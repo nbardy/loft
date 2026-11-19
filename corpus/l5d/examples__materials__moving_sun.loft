@@ -1,0 +1,41 @@
+# R0 source: examples/materials/moving_sun.ts. Camera: front.
+space World Local
+
+const VIEW_YAW = -0rad
+const VIEW_PIVOT = [0, 0, 0]@World
+
+build fn placement(p: p3@World) -> xf@Local>World {
+  let d = p - VIEW_PIVOT
+  let c = cos(VIEW_YAW)
+  let s = sin(VIEW_YAW)
+  place(VIEW_PIVOT + [c * d.x + s * d.z, d.y, -s * d.x + c * d.z], VIEW_YAW)
+}
+
+fn moving_sky(d: rgb, sun: rgb) -> rgb {
+  let t = saturate(0.5 - 0.6 * cos(time * 3.14159265))
+  mix([0.56, 0.27, 0.09], [0.10, 0.24, 0.58], t) * (0.7 + 0.3 * d.z)
+}
+
+# The disc faces away from the sun. The projected sky dominates its front.
+fn ceramic_light(b: Bsdf, n: rgb, v: rgb, sun: rgb, shadow: f, ao: f) -> rgb {
+  eval_bsdf(b, n, v, [0, 0, 1]) * moving_sky([0, 0, 1], sun) * 3.14159265
+}
+
+kind Disc @Local (pose: xf@Local>World) {
+  trace(p) {
+    let q = [length([p.x, p.y]) - 0.88, abs(p.z) - 0.12]
+    length(max(q, [0, 0])) + min(max(q.x, q.y), 0) - 0.08
+  }
+  material(p, n) = ggx([0.95, 0.95, 0.95], 1, 0)
+}
+
+build { emit Disc(pose: placement([0, 0, 0]@World)) }
+
+schedule Main {
+  orbit(at: [0, 0, 0]@World, radius: 4m, height: 0m, period: 1000000000s, fov: 0.6057697367rad)
+  cull_indirect(Disc)
+  render_bundle(Vis64) { draw_indirect(Disc) }
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: ceramic_light, sun: [-0.6, 0.65, -0.65])
+  tonemap_aces(ColorHdr, sky: moving_sky)
+}

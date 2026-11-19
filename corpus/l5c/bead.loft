@@ -1,0 +1,208 @@
+# Source: examples/bead.ts at corpus/manifest.json's examples_rev.
+# view 0 = whole; view 1 = through.
+space World
+
+param view: u = 0 in 0..1
+const bead_center = [0, 1, 0]@World
+const bead_eye = [select(2.5m, 0.05m, view == 1), select(3.5m, 4.2m, view == 1), select(3.5m, 0.08m, view == 1)]@World
+const bore_radius = 0.35m
+const bead_fov = 0.6rad
+
+# Share the analytic query between visible and the authored coverage observation.
+# The nearest-miss gap belongs to the same ray interval as the hit.
+fn bead_approach(ro: p3@World, rd: d3@World, t0: f, t1: f) -> v2 {
+  let q = ro - bead_center
+  let b = dot(q, rd)
+  let hs = b * b - (dot(q, q) - 1.0)
+  let rs = sqrt(max(hs, 0.0))
+  let near = -b - rs
+  let far = -b + rs
+  let a = rd.x * rd.x + rd.z * rd.z
+  let e = q.x * rd.x + q.z * rd.z
+  let g = q.x * q.x + q.z * q.z - bore_radius * bore_radius
+  let hc = e * e - a * g
+  let root = sqrt(max(hc, 0.0))
+  let divisor = max(a, 1e-9)
+  let c0 = (-e - root) / divisor
+  let c1 = (-e + root) / divisor
+  let t = select(near, c1, hc >= 0.0 && near >= c0 && near < c1)
+  # An axial ray inside the bore cannot leave the cylinder.
+  let hit = hs >= 0.0 && t >= t0 && t < far && t < t1 && (a != 0.0 || g >= 0.0)
+  let tn = max(-b, t0)
+  let nearest = q + rd * tn
+  let gap = max(length(nearest) - 1.0, bore_radius - length([nearest.x, nearest.z]))
+  v2(select(tn, t, hit), select(max(gap, 1e-6), 0.0, hit))
+}
+
+kind Bead @World () {
+  trace(p) {
+    let q = p - bead_center
+    max(sphere(q, 1m), bore_radius - length([q.x, q.z]))
+  }
+
+  visible(ro, rd) {
+    let approach = bead_approach(ro, rd, 0.0, 1e30)
+    select(-1.0, approach.x, approach.y == 0.0)
+  }
+
+  material(p, n) = ggx([0.8, 0.3, 0.2], 0.55, 0)
+}
+
+kind Ground @World (radius: m) {
+  visible(ro, rd) = ray_ground(ro, rd, radius)
+  trace(p) = box_sdf(p - [0, -0.05, 0]@World, [radius, 0.05, radius])
+  material(p, n) = ggx([0.38, 0.33, 0.25], 0.9, 0)
+}
+
+# The legacy traced-draw ray is a pixel-center ray. Its distance and gap
+# select a fragment; a rotated 4-bit mask then controls which samples it owns.
+fn trace_coverage(gap: f, footprint: f, ink: f, px: v2) -> u =
+  wgsl(gap: f, footprint: f, ink: f, px: v2) -> u {
+    let edge = select(clamp(ink / footprint, 1.5, 4.0), 0.3, ink <= 0.0);
+    let gap_px = gap / footprint;
+    let cover = select(clamp(1.0 + edge - gap_px, 0.0, 1.0), 1.0, gap <= 0.0 || gap_px < edge);
+    let count = u32(clamp(round(cover * 4.0), 0.0, 4.0));
+    let bits = (1u << count) - 1u;
+    let rotation = u32(fract(52.9829189 * fract(dot(floor(px), vec2f(0.06711056, 0.00583715)))) * 4.0) & 3u;
+    return ((bits << rotation) | (bits >> (4u - rotation))) & 15u;
+  }
+
+fn perspective_ray(uv: v2, eye: p3@World, at: p3@World, fov: f, aspect: f) -> d3@World =
+  wgsl(uv: v2, eye: p3@World, at: p3@World, fov: f, aspect: f) -> d3@World {
+    let forward = normalize(at - eye);
+    let world_up = select(vec3f(0.0, 1.0, 0.0), vec3f(0.0, 0.0, -sign(forward.y)), abs(forward.y) > 0.999999);
+    let right = normalize(cross(forward, world_up));
+    let up = cross(right, forward);
+    let h = tan(0.5 * fov);
+    return normalize(forward + h * (right * ((2.0 * uv.x - 1.0) * aspect) + up * (1.0 - 2.0 * uv.y)));
+  }
+
+fn coverage_weight(mask: u, stored: f, plane: f) -> f =
+  wgsl(mask: u, stored: f, plane: f) -> f {
+    return select(0.0, f32(countOneBits(mask)) * 0.25, stored <= plane);
+  }
+
+fn bead_ground(ro: p3@World, rd: d3@World) -> f =
+  wgsl(ro: p3@World, rd: d3@World) -> f {
+    return -ro.y / rd.y;
+  }
+
+fn bead_bound(ro: p3@World, rd: d3@World, center: p3@World) -> v2 =
+  wgsl(ro: p3@World, rd: d3@World, center: p3@World) -> v2 {
+    let q = ro - center;
+    let b = dot(q, rd);
+    let h = b * b - (dot(q, q) - 1.06 * 1.06);
+    if h < 0.0 { return vec2f(1.0, -1.0); }
+    let root = sqrt(h);
+    return vec2f(max(-b - root, 0.0), -b + root);
+  }
+
+fn bead_footprint(ro: p3@World, center: p3@World, rd: d3@World, t: f, height: f, fov: f) -> f =
+  wgsl(ro: p3@World, center: p3@World, rd: d3@World, t: f, height: f, fov: f) -> f {
+    return 2.0 * t * dot(rd, normalize(center - ro)) * tan(fov * 0.5) / height;
+  }
+
+# The screen and geometry observation share the same ray, coverage, and
+# plane test. x is stored traced distance, y is the gap, z is coverage,
+# and w is analytic ground distance.
+fn bead_fragment(uv: v2, extent: v2) -> v4 {
+  let ray = perspective_ray(uv, bead_eye, bead_center, bead_fov, extent.x / extent.y)
+  let ground = bead_ground(bead_eye, ray)
+  let plane = select(1e30, ground, ground > 0.0)
+  let span = bead_bound(bead_eye, ray, bead_center)
+  if span.y < span.x {
+    return v4(1e30, 0.0, 0.0, plane)
+  }
+  let approach = bead_approach(bead_eye, ray, span.x, span.y)
+  let footprint = bead_footprint(bead_eye, bead_center, ray, approach.x, extent.y, bead_fov)
+  let mask = trace_coverage(approach.y, footprint, 0.04, uv * extent)
+  let stored = select(1e30, approach.x, mask != 0)
+  v4(stored, approach.y, coverage_weight(mask, stored, plane), plane)
+}
+
+fn bead_ink() -> rgb = mix([0.07, 0.04, 0.13], [0.8, 0.3, 0.2] * 0.3, 0.25)
+
+fn bead_pixel(origin: v3, direction: v3) -> v4 =
+  wgsl(origin: v3, direction: v3) -> v4 {
+    let clip = frame.view_proj * vec4f(origin + direction, 1.0);
+    let size = vec2f(frame.size.xy);
+    let xy = clip.xy / clip.w;
+    let uv = vec2f(0.5 + xy.x * 0.5, 0.5 - xy.y * 0.5);
+    return vec4f((floor(uv * size) + 0.5) / size, size);
+  }
+
+fn bead_look(rd: d3@World, ro: p3@World, center: p3@World, fragment: v4, extent: v2, ink: rgb) -> rgb =
+  wgsl(rd: d3@World, ro: p3@World, center: p3@World, fragment: v4, extent: v2, ink: rgb) -> rgb {
+    let horizon = vec3f(0.78, 0.9, 0.96);
+    let sun = normalize(vec3f(-0.4, 0.8, 0.45));
+    let above = mix(horizon, vec3f(0.32, 0.6, 0.92), pow(clamp(rd.y, 0.0, 1.0), 0.6));
+    let below = mix(horizon, vec3f(0.03, 0.27, 0.45), clamp(-6.0 * rd.y, 0.0, 1.0));
+    var background = mix(above, below, 1.0 - smoothstep(-0.002, 0.0, rd.y));
+    if fragment.w < 1e30 {
+      // Equal-height and equal-radius joints from the pinned legacy 24x24
+      // traced shadow fit. The three capsules reduce to their union segment.
+      let h = 1.6827602;
+      let offset = h * sun.xz / sun.y;
+      let a = vec2f(-0.00020994942, -0.18811491) - offset;
+      let b = vec2f(0.00020994942, 0.18811491) - offset;
+      let pa = ro.xz + rd.xz * fragment.w - a;
+      let ba = b - a;
+      let along = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+      let pixel = 2.0 * fragment.w * dot(rd, normalize(center - ro)) * tan(0.3) / extent.y;
+      let soft = max(0.03 + 0.04 * h, pixel / max(abs(rd.y), 0.02));
+      let radius = 0.73972946;
+      let shadow = 0.85 * exp(-h / 9.0) * (1.0 - smoothstep(radius - soft, radius + soft, length(pa - ba * along)));
+      let ground = vec3f(0.86, 0.8, 0.68) * mix(vec3f(1.08, 1.04, 0.96), vec3f(0.46, 0.42, 0.78), 0.8 * shadow);
+      let fog = 1.0 - exp(-0.008 * fragment.w);
+      background = mix(ground, horizon, fog * fog);
+    }
+    if fragment.z == 0.0 { return background; }
+    if fragment.y > 0.0 { return mix(background, ink, fragment.z); }
+    let p = ro + rd * fragment.x - center;
+    let radial = vec3f(p.x, 0.0, p.z);
+    let n = select(normalize(p), -normalize(radial), length(p) < 0.99999);
+    let ndl = dot(n, sun);
+    let light = 0.5 * (smoothstep(-0.033, -0.017, ndl) + smoothstep(0.317, 0.333, ndl));
+    let shade = mix(vec3f(0.46, 0.42, 0.78), vec3f(1.08, 1.04, 0.96), light);
+    let rim = smoothstep(0.64, 0.66, 1.0 - clamp(dot(n, -rd), 0.0, 1.0)) * 0.45 * (0.35 + 0.65 * light);
+    let gloss = smoothstep(0.977, 0.98, dot(n, normalize(sun - rd)));
+    let color = vec3f(0.8, 0.3, 0.2) * shade + vec3f(0.75, 0.95, 1.0) * rim + gloss * 0.16;
+    return mix(background, color, fragment.z);
+  }
+
+# Legacy paints to RGBA8Unorm. Undo the screen route's ACES and sRGB so
+# the authored toon colors still reach the attachment in their original codes.
+fn bead_display_input(c: rgb) -> rgb =
+  wgsl(c: rgb) -> rgb {
+    let code = clamp(c, vec3f(0.0), vec3f(1.0));
+    let y = select(pow((code + 0.055) / 1.055, vec3f(2.4)), code / 12.92, code <= vec3f(0.04045));
+    let a = 2.51 - 2.43 * y;
+    let b = 0.03 - 0.59 * y;
+    return (-b + sqrt(b * b + 0.56 * a * y)) / (2.0 * a);
+  }
+
+fn bead_display(origin: v3, direction: v3, seed: u, bounces: u) -> rgb {
+  let px = bead_pixel(origin, direction)
+  let uv = [px.x, px.y]
+  let extent = [px.z, px.w]
+  let ray = perspective_ray(uv, bead_eye, bead_center, bead_fov, extent.x / extent.y)
+  bead_display_input(bead_look(ray, bead_eye, bead_center, bead_fragment(uv, extent), extent, bead_ink()))
+}
+
+build {
+  emit Bead()
+  emit Ground(radius: 256m)
+  emit Sun(dir: dir([-0.4, 0.8, 0.45]@World), color: [2.2, 2, 1.7])
+}
+
+camera Main { eye: bead_eye, at: bead_center, fov: bead_fov }
+
+schedule BeadView {
+  use_camera(Main)
+  cull_indirect(Bead, Ground)
+  render_bundle(Vis64) { draw_indirect(Bead, Ground) }
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: sun_sky, sun: [-0.4, 0.8, 0.45])
+  screen_pass(bead_display, bounces: 0)
+  tonemap_aces(ColorHdr, sky: sky_color)
+}

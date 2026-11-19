@@ -32,6 +32,7 @@ pub struct Prog<'a> {
     /// Declaration order; a kind's index here is its stage-0 table.
     pub kind_order: Vec<&'a str>,
     pub consts: BTreeMap<&'a str, &'a ConstDecl>,
+    pub worlds: BTreeMap<&'a str, &'a [Ident]>,
     pub spaces: HashSet<&'a str>,
     pub structs: BTreeMap<&'a str, (&'a Ident, &'a [RowField])>,
     pub aliases: BTreeMap<&'a str, (&'a Ident, &'a TyExpr)>,
@@ -39,6 +40,10 @@ pub struct Prog<'a> {
     pub scans: BTreeMap<&'a str, &'a ScanDecl>,
     pub schedule: Option<&'a ScheduleDecl>,
     pub kernels: BTreeMap<&'a str, &'a KernelDecl>,
+    pub bodies: BTreeMap<&'a str, (&'a Ident, &'a [BodyItem])>,
+    pub states: BTreeMap<&'a str, &'a StateDecl>,
+    pub solvers: BTreeMap<&'a str, &'a SolverDecl>,
+    pub plans: BTreeMap<&'a str, &'a PlanDecl>,
     pub laws:BTreeMap<&'a str,&'a LawDecl>,
     pub checks:BTreeMap<&'a str,&'a FnDecl>,
 }
@@ -51,12 +56,14 @@ impl<'a> Prog<'a> {
             kinds: BTreeMap::new(),
             kind_order: vec![],
             consts: BTreeMap::new(),
+            worlds: BTreeMap::new(),
             spaces: HashSet::new(),
             structs: BTreeMap::new(),
             aliases: BTreeMap::new(),
             units: HashSet::new(),
             scans: BTreeMap::new(),
             kernels: BTreeMap::new(),
+            bodies: BTreeMap::new(), states: BTreeMap::new(), solvers: BTreeMap::new(), plans: BTreeMap::new(),
             schedule: None,laws:BTreeMap::new(),checks:BTreeMap::new(),
         };
         let mut seen: BTreeMap<&str, Span> = BTreeMap::new();
@@ -79,12 +86,44 @@ impl<'a> Prog<'a> {
                 }
                 Item::Use(path) => {
                     let parts: Vec<_> = path.iter().map(|n| n.name.as_str()).collect();
-                    if !matches!(parts.as_slice(), ["std", "geom" | "light" | "math" | "color" | "noise"] | ["engines", "realtime"]) {
+                    if !matches!(parts.as_slice(), ["std", "geom" | "light" | "math" | "color" | "noise" | "quant"] | ["engines", "realtime" | "reference" | "woodblock" | "spectral_caustic"]) {
                         let span = path.first().unwrap().span.to(path.last().unwrap().span);
                         return Err(Diag::new(Code::E011, span, format!("unresolved import {}", parts.join("::")), "use a module supplied by the loaded prelude"));
                     }
                 }
                 Item::Camera(_) => {}
+                Item::Body(n, items) => {
+                    name(n)?;
+                    p.bodies.insert(&n.name, (n, items));
+                }
+                Item::State(state) => {
+                    name(&state.name)?;
+                    p.states.insert(&state.name.name, state);
+                    p.structs.insert(&state.name.name, (&state.name, &state.fields));
+                }
+                Item::Solver(solver) => {
+                    name(&solver.name)?;
+                    p.solvers.insert(&solver.name.name, solver);
+                }
+                Item::Plan(plan) => {
+                    name(&plan.name)?;
+                    p.plans.insert(&plan.name.name, plan);
+                }
+                Item::World(n, kinds) => {
+                    name(n)?;
+                    let mut seen = HashSet::new();
+                    for kind in kinds {
+                        if !seen.insert(&kind.name) {
+                            return Err(Diag::new(Code::E003, kind.span, "duplicate world kind", "list each world kind once"));
+                        }
+                    }
+                    p.worlds.insert(&n.name, kinds.as_slice());
+                }
+                Item::Bake(b) => {
+                    name(&b.texel.name)?;
+                    p.fns.insert(&b.texel.name.name, &b.texel);
+                }
+                Item::Retarget { name: n, .. } => name(n)?,
                 Item::Kernel(k) => {
                     name(&k.f.name)?;
                     p.kernels.insert(&k.f.name.name, k);
@@ -129,6 +168,13 @@ impl<'a> Prog<'a> {
                 }
             }
         }
+        for kinds in p.worlds.values() {
+            for kind in *kinds {
+                if !p.kinds.contains_key(kind.name.as_str()) {
+                    return Err(Diag::new(Code::E011, kind.span, format!("unknown world kind {}", kind.name), "declare the kind before using it in the world"));
+                }
+            }
+        }
         if let Some((n, target)) = p.schedule.and_then(|s| s.radiance.as_ref()) {
             p.aliases.insert(&n.name, (n, target));
         }
@@ -158,6 +204,10 @@ impl<'a> Prog<'a> {
             pending.extend(refs.names.into_iter().map(|(n, _)| n).filter(|n| self.consts.contains_key(n)));
         }
         false
+    }
+
+    pub fn param_word(&self, name: &str) -> Option<usize> {
+        self.param_slot(name).map(|slot| slot * 4)
     }
 
     pub fn kind_index(&self, name: &str) -> usize {
@@ -231,7 +281,7 @@ pub fn kind_space(k: &KindDecl) -> &str {
 
 /// The row field that places a kind asked in its own space (`Xform[S -> World]`), checked to be unique.
 pub fn pose_field(k: &KindDecl) -> Option<usize> {
-    let s = kind_space(k);
+    let s = if k.name.name == "Mesh" && k.queries.is_empty() { "Local" } else { kind_space(k) };
     if s == "World" {
         return None;
     }
@@ -268,7 +318,7 @@ fn geometry_fields(k: &KindDecl) -> Vec<usize> {
             // Passing the entire row to a helper (including through a local)
             // lets its callee read any column. Include all words in this key.
             ExprKind::Name(n) if n == "self" => out.push(n.clone()),
-            ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Name(_) => {}
+            ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::String(_) | ExprKind::Name(_) => {}
         }
     }
     fn block(b: &Block, out: &mut Vec<String>) {
@@ -334,6 +384,7 @@ pub struct Compiled {
     pub luts: Vec<eval::Lut>,
     /// Drawn kinds by kind id: (stage-0 table index, name).
     pub drawn: Vec<(usize, String)>,
+    meshes: Vec<gltf::Mesh>,
 }
 
 /// One kind's queries on the CPU in f32 (the twin). Traced and analytic kinds take a world point and direction;
@@ -367,9 +418,41 @@ fn of_v3(v: Val<f32>) -> [f32; 3] {
     }
 }
 
+fn reflect_params(prog: &Prog<'_>, types: &[Ty], packed: &[f32]) -> Res<Vec<loft_ir::ParamMeta>> {
+    use loft_ir::{IrTy, ParamId, ParamMeta};
+    let mut eval: Eval<f32> = Eval::new(prog, types, vec![], &[]);
+    prog.continuous_params().enumerate().map(|(i, (name, decl))| {
+        let range = decl.range.as_ref().map(|r| -> Res<_> {
+            let lo = as_f32(eval::concrete(&eval.module_expr(&r.lo)?, r.lo.span)?, r.lo.span)?;
+            let lo = if r.strict { lo.next_up() } else { lo };
+            let hi = match &r.hi {
+                Some(e) => as_f32(eval::concrete(&eval.module_expr(e)?, e.span)?, e.span)?,
+                None => f32::MAX,
+            };
+            Ok(([lo, 0., 0., 0.], [hi, 0., 0., 0.]))
+        }).transpose()?;
+        let offset = (3 + i) * 4;
+        Ok(ParamMeta {
+            id: ParamId(i as u32), name: name.to_owned(), ty: IrTy::F32,
+            offset_bytes: (offset * 4) as u32,
+            default: [packed[offset], 0., 0., 0.],
+            range,
+        })
+    }).collect()
+}
+
 impl Compiled {
     pub fn prog(&self) -> Prog<'_> {
         Prog::index(&self.modules).expect("indexed once already")
+    }
+
+    /// Reflected slots follow the same ordering and offsets used by WGSL lowering.
+    pub fn param_meta(&self, program: &Program) -> Res<Vec<loft_ir::ParamMeta>> {
+        reflect_params(&self.prog(), &self.types, &program.params)
+    }
+
+    pub fn mesh_triangles(&self) -> impl Iterator<Item = &[[[f32; 3]; 3]]> {
+        self.meshes.iter().map(|mesh| mesh.triangles.as_slice())
     }
 
     /// The row's placement in World (identity for a kind asked in World).
@@ -400,6 +483,20 @@ impl Compiled {
             other @ Val::Void | other @ Val::V(..) | other @ Val::B(_) | other @ Val::U(_) | other @ Val::I(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) | other @ Val::Bsdf(_) => unreachable!("query returns f32, got {other:?}"),
         };
         let mut out = CpuQuery { trace: 0.0, visible: 0.0, material: [0.0; 3], surf_p: [0.0; 3], surf_n: [0.0; 3] };
+        if name == "Mesh" && k.queries.is_empty() {
+            let RowVal::U(asset) = self.tables[*table][row][1] else { unreachable!("checked asset") };
+            let mesh = &self.meshes[asset as usize];
+            let r = rot(&to_local, p);
+            let origin = std::array::from_fn(|i| r[i] + to_local.t[i]);
+            let n = unit(rd);
+            out.visible = mesh.hit(origin, unit(rot(&to_local, rd)));
+            let a = unit(TWIN_LIGHT);
+            let t = unit([n[1] * a[2] - n[2] * a[1], n[2] * a[0] - n[0] * a[2], n[0] * a[1] - n[1] * a[0]]);
+            let lt = std::array::from_fn(|i| n[i] * 0.5 + t[i] * 0.866_025_4);
+            let b = Val::Bsdf(vec![eval::Layer::Lobe("ggx".into(), vec![v3(mesh.color), Val::S(mesh.roughness), Val::S(mesh.metal)])]);
+            out.material = of_v3(ev.eval_bsdf(&b, &v3(n), &v3(n), &v3(lt), sp)?);
+            return Ok(out);
+        }
         let (pl, nl, nw, uv) = match k.query(QueryKind::Surface) {
             Some(surf) => {
                 let (u, v) = (Val::S(p[0]), Val::S(p[1]));
@@ -454,7 +551,7 @@ fn kind_args<'p>(p: &Prog<'p>, pd: &PassDecl) -> Res<Vec<&'p str>> {
         if a.value.span.file == Span::NONE.file && matches!(n.as_str(), "Drawables" | "Casters") {
             kinds.extend(p.kind_order.iter().copied().filter(|k| {
                 let kind = p.kinds[k];
-                !kind.queries.is_empty() && (n == "Drawables" || pose_field(kind).is_some())
+                (!kind.queries.is_empty() || *k == "Mesh") && (n == "Drawables" || pose_field(kind).is_some())
             }));
         } else if let Some((&name, _)) = p.kinds.get_key_value(n.as_str()) {
             kinds.push(name);
@@ -469,7 +566,7 @@ fn fn_name_arg<'e>(p: &Prog, pd: &'e PassDecl, name: &str) -> Res<&'e str> {
     let e = arg(pd, name)?;
     match &e.kind {
         ExprKind::Name(n) if p.fns.contains_key(n.as_str()) => Ok(n),
-        ExprKind::Unproved { .. } | ExprKind::FiniteDiff { .. } | ExprKind::If { .. } | ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Call { .. } | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => Err(Diag::new(Code::E011, e.span, format!("`{name}:` names a library fn"), "write the fn's name, e.g. `sky: sky_color`")),
+        ExprKind::Unproved { .. } | ExprKind::FiniteDiff { .. } | ExprKind::If { .. } | ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::String(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Call { .. } | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => Err(Diag::new(Code::E011, e.span, format!("`{name}:` names a library fn"), "write the fn's name, e.g. `sky: sky_color`")),
     }
 }
 
@@ -516,8 +613,16 @@ fn pack(row: &[RowVal], out: &mut Vec<f32>) {
     }
 }
 
-fn naga_module(name:&str,text:String,src:&Sources)->Res<ShaderModule>{
-    let map=provenance::Map::new(text);
+fn naga_module(name: &str, text: String, src: &Sources, features: loft_ir::GpuFeatures) -> Res<ShaderModule> {
+    let mut prelude = quant::wgsl_prelude(&text, features);
+    if text.contains("loft_ggx_energy(") {
+        let table = if text.contains("var<storage, read> world_luts:") { Some("world_luts") }
+            else if text.contains("var<storage, read> luts:") { Some("luts") }
+            else { None };
+        prelude.push_str(&bsdf::energy_wgsl(table));
+    }
+    prelude.push_str(&text);
+    let map=provenance::Map::new(prelude);
     let diagnostic=|at:Option<Span>,message:String|Diag::new(Code::E701,at.unwrap_or(Span::NONE),format!("WGSL validation in {name}: {message}"),"correct the WGSL expression at this source location");
     let module=naga::front::wgsl::parse_str(&map.shader).map_err(|e|diagnostic(e.labels().find_map(|(s,_)|map.origin(s)),e.emit_to_string(&map.shader)))?;
     naga::valid::Validator::new(naga::valid::ValidationFlags::all(),naga::valid::Capabilities::default()).validate(&module).map_err(|e|diagnostic(e.spans().find_map(|(s,_)|map.origin(*s)),e.emit_to_string(&map.shader)))?;
@@ -552,16 +657,24 @@ pub fn compile(src: &Sources, overrides: &[(String, f64)]) -> Res<(Program, Repo
 }
 
 pub fn compile_cached(src: &Sources, overrides: &[(String, f64)], cache: &std::path::Path) -> Res<(Program, Report, Compiled)> {
-    compile_impl(src, overrides, &[], cache)
+    compile_impl(src, overrides, &[], cache, emit::Aov::Beauty, loft_ir::GpuFeatures::empty())
 }
 
 /// Re-derive local bounds and pack the sampled pose before drawing a requested
 /// still. The render path never culls an animated row against its time-zero box.
 pub fn compile_snapshot(src:&Sources,overrides:&[(String,f64)],samples:&[crate::program::MotionSample])->Res<(Program,Report,Compiled)> {
-    compile_impl(src, overrides, samples, std::path::Path::new("target/loft_cache"))
+    compile_snapshot_aov(src, overrides, samples, emit::Aov::Beauty)
 }
 
-fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::program::MotionSample], cache: &std::path::Path) -> Res<(Program, Report, Compiled)> {
+pub fn compile_snapshot_aov(src: &Sources, overrides: &[(String, f64)], samples: &[crate::program::MotionSample], aov: emit::Aov) -> Res<(Program, Report, Compiled)> {
+    compile_impl(src, overrides, samples, std::path::Path::new("target/loft_cache"), aov, loft_ir::GpuFeatures::empty())
+}
+
+pub fn compile_aov(src: &Sources, overrides: &[(String, f64)], aov: emit::Aov) -> Res<(Program, Report, Compiled)> {
+    compile_impl(src, overrides, &[], std::path::Path::new("target/loft_cache"), aov, loft_ir::GpuFeatures::empty())
+}
+
+fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::program::MotionSample], cache: &std::path::Path, aov: emit::Aov, features: loft_ir::GpuFeatures) -> Res<(Program, Report, Compiled)> {
     let mut ms = vec![];
     let mut clock = Instant::now();
     let mut lap = |name: &'static str, ms: &mut Vec<(&'static str, f64)>| {
@@ -569,6 +682,7 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
         clock = Instant::now();
     };
     let mut modules = parse_all(src)?;
+    let meshes = gltf::lower(src, &mut modules)?;
     for c in modules.iter_mut().flat_map(|m|&mut m.items).filter_map(|it|if let Item::Const(c)=it{Some(c)}else{None}){
         if c.comptime && let Some((_,v))=overrides.iter().find(|(n,_)|n==&c.name.name){
             let integer=matches!(&c.ty,Some(TyExpr::Name(n)) if n.name=="u32" || n.name=="i32");
@@ -600,7 +714,7 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
         }
     }
     refine::check(&p,&types,overrides)?;
-    if let Some(span) = pending_lowering {
+    if let Some(span) = pending_lowering && !p.kernels.get("deposit_caustic").is_some_and(|k| k.f.name.span == span) {
         return Err(Diag::new(Code::E405, span, "Phase 4 lowering is pending for this checked program",
             "use the typed front end to inspect the Phase 4 contract"));
     }
@@ -615,6 +729,9 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
     let mut culled: Vec<&str> = vec![];
     let mut casters: Vec<&str> = vec![];
     let mut shadow_size = 0u32;
+    let mut path = None;
+    let mut path_entry = None;
+    let mut print = false;
     let has_shadow_pass = sched.passes.iter().any(|p| p.verb.name == "find_shadow_map");
     let mut emitted_passes = HashSet::new();
     let mut available: HashSet<&str> = ["FrameUniform", "InputsBuf", "ParamsBuf", "RowTables", "LutTables", "BodyTables", "StateBuf", "PoseBuf"].into_iter().collect();
@@ -637,6 +754,8 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
                 }
                 rows_fns.push(p.fns[v]);
             }
+            "run_solver" => return Err(Diag::new(Code::E405, pd.verb.span,
+                "the checked solver has no execution lowering", "use a lowered schedule")),
             "run_laws" | "check" => {}, // lowered together in schedule order by motion_module
             "orbit" => {
                 let f = |n: &str, types: &mut Vec<Ty>| -> Res<f32> {
@@ -650,6 +769,33 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
                     height: if pd.args.iter().any(|a|a.name.as_ref().is_some_and(|n|n.name=="height")){f("height",&mut types)?}else{0.5},
                     period: if pd.args.iter().any(|a|a.name.as_ref().is_some_and(|n|n.name=="period")){f("period",&mut types)?}else{24.0},
                     fov: f("fov", &mut types)?,
+                    fixed_eye: None,
+                });
+            }
+            "use_camera" => {
+                let [Arg { value: Expr { kind: ExprKind::Name(name), .. }, .. }] = pd.args.as_slice() else {
+                    return Err(Diag::new(Code::E520, pd.verb.span, "use_camera needs a declared camera", "write use_camera(CameraName)"));
+                };
+                let fields = &modules.iter().flat_map(|m| &m.items).find_map(|item| match item {
+                    Item::Camera(c) if c.name.name == *name => Some(c),
+                    _ => None,
+                }).ok_or_else(|| Diag::new(Code::E520, pd.verb.span, format!("unknown camera {name}"), "declare the camera at module scope"))?.fields;
+                let field = |names: &[&str]| fields.iter()
+                    .find(|(n, _)| names.contains(&n.name.as_str()))
+                    .map(|(_, e)| e)
+                    .ok_or_else(|| Diag::new(Code::E520, pd.verb.span, format!("camera needs {}", names[0]), "supply the camera field"));
+                let f = |e: &Expr, types: &mut Vec<Ty>| as_f32(stage0(&p, types, e, overrides)?, e.span);
+                let point = |e: &Expr, types: &mut Vec<Ty>| as_v3(stage0(&p, types, e, overrides)?, e.span);
+                let at = point(field(&["at", "target"])?, &mut types)?;
+                let fov = f(field(&["fov"])?, &mut types)?;
+                camera = Some(match field(&["eye"]) {
+                    Ok(e) => Orbit { at, fov, fixed_eye: Some(point(e, &mut types)?), radius: 0.0, height: 0.0, period: 1.0 },
+                    Err(_) => Orbit {
+                        at, fov, fixed_eye: None,
+                        radius: f(field(&["radius"])?, &mut types)?,
+                        height: field(&["height"]).map_or(Ok(0.5), |e| f(e, &mut types))?,
+                        period: field(&["period"]).map_or(Ok(24.0), |e| f(e, &mut types))?,
+                    },
                 });
             }
             "cull_indirect" => {
@@ -696,6 +842,49 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
                 sun = Some(as_v3(stage0(&p, &mut types, s, overrides)?, s.span)?);
                 passes.push(Pass::Shade(vec![]));
             }
+            "screen_pass" => {
+                let Some(ExprKind::Name(entry)) = pd.args.first().map(|a| &a.value.kind) else {
+                    return Err(Diag::new(Code::E405, pd.verb.span, "screen pass needs a path function", "name a fn with signature (v3, v3, u, u) -> rgb"));
+                };
+                let f = p.fns.get(entry.as_str()).ok_or_else(|| Diag::new(Code::E011, pd.args[0].value.span,
+                    format!("unknown path function {entry}"), "name a declared fn"))?;
+                let checker = check::Ck::new(&p, &mut types);
+                let params = f.params.iter().map(|a| a.ty.as_ref().map(|t| checker.resolve(t, true)).transpose())
+                    .collect::<Res<Vec<_>>>()?;
+                let rgb = Some(Ty::VecN(3));
+                if params != [rgb.clone(), rgb.clone(), Some(Ty::U32), Some(Ty::U32)]
+                    || f.ret.as_ref().map(|t| checker.resolve(t, true)).transpose()? != rgb
+                {
+                    return Err(Diag::new(Code::E003, pd.args[0].value.span, "invalid path function signature",
+                        "write fn sample(origin: v3, direction: v3, seed: u, bounces: u) -> rgb"));
+                }
+                path_entry = Some(entry.as_str());
+                let integrator = match pd.args.iter().find(|a| a.name.as_ref().is_some_and(|key| key.name == "spectral")).map(|a| &a.value.kind) {
+                    Some(ExprKind::Bool(true)) => emit::paths::Integrator::Spectral,
+                    Some(ExprKind::Bool(false)) | None => emit::paths::Integrator::Reference,
+                    Some(_) => return Err(Diag::new(Code::E003, pd.verb.span, "spectral requires a boolean", "use spectral: true or omit the option")),
+                };
+                let e = arg(pd, "bounces")?;
+                let bounces = as_f32(stage0(&p, &mut types, e, overrides)?, e.span)?;
+                if bounces.fract() != 0.0 || !(0.0..=64.0).contains(&bounces) {
+                    return Err(Diag::new(Code::E602, e.span, "invalid path bounce count", "use an integer from 0 to 64"));
+                }
+                let lens_value = |name: &str, fallback, types: &mut Vec<Ty>| -> Res<f32> {
+                    let Some(a) = pd.args.iter().find(|a| a.name.as_ref().is_some_and(|key| key.name == name)) else { return Ok(fallback); };
+                    let e = &a.value;
+                    as_f32(stage0(&p, types, e, overrides)?, e.span)
+                };
+                let radius = lens_value("lens_radius", 0.0, &mut types)?;
+                let focus = lens_value("focus", 1.0, &mut types)?;
+                if !radius.is_finite() || radius < 0.0 || !focus.is_finite() || focus <= 0.0 {
+                    return Err(Diag::new(Code::E602, pd.verb.span, "invalid thin lens", "use a nonnegative lens radius and positive focus distance"));
+                }
+                let lens = [radius, focus];
+                if path.replace(emit::paths::PathTrace { integrator, bounces: bounces as u32, lens, lamps: vec![], worlds: vec![], media: vec![] }).is_some() {
+                    return Err(Diag::new(Code::E505, pd.verb.span, "duplicate path pass", "schedule one path integrator"));
+                }
+            }
+            "outline_and_paper" => { print = true; }
             "tonemap_aces" => {
                 sky = Some(fn_name_arg(&p, pd, "sky")?);
                 passes.push(Pass::Present);
@@ -710,7 +899,7 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
             }
         }
         let (reads, writes): (&[&str], &[&str]) = match verb {
-            "orbit" => (&["FrameUniform"], &["CameraSlot"]),
+            "orbit" | "use_camera" => (&["FrameUniform"], &["CameraSlot"]),
             "run_laws" => (&["StateBuf", "RowTables"], &["PoseBuf"]),
             "check" => (&["RowTables", "PoseBuf"], &["VerdictBuf"]),
             "cull_indirect" => (&["CameraSlot"], &["IndirectBuf"]),
@@ -719,6 +908,8 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
             "tile_classify" => (&["Vis64"], &["TileLists"]),
             "shade_tiles" if has_shadow_pass => (&["Vis64", "DepthBuf", "TileLists", "ShadowMap"], &["ColorHdr"]),
             "shade_tiles" => (&["Vis64", "DepthBuf", "TileLists"], &["ColorHdr"]),
+            "outline_and_paper" => (&["ColorHdr", "Vis64"], &["ColorHdr"]),
+            "screen_pass" => (&["CameraSlot"], &["ColorHdr"]),
             "tonemap_aces" => (&["ColorHdr"], &["Swapchain"]),
             _ => (&[], &[]),
         };
@@ -793,13 +984,6 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
         *color = as_v3(eval::concrete(&ev.module_expr(&decl.value)?, decl.name.span)?, decl.name.span)?;
     }
     let tables = ev.tables;
-    // A declared Mesh with no importer yet must never render as an empty data-only table.
-    if let Some(mesh) = p.kinds.get("Mesh")
-        && mesh.queries.is_empty() && !tables[p.kind_index("Mesh")].is_empty()
-    {
-        return Err(Diag::new(Code::E405, mesh.name.span, "imported Mesh drawing is not lowered yet",
-            "supply Mesh asset lowering in the glTF adapter"));
-    }
     let environment=|kind:&str|->Res<Option<[[f32;3];2]>>{
         let Some(k)=p.kinds.get(kind) else{return Ok(None)};
         match tables[p.kind_index(kind)].as_slice(){
@@ -808,6 +992,56 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
             _=>Err(Diag::new(Code::E602,k.name.span,format!("expected one {} environment row",kind),"emit one environment for this view")),
         }
     };
+    if aov != emit::Aov::Beauty { path = None; }
+    if let Some(path) = &mut path {
+        if let Some(medium) = p.kinds.get("FieldMedium") {
+            for row in &tables[p.kind_index("FieldMedium")] {
+                let [lo, hi, sigma_t, albedo, g, emission] = row.as_slice() else {
+                    return Err(Diag::new(Code::E003, medium.name.span, "invalid medium layout", "use FieldMedium from the light prelude"));
+                };
+                let v = |x: &RowVal| as_v3(x.clone(), medium.name.span);
+                let (lo, hi, t, albedo, emit) = (v(lo)?, v(hi)?, v(sigma_t)?, v(albedo)?, v(emission)?);
+                let g = as_f32(g.clone(), medium.name.span)?;
+                if (0..3).any(|i| !(lo[i] < hi[i] && t[i] >= 0.0 && (0.0..=1.0).contains(&albedo[i]) && emit[i] >= 0.0))
+                    || !(-1.0..1.0).contains(&g) || g == -1.0
+                {
+                    return Err(Diag::new(Code::E602, medium.name.span, "invalid medium coefficients or bounds",
+                        "use positive extents, nonnegative extinction and emission, albedo in [0,1] and |g| < 1"));
+                }
+                path.media.push([[lo[0], lo[1], lo[2], g], [hi[0], hi[1], hi[2], 0.0],
+                    [t[0], t[1], t[2], 0.0], [t[0] * albedo[0], t[1] * albedo[1], t[2] * albedo[2], 0.0],
+                    [emit[0], emit[1], emit[2], 0.0]]);
+            }
+        }
+        path.lamps.push([[0.0; 4]; 2]); // index zero is the directional sun
+        if let Some(lamp) = p.kinds.get("PointLamp") {
+            for row in &tables[p.kind_index("PointLamp")] {
+                let [pos, color, reach] = row.as_slice() else { return Err(Diag::new(Code::E003, lamp.name.span, "invalid light layout", "use the PointLamp from the light prelude")); };
+                let [x,y,z] = as_v3(pos.clone(), lamp.name.span)?;
+                let [r,g,b] = as_v3(color.clone(), lamp.name.span)?;
+                if let Some(medium) = p.kinds.get("FieldMedium") {
+            for row in &tables[p.kind_index("FieldMedium")] {
+                let [lo, hi, sigma_t, albedo, g, emission] = row.as_slice() else {
+                    return Err(Diag::new(Code::E003, medium.name.span, "invalid medium layout", "use FieldMedium from the light prelude"));
+                };
+                let v = |x: &RowVal| as_v3(x.clone(), medium.name.span);
+                let (lo, hi, t, albedo, emit) = (v(lo)?, v(hi)?, v(sigma_t)?, v(albedo)?, v(emission)?);
+                let g = as_f32(g.clone(), medium.name.span)?;
+                if (0..3).any(|i| !(lo[i] < hi[i] && t[i] >= 0.0 && (0.0..=1.0).contains(&albedo[i]) && emit[i] >= 0.0))
+                    || !(-1.0..1.0).contains(&g) || g == -1.0
+                {
+                    return Err(Diag::new(Code::E602, medium.name.span, "invalid medium coefficients or bounds",
+                        "use positive extents, nonnegative extinction and emission, albedo in [0,1] and |g| < 1"));
+                }
+                path.media.push([[lo[0], lo[1], lo[2], g], [hi[0], hi[1], hi[2], 0.0],
+                    [t[0], t[1], t[2], 0.0], [t[0] * albedo[0], t[1] * albedo[1], t[2] * albedo[2], 0.0],
+                    [emit[0], emit[1], emit[2], 0.0]]);
+            }
+        }
+        path.lamps.push([[x,y,z,as_f32(reach.clone(),lamp.name.span)?],[r,g,b,0.0]]);
+            }
+        }
+    }
     let sky_colors=environment("Sky")?;
     let sun_row=environment("Sun")?;
     let [default_sun, default_zenith, default_horizon] = environment_defaults;
@@ -835,10 +1069,26 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
     if a != b || b.windows(2).any(|pair| pair[0] == pair[1]) || drawn.len() > abi::MAX_KINDS {
         return Err(Diag::new(Code::E520, sched.name.span, format!("cull lists {culled:?} but the bundle draws {drawn:?}"), "cull each drawable kind once (up to 32)"));
     }
+    let ids: Vec<u32> = (0..drawn.len() as u32).collect();
+    // Shadow-only geometry has row and shader resources but no primary draw.
+    for &caster in &casters {
+        if !drawn.contains(&caster) { drawn.push(caster); }
+    }
+    if drawn.len() > abi::MAX_KINDS {
+        return Err(Diag::new(Code::E520, sched.name.span, "too many primary and shadow kinds", "use up to 32 kinds"));
+    }
+    if let Some(path) = &mut path {
+        path.worlds.push(emit::paths::WorldResources { kinds: (0..drawn.len() as u32).collect(), media: true });
+        for members in p.worlds.values() {
+            path.worlds.push(emit::paths::WorldResources {
+                kinds: members.iter().filter_map(|m| drawn.iter().position(|k| *k == m.name).map(|k| k as u32)).collect(),
+                media: members.iter().any(|m| m.name == "FieldMedium"),
+            });
+        }
+    }
     let caster_ids = casters.iter().map(|c| {
         drawn.iter().position(|d| d == c).map(|i| i as u32).ok_or_else(|| Diag::new(Code::E520, sched.name.span, format!("shadow caster `{c}` is not drawn"), "cast shadows from drawn kinds"))
     }).collect::<Res<Vec<_>>>()?;
-    let ids: Vec<u32> = (0..drawn.len() as u32).collect();
     for pass in &mut passes {
         match pass {
             Pass::Vis(k) | Pass::Shade(k) => *k = ids.clone(),
@@ -859,12 +1109,19 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
         if rows.is_empty() || rows.len() as u32 >= abi::MAX_ROWS {
             return Err(Diag::new(Code::E602, k.name.span, format!("kind `{name}` is drawn with {} rows", rows.len()), "emit 1 to 16,777,215 rows from the rows pass"));
         }
-        let key_fields = geometry_fields(k);
+        let mesh_kind = *name == "Mesh" && k.queries.is_empty();
+        let mesh_asset = |row: &[RowVal]| {
+            match row {
+                [RowVal::X(_), RowVal::U(id), RowVal::U(0)] if (*id as usize) < meshes.len() => Ok(&meshes[*id as usize]),
+                _ => Err(Diag::new(Code::E602, k.name.span, "invalid Mesh asset or LOD", "emit an imported mesh with LOD zero")),
+            }
+        };
+        let key_fields = if mesh_kind { vec![1] } else { geometry_fields(k) };
         let mut shapes: Vec<usize> = vec![];
         let mut shape_of = vec![0usize; rows.len()];
         let mut keys: Vec<Vec<&RowVal>> = vec![];
         for (r, row) in rows.iter().enumerate() {
-            let key: Vec<&RowVal> = key_fields.iter().map(|i| &row[*i]).collect();
+            let key: Vec<&RowVal> = key_fields.iter().filter_map(|i| row.get(*i)).collect();
             shape_of[r] = match keys.iter().position(|q| *q == key) {
                 Some(s) => s,
                 None => {
@@ -879,7 +1136,15 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
         let domain=cache::kind_key(&p,k,&luts)?;
         let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(shapes.len());
         let chunk = shapes.len().div_ceil(threads);
-        let derived: Vec<lip::Derived> = std::thread::scope(|sc| {
+        let derived: Vec<lip::Derived> = if mesh_kind {
+            for row in rows { mesh_asset(row)?; }
+            shapes.iter().map(|&row| {
+                let mesh = mesh_asset(&rows[row])?;
+                // A planar triangle still has a nonempty conservative box for the culler.
+                Ok(lip::Derived { lo: mesh.lo.map(|x| x.next_down().into()),
+                    hi: mesh.hi.map(|x| x.next_up().into()), l: 0., evals: 0 })
+            }).collect::<Res<_>>()?
+        } else { std::thread::scope(|sc| {
             let jobs: Vec<_> = shapes.chunks(chunk)
                 .map(|group| {
                     let (p, types, tables, luts, keys, shape_of, domain) = (&p, &types, &tables, &luts, &keys, &shape_of, &domain);
@@ -898,7 +1163,7 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
                 })
                 .collect();
             jobs.into_iter().map(|h| h.join().expect("derive thread")).collect::<Res<Vec<Vec<_>>>>().map(|v| v.into_iter().flatten().collect())
-        })?;
+        })? };
         let pose = pose_field(k);
         let (mut words, mut lips, mut evals) = (vec![], vec![], 0u64);
         for d in &derived {
@@ -927,7 +1192,15 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
             lips.push(d.l as f32);
             instances.push(Instance { lo, hi, kind: id as u32, row: r as u32 });
         }
-        let draw = match (surface, k.query(QueryKind::Visible)) {
+        let draw = if mesh_kind {
+            let mut vertices = 0;
+            for row in rows {
+                let n = u32::try_from(mesh_asset(row)?.triangles.len()).ok().and_then(|n| n.checked_mul(3))
+                    .ok_or_else(|| Diag::new(Code::E602, k.name.span, "mesh vertex count exceeds u32", "split the mesh"))?;
+                vertices = vertices.max(n);
+            }
+            Draw::Mesh { vertices }
+        } else { match (surface, k.query(QueryKind::Visible)) {
             (Some(s), _) => {
                 let g = s.attrs.iter().find(|a| a.name.name == "grid").expect("checked grid");
                 let n = |e: &Expr| match e.kind {
@@ -938,7 +1211,7 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
             }
             (None, Some(_)) => Draw::Analytic,
             (None, None) => Draw::Traced,
-        };
+        } };
         reports.push(KindReport {
             name: name.to_string(),
             rows: rows.len(),
@@ -955,14 +1228,24 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
     lap("derive", &mut ms);
 
     let mut lut_refs = vec![];
-    let mut off = 0u32;
+    let asset_words = gltf::words(&meshes);
+    let mut off = asset_words.len().div_ceil(12) as u32;
     for l in &luts {
         lut_refs.push(emit::LutRef { name: l.name.clone(), offset: off, n: l.frames.len() as u32, lo: l.lo, hi: l.hi });
         off += l.frames.len() as u32;
     }
+    let mut lut_words = asset_words;
+    lut_words.resize(lut_words.len().next_multiple_of(12), 0.);
+    lut_words.extend(luts.iter().flat_map(|l| l.frames.iter().flatten().copied()));
+    let mut priors = BTreeMap::new();
+    for (name, decl) in &p.plans {
+        if let Some(prior) = plan::lower_source(decl, &mut lut_words)? {
+            priors.insert((*name).to_string(), prior.header_word);
+        }
+    }
     let mut texts = Vec::new();
     for (name, kt) in drawn.iter().zip(&kinds) {
-        let shader = emit::kind_module(&p, &types, p.kinds[*name], light, &lut_refs, kt.draw)?;
+        let shader = emit::kind_module(&p, &types, p.kinds[*name], light, &lut_refs, kt.draw, aov)?;
         texts.push((name.to_string(), shader));
     }
     let mut dispatches = vec![];
@@ -974,7 +1257,7 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
             let table = &tables[p.kind_index(name)];
             let output = || {
                 if let Some(draw) = draw {
-                    return Ok((draw, DispatchRows::Drawable(draw)));
+                    return Ok((texts.len(), DispatchRows::Drawable(draw)));
                 }
                 if table.is_empty() {
                     return Err(Diag::new(Code::E602, kind.name.span, "scheduled table has no rows", "emit a row or remove its scheduled operation"));
@@ -988,31 +1271,48 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
                     name: name.into(), n_rows: table.len() as u32, stride: (words.len() / table.len()) as u32, words,
                 }))
             };
-            if let Some((entry, dispatch)) = emit::motion_module(&p, &types, kind, output)? {
-                if let Some(draw) = draw {
-                    texts[draw].1.push_str(&entry);
-                } else {
-                    let mut kernel = emit::table_module(&p, &types, kind);
-                    kernel.push_str(&entry);
-                    texts.push((name.into(), kernel));
-                }
+            if let Some((entry, dispatch)) = emit::motion_module(&p, &types, kind, &priors, output)? {
+                texts.push((format!("{name}.advance"), entry));
                 dispatches.push(dispatch);
             }
         }
     }
+    let present = if let Some(path) = &path {
+        passes.retain(|pass| matches!(pass, Pass::Present));
+        shadow_size = 0;
+        emit::paths::module(&p, &types, &kinds, &texts, &lut_refs, path, path_entry.expect("checked path entry"))?
+    } else {
+        emit::paths::present(&p, &types, sky, aov, print)
+    };
     let shared = texts.len();
     texts.push(("cull".into(), emit::cull_module()));
     texts.push(("classify".into(), emit::classify_module()));
-    texts.push(("present".into(), emit::present_module(&p, &types, sky)));
+    texts.push(("present".into(), present));
+    let mut bakes = Vec::new();
+    for item in modules.iter().flat_map(|m| &m.items) {
+        if let Item::Bake(decl) = item {
+            let (bake, wgsl) = emit::bake_module(&p, &types, decl, texts.len())?;
+            texts.push((bake.name.clone(), wgsl));
+            bakes.push(bake);
+        }
+    }
     lap("emit", &mut ms);
+    let store_energy = texts.iter().any(|(_, w)| w.contains("loft_ggx_energy(")
+        && (w.contains("var<storage, read> luts:") || w.contains("var<storage, read> world_luts:")));
     let shader_modules = texts.into_iter().map(|(n,w)| {
-        let mut m=naga_module(&n,w,src)?;
+        let mut m=naga_module(&n, w, src, features)?;
         if let Some(k)=p.kinds.get(n.as_str()) {let (file,line,col,_,_)=src.locate(k.name.span); m.span=Some((file,line,col));}
         Ok(m)
     }).collect::<Res<Vec<_>>>()?;
     lap("naga", &mut ms);
 
+    let param_ranges = reflect_params(&p, &types, &params)?.into_iter().map(|m|
+        (m.name, m.range.map(|(lo, hi)| [lo[0], hi[0]]))).collect();
+    if store_energy { lut_words.extend(bsdf::energy_words()); }
     let program = Program {
+        param_ranges,
+        bakes,
+        path,
         dispatches,
         modules: shader_modules,
         kinds,
@@ -1020,7 +1320,8 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
         camera,
         sun, params,
         shadow_size,
-        luts: luts.iter().flat_map(|l| l.frames.iter().flatten().copied()).collect(),
+        luts: lut_words,
+        priors,
         passes,
         cull: shared,
         classify: shared + 1,
@@ -1028,14 +1329,14 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
     };
     let drawn_owned = drawn.iter().map(|d| (p.kind_index(d), d.to_string())).collect();
     drop(p);
-    Ok((program, Report { kinds: reports, ms }, Compiled { modules, types, tables, luts, drawn: drawn_owned }))
+    Ok((program, Report { kinds: reports, ms }, Compiled { modules, types, tables, luts, drawn: drawn_owned, meshes }))
 }
 
 /// A name expression, copied (bundle bodies are re-read as kind lists).
 fn clone_name(e: &Expr) -> Expr {
     let kind = match &e.kind {
         ExprKind::Name(n) => ExprKind::Name(n.clone()),
-        ExprKind::Unproved { .. } | ExprKind::FiniteDiff { .. } | ExprKind::If { .. } | ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Call { .. } | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => ExprKind::Bool(false),
+        ExprKind::Unproved { .. } | ExprKind::FiniteDiff { .. } | ExprKind::If { .. } | ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::String(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Call { .. } | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => ExprKind::Bool(false),
     };
     Expr { id: e.id, span: e.span, kind }
 }

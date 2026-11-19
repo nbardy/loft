@@ -1,0 +1,33 @@
+# Phase 2 and 3 fix wave
+
+## Predictions before compilation
+
+- Restore the exact scored l23a–c implementations and integration repairs over l23d. The test revision will retain all three lane heads as ancestors.
+- The four authored declaration probes will reach the front end. Duplicate fields, invalid solver write ownership and unsupported plan objectives must fail at their source spans.
+- A shader-compatible 2×2 external texture must fail the first bind when the host declares a 16×16 contract. The correct resource must retain the same GPU handle.
+- The approved picture manifest and frame bytes should have zero changes. Acceptance still requires the measured picture gate.
+
+## Findings
+
+| Review | Disposition and evidence |
+| --- | --- |
+| Lane restoration | Fixed at `6c30706`. The scored integrator revision `91d00c5` is an ancestor, including l23a–c and the integration repairs. l23d remains the base. |
+| MUST 1, authored Tier 0 | Partial, **ESCALATE**. The checked E+ subset lowers to the register allocator and the CLI has a native traced-kind session with a prebuilt VM in both visibility and shade. It updates the tape, derived row bounds and cull bounds, then promotes just that kind after 400 ms. The native CLI probe stopped at a repeated WGSL return signature. The committed one-line repair removes that signature. The reconstructed shader compiled for visibility and shade on Dawn. The repaired binary, upload time, GPU overhead and shaded-pixel agreement remain unscored after the build cap. Current tape lowering covers a render-only subset with immutable expressions, arithmetic, row reads and supported helpers. |
+| MUST 1, browser and diagnostics | **ESCALATE**. Browser promotion still returns the typed unsupported result. The pinned wgpu 30.0.1 API has no async pipeline creation and adoption path for the WebGPU JS pipeline handle. Authored source spans and the new negative fixtures are present. The full E101–E503 snapshot set is pending. |
+| MUST 2, portability and runner size | Portability and vocabulary scans pass. The Naga CPU twin is a compiled `loft-std` dependency, and native worker/clock and parameter packing moved there as reusable host algorithms. **ESCALATE** size. The same counting convention as the review reports 2,779 runner-local lines plus 11 shared lines, against 1,000. Even excluding inline tests, blank lines and comments gives 2,328 local lines. |
+| MUST 3, motion declarations | Partial, **ESCALATE**. Both grammar engines accepted 62/62 inputs. The CLI emitted the expected five negative diagnostics for duplicate body fields, invalid state checkpoint, solver ownership, duplicate constraint endpoint and unknown plan objective. The Rust suite exposed the single-segment `lens` vector ambiguity. A dedicated length-list parser fixes it in source after the final build. The positive fixture passed on the previous binary with a padded two-entry list. The integrator's Boss body sample also uses an integral loop counter as a float multiplier without a cast. Body/state table emission, a full solver type and race check, scheduled solver execution and solver event lowering are pending. A declared solver without its state gets E011. A checked scheduled solver with its state gets the explicit E405 lowering refusal. |
+| MUST 3, Stage 0 plan consumer | Closed/defaulted numerical plans solve into `LutTables` with a Truth status. `prior.loft` returned Held, and Metal sampled the result from a motion law at 0.5 s, giving `0.77374995 m` vs analytic `0.77375 m`. **ESCALATE** Stage 0 asset argument binding for open templates and `near`, `clear`, and `land_on` in authored scenes. The typed l23d solver retains those operations. |
+| MUST 4, motion scene scope | **ESCALATE**. The Rust suite still passes the scored Crab, Heron and Boss scalar checks. Heron and Boss retain scalar targets. No measured full slice-indexed BODY/STATE/POSE solve, 2,928-byte Boss state, surface-frame pinning, general support hull or colored secondary solver is available for acceptance. |
+| MUST 5, first texture bind | Fixed. The host supplies the contract before binding the first handle, with format, extent, dimension, samples, mips and required usages. The frozen trait and `TableDecl` remain unchanged. The Metal epoch test refused a 2×1 handle for its existing 1×1 asset and exercised the valid resource, zero-copy exports and unchanged independent groups. The test used the fixture's 1×1 resource in place of the predicted 16×16 setup to preserve its single-texel read/write probe. |
+| SHOULD, async picking | Fixed. Callback completion carries `Result<PickResult>` with a typed readback failure. The Washer GPU test passed with this API. |
+| SHOULD, parameter reflection | Fixed. The production compiler carries authored scalar names and ranges into motion bundles at their packed offsets. The initial environment words retain their slots. The reflected layout remains scoped to the compiler's existing scalar parameter surface. |
+| SHOULD, LUT capacity | Fixed. Checked alignment, extent, offsets and reservation return a typed capacity error. Numerical failure remains `Unknown(SolveFailed)`. The l23d numerical and LUT unit tests passed. |
+
+## Measurements
+
+- Three Rust build attempts used `CARGO_BUILD_JOBS=2 tools/dev.sh test loft-cli --workspace --no-fail-fast`. The first failure was a borrowed closure in plan argument evaluation. The second was a test's direct access to a field moved into `loft-std`. The third compiled and ran 108 tests, with 107 passed, one failed and three inherited skips. The parser length-list repair and Tier 0 WGSL splice repair were made after that build. The workspace test, native edit acceptance and wasm rebuild remain open for the committed tip.
+- The full Metal gate measured Pictures 18/18, Twin 36/36, Speed 11/12, Load 33/33 and Truth 34/34. Capsules-20 missed its 1.100 ms p95 budget at 1.148 ms with a 0.098 ms control. The focused comparison measured 0.944 ms on the scored revision and 0.746 ms on the fix binary, with controls of 0.099 ms and 0.098 ms. Both focused runs passed. The full gate's original miss is preserved.
+- `pnpm test` passed 314/314 using the integrator's matching native fixtures. The original five gate mutants and inline-growth regression passed in the Rust suite.
+- Independently decoded all 18 approved PNG files to RGBA and verified the manifest SHA-256 values in `reference-hashes.json`. The manifest, reference bytes, frozen execution trait and ABI golden vectors have no changes. The branch introduces no authored look change that requires an approval pair.
+
+Run logs, shaders, probes and measurements are preserved under `out/meta/i23-fix/` in the primary checkout.

@@ -4,11 +4,15 @@ mod bindings;
 mod encode;
 pub use encode::render_bundle_stale;
 mod interop;
+mod mips;
 mod stepping;
+mod resources;
+mod inputs;
 pub use backend::{ExecutionBackend, WgpuBackend};
 pub type Runner = WgpuBackend;
 
 use loft_ir::*;
+use resources::Resource;
 use std::{collections::BTreeMap, sync::Arc};
 
 #[derive(Debug, PartialEq, Eq)]
@@ -16,9 +20,20 @@ pub enum RunnerError {
     UnknownInstance,
     UnknownResource,
     AbiMismatch,
+    Readback,
+    Bundle(bundle::BundleError),
     Capacity,
     InvalidShader(String),
     Unsupported(&'static str),
+}
+impl From<loft_std::bundle::InvalidResources> for RunnerError {
+    fn from(error: loft_std::bundle::InvalidResources) -> Self {
+        use loft_std::bundle::InvalidResources;
+        match error {
+            InvalidResources::Layout => Self::AbiMismatch,
+            InvalidResources::AttachmentCount => Self::Unsupported("multiple host attachments of one kind"),
+        }
+    }
 }
 type Result<T> = std::result::Result<T, RunnerError>;
 #[derive(Debug, PartialEq)]
@@ -30,7 +45,7 @@ pub struct FrameIdentity {
 
 struct Table {
     decl: TableDecl,
-    buffer: Option<Arc<wgpu::Buffer>>,
+    resource: Resource,
     active: u32,
     epoch: u64,
 }
@@ -39,7 +54,11 @@ struct Instance {
     decl: Bundle,
     resource_epoch: u64,
     checkpoints: Vec<Arc<wgpu::Buffer>>,
+    history: stepping::History,
+    outbox: Option<events::Outbox>,
+    pick_source: Option<pick::Source>,
     compute: encode::ComputeCache,
+    edits: tier0::Edits,
 }
 fn allocate(d: &wgpu::Device, size: u64) -> Arc<wgpu::Buffer> {
     use wgpu::BufferUsages as U;
@@ -52,7 +71,13 @@ fn allocate(d: &wgpu::Device, size: u64) -> Arc<wgpu::Buffer> {
 }
 impl Table {
     fn bytes(&self) -> Result<&wgpu::Buffer> {
-        self.buffer.as_deref().ok_or(RunnerError::AbiMismatch)
+        self.buffer().map(Arc::as_ref).ok_or(RunnerError::AbiMismatch)
+    }
+    fn buffer(&self) -> Option<&Arc<wgpu::Buffer>> {
+        match &self.resource { Resource::Buffer(buffer) => buffer.as_ref(), _ => None }
+    }
+    fn attachment(&self) -> Option<(&wgpu::TextureView, TextureDecl)> {
+        match &self.resource { Resource::Attachment(view, decl) => Some((view, *decl)), _ => None }
     }
     fn bounds(&self, n: u32, d: &wgpu::Device) -> Result<u64> {
         let bytes = u64::from(n) * u64::from(self.decl.stride_bytes);
@@ -67,7 +92,9 @@ impl Table {
 impl Instance {
     fn new(device: &wgpu::Device, queue: &wgpu::Queue, decl: &Bundle) -> Result<Self> {
         let mut tables = BTreeMap::new();
+        let roles = loft_std::bundle::Resources::new(decl).map_err(RunnerError::from)?;
         for t in &decl.tables {
+            use loft_std::bundle::Role;
             if t.stride_bytes == 0
                 || !t.stride_bytes.is_multiple_of(4)
                 || !t.initial.len().is_multiple_of(t.stride_bytes as usize)
@@ -78,30 +105,33 @@ impl Instance {
             }
             let active = u32::try_from(t.initial.len() / t.stride_bytes as usize)
                 .map_err(|_| RunnerError::Capacity)?;
-            if active > t.capacity || tables.contains_key(&t.id) {
+            let role = roles.role(t.id);
+            if active > t.capacity || tables.contains_key(&t.id)
+                || active != 0 && (t.lifetime == TableLifetime::External || !matches!(role, Role::Buffer))
+            {
                 return Err(RunnerError::AbiMismatch);
             }
-            let mut table = Table {
-                decl: t.clone(),
-                buffer: None,
-                active,
-                epoch: 0,
+            let resource = match role {
+                Role::Buffer if t.lifetime == TableLifetime::External => Resource::Buffer(None),
+                Role::Buffer => {
+                    let bytes = u64::from(t.capacity) * u64::from(t.stride_bytes);
+                    if bytes > device.limits().max_buffer_size
+                        || matches!(t.lifetime, TableLifetime::DynamicArena { max_rows } if t.capacity > max_rows)
+                    {
+                        return Err(RunnerError::Capacity);
+                    }
+                    let buf = allocate(device, bytes);
+                    if active != 0 { queue.write_buffer(&buf, 0, &t.initial); }
+                    Resource::Buffer(Some(buf))
+                }
+                Role::Texture => Resource::Texture { handle: None, contract: None },
+                Role::Attachment(desc) => resources::texture(device, desc)?,
+                Role::Sampler => resources::sampler(device),
+                Role::HostAttachment => Resource::HostAttachment,
             };
-            let bytes = table.bounds(t.capacity, device)?;
-            if t.lifetime == TableLifetime::External {
-                if active != 0 {
-                    return Err(RunnerError::AbiMismatch);
-                }
-            } else {
-                let buf = allocate(device, bytes);
-                if active != 0 {
-                    queue.write_buffer(&buf, 0, &t.initial)
-                }
-                table.buffer = Some(buf);
-            }
-            tables.insert(t.id, table);
+            tables.insert(t.id, Table { decl: t.clone(), resource, active, epoch: 0 });
         }
-        if decl.rows.values().any(|id| !tables.contains_key(id)) {
+        if decl.rows.values().any(|id| !tables.get(id).is_some_and(|t| matches!(t.resource, Resource::Buffer(_)))) {
             return Err(RunnerError::UnknownResource);
         }
         let checkpoints = if let Some(s) = &decl.state {
@@ -118,8 +148,12 @@ impl Instance {
             tables,
             decl: decl.clone(),
             compute,
+            edits: tier0::Edits::default(),
             resource_epoch: 0,
             checkpoints,
+            history: Default::default(),
+            outbox: None,
+            pick_source: None,
         })
     }
     fn arena(&mut self, k: KindId) -> Result<&mut Table> {
@@ -215,7 +249,7 @@ impl Runner {
             enc.copy_buffer_to_buffer(old, 0, &buf, 0, Some(old.size().min(buf.size())));
             buf
         };
-        t.buffer = Some(replace(&mut enc, t.bytes()?));
+        t.resource = Resource::Buffer(Some(replace(&mut enc, t.bytes()?)));
         if inst.decl.state.as_ref().is_some_and(|s| s.table == table) {
             for ring in &mut inst.checkpoints {
                 *ring = replace(&mut enc, ring)
@@ -230,6 +264,9 @@ impl Runner {
     pub fn hot_swap_module(&mut self, id: InstanceId, module: ModuleId, wgsl: &str) -> Result<()> {
         let device = self.device.clone();
         let inst = self.instance(id)?;
+        if inst.edits.request(module, wgsl)? {
+            return Ok(());
+        }
         let mut decl = inst.decl.clone();
         let m = decl
             .modules
@@ -239,9 +276,11 @@ impl Runner {
         m.bytes = wgsl.as_bytes().into();
         m.target = ShaderTarget::Wgsl;
         m.hash = *blake3::hash(wgsl.as_bytes()).as_bytes();
-        let replacement = encode::ComputeCache::new(&device, &decl, &inst.tables)?;
+        let mut replacement = encode::ComputeCache::new(&device, &decl, &inst.tables)?;
+        replacement.keep_parameters(&inst.compute);
         inst.decl = decl;
         inst.compute = replacement;
+        inst.edits = tier0::Edits::default();
         Ok(())
     }
     pub fn hot_swap_bundle(&mut self, id: InstanceId, b: &Bundle) -> Result<()> {
@@ -264,10 +303,11 @@ impl Runner {
                     return Err(RunnerError::AbiMismatch);
                 }
                 // Content and history belong to the state layout, independent of module IDs and source hashes.
-                new.buffer = current.buffer.clone();
+                new.resource = Resource::Buffer(current.buffer().cloned());
                 new.active = current.active;
                 new.decl.capacity = current.decl.capacity;
                 next.checkpoints = std::mem::take(&mut old.checkpoints);
+                next.history = std::mem::take(&mut old.history);
                 // Ring history survives code/configuration swaps along with its live allocation.
                 next.decl.state.as_mut().unwrap().checkpoint_slots = a.checkpoint_slots;
             }
@@ -278,25 +318,49 @@ impl Runner {
         *old = next;
         Ok(())
     }
+    pub fn push_input(&mut self, id: InstanceId, slot: InputId, tick: u64, value: InputValue<'_>) -> Result<()> {
+        Ok(self.instance(id)?.compute.input.push(slot, tick, value)?)
+    }
+
+    /// Record the bundle into the caller's encoder without submitting it.
+    ///
+    /// Render passes share one caller color attachment and optional depth attachment.
+    /// Use 2D renderable views in their textures' base formats with the sample count
+    /// and depth convention supplied at attachment. Shader outputs must use that
+    /// depth convention. The caller initializes and, for MSAA, resolves the views.
     pub fn encode_into(
         &mut self,
         id: InstanceId,
         encoder: &mut wgpu::CommandEncoder,
-        _target: &wgpu::TextureView,
-        _depth: Option<&wgpu::TextureView>,
+        target: &wgpu::TextureView,
+        depth: Option<&wgpu::TextureView>,
         time_s: f64,
         dt_s: f32,
     ) -> Result<FrameIdentity> {
         let device = self.device.clone();
+        let target = embed::Target {
+            color: target,
+            depth,
+            caps: self.caps,
+        };
         let inst = self.instance(id)?;
+        inst.edits.update(&device, &mut inst.compute)?;
         inst.compute.encode(
             &device,
             encoder,
-            &inst.decl.passes,
             &inst.tables,
             inst.resource_epoch,
             time_s,
             dt_s,
+            &mut inst.history,
+            &inst.checkpoints,
+            inst.decl.state.as_ref().map(|s| s.table),
+            id,
+            (time_s * 120.).round() as u32,
+            0,
+            &mut inst.outbox,
+            Some(&target),
+            None,
         )?;
         Ok(FrameIdentity {
             instance: id,
@@ -308,11 +372,12 @@ impl Runner {
 pub mod bundle;
 pub mod embed;
 pub mod events;
-pub mod mips;
 pub mod params;
 pub mod pick;
-pub mod replay;
+pub use loft_format::replay;
 pub mod tier0;
+#[doc(hidden)]
+pub use loft_std::promotion;
 
 #[cfg(test)]
 mod tests;

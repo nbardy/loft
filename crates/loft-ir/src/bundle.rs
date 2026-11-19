@@ -248,8 +248,60 @@ pub struct PickResult {
     pub depth_ndc: f32,
     pub world_pos: [f32; 3],
 }
+#[derive(Clone, Copy, Debug)]
+pub enum ImageFormat { Rg32Uint, Rgba16Float, Depth32Float }
+
+#[derive(Clone, Copy, Debug)]
+pub struct TextureDecl {
+    pub table: TableId,
+    pub format: ImageFormat,
+    pub extent: [u32; 3],
+    pub samples: u8,
+    pub clear: Option<[f64; 4]>,
+}
+
+#[derive(Clone, Debug)]
+pub struct FrameData {
+    pub main: TableId,
+    pub variants: Vec<(PassId, TableId)>,
+    pub time_offset: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InputId(pub u32);
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InputKind { Level, Event, Packet }
+#[derive(Clone, Copy, Debug)]
+pub struct InputSlot {
+    pub kind: InputKind,
+    pub offset_words: u32,
+    pub words: u32,
+}
+pub enum InputValue<'a> {
+    Level(&'a [f32]),
+    Event { seq: u64, payload: &'a [f32] },
+    PosePacket { tick: u64, data: &'a [f32] },
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Resources {
+    pub inputs: Vec<InputSlot>,
+    pub textures: Vec<TextureDecl>,
+    pub comparison_samplers: Vec<TableId>,
+    pub resets: Vec<TableId>,
+    pub cull_front: Vec<PassId>,
+    pub frame: Option<FrameData>,
+}
+impl Resources {
+    pub fn is_empty(&self) -> bool {
+        self.inputs.is_empty() && self.textures.is_empty() && self.comparison_samplers.is_empty()
+            && self.resets.is_empty() && self.cull_front.is_empty() && self.frame.is_none()
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Bundle {
+    pub resources: Resources,
     pub modules: Vec<ModuleBlob>,
     pub tables: Vec<TableDecl>,
     pub struct_layouts: Vec<StructLayout>,

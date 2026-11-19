@@ -5,6 +5,8 @@
 
 #[path = "kernel_units.rs"]
 mod kernel_units;
+#[path = "motion_source.rs"]
+mod motion_source;
 use crate::Prog;
 use loft_parse::ast::*;
 use loft_ir::{Code, Diag, Res, Span};
@@ -79,6 +81,7 @@ pub fn check(p: &Prog, types: &mut Vec<Ty>) -> Res<CheckedEffects> {
             ck.assignable(&t, &want, c.value.span)?; if t==Ty::AbstractInt {ck.set(&c.value,want);}
         }
     }
+    motion_source::check(&mut ck)?;
     for sc in p.scans.values() { ck.scan(sc)?; }
     for f in p.fns.values() { ck.func(f, None)?; }
     for k in p.kinds.values() {
@@ -237,7 +240,7 @@ impl<'p,'a> Ck<'p,'a> {
                     )),
                 };
             }
-            if matches!(s.name.as_str(), "World" | "Local") || self.p.spaces.contains(s.name.as_str()) {
+            if matches!(s.name.as_str(), "World" | "Local") || self.comptime && !self.p.bodies.is_empty() && s.name == "Body" || self.p.spaces.contains(s.name.as_str()) {
                 Ok(Space::Named(s.name.clone()))
             } else {
                 Err(Diag::new(
@@ -801,7 +804,7 @@ impl<'p,'a> Ck<'p,'a> {
                 }
                 self.expr(&first.value)?
             }
-            ExprKind::Unproved { .. } | ExprKind::FiniteDiff { .. } | ExprKind::If { .. } | ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Call { .. } | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => self.expr(head)?,
+            ExprKind::Unproved { .. } | ExprKind::FiniteDiff { .. } | ExprKind::If { .. } | ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::String(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Call { .. } | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => self.expr(head)?,
         };
         let Ty::Geo(Geo::Pt, parent) = point else {
             return Err(e104(head.span, format!("a map takes a point, found `{point}`"), "map a `Pt[S]`"));
@@ -905,11 +908,12 @@ impl<'p,'a> Ck<'p,'a> {
                 NumSuffix::None | NumSuffix::Deg | NumSuffix::Unit => Ty::F32,
             }),
             ExprKind::Bool(_) => Ok(Ty::Bool),
+            ExprKind::String(_) => Err(Diag::new(Code::E403, e.span, "string outside an asset call", "pass it to a Stage 0 asset call")),
             ExprKind::Name(n) => {
                 if let Some(l) = self.lookup(n) {
                     return Ok(l.ty.clone());
                 }
-                if n == "SceneWorld" && self.p.structs.contains_key("World") { return Ok(Ty::Struct("World".into())); }
+                if (n == "SceneWorld" || self.p.worlds.contains_key(n.as_str())) && self.p.structs.contains_key("World") { return Ok(Ty::Struct("World".into())); }
                 if n=="time" {return if self.comptime{Err(Diag::new(Code::E403,e.span,"time read at build stage","read time in a query or a law"))}else{Ok(Ty::F32)}}
                 if let Some(c) = self.p.consts.get(n.as_str()) {
                     if self.comptime {
@@ -958,6 +962,12 @@ impl<'p,'a> Ck<'p,'a> {
             ExprKind::Binary(op, a, b) => {
                 let ta = self.expr(a)?;
                 let tb = self.expr(b)?;
+                // Build loop counters scale physical quantities through the CPU evaluator's scalar conversion.
+                if self.comptime && matches!((*op, &ta, &tb),
+                    (BinOp::Mul, Ty::U32 | Ty::I32, Ty::F32) | (BinOp::Mul, Ty::F32, Ty::U32 | Ty::I32))
+                {
+                    return Ok(Ty::F32);
+                }
                 binary(*op, &ta, &tb, a.span, b.span, e.span).map_err(|d| {
                     // A value from a map space used outside it (the draft's gaze bug): quote the author's transform
                     // and point at the map that made the space.
@@ -1036,6 +1046,14 @@ impl<'p,'a> Ck<'p,'a> {
                     )),
                 }
             }
+            Ty::Struct(k) if k == "PriorSample" => match m.name.as_str() {
+                "pos" => Ok(Ty::Geo(Geo::Pt, Space::Named("World".into()))),
+                "vel" => Ok(Ty::Geo(Geo::Vec, Space::Named("World".into()))),
+                "rot" => Ok(Ty::VecN(4)),
+                "compliance" => Ok(Ty::F32),
+                "active" => Ok(Ty::Bool),
+                _ => Err(e003(m.span, "unknown prior sample field", "use pos, vel, rot, compliance or active")),
+            },
             Ty::Struct(k) => {
                 let (_, fields) = self.p.structs[k.as_str()];
                 let f = fields.iter().find(|f| f.name.name == m.name).ok_or_else(||
@@ -1057,6 +1075,24 @@ impl<'p,'a> Ck<'p,'a> {
         if let Some(a) = args.iter().find_map(|a| a.name.as_ref()) {
             return Err(Diag::new(Code::E405, a.span, "named arguments are schedule-only in Phase 0", "pass arguments by position"));
         }
+        if callee.name == "sample_prior" {
+            let [prior, time] = args else {
+                return Err(e003(span, "sample_prior needs two arguments", "write sample_prior(PlanName, t)"));
+            };
+            let decl = match &prior.value.kind {
+                ExprKind::Name(name) => self.p.plans.get(name.as_str()),
+                _ => None,
+            }.ok_or_else(|| e003(prior.value.span, "expected a named plan", "name a declared plan"))?;
+            if self.ownership.is_none() || decl.params.iter().any(|p| p.default.is_none()) {
+                return Err(Diag::new(Code::E405, span, "sample_prior needs a closed plan and a motion law",
+                    "bind every plan parameter at Stage 0 and sample from a law"));
+            }
+            let actual = self.expr(&time.value)?;
+            self.assignable(&actual, &Ty::F32, time.value.span)?;
+            self.set(&time.value, Ty::F32);
+            self.set(&prior.value, Ty::U32);
+            return Ok(Ty::Struct("PriorSample".into()));
+        }
         // `sample_c2(scan, t)`: the scan is named, not passed as a value.
         if matches!(callee.name.as_str(), "sample_c2" | "loft_dsample") {
             let want = if callee.name == "sample_c2" { 2 } else { 3 };
@@ -1076,11 +1112,29 @@ impl<'p,'a> Ck<'p,'a> {
         }
         if callee.name == "unknown" && !self.p.fns.contains_key("unknown") {
             if let [Arg { value: Expr { kind: ExprKind::Name(reason), .. }, .. }] = args
-                && reason.as_bytes().first().is_some_and(u8::is_ascii_uppercase)
+                && crate::fusion::reason(reason).is_some()
             {
                 return Ok(Ty::Verdict);
             }
             return Err(e003(span, "unknown verdict requires a reason tag", "write unknown(MissingSurface)"));
+        }
+        if callee.name == "emit_event" {
+            if self.ownership.is_none() && self.kernel.is_none() {
+                return Err(e003(span, "emit_event requires an effectful entry", "call it in a law, solver or kernel"));
+            }
+            let [tag, instance, site, payload] = args else {
+                return Err(e003(span, "emit_event needs four arguments", "provide tag, instance_id, site_id and payload"));
+            };
+            if !matches!(&tag.value.kind, ExprKind::Name(n) if n.as_bytes().first().is_some_and(u8::is_ascii_uppercase)) {
+                return Err(e003(tag.value.span, "expected an event symbol", "name the event tag with an initial capital"));
+            }
+            self.set(&tag.value, Ty::U32);
+            for (arg, want) in [(instance, Ty::U32), (site, Ty::U32), (payload, Ty::VecN(4))] {
+                let actual = self.expr(&arg.value)?;
+                self.assignable(&actual, &want, arg.value.span)?;
+                self.set(&arg.value, want);
+            }
+            return Ok(Ty::Void);
         }
         let ts: Vec<Ty> = args.iter().map(|a| self.expr(&a.value)).collect::<Res<_>>()?;
         let sp: Vec<Span> = args.iter().map(|a| a.value.span).collect();
@@ -1134,11 +1188,53 @@ impl<'p,'a> Ck<'p,'a> {
             };
             return Ok(subst(&ret, &vars));
         }
+        if let Some(op) = crate::quant::Quant::resolve(&callee.name) {
+            let (params, result) = op.signature();
+            if ts.len() != params.len() {
+                return Err(e003(span, format!("{} takes {} arguments", op.name(), params.len()), "match the packed intrinsic signature"));
+            }
+            for ((arg, ty), expected) in args.iter().zip(ts).zip(params) {
+                self.assignable(&ty, expected, arg.value.span)?;
+                if ty == Ty::AbstractInt {
+                    self.set(&arg.value, expected.clone());
+                }
+            }
+            return Ok(result);
+        }
         if let Some(world) = crate::world::WorldCall::resolve(&callee.name, &ts, span)? {
-            self.pending_lowering.get_or_insert(span);
+            if !matches!(world.query, crate::world::WorldQuery::Trace { .. } | crate::world::WorldQuery::Visible { .. }
+                | crate::world::WorldQuery::Sky { .. } | crate::world::WorldQuery::Medium { .. }) {
+                self.pending_lowering.get_or_insert(span);
+            }
             return self.world_query(world, span);
         }
         match callee.name.as_str() {
+            "inscatter_joint" => {
+                let [world, ray, distance, tail @ ..] = ts.as_slice() else {
+                    return Err(e003(span, "inscatter_joint needs a world, ray, ray limit and RNG key", "write inscatter_joint(w, r, t_max, steps, rng)"));
+                };
+                let rng = match tail {
+                    [rng] => rng,
+                    [steps, rng] => {
+                        self.assignable(steps, &Ty::U32, args[3].value.span)?;
+                        if *steps == Ty::AbstractInt { self.set(&args[3].value, Ty::U32); }
+                        rng
+                    }
+                    _ => return Err(e003(span, "inscatter_joint takes four or five arguments", "omit steps for 24 integration steps")),
+                };
+                let named = |name: &str| self.resolve(&TyExpr::Name(Ident { name: name.into(), span }), true);
+                self.assignable(world, &named("World")?, sp[0])?;
+                self.assignable(ray, &named("Ray")?, sp[1])?;
+                self.assignable(distance, &Ty::F32, sp[2])?;
+                self.assignable(rng, &named("RngKey")?, *sp.last().unwrap())?;
+                if named("Radiance")? != Ty::VecN(3) {
+                    return Err(Diag::new(Code::E405, span, "the RGB medium marcher needs Radiance = rgb",
+                        "supply a marcher for the schedule's custom radiance"));
+                }
+                let result = named("Vol")?;
+                if *distance == Ty::AbstractInt { self.set(&args[2].value, Ty::F32); }
+                return Ok(result);
+            }
             "atomic_add" => {
                 self.require(KernelCapability::Atomics, span)?;
                 let [dst, val] = args else { return Err(e003(span, "atomic_add needs a destination and value", "write atomic_add(table[i].field, value)")); };
@@ -1170,7 +1266,6 @@ impl<'p,'a> Ck<'p,'a> {
                 return Err(e003(span, "subgroup_add takes one numeric scalar", "pass an f, i or u value"));
             }
             "mix_bsdf" => {
-                self.pending_lowering.get_or_insert(span);
                 if let [Ty::Bsdf, Ty::Bsdf, Ty::F32 | Ty::AbstractInt] = ts.as_slice() {
                     self.set(&args[2].value, Ty::F32);
                     return Ok(Ty::Bsdf);
@@ -1212,7 +1307,14 @@ impl<'p,'a> Ck<'p,'a> {
                 named("Lit")
             }
             Sky { direction } => { self.assignable(&direction, &dir, span)?; named("Radiance") }
-            Medium { point: p } => { self.assignable(&p, &point, span)?; named("Sigma") }
+            Medium { point: p } => {
+                self.assignable(&p, &point, span)?;
+                if named("Radiance")? != Ty::VecN(3) {
+                    return Err(Diag::new(Code::E405, span, "the field medium sampler needs Radiance = rgb",
+                        "supply coefficient sampling for the schedule's custom radiance"));
+                }
+                named("Sigma")
+            }
         }
     }
 
@@ -1248,7 +1350,7 @@ fn path(e: &Expr) -> Option<String> {
         ExprKind::Name(n) => Some(n.clone()),
         ExprKind::Member(b, m) => path(b).map(|p| format!("{p}.{}", m.name)),
         ExprKind::Num { .. }
-        | ExprKind::Bool(_)
+        | ExprKind::Bool(_) | ExprKind::String(_)
         | ExprKind::Index(..)
         | ExprKind::Call { .. }
         | ExprKind::Ctor { .. }
@@ -1416,6 +1518,7 @@ fn builtin(name: &str, ts: &[Ty], sp: &[Span], span: Span) -> Res<Ty> {
     match name {
         "held"|"missed" if matches!(ts,[Ty::F32|Ty::AbstractInt])=>Ok(Ty::Verdict),
         "atan2" if matches!(ts,[Ty::F32,Ty::F32])=>Ok(Ty::F32),
+        "ggx_energy" if matches!(ts, [Ty::F32, Ty::F32]) => Ok(Ty::VecN(2)),
         "has_sky"=>{arity(0)?;Ok(Ty::Bool)},
         "sky_zenith"|"sky_horizon"|"sun_color"=>{arity(0)?;Ok(Ty::VecN(3))},
         "dist" => return builtin("distance",ts,sp,span),
@@ -1426,6 +1529,7 @@ fn builtin(name: &str, ts: &[Ty], sp: &[Span], span: Span) -> Res<Ty> {
         "acos" | "log" | "abs" | "sqrt" | "sin" | "cos" | "exp" | "floor" | "fract" | "sign" | "saturate" => componentwise(1),
         "min" | "max" | "pow" | "step" => componentwise(2),
         "clamp" | "smoothstep" => componentwise(3),
+        "fma" if matches!(ts, [Ty::F32, Ty::F32, Ty::F32]) => Ok(Ty::F32),
         "smootherstep" | "loft_dsmoothstep" | "loft_dsmootherstep" => {
             arity(3)?;
             for (t, s) in ts.iter().zip(sp) {

@@ -1,0 +1,17 @@
+space World
+param density: f = 2.0
+param unrelated: f = 0.1
+
+bake_tex InkMask 2048x2048 r16float on load mips(true) (uv: v2) {
+  let q = uv * 2.0 - [1.0, 1.0]
+  let stroke = abs(q.y - 0.22 * sin(q.x * 12.0))
+  1.0 - smoothstep(0.017, 0.024, stroke)
+}
+
+bake_tex SkyIbl cube 128x128 rgba16float on load mips(true) (dir: d3@World) {
+  v4(sky_dome(dir.xyz), 1.0)
+}
+
+bake_tex Cloud 16x8x4 r8unorm on dirty(density) mips(true) (uvw: v3) {
+  clamp((uvw.x + uvw.y + uvw.z) * density - 1.0, 0.0, 1.0)
+}

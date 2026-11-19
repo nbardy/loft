@@ -271,3 +271,21 @@ fn frozen_diagnostic_fixtures() {
         expect(code,&std::fs::read_to_string(dir.join(format!("{code}.loft"))).unwrap());
     }
 }
+
+#[test]
+fn authored_motion_declarations_preserve_spans_and_write_ownership() {
+    let scene = kind("", OK_TRACE, OK_MATERIAL);
+    let valid = include_str!("motion_source/accepted.loft").replace("space Body Head", "space Head");
+    compile(&format!("{scene}\n{valid}")).unwrap_or_else(|(_, diagnostic)| panic!("{diagnostic}"));
+    for (code, fixture, excerpt) in [
+        (Code::E011, include_str!("motion_source/body-duplicate.loft"), "mass: 1kg, mass: 2kg"),
+        (Code::E003, include_str!("motion_source/state-zero-checkpoint.loft"), "checkpoint 0"),
+        (Code::E501, include_str!("motion_source/solver-undeclared-write.loft"), "prev[0] = pos[0]"),
+        (Code::E503, include_str!("motion_source/solver-race.loft"), "edge(i, i)"),
+        (Code::E003, include_str!("motion_source/plan-objective.loft"), "impossible(1)"),
+    ] {
+        let (actual, diagnostic) = compile(&format!("{scene}\n{fixture}")).expect_err("invalid motion declaration");
+        assert_eq!(actual, code, "{diagnostic}");
+        assert!(diagnostic.contains(excerpt), "{diagnostic}");
+    }
+}

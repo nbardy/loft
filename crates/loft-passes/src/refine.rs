@@ -69,7 +69,7 @@ impl Proof<'_, '_> {
             } else {
                 *value
             })),
-            ExprKind::Bool(_) => None,
+            ExprKind::Bool(_) | ExprKind::String(_) => None,
             ExprKind::Name(n) => env.get(n).or_else(|| self.constants.get(n)).copied(),
             ExprKind::Member(b, f) => {
                 self.expr(b, env)?;

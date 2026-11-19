@@ -1,0 +1,15 @@
+[package]
+name = "loft-format"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Portable Loft bundle and replay-log codecs"
+
+[dependencies]
+loft-ir = { path = "../loft-ir" }
+blake3 = "1"
+naga.workspace = true
+
+[lints]
+workspace = true

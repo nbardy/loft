@@ -1,0 +1,32 @@
+# R0 source: examples/mixed_precision.ts. Camera: three.
+space World Local
+
+const VIEW_YAW = -0.6610431689rad
+const VIEW_PIVOT = [0, 0, 0]@World
+
+build fn placement(p: p3@World) -> xf@Local>World {
+  let d = p - VIEW_PIVOT
+  let c = cos(VIEW_YAW)
+  let s = sin(VIEW_YAW)
+  place(VIEW_PIVOT + [c * d.x + s * d.z, d.y, -s * d.x + c * d.z], VIEW_YAW)
+}
+
+kind Copper @Local (pose: xf@Local>World) {
+  visible(ro, rd) = ray_sphere(ro, rd, [0, 0, 0]@Local, 1)
+  trace(p) = sphere(p - [0, 0, 0]@Local, 1)
+  material(p, n) {
+    let u = 0.5 + 0.5 * p.y
+    ggx([0.47 + 0.42 * u, 0.22 + 0.38 * u, 0.17 + 0.29 * u], 0.36, 0.74)
+  }
+}
+
+build { emit Copper(pose: placement([0, 0, 0]@World)) }
+
+schedule Main {
+  orbit(at: [0, 0, 0]@World, radius: 4.5607017m, height: 1.3m, period: 1000000000s, fov: 0.65rad)
+  cull_indirect(Copper)
+  render_bundle(Vis64) { draw_indirect(Copper) }
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: sun_sky, sun: [-0.6621788046, 0.8, 0.1184028326])
+  tonemap_aces(ColorHdr, sky: sky_color)
+}

@@ -518,6 +518,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "loft-format"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "loft-ir",
+ "naga",
+]
+
+[[package]]
 name = "loft-ir"
 version = "0.1.0"
 dependencies = [
@@ -563,10 +572,23 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "loft-abi",
+ "loft-format",
  "loft-ir",
+ "loft-std",
  "naga",
  "pollster",
  "web-sys",
+ "wgpu",
+ "wgpu-naga-bridge",
+]
+
+[[package]]
+name = "loft-std"
+version = "0.1.0"
+dependencies = [
+ "loft-abi",
+ "loft-ir",
+ "naga",
  "wgpu",
  "wgpu-naga-bridge",
 ]

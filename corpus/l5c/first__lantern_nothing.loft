@@ -1,0 +1,50 @@
+# Source: examples/first/lantern_nothing.ts at corpus/manifest.json's examples_rev.
+# view 0 = three; view 1 = low.
+space World
+
+param view: u = 0 in 0..1
+const eye_yaw = select(0.679413806, 1.304544278, view == 1)
+
+fn lantern_r(m: f, sign: f) -> f =
+  (0.16 + 0.59 * sin(3.14159265 * m)) * (0.95 + 0.05 * sign * cos(43.98229715 * m))
+
+# Split at the zeros of the rib cosine so the source abs() has a smooth
+# derivative in each patch. Neighbours share their edge positions.
+kind Paper @World (lo: f, hi: f, sign: f) {
+  surface(u, v) grid 8x24 {
+    let m = mix(lo, hi, u)
+    let r = lantern_r(m, sign)
+    let a = TAU * v + 1.57079633
+    [r * sin(a), 0.04 + 1.8 * m, -r * cos(a)]@World
+  }
+
+  material(p, n, uv) {
+    let m = mix(lo, hi, uv.x)
+    let rib = smoothstep(0.9, 0.98, abs(cos(43.98229715 * m)))
+    let cap = 1 - smoothstep(0.06, 0.08, m) + smoothstep(0.92, 0.94, m)
+    let red = mix([0.86, 0.2, 0.12], [0.5, 0.08, 0.06], rib)
+    let color = mix(red, [0.08, 0.06, 0.06], cap)
+    ggx(color, 0.7, 0)
+  }
+}
+
+build {
+  emit Sky(zenith: DEFAULT_ZENITH, horizon: DEFAULT_HORIZON)
+  build for i in 0..15 {
+    let band = f32(i)
+    let lo = max(0.0, (band - 0.5) / 14.0)
+    let hi = min(1.0, (band + 0.5) / 14.0)
+    emit Paper(lo: lo, hi: hi, sign: select(-1.0, 1.0, i % 2 == 0))
+  }
+  let c = cos(eye_yaw)
+  let s = sin(eye_yaw)
+  emit Sun(dir: dir([-0.55 * c - 0.35 * s, 0.75, -0.55 * s + 0.35 * c]@World), color: [2.2, 2, 1.7])
+}
+
+camera Main {
+  at: [0, select(0.9, 1.0, view == 1), 0]@World,
+  radius: select(sqrt(44.68), sqrt(32.5), view == 1),
+  height: select(1.5m, -0.4m, view == 1),
+  period: 1e20s,
+  fov: select(0.6rad, 0.55rad, view == 1)
+}

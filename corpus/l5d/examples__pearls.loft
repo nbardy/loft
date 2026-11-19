@@ -1,0 +1,92 @@
+# R0 source: examples/pearls.ts. Camera: three.
+space World Local
+
+const VIEW_YAW = -0.7378150601rad
+const VIEW_PIVOT = [0, -0.3, 0]@World
+
+build fn placement(p: p3@World) -> xf@Local>World {
+  let d = p - VIEW_PIVOT
+  let c = cos(VIEW_YAW)
+  let s = sin(VIEW_YAW)
+  place(VIEW_PIVOT + [c * d.x + s * d.z, d.y, -s * d.x + c * d.z], VIEW_YAW)
+}
+
+# The R0 lattice hash, including signed cells, before the point geometry is emitted.
+build fn pcg(x: u) -> u {
+  let s = x * 747796405 + 2891336453
+  let w = xor(shr(s, shr(s, 28) + 4), s) * 277803737
+  xor(shr(w, 22), w)
+}
+
+build fn cell_hash(x: i, y: i, z: i) -> rgb {
+  let h = pcg(u32(x) + pcg(u32(y) + pcg(u32(z))))
+  let j = pcg(h)
+  [f32(shr(h, 8)), f32(shr(j, 8)), f32(shr(pcg(j), 8))] / 16777216
+}
+
+fn swell(x: f, z: f) -> f {
+  let a = TAU * ((x + 0.25 * z) / (10 * sqrt(1.0625)) - time / 10)
+  let b = TAU * ((z - 0.4 * x) / (4.5 * sqrt(1.16)) - 0.6 * time / 4.5)
+  0.3 * sin(a) + 0.08 * sin(b)
+}
+
+fn pearl_y(x: f, z: f, y: f, r: f, seed: f) -> f {
+  let h = select(0.12 * sin(0.8 * time + 40 * seed), swell(x, z) - 0.35 * r, y == 0)
+  clamp(h, r - 0.65, 0.65 - r)
+}
+
+fn pearl_color(h: f) -> rgb {
+  let f = fract(rgb(h) + [0.0, 0.6666666667, 0.3333333333])
+  let rgb_color = clamp(abs(f * 6 - rgb(3)) - rgb(1), rgb(0), rgb(1))
+  mix(rgb(1), rgb_color, 0.62)
+}
+
+kind Pearl @Local (pose: xf@Local>World, x: f, y: f, z: f, r: f in 0.14..0.46, seed: f, hue: f) {
+  visible(ro, rd) = ray_sphere(ro, rd, [0, pearl_y(x, z, y, r, seed), 0]@Local, r)
+  trace(p) = sphere(p - [0, pearl_y(x, z, y, r, seed), 0]@Local, r)
+  material(p, n) {
+    let sheen = 0.55 * pow(saturate(dot(n.xyz, [0.2, 0.95, 0.2])), 6)
+    ggx(mix(pearl_color(hue), [1, 0.97, 0.92], sheen), 0.35, 0.25)
+  }
+}
+
+kind Sea @Local (pose: xf@Local>World) {
+  surface(u, v) grid 120x120 {
+    let x = (u - 0.5) * 60
+    let z = (v - 0.5) * 60
+    [x, swell(x, z), z]@Local
+  }
+  material(p, n, uv) = ggx([0.035, 0.18, 0.23], 0.28, 0)
+}
+
+build {
+  emit Sea(pose: placement([0, 0, 0]@World))
+  build for ix in 0..13 {
+    build for iz in 0..13 {
+      build for iy in 0..3 {
+        let x = i32(ix) - 6
+        let y = i32(iy) - 2
+        let z = i32(iz) - 6
+        let h = cell_hash(x, y, z)
+        let top = y == 0
+        if h.x < select(0.6 + 0.12 * f32(y), 0.85, top) {
+          let r = mix(0.2, 0.46, h.y) * select(0.7, 1, top)
+          let jitter = cell_hash(x + 17, y + 31, z + 7)
+          let room = 1.9 * (0.65 - r)
+          let wx = f32(x) * 1.3 + (jitter.x - 0.5) * room
+          let wz = f32(z) * 1.3 + (jitter.y - 0.5) * room
+          emit Pearl(pose: placement([wx, f32(y) * 1.3, wz]@World), x: wx, y: f32(y), z: wz, r: r, seed: h.x, hue: 0.9 * h.z + 0.02)
+        }
+      }
+    }
+  }
+}
+
+schedule Main {
+  orbit(at: [0, -0.3, 0]@World, radius: 14.86606875m, height: 6.8m, period: 1000000000s, fov: 0.6rad)
+  cull_indirect(Sea, Pearl)
+  render_bundle(Vis64) { draw_indirect(Sea); draw_indirect(Pearl) }
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: sun_sky, sun: [-0.6020421506, 0.8, -0.00672672794])
+  tonemap_aces(ColorHdr, sky: sky_color)
+}

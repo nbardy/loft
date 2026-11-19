@@ -1,0 +1,64 @@
+# R0 source: examples/reeds_shadow.ts. Camera: whole.
+space World Local
+
+const VIEW_YAW = -0.6435011088rad
+const VIEW_PIVOT = [0, 1.5, 0]@World
+
+build fn placement(p: p3@World) -> xf@Local>World {
+  let d = p - VIEW_PIVOT
+  let c = cos(VIEW_YAW)
+  let s = sin(VIEW_YAW)
+  place(VIEW_PIVOT + [c * d.x + s * d.z, d.y, -s * d.x + c * d.z], VIEW_YAW)
+}
+
+kind Floor @World (radius: m = 80m) {
+  visible(ro, rd) = ray_ground(ro, rd, radius)
+  trace(p) = box_sdf(p - [0, -0.05, 0]@World, [radius, 0.05, radius])
+  material(p, n) = ggx([0.42, 0.39, 0.34], 0.9, 0)
+}
+
+fn reed_section(m: f, v: f, sway: f) -> p3@Local {
+  let a = TAU * (v + 0.25)
+  let dx = 2 * m * sway
+  let speed = sqrt(dx * dx + 12.25)
+  let r = 0.2 - 0.17 * m
+  let r2 = r * (1 - smootherstep(0.88, 1, m))
+  let side = r2 * sin(a)
+  [m * m * sway + 3.5 / speed * side, 3.5 * m - dx / speed * side, r2 * cos(a)]@Local
+}
+
+kind Reed @Local (pose: xf@Local>World, phase: f) {
+  surface(u, v) grid 96x24 {
+    let m = 0.4 * u + 0.3 * (1 - cos(u * 3.14159265))
+    reed_section(m, v, 0.5 * sin(time + phase))
+  }
+  material(p, n, uv) = ggx([0.85, 0.55, 0.2], 0.67, 0)
+}
+
+kind Stone @Local (pose: xf@Local>World) {
+  visible(ro, rd) = ray_sphere(ro, rd, [0, 0, 0]@Local, 0.55)
+  trace(p) = sphere(p - [0, 0, 0]@Local, 0.55)
+  material(p, n) = ggx([0.55, 0.6, 0.65], 0.76, 0)
+}
+
+build {
+  build for k in 0..6 {
+    let phase = f32(k)
+    let x = 0.7 * phase - 2
+    let z = select(-0.3, 0.3, k % 2 != 0)
+    emit Reed(pose: placement([x, 0, z]@World), phase: phase)
+  }
+  emit Stone(pose: placement([1.6, 0.45, 1.3]@World))
+  emit Floor()
+
+}
+
+schedule Main {
+  orbit(at: [0, 1.5, 0]@World, radius: 10m, height: 2.5m, period: 1000000000s, fov: 0.6rad)
+  cull_indirect(Reed, Stone, Floor)
+  render_bundle(Vis64) { draw_indirect(Reed); draw_indirect(Stone); draw_indirect(Floor) }
+  find_shadow_map(Reed, Stone, size: 2048)
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: sun_sky, sun: [-0.59, 0.8, 0.12])
+  tonemap_aces(ColorHdr, sky: sky_color)
+}
