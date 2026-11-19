@@ -26,4 +26,10 @@ File ownership: change only files your lane owns, together with the new files it
 
 Also build engines/spectral_caustic.loft, a reusable integrator (PATCH_V1_2 §7): hero-wavelength Radiance = v4, a caustic photon kernel with integer atomics, and a nested dielectric stack. Then, as a stretch once your proof passes, build scenes/spectral_caustic_study.loft as described in agent_notes/2026-11-20_v1/use_cases.md §1, as a fork of engines/reference.loft. It needs a caustic photon kernel with integer atomics, Radiance = v4 hero wavelengths, a nested dielectric stack, and mix_bsdf wet paper. CPU-twin and naga checks only; the integrator renders it.
 
+Implement Phase 4 diagnostics and baking from `docs/spec/07_PLATFORM_POWER_EXTENSIONS.md` (§§5–6, 9).
+
+- Wire `--aov beauty|albedo|normal|depth|id|sdf_steps|lipschitz_ratio|overdraw` for render and clip. Supply a synthetic bad Lipschitz-bound mutant. The integrator must verify red where `lipschitz_ratio > 1.0`.
+- Wire `bake_tex` for 2D, 3D and cube, with `on load`, `on dirty(params)` and `mips(...)` driving `PassRun::GenerateMips`. The load fixture passes when a 2048² procedural mask and a 128² IBL cube bake and generate mips once in ≤2 ms total, with 0 ms/frame of bake and mip work thereafter while clean.
+- Validate generated modules and test the bake scheduling on CPU. The integrator renders the mutant and times the bake.
+
 Final message ≤120 words.

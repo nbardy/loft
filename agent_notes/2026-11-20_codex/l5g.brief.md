@@ -24,4 +24,6 @@ Write agent_notes/2026-11-20_v1/lanes/l5g.md covering: what you built, the proof
 
 File ownership: change only files your lane owns, together with the new files it creates. Step 0 pre-declared the hub entries in Cargo.toml, lib.rs and the CLI; fill in the stubs and do not add new ones. The integrator runs tools/lane_check.sh and rejects a lane that touches unowned files, adds crates or `#[ignore]`, or edits crates/loft-abi or tests/golden*.
 
+Implement `.loftlog` record/replay and its CLI from `docs/spec/07_PLATFORM_POWER_EXTENSIONS.md` (§§8–9). Pass when the recorded crab scramble replays with a 0-bit state diff. Prove state parity on the CPU twin and supply the fixture for integrator replay. Keep the existing `.loftb` round trip and verify that a standalone runner loads the built bundle without linking `loft-passes`.
+
 Final message ≤120 words.
