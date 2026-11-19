@@ -1,0 +1,115 @@
+# Motion kernels shared by build, laws and pose queries. Lengths use metres and
+# time uses seconds. S is the space containing both the trunk and its contacts.
+
+pub fn capture_point_ff[S](pos: p3@S, vel: v3@S, h: m, a_cmd: v3@S,
+                           v_s: v3@S, a_s: v3@S, g_eff: v3@S) -> p3@S {
+  let up = normalize(g_eff)
+  let tc2 = h / length(g_eff)
+  let lead = (vel - v_s) * sqrt(tc2) + (a_cmd - a_s) * (0.5 * tc2)
+  pos + (lead - up * dot(lead, up))
+}
+
+# One component of the quintic. Returns displacement, speed and acceleration.
+# Duration is positive. Initial velocity and both end accelerations are zero.
+pub fn quintic_plan(d: m, v1: f, dur: s, t: s) -> v3 {
+  let u = clamp(t / dur, 0.0, 1.0)
+  let v = v1 * dur
+  let a = 10.0 * d - 4.0 * v
+  let b = -15.0 * d + 7.0 * v
+  let c = 6.0 * d - 3.0 * v
+  [u * u * u * (a + u * (b + u * c)),
+   u * u * (3.0 * a + u * (4.0 * b + u * 5.0 * c)) / dur,
+   u * (6.0 * a + u * (12.0 * b + u * 20.0 * c)) / (dur * dur)]
+}
+
+# XPBD multiplier increment. The caller applies the inverse masses and
+# constraint gradients to the positions, and retains lambda across iterations.
+pub fn solve_dist_edge[S](a: p3@S, b: p3@S, im_a: f, im_b: f,
+                          rest: m, alpha: f, lambda: f) -> f {
+  let denom = im_a + im_b + alpha
+  if denom > 0.0 { (rest - dist(a, b) - alpha * lambda) / denom } else { 0.0 }
+}
+
+pub fn solve_prior_xpbd[S](pos: p3@S, goal: p3@S, composure: f,
+                           inv_mass: f, alpha: f, lambda: v3@S) -> v3@S {
+  let compliance = alpha / max(composure * composure, 0.002)
+  let denom = inv_mass + compliance
+  if denom > 0.0 { (goal - pos - lambda * compliance) / denom } else { (goal - pos) * 0.0 }
+}
+
+# An unreachable target is projected onto the reachable annulus. Keep this
+# endpoint explicit so a planted-pin check sees the projection as drift.
+pub fn ik_reachable_end[S](root: p3@S, tgt: p3@S, l1: m, l2: m, pole: d3@S) -> p3@S {
+  let delta = tgt - root
+  let n = length(delta)
+  let axis = if n > 0.0 { delta / n } else { pole * 1.0 }
+  root + axis * clamp(n, abs(l1 - l2), l1 + l2)
+}
+
+# The knee of a two-bone pose. The caller retains root and ik_reachable_end.
+pub fn solve_2bone_ik[S](root: p3@S, end: p3@S, l1: m, l2: m, pole: d3@S) -> p3@S {
+  let d = dist(root, end)
+  if d <= 0.0 { return root + pole * l1 }
+  let along = (end - root) / d
+  let projected = pole * 1.0 - along * dot(pole, along)
+  let xyz = along.xyz
+  let seed = if abs(xyz.x) < abs(xyz.y) {
+    [1.0, 0.0, 0.0]@S
+  } else {
+    [0.0, 1.0, 0.0]@S
+  }
+  let side = if length(projected) > 1e-6 { dir(projected) } else { dir(cross(along, seed - [0.0, 0.0, 0.0]@S)) }
+  let span = (d * d + l1 * l1 - l2 * l2) / (2.0 * d)
+  root + along * span + side * sqrt(max(0.0, l1 * l1 - span * span))
+}
+
+# Constant-length S in the plane spanned by the chord and bend direction.
+# Six equal links have signed transverse steps [+1, 0, -1, -1, 0, +1].
+# The caller supplies a perpendicular unit bend and checks len/3 <= chord <= len.
+pub fn solve_s_neck_ik[S](shoulder: p3@S, head: p3@S, len: m, bend: d3@S, joint: u) -> p3@S {
+  let step_len = len / 6.0
+  let chord_len = dist(shoulder, head)
+  let axis = (head - shoulder) / chord_len
+  let bowed = (chord_len - 2.0 * step_len) / 4.0
+  let side = sqrt(max(0.0, step_len * step_len - bowed * bowed))
+  let straight = select(0.0, 1.0, joint >= 2) + select(0.0, 1.0, joint >= 5)
+  let offset = select(0.0, 1.0, joint == 1 || joint == 2) - select(0.0, 1.0, joint == 4 || joint == 5)
+  shoulder + axis * (straight * step_len + (f32(joint) - straight) * bowed) + bend * (side * offset)
+}
+
+# Exact solution of x'' + 2*zeta*w*x' + w²*x = drive_a over a fixed tick.
+# The equilibrium shift keeps the update well conditioned under constant drive.
+pub fn step_spring_exact(x: f, v: f, drive_a: f, hz: f, zeta: f, dt: s) -> v2 {
+  let w = 6.283185307 * hz
+  if w == 0.0 { return [x + dt * (v + 0.5 * dt * drive_a), v + dt * drive_a] }
+  let decay = zeta * w
+  let eq = drive_a / (w * w)
+  let q = x - eq
+  let discriminant = 1.0 - zeta * zeta
+  var c = 1.0
+  var s = dt
+  var e = exp(-decay * dt)
+  if discriminant > 1e-6 {
+    let angle = w * sqrt(discriminant)
+    c = cos(angle * dt)
+    s = sin(angle * dt) / angle
+  }
+  if discriminant < -1e-6 {
+    let root = w * sqrt(-discriminant)
+    # Factor out the decay before summing exponentials. The slow root uses
+    # the product of the roots to avoid cancellation at high damping.
+    let slow = exp((-w * w / (decay + root)) * dt)
+    let fast = exp(-(decay + root) * dt)
+    c = 0.5 * (slow + fast)
+    s = 0.5 * (slow - fast) / root
+    e = 1.0
+  }
+  [eq + e * (c * q + s * (v + decay * q)),
+   e * (c * v - s * (w * w * q + decay * v))]
+}
+
+# Apply a squash to an offset. The axis stretch is q > 0, with determinant 1.
+pub fn volume_squash[S](q: f, axis: d3@S, offset: v3@S) -> v3@S {
+  let axial = axis * dot(axis, offset)
+  axial * q + (offset - axial) / sqrt(q)
+}

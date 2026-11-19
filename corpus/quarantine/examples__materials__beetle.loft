@@ -1,0 +1,60 @@
+# Source: examples/materials/beetle.ts at corpus/manifest.json's examples_rev.
+# view 0 = whole; view 1 = shell.
+space World Bar
+
+param view: u = 0 in 0..1
+const yaw = -select(atan2(3.5, 4), atan2(0.8, 1.4), view == 1)
+const tip_span = 0.05
+
+fn spine_m(u: f, start: f, end: f) -> f {
+  let a = 1.57079633 * u
+  let middle = 1 - start - end
+  start * tip_span * (1 - cos(a)) +
+    end * (1 - tip_span * (1 - sin(a))) +
+    middle * mix(tip_span, 1 - tip_span, u)
+}
+
+# Reparameterize the rounded ends by angle. This removes the square-root
+# derivative singularity at the pole without changing the swept geometry.
+kind CoatedSweep @Bar (pose: xf@Bar>World, start: f, end: f) {
+  surface(u, v) grid 32x24 {
+    let m = spine_m(u, start, end)
+    let angle = 1.57079633 * u
+    let end_scale = start * (sin(angle) - 1) + end * (cos(angle) - 1) + 1
+    let r = (0.12 + 0.55 * sin(3.14159265 * m)) * end_scale
+    let a = TAU * v + 1.57079633
+    let c = cos(a)
+    let s = sin(a)
+    [1.1 * (2 * m - 1), 0.35 + 0.55 * s * r, c * r]@Bar
+  }
+
+  material(p, n, uv) {
+    let m = spine_m(uv.x, start, end)
+    ggx([0.08, 0.1, 0.06], 0.15, 0) + film(1, 1.56, 400 + 60 * m)
+  }
+}
+
+kind Ground @World (radius: m) {
+  visible(ro, rd) = ray_ground(ro, rd, radius)
+  trace(p) = box_sdf(p - [0, -0.05, 0]@World, [radius, 0.05, radius])
+  material(p, n) = ggx([0.38, 0.33, 0.25], 0.9, 0)
+}
+
+build {
+  let pose = place([0, 0, 0]@World, yaw)
+  emit CoatedSweep(pose: pose, start: 1, end: 0)
+  emit CoatedSweep(pose: pose, start: 0, end: 0)
+  emit CoatedSweep(pose: pose, start: 0, end: 1)
+  emit Ground(radius: 256m)
+  let c = cos(yaw)
+  let s = sin(yaw)
+  emit Sun(dir: dir([-0.4 * c + 0.45 * s, 0.8, 0.4 * s + 0.45 * c]@World), color: [2.2, 2, 1.7])
+}
+
+camera Main {
+  at: [0, select(0.35, 0.4, view == 1), 0]@World,
+  radius: select(sqrt(28.25000000), sqrt(2.60000000), view == 1),
+  height: select(2.15m, 1.2m, view == 1),
+  period: 1e20s,
+  fov: select(0.6rad, 0.5rad, view == 1)
+}

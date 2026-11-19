@@ -1,0 +1,138 @@
+space World
+
+const HERON_REST = 0.85m
+const HERON_CROUCH = 0.59m
+const HERON_TAKEOFF = 0.77s
+const HERON_LAND = 1.55s
+const HERON_LAND_X = 1.4m
+const HERON_BLOCK_Y = 0.20m
+const HERON_TOE_R = 0.018m
+const HERON_NECK = 1.55m
+
+fn heron_fish(t: s) -> p3@World = [-1.25 + 4.0 * smootherstep(0.2, 2.0, t), 0.13, 3.0]@World
+
+kind HuntingHeron @World (
+  x: f = 0.0, hip_y: f = HERON_REST, lean: f = 0.0,
+  pin_x: f = 0.0, foot_y: f = 0.0,
+  look_x: f = -1.25, look_y: f = 0.13, look_z: f = 3.0
+) {
+  trace(p) {
+    let hip = [x, hip_y, 0.0]@World
+    let shoulder = heron_shoulder(self)
+    let head = heron_head(self)
+    let bill = heron_bill(self)
+    let belly = capsule(p, hip + [0.0, 0.0, -0.22], shoulder, 0.178)
+    var d = min(belly, capsule(p, head, bill, 0.018))
+    d = min(d, sphere(p - head, 0.072))
+    for i in 0..6 {
+      let a = heron_neck_joint(self, i)
+      let b = heron_neck_joint(self, i + 1)
+      d = min(d, capsule(p, a, b, 0.052 - 0.004 * f32(i)))
+    }
+    for i in 0..2 {
+      let s = select(-1.0, 1.0, i == 1)
+      let root = heron_leg_root(self, s)
+      let toe = heron_leg_end(self, s)
+      let knee = solve_2bone_ik(root, toe, 0.45m, 0.48m, dir([0.0, 0.0, -1.0]@World))
+      d = min(d, min(capsule(p, root, knee, 0.027), capsule(p, knee, toe, HERON_TOE_R)))
+    }
+    d
+  }
+  material(p, n) {
+    let head = heron_head(self)
+    let below = smoothstep(hip_y - 0.13, hip_y + 0.08, p.y)
+    let crown = smoothstep(head.y - 0.012, head.y + 0.036, p.y) * (1.0 - smoothstep(0.07, 0.11, dist(p, head)))
+    let bill = smoothstep(0.08, 0.20, dist(p, head)) * smoothstep(head.z + 0.024, head.z + 0.15, p.z)
+    let feathers = mix([0.19, 0.24, 0.28], [0.75, 0.80, 0.84], below * 0.88)
+    ggx(mix(mix(feathers, [0.065, 0.09, 0.115], crown), [0.83, 0.51, 0.17], bill), 0.63, 0)
+  }
+}
+
+fn heron_shoulder(h: HuntingHeron) -> p3@World = [h.x, h.hip_y + 0.09, 0.11 + 0.25 * h.lean]@World
+fn heron_head(h: HuntingHeron) -> p3@World = heron_shoulder(h) + [0.0, 1.19, 0.32]
+fn heron_bill(h: HuntingHeron) -> p3@World {
+  let head = heron_head(h)
+  let look = [h.look_x, h.look_y, h.look_z]@World
+  head + dir(look - head) * 0.29m
+}
+fn heron_neck_joint(h: HuntingHeron, i: u) -> p3@World =
+  solve_s_neck_ik(heron_shoulder(h), heron_head(h), HERON_NECK, dir([1.0, 0.0, 0.0]@World), i)
+fn heron_pin(x: m, y: m, side: f) -> p3@World = [x + 0.16 * side, y + HERON_TOE_R, -0.07]@World
+fn heron_leg_root(h: HuntingHeron, side: f) -> p3@World =
+  [h.x + 0.135 * side, h.hip_y - 0.09, -0.055]@World
+fn heron_leg_end(h: HuntingHeron, side: f) -> p3@World =
+  ik_reachable_end(heron_leg_root(h, side), heron_pin(h.x, h.foot_y, side),
+    0.45m, 0.48m, dir([0.0, 0.0, -1.0]@World))
+
+fn heron_height(t: s) -> m {
+  if t <= HERON_TAKEOFF { return act_crouch(HERON_REST, HERON_CROUCH, 0.60s, HERON_TAKEOFF, t) }
+  if t >= HERON_LAND { return HERON_REST + HERON_BLOCK_Y }
+  act_ballistic(HERON_REST, HERON_REST + HERON_BLOCK_Y, HERON_LAND - HERON_TAKEOFF, t - HERON_TAKEOFF)
+}
+
+law heron_step(h: HuntingHeron, dt) writes h.{x, hip_y, lean, pin_x, foot_y, look_x, look_y, look_z} {
+  let flight = clamp((time - HERON_TAKEOFF) / (HERON_LAND - HERON_TAKEOFF), 0.0, 1.0)
+  let height = heron_height(time)
+  let fish = heron_fish(time)
+  h.x = HERON_LAND_X * flight
+  h.hip_y = height
+  h.lean = 0.17 * (4.0 * flight * (1.0 - flight))
+  h.pin_x = select(0.0, HERON_LAND_X, time >= HERON_LAND)
+  h.foot_y = if time <= HERON_TAKEOFF { 0.0 } else { height - HERON_REST }
+  h.look_x = fish.x
+  h.look_y = fish.y
+  h.look_z = fish.z
+}
+
+check heron_neck_length(h: HuntingHeron) -> m {
+  var arc = 0.0
+  for i in 0..6 { arc = arc + dist(heron_neck_joint(h, i), heron_neck_joint(h, i + 1)) }
+  let error = abs(arc - HERON_NECK)
+  return if error > 0.2mm { missed(error) } else { held(0.2mm - error) }
+}
+
+check heron_pins(h: HuntingHeron) -> m {
+  let anchor_y = select(0.0, HERON_BLOCK_Y, time >= HERON_LAND)
+  let air = time > HERON_TAKEOFF && time < HERON_LAND
+  let drift = max(dist(heron_leg_end(h, -1.0), heron_pin(h.pin_x, anchor_y, -1.0)),
+                  dist(heron_leg_end(h, 1.0), heron_pin(h.pin_x, anchor_y, 1.0)))
+  let error = select(drift, 0.0, air)
+  return if error > 0.5mm { missed(error) } else { held(0.5mm - error) }
+}
+
+# Convert the 12° pitch limit to slope once. Check the head over the rendered hip.
+check heron_posture(h: HuntingHeron) -> rad {
+  let margin = min(0.21255656 - abs(h.lean), heron_head(h).y - h.hip_y)
+  return if margin < 0.0 { missed(-margin) } else { held(margin) }
+}
+
+check heron_gaze(h: HuntingHeron) -> rad {
+  let aim = dir(heron_fish(time) - heron_head(h))
+  let view = dir(heron_bill(h) - heron_head(h))
+  let error = length(cross(aim, view))
+  let margin = min(0.0009999998 - error, min(view.z, dot(aim, view)))
+  return if margin < 0.0 { missed(-margin) } else { held(margin) }
+}
+
+kind HeronStage @World (at: p3@World, half: v3, stone: bool) {
+  trace(p) = box_sdf(p - at, half)
+  material(p, n) = ggx(mix([0.22, 0.30, 0.29], [0.35, 0.28, 0.22], select(0.0, 1.0, stone)), 0.79, 0)
+}
+
+kind HeronFish @World () {
+  trace(p) = capsule(p, heron_fish(time) + [-0.10, 0.0, 0.0], heron_fish(time) + [0.10, 0.0, 0.0], 0.037)
+  material(p, n) = ggx([0.32, 0.53, 0.59], 0.27, 0.44)
+}
+
+camera Main { at: [0.6, 1.15, 0.4]@World, radius: 4.5m, height: 1.1m, period: 24s, fov: 40deg }
+build {
+  emit HuntingHeron()
+  emit HeronFish()
+  emit HeronStage(at: [0.0, -0.08, 0.0]@World, half: [4.0, 0.08, 4.0], stone: false)
+  emit HeronStage(at: [1.4, 0.10, 0.0]@World, half: [0.29, 0.10, 0.32], stone: true)
+  emit HeronStage(at: [0.65, 0.09, 0.0]@World, half: [0.035, 0.09, 0.42], stone: true)
+}
+schedule Main {
+  run_laws(heron_step)
+  check(heron_pins, heron_neck_length, heron_posture, heron_gaze)
+}

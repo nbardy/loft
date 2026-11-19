@@ -1,0 +1,36 @@
+# Source: examples/light/area_lamp.ts at corpus/manifest.json's examples_rev.
+# The authored light has a disc radius and casts a ray to the sampled disc.
+space World
+
+param lamp_size: m = 0.2m in 0m..1m
+
+kind Post @World (a: p3@World, b: p3@World, r: m > 0m) {
+  visible(ro, rd) = ray_capsule(ro, rd, a, b, r)
+  trace(p) = capsule(p, a, b, r)
+  material(p, n) = ggx([0.75, 0.55, 0.35], 0.75, 0)
+}
+
+kind Ground @World (radius: m) {
+  visible(ro, rd) = ray_ground(ro, rd, radius)
+  trace(p) = box_sdf(p - [0, -0.05, 0]@World, [radius, 0.05, radius])
+  material(p, n) = ggx([0.38, 0.33, 0.25], 0.9, 0)
+}
+
+# Rebase around the target and rotate its view direction onto the orbit's +Z.
+build {
+  let yaw = -atan2(-0.9, 3.5)
+  let c = cos(yaw)
+  let s = sin(yaw)
+  emit Post(a: [0.6 * c, 0, -0.6 * s]@World, b: [0.6 * c, 1.6, -0.6 * s]@World, r: 0.12m)
+  emit Ground(radius: 256m)
+  emit PointLamp(pos: [1.2 * c, 2.2, -1.2 * s]@World, color: [1.5, 1.2, 0.8], radius: lamp_size, reach: 1.6m)
+  emit Sun(dir: dir([-0.4 * c + 0.3 * s, 0.8, 0.4 * s + 0.3 * c]@World), color: [0.05, 0.06, 0.1])
+}
+
+camera Main {
+  at: [0, 0, 0]@World,
+  radius: sqrt(13.06),
+  height: 5.5m,
+  period: 1e20s,
+  fov: 0.75rad
+}

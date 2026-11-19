@@ -1,55 +1,43 @@
-# Open targets after the D1 redesign gate
+# Open targets for v1.0-alpha
 
-**Phases 2, 3, 4 and 5 are blocked.** [Gate and raw evidence](../../out/meta/i6/gate.json) · [Contact sheet](../../out/meta/i6/sheet.webp)
+The alpha uses the lead’s release rule. The locked Apple M4 Metal run on `07ac562` held Twin 36/36, Truth 34/34 and Speed 12/12, with zero contention. All six mutants fired. The runner typechecked for wasm32 with web-sys. Both grammar recognizers gave 280/280 expected outcomes, including the negative sentinel. The 18 gate hashes, nine bead pins and 1,510 legacy beauty hashes matched. The six scenes used 5/5, 5/5 and 17/17 commands at counts 1 and 20. Their 300-frame p95 times were 0.5005/0.653 ms for capsules, 0.456/1.506 ms for blobs and 3.911/5.453 ms for hermits. [Release measurements](../../out/meta/rel/gate.json) · [Five-gate log](../../out/meta/rel/baseline.log)
 
-The scored candidate is `10f77b51626b5be3f20b130a306ad7c78c37ff78` on `loft/int6`. It contains `loft/int23-fix` at `498c0f3`, the Phase 4 import at `d3faf43` and the Phase 5 import at `637401f`. The combined tree was built once with the optimized lab profile. One Apple M4 Metal GPU lock covered the full gate, phase probes, mutants, platform checks and suites.
+## Runner and edits
 
-| Gate | Held | Release consequence |
-| --- | ---: | --- |
-| Pictures | 0/18 | Each combined frame differed from its Phase 4 proposal by at most 1 pixel above 2/255. All 18 qualify for the requested exception. |
-| Twin | 36/36 | Passed. |
-| Speed | 12/12 | All six command counts and 300-frame p95 caps held. Controls ranged from 0.039 to 0.099 ms against 0.35 ms. |
-| Load | 31/33 | Hermit at both counts created 14 pipelines. The manifest budgets 13. The indexed shell adds one load-time bake pipeline. |
-| Truth | 34/34 | Passed. |
-
-All five decision mutants and the inline-BSDF-growth mutant fired. The runner compiled for wasm32 with web-sys. Both grammar recognizers accepted the 279 tracked scenes and rejected the negative sentinel. The native suite recorded 107 passed, 39 failed and 0 ignored. Bun recorded 312 passed and 3 failed.
-
-## Phases 2 and 3
-
-| Lane | Evidence on the combined candidate | Remaining acceptance criteria |
-| --- | --- | --- |
-| D1a · `b1a4c26` | Runner tests passed 16/16, including rebind, swap, host depth and native manual promotion. A source-built hermit bundle drew two standalone frames. Fresh 481-tick replay matched state and pixels. | Runner counts 3,758 physical lines against 1,000 before the separate native executor. Native source and embed still use different rendering paths. Shared bake/path resources, cross-caller pixel/state parity and browser frames remain open. Three- and four-section persisted layouts still share ABI 1. |
-| D1c · `561df77` | The CPU test confirmed the six-op sphere tape, two live registers, one dirty row and a structural tape using five registers. The manual GPU edit fixture passed at +0.378 ms. | Public literal, structural, loop and invalid edits all exited 6 while creating the editable shader. WGSL source markers reached Naga at line 140. Source-to-upload ≤2 ms, zero foreground creations, GPU overhead ≤0.5 ms, field and image parity, typed rejection and browser async promotion still need a working authored path. |
-| Phase 3 motion | The timed prior clip passed at 0.553 ms. Boss body syntax checked. The scalar Crab matched 481/481 ticks. | Scheduled solver and open HeronHop returned E405. The 1,000-row Crab ran in 0.168 ms p95 against 0.150 ms, control 0.061 ms. Full BODY/STATE/POSE, Stage 0 near/clear/land_on asset binding, colored constraints, solver events, world-space pinning and support-hull coverage remain open. |
-
-## Phase 4
-
-D1b (`8156b11`) scored 0.487, 0.733, 0.466, 1.471, 3.922, 5.432 ms p95 for capsules, blobs and hermits at 1 and 20 instances respectively. Hermit-20’s 6,369 indexed UV vertices and 36,864 corners produced identical beauty, depth AOV and ID pixels against the procedural draw. Hermit-20’s median Vis, Shadow and Shade times were 1.399, 0.630 and 2.180 ms. The earlier paired timing experiment also met all six budgets with immediate reads. It leaves the historical tail unexplained.
-
-| Check | Result |
+| Target | Alpha measurement and work remaining |
 | --- | --- |
-| Coral Shrine | 19.240 ms p95 against 4.0 ms over 100 close frames after 30 warmups. Shade took 16.019 ms median, control 0.053 ms. The 64-pixel bore probe distinguished the carved and solid worlds. |
-| Bake | 3.748 ms against 2.0 ms. All 20 load dispatches and 5/0/0/5/0 frame dispatches held. Vector dirty clocks, every-mip texel comparison and portable bake descriptors remain open. |
-| Spectral | The four-sample 128² study rendered on the eight-slot device. |
-| Transport and viewer | Dielectric transmission, dipole/random-walk SSS, Gaussian media, prior-frame reservoir reuse, reprojection and scheduled bloom mips remain open. |
+| Runner size and shared execution | 3,758 physical lines against 1,000 before counting the separate native executor. The 16 runner tests passed and an external host drew two frames. Native source and embed still need shared bake/path resources, cross-caller pixel and state parity, and browser frames. Three- and four-section persisted layouts both report ABI 1. |
+| Tier 0 authored edits | Literal, structural, bounded-loop and rejected edits all exited 6 at WGSL line 140 on the U+FDD0 source marker. The three independently compiled controls rendered. The manual GPU fixture uploaded in 0.021 ms, added 0.490 ms p95 and had 0/140,000 pixels above 1/255. The public path still needs source-to-upload ≤2 ms, zero foreground pipeline creations, overhead ≤0.5 ms, field and image parity, typed rejection and browser promotion. |
 
-## Phase 5
+## Motion
 
-D1d (`93e0888`) supplied an identity index for 295 frozen entries. All 187 candidate source hashes matched and all 187 clips met their 50 ms cap. The bead passed 9/9 frozen RGBA frames with at most eight isolated pixels above one code, zero off-edge pixels and zero depth failures. Its portable bundle export still refuses the screen-path resource descriptor.
-
-| Check | Result |
+| Target | Alpha measurement and work remaining |
 | --- | --- |
-| Corpus certification | 0/295 certified, 281 required. There are 108 missing candidates and 186 candidates without pinned geometry. The 107 scratch observations cover 15 identities. Source checks, 14 reduced previews and between-key seed motion still need evidence. |
-| glTF and retarget | The optimized 100,000-triangle import took 22.042 ms against 100 ms. The two-primitive pack succeeded. D1d’s primitive-color probe failed. Textures, skinning and animated clips remain open. Retarget returned E601 and the positive planted-toe drift (≤0.1 mm) is unmeasured. |
-| Hardware rays | Portable per-row hit/miss returned 1 m and −1. The native probe exited 1 with one acceleration structure bound against a per-stage device limit of zero. Compiled World paths still refuse mesh geometry. |
-| Embedding and replay | Standalone host submitted two frames and both depth conventions passed. Pinned timed replay exited 5 on bundle identity. Live slots and post-start input, cross-device replay, Keel/browser frames, dynamic host viewport and portable ASSETS remain open. |
+| Authored solvers and plans | Scheduled solver and open HeronHop both exited 1 with E405. The closed prior clip ran at 0.553 ms p95. Stage 0 asset binding for `near`, `clear` and `land_on`, colored constraints, solver events, world-space pinning and support hulls remain open. |
+| Full motion model | Scalar Crab replay matched all 481 ticks. Its 1,000-row kernel measured 0.011 ms p95 against 0.150 ms, with a 0.047 ms control. Full BODY/STATE/POSE execution remains open. The earlier Boss measurement was 76 bytes of active state against a 2,928-byte state and 3,072-byte pose requirement. |
 
-## Workspace regressions
+## Rendering
 
-36 native tests tried to read `lib/migration/` as a file. The remaining failures were the 1,000-row Crab budget, the Shrine test prelude missing `loft_user_paper_grain` (E701) and the custom Radiance medium refusal (E405).
+| Target | Alpha measurement and work remaining |
+| --- | --- |
+| Coral Shrine close view | Restoring the shadow map reduced p95 from 19.240 to **4.210 ms** against **4.000 ms**, at 1280×800 after 30 warmups over 100 frames. Median Shade fell from 16.019 to 0.544 ms. Control was 0.039 ms. The woodblock comparison had 73 pixels above 2/255 out of 1,024,000. The per-hit shadow proposal is excluded from this alpha. |
+| Hermit load pipelines | Load held 31/33. Hermit at both counts created 14 pipelines against 13. Its indexed shell uses a load-only bake. All 6,369 UV vertices and 36,864 corners produced matching procedural and indexed images for beauty, depth and ID. |
+| Bake completeness | This run completed the 20 load dispatches in 1.371 ms against 2.000 ms. The scored integration took 3.748 ms. Dirty dispatches were 5/0/0/5/0. Every-mip texel parity, vector parameter invalidation and portable bake descriptors still need verification. |
+| Transport and viewer | The four-sample spectral study rendered at 128² on the eight-slot device. Dielectric transmission, dipole/random-walk SSS, Gaussian media, prior-frame reservoir reuse, reprojection and scheduled bloom mips remain open. |
 
-The full Bun run lacked the legacy native add-on and draw executable in the disposable checkout. After restoring the binaries from the identical legacy source tree, the three affected server tests passed in a focused check. [Full run](../../out/meta/i6/bun.log) · [Focused check](../../out/meta/i6/legacy-recheck.log)
+## Corpus and interoperability
 
-## Owner review
+| Target | Alpha measurement and work remaining |
+| --- | --- |
+| Corpus certification | **0/295 certified**, 281 required. All 187 candidate hashes matched and all 187 clips met 50 ms, with a maximum p95 of 14.100 ms. There are 108 missing candidates and 186 candidates without pinned geometry. The 107 scratch observations cover 15 identities. Source checks, 14 reduced previews and between-key seed motion still need evidence. |
+| Bead export | Bead passed 9/9 frozen geometry frames with at most eight isolated pixels above one code, zero off-edge pixels and zero depth failures. Bundle export exited 1 because the screen-path resource needs a portable descriptor. |
+| glTF import time and coverage | The optimized 100,000-triangle import took **22.135 ms** against **100 ms**. D1d’s debug runs took 331.740 and 557.989 ms. Two-primitive packing succeeded, but D1d’s primitive-color probe failed. Textures, skinning and animation remain open. |
+| Retargeting | The positive walk exited 1 with E601. Planted-toe drift remains unmeasured against 0.1 mm. |
+| Hardware rays | The portable probe returned 1 m and −1 for hit and miss. The hardware probe exited 1 with one acceleration structure requested against a per-stage limit of zero. Compiled World traversal still refuses mesh geometry. |
+| Embedding and replay | The standalone host drew two frames and passed both depth conventions. Fresh replay reproduced the recorded image. Pinned replay exited 5 on bundle identity. Live slots, post-start input, cross-device replay, Keel/browser frames, dynamic host viewport and portable ASSETS remain open. |
 
-The appearance queue covers 18 layered frames, Coral Shrine’s woodblock treatment and revised exact shadows, and 187 corpus beauty pairs in 17 batches, including the bead’s revised proposal. All frozen reference hashes held before and after measurement. The texture bundle serial contract needs a separate format decision. [Owner queue](../../out/meta/i6/approval_needed.md) · [Phase 4 format request](../../out/meta/i4-r2/approval_needed.md)
+## Workspace tests and appearance review
+
+Bun passed all 315 tests. Native tests recorded 108 passes, 38 failures and zero ignored. Of those failures, 36 read `lib/migration/` as a file. The Shrine test prelude lacks `loft_user_paper_grain` (E701). The custom Radiance medium fixture returns E405. [Named failures](../../out/meta/rel/gate.json) · [Native logs](../../out/meta/rel/tests/)
+
+All 18 layered frames exceeded frozen picture tolerance. Each independent still was within one pixel above 2/255 of its queued Phase 4 proposal, against an allowance of 1,024. The woodblock look and 187 corpus beauty pairs across 17 batches, including the revised bead proposal, remain queued for owner review. Texture bundle serialization still needs a format decision. [Release image comparisons](../../out/meta/rel/picture-diffs.json) · [Original appearance queue](../../out/meta/i6/approval_needed.md) · [Format request](../../out/meta/i4-r2/approval_needed.md)

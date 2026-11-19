@@ -66,6 +66,7 @@ pub enum Draw {
     Traced,
     /// `query surface`: a `nu × nv` grid evaluated in the vertex stage; the record carries (u, v).
     Surface { nu: u32, nv: u32 },
+    Mesh { vertices: u32 },
 }
 
 impl Draw {
@@ -74,6 +75,7 @@ impl Draw {
         match self {
             Draw::Analytic | Draw::Traced => 36,
             Draw::Surface { nu, nv } => 6 * nu * nv,
+            Draw::Mesh { vertices } => vertices,
         }
     }
 }
@@ -89,7 +91,7 @@ pub struct Instance {
 }
 
 
-/// Camera from the schedule's `orbit` pass, evaluated per frame at time t.
+/// Perspective camera evaluated per frame at time t.
 #[derive(Clone, Copy, Debug)]
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct Orbit {
@@ -98,10 +100,15 @@ pub struct Orbit {
     pub height: f32,
     pub period: f32,
     pub fov: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fixed_eye: Option<[f32; 3]>,
 }
 
 impl Orbit {
     pub fn eye(&self, t: f32) -> [f32; 3] {
+        if let Some(eye) = self.fixed_eye {
+            return eye;
+        }
         let a = std::f32::consts::TAU * t / self.period;
         [self.at[0] + self.radius * a.sin(), self.at[1] + self.height, self.at[2] + self.radius * a.cos()]
     }
@@ -125,8 +132,7 @@ pub enum Pass {
     Present,
 }
 
-/// Phase 1.5 snapshot from the initial row through one target tick.
-/// Writes one vec4 per requested scalar field or check.
+/// A fixed-step dispatch and its packed row and verdict layouts.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Dispatch {
     pub module: usize,
@@ -134,12 +140,13 @@ pub struct Dispatch {
     pub workgroup_x: u32,
     pub input: DispatchRows,
     pub bindings: Vec<DispatchBinding>,
-    pub fields: Vec<String>,
+    pub fields: Vec<(String, u32)>,
+    pub layout_hash: [u8; 32],
     pub checks: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
-pub enum DispatchResource { Parameters, Rows, Arguments, Results }
+pub enum DispatchResource { Rows, Arguments, Results, Outbox, Luts }
 
 #[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub struct DispatchBinding {
@@ -179,6 +186,10 @@ pub struct MotionSample {
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct Program {
     #[serde(default)]
+    pub bakes: Vec<crate::bake_tex::Bake>,
+    #[serde(default)]
+    pub path: Option<crate::emit::paths::PathTrace>,
+    #[serde(default)]
     pub dispatches: Vec<Dispatch>,
     pub modules: Vec<ShaderModule>,
     pub kinds: Vec<KindTable>,
@@ -188,10 +199,15 @@ pub struct Program {
     /// Compiler-packed group 0 parameter storage.
     #[serde(default, with = "crate::sexp::words")]
     pub params: Vec<f32>,
+    /// Authored scalar parameters occupy one vec4 slot each after three environment slots.
+    #[serde(default)]
+    pub param_ranges: Vec<(String, Option<[f32; 2]>)>,
     /// Shadow-map side in texels (0 without a shadow pass).
     pub shadow_size: u32,
-    /// Every scan's baked table, concatenated (12 words per frame).
+    /// Baked scans and prior tables share the same word-addressed storage.
     pub luts: Vec<f32>,
+    #[serde(default)]
+    pub priors: std::collections::BTreeMap<String, u32>,
     pub passes: Vec<Pass>,
     /// Indices into `modules` of the three shared modules.
     pub cull: usize,

@@ -26,7 +26,6 @@ fn mesh_constructor_uses_asset_and_optional_lod() {
 }
 
 #[test]
-#[ignore = "L5a connects the imported triangle BLAS and CPU twin"]
 fn imported_instances_share_one_mesh_module() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut src = Sources::default();

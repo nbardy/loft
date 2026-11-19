@@ -264,7 +264,7 @@ impl Rng {
     }
 }
 
-fn quantile(xs: &[f64], q: f64) -> f64 {
+pub(crate) fn quantile(xs: &[f64], q: f64) -> f64 {
     let mut s = xs.to_vec();
     s.sort_by(f64::total_cmp);
     s[((s.len() - 1) as f64 * q).round() as usize]
@@ -374,6 +374,7 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
                         Draw::Analytic => q <= 2,
                         Draw::Traced => q == 0 || q == 2,
                         Draw::Surface { .. } => q >= 2,
+                        Draw::Mesh { .. } => q == 1 || q == 2,
                     };
                     if used {
                         push(format!("{}.{name} (max err {:.2e}, {} samples)", kt.name, worst[q], at.len()), evidence[q].verdict());
@@ -384,27 +385,21 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
         Gate::Speed => {
             let control = c.g.triangle_control_ms(c.size)?;
             let l = Loaded::new(c.g, p, c.size, None)?;
-            let mut commands = 0;
-            for i in 0..30 {
-                commands = l.frame(c.g, i as f32 / 30.0);
-                l.gpu_ms(c.g)?;
-            }
-            let mut ms = vec![];
-            let mut per_pass: Vec<Vec<f64>> = vec![];
-            for i in 0..c.timing_frames {
-                // The orbit moves so every frame is a different view of the same scene.
-                l.frame(c.g, c.frames[0] + i as f32 * (1.0 / 60.0));
-                let (total, passes) = l.gpu_ms(c.g)?.ok_or("no timestamp queries on this adapter")?;
-                ms.push(total);
-                per_pass.push(passes);
-            }
+            let times = (0..30).map(|i| i as f32 / 30.0)
+                .chain((0..c.timing_frames).map(|i| c.frames[0] + i as f32 * (1.0 / 60.0)));
+            let timing = l.profile_frames(c.g, times, true)?;
+            let measured = &timing[30..];
+            let commands = measured.iter().map(|f| f.commands)
+                .max_by_key(|n| n.abs_diff(b.commands)).ok_or("missing speed frames")?;
+            let ms = measured.iter().map(|f| f.gpu_ms).collect::<Vec<_>>();
             let names: Vec<String> = p.passes.iter().map(|x| format!("{x:?}").split('(').next().unwrap_or("").to_string()).collect();
-            let pass_p50: Vec<(String, f64)> = names.iter().enumerate().map(|(i, n)| (n.clone(), quantile(&per_pass.iter().map(|v| v[i]).collect::<Vec<_>>(), 0.5))).collect();
+            let pass_p50: Vec<(String, f64)> = names.iter().enumerate().map(|(i, n)| (n.clone(), quantile(&measured.iter().map(|f| f.pass_ms[i]).collect::<Vec<_>>(), 0.5))).collect();
             report[&s.name]["speed_passes_p50_ms"] = json!(pass_p50);
             let (p50, p95) = (quantile(&ms, 0.5), quantile(&ms, 0.95));
             let deciles: Vec<f64> = (0..=10).map(|i| quantile(&ms, f64::from(i) / 10.0)).collect();
             let contended = control > 0.35;
-            report[&s.name]["speed"] = json!({"control_p50_ms": control, "contended": contended, "p50_ms": p50, "p95_ms": p95, "commands": commands, "frames": ms.len(), "deciles_ms": deciles, "ms": ms});
+            report[&s.name]["speed"] = json!({"control_p50_ms": control, "contended": contended, "p50_ms": p50, "p95_ms": p95, "commands": commands, "frames": ms.len(), "deciles_ms": deciles, "ms": ms,
+                "frame_stamps": measured, "shader_sha256": crate::profile::shader_hashes(p)?});
             push(format!("{commands} GPU commands == {}", b.commands), held_if(-f64::from(commands.abs_diff(b.commands)), None));
             out.push(Check {
                 gate, scene: s.name.clone(), contended,
@@ -565,6 +560,14 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
 }
 
 pub fn run(approve: bool, only: Option<&str>) -> Result<(), Failure> {
+    run_selected(approve, only, &GATES)
+}
+
+pub(crate) fn speed_gate() -> Result<(), Failure> {
+    run_selected(false, None, &[Gate::Speed])
+}
+
+fn run_selected(approve: bool, only: Option<&str>, selected: &[Gate]) -> Result<(), Failure> {
     let root = root().map_err(Failure::Usage)?;
     let path = root.join("engines/gates.json");
     let text = std::fs::read_to_string(&path).map_err(|e| Failure::Usage(e.to_string()))?;
@@ -596,12 +599,14 @@ pub fn run(approve: bool, only: Option<&str>) -> Result<(), Failure> {
         report[&s.name]["compile_ms"] = json!(r.ms.iter().map(|(n, t)| json!([n, t])).collect::<Vec<_>>());
         report[&s.name]["rows"] = json!(r.kinds.iter().map(|k| json!([k.name, k.rows, k.shapes, k.l_max])).collect::<Vec<_>>());
         let shapes: Vec<usize> = r.kinds.iter().map(|k| k.shapes).collect();
-        gate(&mut c, Gate::Load, s, &p, &comp, &shapes, &mut checks, &mut report).map_err(Failure::Device)?;
+        if selected.contains(&Gate::Load) {
+            gate(&mut c, Gate::Load, s, &p, &comp, &shapes, &mut checks, &mut report).map_err(Failure::Device)?;
+        }
         compiled.push((s, p, comp, shapes));
     }
     // Measure all cold/warm loads before the long timestamped frame batches.
     for (s, p, comp, shapes) in compiled {
-        for gt in GATES.into_iter().filter(|g| *g != Gate::Load) {
+        for gt in selected.iter().copied().filter(|g| *g != Gate::Load) {
             gate(&mut c, gt, s, &p, &comp, &shapes, &mut checks, &mut report).map_err(Failure::Device)?;
         }
     }
@@ -610,7 +615,7 @@ pub fn run(approve: bool, only: Option<&str>) -> Result<(), Failure> {
         std::fs::write(&path, serde_json::to_string_pretty(&cfg).map_err(|e| Failure::Usage(e.to_string()))? + "\n").map_err(|e| Failure::Usage(e.to_string()))?;
         println!("approved {} references into engines/gates.json and out/meta/refs/", c.refs.len());
     }
-    for gt in GATES {
+    for &gt in selected {
         let mine: Vec<&Check> = checks.iter().filter(|x| x.gate == gt).collect();
         let held = mine.iter().filter(|x| matches!(x.verdict, Verdict::Held { .. })).count();
         let warnings = mine.iter().filter(|x| x.contended).count();
