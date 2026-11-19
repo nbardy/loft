@@ -4,7 +4,7 @@
 
 | Scene | Modules | Pipelines | Cmds/Frame | Cold / Warm Load | GPU p50 / p95 (Native) | Motion p95 (1 / 1,000) | Assumptions |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| **Hermit Boss (1 / 20)** | `12` / `12` | `15` / `15` | `19` / `19` | `1.15 s` / `0.06 s` *(cached deriv)* | `2.5 / 2.9 ms` (`1`), `4.5 / 5.2 ms` (`20`) | `0.14 ms` / `0.42 ms` *(2,368 B state)* | 1 crab: `7.2k` shell + `3.8k` leg tris, `140k` SDF px (`L=2.28`/`1.0`), `256k` fg px. 20 crabs: `140k` vis tris, `350k` SDF px, `665k` fg px. **predicted** |
+| **Hermit Boss (1 / 20)** | `12` / `12` | `15` / `15` | `19` / `19` | `1.15 s` / `0.06 s` *(cached deriv)* | `2.5 / 2.9 ms` (`1`), `4.5 / 5.2 ms` (`20`) | `0.14 ms` / `0.42 ms` *(2,928 B state)* | 1 crab: `7.2k` shell + `3.8k` leg tris, `140k` SDF px (`L=2.28`/`1.0`), `256k` fg px. 20 crabs: `140k` vis tris, `350k` SDF px, `665k` fg px. **predicted** |
 | **Heron Hunting (1)** | `10` | `12` | `14` | `0.85 s` / `0.05 s` | `1.9 / 2.2 ms` | `0.08 ms` / `0.17 ms` *(352 B state)* | `5.6k` tris + `18k` head SDF px + `120k` fg px; `plan` CPU solve `2.8 ms`, GPU 600-tick bake `0.7 ms`. **predicted** |
 | **Coral Shrine (Close / Far)** | `8` / `8` | `9` / `9` | `10` / `10` | `0.62 s` / `0.04 s` | `3.4 / 3.9 ms` / `1.6 / 1.9 ms` | `0.00 ms` *(static)* | `3,069` analytic cones (`Bvh2`, `310k` close px) + `95k` KIFS lantern px + dual shadow world. **predicted** |
 

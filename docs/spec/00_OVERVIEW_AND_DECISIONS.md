@@ -27,3 +27,12 @@ Loft is a **meta engine**: a tiny, slow-changing GPU runner and typed SSA IR (`c
 17. **Default `schedule` + prelude `Sun`/`Sky`.** Omitting `schedule Main` runs `engines::realtime::realtime` over all emitted drawable kinds, cutting ~120–150 tokens of scene boilerplate and preventing omitted-kind bugs.
 
 ---
+
+## 3. Scope: Flagship Pack #1 on an Unconstrained Substrate
+
+Layers 0 and 1 know nothing about creatures, PBR, fluids, splats or neural nets: they are typed memory arenas, a pass
+DAG with GPU-driven dispatch and loops, SSA math, deterministic host and GPU execution, pluggable backends, and gates.
+Procedural 3D, light and creature motion (`std::geom`, `std::light`, `std::stylised`, `std::motion`, the five engines)
+are **Flagship Pack #1**, built in Phases 1.5–5. Fluids, Gaussian splats, reverse-mode differentiation, neural
+shaders, spectral optics and ECS are future packs. They are not built now, and their seams stay open
+(`PATCH_V1_2.md` §6).

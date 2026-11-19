@@ -1,0 +1,26 @@
+You are Loft's auditor and integrator for one parallel wave. Repo ~/git/loft. You have no other context. Read docs/PHILOSOPHY.md, CORE.md, docs/spec/ (06 overrides, README rulings), docs/spec/QUIRKS.md and agent_notes/2026-11-20_v1/fanout_handoff.md.
+
+PHASE: __PHASE__. Lane branches: __BRANCHES__. Lane notes: agent_notes/2026-11-20_v1/lanes/__IDS__.
+
+1. **Audit each lane's diff** (`git diff main...<branch>`). Check:
+   - correctness against the spec;
+   - no weakened tolerances;
+   - no changes to frozen types;
+   - no domain words in loft-runner/loft-ir (grep);
+   - line budgets per layer;
+   - sum types and typed errors.
+
+   Write agent_notes/2026-11-20_v1/reviews/__ID__.md with findings ranked MUST-FIX, SHOULD-FIX, NOTE.
+2. **Integrate.**
+   - Merge the lanes in a sensible order into an integration branch (cambium workspace __WS__ on __BRANCH__).
+   - Fix every MUST-FIX yourself.
+   - Leave out a lane that ESCALATEd or cannot be fixed, and say why.
+3. **Gate, with the GPU lock held.** Take the lock with `exec 9>/tmp/loft-gpu.lock; flock 9`. Then:
+   - run ONE full GPU gate for this phase: its row of docs/spec/05 §2 (predicted vs measured), the mutant gates, and the contention canary (a CONTENDED speed verdict is a warning, not a failure);
+   - write out/meta/__ID__/gate.json;
+   - release the lock.
+4. **Merge** into main and push, if the phase's gates pass. Otherwise do not merge, and write exactly what failed.
+
+Commit messages end with "Co-Authored-By: GPT (codex) <noreply@openai.com>".
+
+Final message ≤200 words: gates predicted vs measured, lanes merged or left out, and the merged sha.
