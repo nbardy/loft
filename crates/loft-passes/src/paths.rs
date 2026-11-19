@@ -5,7 +5,6 @@ use loft_ir::{Code, Diag, Res, Span};
 use loft_parse::ast::{QueryKind, Ty};
 #[path="path_twin.rs"]
 pub mod cpu;
-#[path = "paths/shadow.rs"]
 use std::{collections::BTreeSet, fmt::Write};
 
 #[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
