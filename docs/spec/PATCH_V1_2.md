@@ -68,9 +68,29 @@ Drop glTF export (keep import and retargeting). Add the `.loftb` zero-compiler r
   render kinds. Tier 1 compiles asynchronously (~100 ms). If the `StateStoreDecl` layout hash is unchanged, the live
   `StateBuf` and checkpoint rings survive the swap. They reset cleanly only when the state's fields changed.
 
-## 6. Explicit non-goals (also in `00_OVERVIEW_AND_DECISIONS.md`)
-- **The host owns gameplay ECS.** Dynamic component composition lives in the host (Keel, Three.js, game code), which
-  drives Loft through `upsert_rows` and `push_input`.
-- **No multi-pass reverse-mode GPU AD or tensor-core MMA in v1.** Inverse rendering and neural training run
-  externally (PyTorch, MLX, CUDA) and exchange data through buffers and assets.
-- **A single-queue wgpu substrate.** Layer 0 has no custom Vulkan/Metal multi-queue or mesh-shader backends.
+## 6. Unconstrained meta-engine seams (reserved in Step 0; their library packs come after v1.0)
+Loft's Layer 0/1 substrate is domain-agnostic. Procedural 3D, lighting and creature motion are **Flagship Pack #1**,
+not an architectural ceiling. Reserve these four seams in `loft-ir` / `loft-runner` (~70 LOC) without building the
+packs that will use them during Phases 1.5–5:
+
+1. **Pluggable backends and targets.** `ModuleBlob { id, hash, target: ShaderTarget, bytes }`, where `ShaderTarget` is
+   `NagaIr | Wgsl | Msl | Spirv | Ptx | Wasm`. The runner implements an `ExecutionBackend` trait covering attach,
+   load_bundle, upsert_rows, encode_into, step_pass_cpu and so on. v1.0 has `WgpuBackend` only; native Metal, CUDA
+   or WASM backends plug in later. External memory interop (adopt and export raw buffers) goes through the same trait.
+2. **GPU-driven pass loops and queue hints.** `PassDecl.queue: QueueClass` (`Graphics | AsyncCompute | Transfer`) is
+   ignored by `WgpuBackend`. `PassRun` gains `PassLoop { max_iters, cond_buf: Option<(TableId, u32)>, body: Box<[PassDecl]> }`.
+   It stops early when `cond_buf[offset] == 0`, which covers CFL substeps, wavefront tracing and Poisson solves. On
+   wgpu it unrolls to bounded indirect dispatches, where an empty iteration writes (0,0,0).
+3. **Kind-agnostic tables.** A `TableDecl` needs no owning `KindId`. Any library can allocate SoA component arrays,
+   brick pools or weight tensors through `TableDecl` + `PassBinding`.
+4. **Open IR and strict desugaring.**
+   - `Op::Intrinsic { name: SymId, args: Box<[ValId]> }` holds future MMA, atomics and subgroup ops.
+   - Every Layer 2 pass (AD, intervals, law fusion, emit, …) is a standalone `Fn(&mut IrModule) -> Result<()>` in a
+     pass registry.
+   - Every flagship construct (`body`, `law`, `solver`, `plan`, `Bsdf`, `VisRec`) lowers strictly to universal
+     `Table + Kernel + Pass` IR in `loft-passes`, and is never special-cased in `loft-runner`.
+
+Deferred packs (`std::fluid` MLS-MPM/CFD, `std::splat` 3D/4DGS, `std::diff` reverse-mode vjp, `std::neural` MMA,
+`std::spectral`, `std::ecs`) ship later as ordinary `.loft` libraries and optional Layer 2 passes, with zero Layer 0/1
+rewrites. They use the same terse surface: `build fn` constructs tables and rows, and `schedule` wires the passes.
+None of them is built during Phases 1.5–5.

@@ -28,10 +28,11 @@ Loft is a **meta engine**: a tiny, slow-changing GPU runner and typed SSA IR (`c
 
 ---
 
-## 3. Explicit Non-Goals (Layer 0)
+## 3. Scope: Flagship Pack #1 on an Unconstrained Substrate
 
-- **Host owns gameplay ECS.** Dynamic component composition lives in the host (Keel, Three.js, game code) and drives
-  Loft via `upsert_rows` and `push_input`.
-- **No multi-pass reverse-mode GPU AD or tensor-core MMA in v1.** Inverse rendering and neural training run externally
-  (PyTorch/MLX/CUDA) and exchange data through shared buffers and assets.
-- **Single-queue wgpu substrate.** No custom Vulkan/Metal multi-queue or mesh-shader backends in Layer 0.
+Layers 0 and 1 know nothing about creatures, PBR, fluids, splats or neural nets: they are typed memory arenas, a pass
+DAG with GPU-driven dispatch and loops, SSA math, deterministic host and GPU execution, pluggable backends, and gates.
+Procedural 3D, light and creature motion (`std::geom`, `std::light`, `std::stylised`, `std::motion`, the five engines)
+are **Flagship Pack #1**, built in Phases 1.5–5. Fluids, Gaussian splats, reverse-mode differentiation, neural
+shaders, spectral optics and ECS are future packs. They are not built now, and their seams stay open
+(`PATCH_V1_2.md` §6).
