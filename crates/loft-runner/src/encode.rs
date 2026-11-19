@@ -30,7 +30,11 @@ impl Group {
                         resource: match (images.views.get(id), images.samplers.get(id)) {
                             (Some((view, _)), None) => wgpu::BindingResource::TextureView(view),
                             (None, Some(sampler)) => wgpu::BindingResource::Sampler(sampler),
-                            _ => tables[id].bytes()?.as_entire_binding(),
+                            (None, None) if self.index == 3 => {
+                                return Err(RunnerError::Unsupported("external texture or sampler binding"));
+                            }
+                            (None, None) => tables[id].bytes()?.as_entire_binding(),
+                            (Some(_), Some(_)) => return Err(RunnerError::AbiMismatch),
                         },
                     })
                 })

@@ -959,6 +959,12 @@ impl<'p,'a> Ck<'p,'a> {
             ExprKind::Binary(op, a, b) => {
                 let ta = self.expr(a)?;
                 let tb = self.expr(b)?;
+                // Build loop counters scale physical quantities through the CPU evaluator's scalar conversion.
+                if self.comptime && matches!((*op, &ta, &tb),
+                    (BinOp::Mul, Ty::U32 | Ty::I32, Ty::F32) | (BinOp::Mul, Ty::F32, Ty::U32 | Ty::I32))
+                {
+                    return Ok(Ty::F32);
+                }
                 binary(*op, &ta, &tb, a.span, b.span, e.span).map_err(|d| {
                     // A value from a map space used outside it (the draft's gaze bug): quote the author's transform
                     // and point at the map that made the space.
