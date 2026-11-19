@@ -44,20 +44,26 @@ query_decl:  QUERY_NAME "(" params? ")" fn_body
 
 body_decl:   "body" UIDENT "{" (_NL? body_item (_sep body_item)* _sep?)? "}"
 body_item:   waive_stmt
-           | "trunk" "{" field_inits "}"
-           | "chain" LIDENT ("[" expr "]")? ":" LIDENT "{" field_inits "}"
-           | "segment" LIDENT "{" field_inits "}"
-           | "build" "for" for_bind ("," for_bind)* "{" _NL? (body_item | stmt) (_sep (body_item | stmt))* _sep? "}"
+           | "trunk" body_fields
+           | "chain" LIDENT ("[" expr "]")? ":" LIDENT body_fields
+           | "segment" LIDENT body_fields
+           | "build" "for" body_bind ("," body_bind)* "{" _NL? body_loop_item (_sep body_loop_item)* _sep? "}"
+body_loop_item: body_item | "let" LIDENT "=" expr
+body_bind: LIDENT "in" expr ".." expr
+body_fields: "{" (_NL? body_field (("," _NL? | _sep) body_field)* ("," _NL? | _sep)?)? "}"
+body_field: LIDENT ":" (expr (".." expr)? | body_fields)
 
 state_decl:  "state" UIDENT ("checkpoint" INT)? ("home" LIDENT)? "{" (_NL? col (("," | _sep) col)* ("," | _sep)?)? "}"
 
 law_decl:    "law" LIDENT "(" params ")" "writes" write_set block
 write_set:   LIDENT ("." "{" ident_list "}")?
 
-solver_decl: "solver" UIDENT "over" path_ref ("writes" write_set)? "config" "{" field_inits "}" block
+solver_decl: "solver" UIDENT "over" path_ref (_NL? "writes" (LIDENT | UIDENT) ("." "{" ident_list "}")?)? _NL? "config" "{" field_inits "}" _NL? solver_block
+solver_block: "{" (_NL? solver_step (_sep solver_step)* _sep?)? "}"
+solver_step: stmt | "constrain" LIDENT "(" LIDENT "," LIDENT ")" "in" expr ".." expr block
 path_ref:    IDENT ("." LIDENT)*
 
-plan_decl:   "plan" UIDENT "(" params? ")" "->" type_expr "{" _NL? ("knots" ":" INT "," "duration" ":" expr _sep)? "minimize" expr _sep "subject_to" block _sep? "}"
+plan_decl:   "plan" UIDENT "(" params? ")" "->" type_expr "{" _NL? ("knots" ":" INT "," "duration" ":" expr _sep)? "minimize" expr _sep "subject_to" "{" (_NL? expr (_sep expr)* _sep?)? "}" _sep? "}"
 check_decl:  "check" LIDENT "(" params ")" "->" type_expr block
 retarget_decl: "retarget" UIDENT "from" UIDENT "to" UIDENT "{" field_inits "}"
 
@@ -95,7 +101,6 @@ stmt:        "let" LIDENT (":" type_expr)? "=" expr
            | "map" LIDENT "=" expr
            | build_for_stmt
            | "for" LIDENT "in" expr ".." expr block
-           | "constrain" LIDENT "(" LIDENT "," LIDENT ")" "in" expr ".." expr block
            | "yield" expr
            | "return" expr
            | lhs "=" expr

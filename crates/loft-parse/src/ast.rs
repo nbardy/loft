@@ -37,10 +37,67 @@ pub enum Item {
     /// `build { ... }`: an anonymous build fn; the default engine runs every one in source order.
     Build(FnDecl),
     Law(LawDecl),
+    Body(Ident, Vec<BodyItem>),
+    State(StateDecl),
+    Solver(SolverDecl),
+    Plan(PlanDecl),
     Kernel(KernelDecl),
     /// `check name(h: K, ...) -> unit { ... }`: `ret` is the verdict's unit.
     Check(FnDecl),
     Camera(CameraDecl),
+}
+
+#[derive(serde::Serialize, Clone, Debug)]
+pub enum BodyItem {
+    Trunk(Ident, BodyFields),
+    Segment(Ident, BodyFields),
+    Chain(Ident, Option<Expr>, Ident, BodyFields),
+    For(Ident, Expr, Expr, Vec<BodyItem>),
+    Let(Ident, Expr),
+    Waive(Ident, Ident),
+}
+
+pub type BodyFields = Vec<(Ident, BodyValue)>;
+
+#[derive(serde::Serialize, Clone, Debug)]
+pub enum BodyValue {
+    Value(Expr),
+    Lengths(Vec<Expr>),
+    Range(Expr, Expr),
+    Record(BodyFields),
+}
+
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct StateDecl {
+    pub name: Ident,
+    pub checkpoint: Option<u32>,
+    pub home: Option<Ident>,
+    pub fields: Vec<RowField>,
+}
+
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct SolverDecl {
+    pub name: Ident,
+    pub table: Vec<Ident>,
+    pub writes: Option<(Ident, Vec<Ident>)>,
+    pub config: Vec<(Ident, Expr)>,
+    pub steps: Vec<SolverStep>,
+}
+
+#[derive(serde::Serialize, Clone, Debug)]
+pub enum SolverStep {
+    Statement(Stmt),
+    Constraint { name: Ident, a: Ident, b: Ident, lo: Expr, hi: Expr, block: Block },
+}
+
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct PlanDecl {
+    pub name: Ident,
+    pub params: Vec<RowField>,
+    pub ret: TyExpr,
+    pub horizon: Option<(u32, Expr)>,
+    pub objective: Expr,
+    pub holds: Vec<Expr>,
 }
 
 /// Permissions checked at a kernel's typed boundary.

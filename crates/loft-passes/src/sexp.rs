@@ -74,8 +74,9 @@ pub fn read(text: &str) -> Result<Program, String> {
         let valid_entry = p.modules.get(step.module).is_some_and(|m| m.naga.entry_points.iter().any(|e|
             e.name == step.entry && e.stage == naga::ShaderStage::Compute && e.workgroup_size == [step.workgroup_x, 1, 1]));
         let mut slots = std::collections::BTreeSet::new();
-        let valid_bindings = step.bindings.iter().all(|b| b.group < 4 && slots.insert((b.group, b.slot)));
-        if !valid_table || !valid_entry || !valid_bindings || step.fields.is_empty() && step.checks.is_empty() {
+        let valid_bindings = step.bindings.iter().all(|b| b.group < 4 && slots.insert((b.group, b.slot)))
+            && step.input.view(&p.kinds).is_some_and(|(_, _, stride, _)| step.fields.iter().all(|(_, offset)| *offset < stride));
+        if !valid_table || !valid_entry || !valid_bindings {
             return Err(
                 "invalid motion entry; supply an existing kind and its writes or checks".into(),
             );
@@ -130,8 +131,10 @@ mod tests {
             },
             sun: [0.; 3],
             params: vec![],
+            param_ranges: vec![],
             shadow_size: 0,
             luts: vec![],
+            priors: Default::default(),
             passes: vec![Pass::Cull],
             cull: 0,
             classify: 0,

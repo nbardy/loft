@@ -1,0 +1,107 @@
+space World
+
+const CRAB_HEIGHT = 0.49m
+const CRAB_WIDTH = 0.82m
+const CRAB_TOE_R = 0.025m
+const CRAB_LONG = 0.68m
+const CRAB_SHORT = 0.48m
+
+# The eight sockets alternate groups on each side. Either group spans the
+# centre line on both sides, so its x interval at z = 0 is [pin-width, pin+width].
+fn crab_group(i: u) -> f = f32((i + i / 4) % 2)
+fn crab_side(i: u) -> f = select(-1.0, 1.0, i >= 4)
+fn crab_depth(i: u) -> f = (f32(i % 4) - 1.5) * 0.22m
+
+kind Scramble @World (
+  x: f = 0.0, vx: f = 0.6, a_pin: f = 0.0, b_pin: f = 0.0,
+  phase: f = 0.0, swing: f = 0.0, aim: f = 0.0,
+  toe_bias: f = 0.0
+) {
+  trace(p) {
+    let trunk = [x, CRAB_HEIGHT, 0.0]@World
+    var d = round_box(p - trunk, [0.38, 0.19, 0.46], 0.12)
+    for i in 0..8 {
+      let hip = crab_hip(self, i)
+      let toe = crab_end(self, i)
+      let knee = solve_2bone_ik(hip, toe, CRAB_SHORT, CRAB_LONG, crab_pole(i))
+      d = min(d, min(capsule(p, hip, knee, 0.055), capsule(p, knee, toe, CRAB_TOE_R)))
+    }
+    for i in 0..2 {
+      let s = select(-1.0, 1.0, i == 1)
+      let palm = trunk + [s * 0.41, -0.065, 0.42]
+      d = min(d, capsule(p, trunk + [s * 0.27, 0, 0.2], palm, 0.085))
+      d = min(d, capsule(p, palm, palm + [s * 0.05, -0.03, 0.22], 0.11))
+      let eye = trunk + [s * 0.14, 0.19, 0.32]
+      d = min(d, capsule(p, trunk + [s * 0.14, 0.08, 0.30], eye, 0.027))
+      d = min(d, sphere(p - eye, 0.045))
+    }
+    d
+  }
+  material(p, n) {
+    let light = smoothstep(0.10, CRAB_HEIGHT + 0.16, p.y)
+    let freckles = 0.85 + 0.25 * fbm2([p.x, 0.0, p.z] * 18.0)
+    ggx(mix([0.20, 0.048, 0.025], [0.75, 0.21, 0.086], light) * freckles, 0.34, 0) +
+      coat(0.45, 0.12)
+  }
+}
+
+fn crab_hip(h: Scramble, i: u) -> p3@World =
+  [h.x + crab_side(i) * 0.24, CRAB_HEIGHT, 0.82 * crab_depth(i)]@World
+fn crab_pole(i: u) -> d3@World = dir([crab_side(i) * 0.4, 1.0, 0.0]@World)
+
+fn crab_anchor(h: Scramble, i: u) -> m = select(h.a_pin, h.b_pin, crab_group(i) == 1.0)
+
+fn crab_end(h: Scramble, i: u) -> p3@World {
+  let swing = roam_toe(crab_anchor(h, i), h.aim, h.phase, crab_group(i) == h.swing, 0.095m)
+  let toe = [swing.x + crab_side(i) * CRAB_WIDTH + h.toe_bias, CRAB_TOE_R + swing.y, crab_depth(i)]@World
+  ik_reachable_end(crab_hip(h, i), toe, CRAB_SHORT, CRAB_LONG, crab_pole(i))
+}
+
+law scramble_step(h: Scramble, dt) writes h.{x, vx, a_pin, b_pin, phase, swing, aim} {
+  let lo = if h.phase > 0.0 { select(h.a_pin, h.b_pin, h.swing == 0.0) } else { min(h.a_pin, h.b_pin) }
+  let hi = if h.phase > 0.0 { select(h.a_pin, h.b_pin, h.swing == 0.0) } else { max(h.a_pin, h.b_pin) }
+  let accel = roam_accel(h.x, h.vx, -0.6, CRAB_HEIGHT, lo - CRAB_WIDTH, hi + CRAB_WIDTH, 6.0)
+  let cp = capture_point_ff([h.x, CRAB_HEIGHT, 0.0]@World,
+    [h.vx, 0.0, 0.0]@World - [0.0, 0.0, 0.0]@World, CRAB_HEIGHT,
+    [accel, 0.0, 0.0]@World - [0.0, 0.0, 0.0]@World,
+    [0.0, 0.0, 0.0]@World - [0.0, 0.0, 0.0]@World,
+    [0.0, 0.0, 0.0]@World - [0.0, 0.0, 0.0]@World,
+    [0.0, -9.81, 0.0]@World - [0.0, 0.0, 0.0]@World)
+  let step = roam_swing(h.a_pin, h.b_pin, h.phase, h.swing, h.aim, cp.x, 0.087m, dt, 0.10s)
+  let landed = step.x == 1.0
+  h.x = h.x + dt * (h.vx + 0.5 * dt * accel)
+  h.vx = h.vx + dt * accel
+  h.a_pin = select(h.a_pin, step.z, landed && step.y == 0.0)
+  h.b_pin = select(h.b_pin, step.z, landed && step.y == 1.0)
+  h.phase = select(step.x, 0.0, landed)
+  h.swing = step.y
+  h.aim = step.z
+}
+
+check crab_planted(h: Scramble) -> m {
+  var drift = 0.0
+  for i in 0..8 {
+    let anchor = [crab_anchor(h, i) + crab_side(i) * CRAB_WIDTH, CRAB_TOE_R, crab_depth(i)]@World
+    let error = dist(crab_end(h, i), anchor)
+    drift = max(drift, select(error, 0.0, h.phase > 0.0 && crab_group(i) == h.swing))
+  }
+  return if drift > 0.05mm { missed(drift) } else { held(0.05mm - drift) }
+}
+
+check crab_clearance(h: Scramble) -> m {
+  var clearance = CRAB_HEIGHT
+  for i in 0..8 { clearance = min(clearance, crab_end(h, i).y - CRAB_TOE_R) }
+  return if clearance < -2mm { missed(-clearance) } else { held(clearance + 2mm) }
+}
+
+kind ScrambleBed @World () {
+  trace(p) = box_sdf(p - [-0.8, -0.06, 0.0]@World, [4.8, 0.06, 3.0])
+  material(p, n) = ggx([0.29, 0.23, 0.17] * (0.84 + 0.29 * fbm2([p.x, 0.0, p.z] * 5.0)), 0.84, 0)
+}
+
+camera Main { at: [-0.25, 0.45, 0.0]@World, radius: 3.5m, height: 1.25m, period: 24s, fov: 40deg }
+build { emit Scramble(); emit ScrambleBed() }
+schedule Main {
+  run_laws(scramble_step)
+  check(crab_planted, crab_clearance)
+}

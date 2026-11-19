@@ -2,7 +2,7 @@
 # cli. Independent of the legacy rust/ workspace beside it; build through tools/dev.sh, which takes the compile lock.
 [workspace]
 resolver = "3"
-members = ["crates/loft-abi", "crates/loft-ir", "crates/loft-parse", "crates/loft-plan", "crates/loft-passes", "crates/loft-runner", "crates/loft-cli"]
+members = ["crates/loft-abi", "crates/loft-ir", "crates/loft-parse", "crates/loft-plan", "crates/loft-passes", "crates/loft-runner", "crates/loft-std", "crates/loft-cli"]
 exclude = ["rust"]
 
 [workspace.package]

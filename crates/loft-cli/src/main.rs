@@ -96,6 +96,7 @@ fn command(mut args: Vec<String>) -> Result<(), Failure> {
     };
     match cmd.as_str() {
         "ir" | "build" if cmd == "ir" || args.get(1).is_some_and(|p| p.ends_with(".sexp")) => {
+            let telemetry = if cmd == "build" { flag(&mut args, "--json")? } else { None };
             let output = flag(&mut args, "-o")?;
             args.retain(|a| a != "--sexp");
             exact(&args, 2, 2)?;
@@ -107,36 +108,56 @@ fn command(mut args: Vec<String>) -> Result<(), Failure> {
                 let src = sources(&path).map_err(Failure::Usage)?;
                 loft_passes::compile(&src, &set).map_err(|d| Failure::Compile(render(&d, &src)))?.0
             };
+            if let Some(path) = telemetry {
+                profile::write_json(&path, &loft_passes::telemetry::collect(&program))?;
+            }
             let text = loft_passes::sexp::write(&program).map_err(Failure::Compile)?;
             if let Some(out) = output { std::fs::write(out, text).map_err(|e| Failure::Usage(e.to_string()))?; }
             else if cmd == "ir" { println!("{text}"); }
             Ok(())
         }
+        "build" if let Some(path) = flag(&mut args, "--json")? => {
+            exact(&args, 2, 2)?;
+            let src = sources(&scene(&args)?).map_err(Failure::Usage)?;
+            let (program, _, _) = loft_passes::compile(&src, &set)
+                .map_err(|d| Failure::Compile(render(&d, &src)))?;
+            profile::write_json(&path, &loft_passes::telemetry::collect(&program))
+        }
         "build" => build::run(&args[1..], &set),
         "render" => render::run(&args[1..]),
         "clip" => clip::run(&args[1..], &set),
-        "profile" => profile::run(&args[1..]),
+        "profile" => profile::run(&args[1..], &set),
         "fmt" => fmt::run(&args[1..]),
         "fork" => fork::run(&args[1..]),
-        "check" | "show" => {
-            exact(&args, 2, if cmd == "show" { 3 } else { 2 })?;
+        "show" => {
+            let kind = flag(&mut args, "--kind")?;
+            let json = args.iter().any(|a| a == "--json");
+            let plan = args.iter().any(|a| a == "--plan");
+            args.retain(|a| a != "--json" && a != "--plan");
+            exact(&args, 2, if kind.is_some() { 2 } else { 3 })?;
+            let src = sources(&scene(&args)?).map_err(Failure::Usage)?;
+            let (program, _, _) = loft_passes::compile(&src, &set)
+                .map_err(|d| Failure::Compile(render(&d, &src)))?;
+            profile::show(&program, kind.as_deref().or_else(|| args.get(2).map(String::as_str)), plan, json)
+        }
+        "check" => {
+            exact(&args, 2, 2)?;
             let src = sources(&scene(&args)?).map_err(Failure::Usage)?;
             let (program, report, _) = loft_passes::compile(&src, &set).map_err(|d| Failure::Compile(render(&d, &src)))?;
-            if cmd == "show" {
-                for m in program.modules.iter().filter(|m| args.get(2).is_none_or(|n| *n == m.name)) {
-                    println!("// ===== module {} =====\n{}", m.name, m.wgsl);
-                }
-                return Ok(());
+            let mut failed = false;
+            for (name, &header) in &program.priors {
+                let held = program.luts[header as usize + 3].to_bits() == 1;
+                println!("plan {name}: {}", if held { "Held" } else { "Unknown(SolveFailed)" });
+                failed |= !held;
             }
             if program.dispatches.iter().any(|m| !m.checks.is_empty()) {
                 let g = loft_cli::native::gpu().map_err(Failure::Device)?;
-                let mut failed = false;
                 for (name, verdict) in gates::authored_checks(&g, &program, time).map_err(Failure::Device)? {
                     println!("check {name} at t={time}: {verdict}");
                     failed |= !matches!(verdict, loft_ir::Verdict::Held { .. });
                 }
-                if failed { return Err(Failure::Truth("authored checks failed".into())); }
             }
+            if failed { return Err(Failure::Truth("authored checks failed".into())); }
             for k in &report.kinds {
                 println!("kind {:<12} {:?}  rows {:>4}  shapes {:>3}  derived L {:.4}..{:.4}  bound evals {}",
                     k.name, k.draw, k.rows, k.shapes, k.l_min, k.l_max, k.evals);
@@ -145,6 +166,14 @@ fn command(mut args: Vec<String>) -> Result<(), Failure> {
             Ok(())
         }
         "still" => {
+            let edit = flag(&mut args, "--edit")?;
+            let kind = flag(&mut args, "--kind")?;
+            if let Some(edit) = edit {
+                exact(&args, 3, 3)?;
+                let kind = kind.ok_or_else(|| Failure::Usage("still --edit needs --kind K".into()))?;
+                return gates::edited_still(&scene(&args)?, Path::new(&edit), &kind, &set, time, Path::new(&args[2]), max_frame);
+            }
+            if kind.is_some() { return Err(Failure::Usage("still --kind needs --edit SOURCE".into())); }
             exact(&args, 3, 3)?;
             gates::still(&scene(&args)?, &set, time, Path::new(&args[2]), max_frame)
         }

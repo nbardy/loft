@@ -5,6 +5,8 @@
 
 #[path = "kernel_units.rs"]
 mod kernel_units;
+#[path = "motion_source.rs"]
+mod motion_source;
 use crate::Prog;
 use loft_parse::ast::*;
 use loft_ir::{Code, Diag, Res, Span};
@@ -79,6 +81,7 @@ pub fn check(p: &Prog, types: &mut Vec<Ty>) -> Res<CheckedEffects> {
             ck.assignable(&t, &want, c.value.span)?; if t==Ty::AbstractInt {ck.set(&c.value,want);}
         }
     }
+    motion_source::check(&mut ck)?;
     for sc in p.scans.values() { ck.scan(sc)?; }
     for f in p.fns.values() { ck.func(f, None)?; }
     for k in p.kinds.values() {
@@ -237,7 +240,7 @@ impl<'p,'a> Ck<'p,'a> {
                     )),
                 };
             }
-            if matches!(s.name.as_str(), "World" | "Local") || self.p.spaces.contains(s.name.as_str()) {
+            if matches!(s.name.as_str(), "World" | "Local") || self.comptime && !self.p.bodies.is_empty() && s.name == "Body" || self.p.spaces.contains(s.name.as_str()) {
                 Ok(Space::Named(s.name.clone()))
             } else {
                 Err(Diag::new(
@@ -1036,6 +1039,14 @@ impl<'p,'a> Ck<'p,'a> {
                     )),
                 }
             }
+            Ty::Struct(k) if k == "PriorSample" => match m.name.as_str() {
+                "pos" => Ok(Ty::Geo(Geo::Pt, Space::Named("World".into()))),
+                "vel" => Ok(Ty::Geo(Geo::Vec, Space::Named("World".into()))),
+                "rot" => Ok(Ty::VecN(4)),
+                "compliance" => Ok(Ty::F32),
+                "active" => Ok(Ty::Bool),
+                _ => Err(e003(m.span, "unknown prior sample field", "use pos, vel, rot, compliance or active")),
+            },
             Ty::Struct(k) => {
                 let (_, fields) = self.p.structs[k.as_str()];
                 let f = fields.iter().find(|f| f.name.name == m.name).ok_or_else(||
@@ -1057,6 +1068,24 @@ impl<'p,'a> Ck<'p,'a> {
         if let Some(a) = args.iter().find_map(|a| a.name.as_ref()) {
             return Err(Diag::new(Code::E405, a.span, "named arguments are schedule-only in Phase 0", "pass arguments by position"));
         }
+        if callee.name == "sample_prior" {
+            let [prior, time] = args else {
+                return Err(e003(span, "sample_prior needs two arguments", "write sample_prior(PlanName, t)"));
+            };
+            let decl = match &prior.value.kind {
+                ExprKind::Name(name) => self.p.plans.get(name.as_str()),
+                _ => None,
+            }.ok_or_else(|| e003(prior.value.span, "expected a named plan", "name a declared plan"))?;
+            if self.ownership.is_none() || decl.params.iter().any(|p| p.default.is_none()) {
+                return Err(Diag::new(Code::E405, span, "sample_prior needs a closed plan and a motion law",
+                    "bind every plan parameter at Stage 0 and sample from a law"));
+            }
+            let actual = self.expr(&time.value)?;
+            self.assignable(&actual, &Ty::F32, time.value.span)?;
+            self.set(&time.value, Ty::F32);
+            self.set(&prior.value, Ty::U32);
+            return Ok(Ty::Struct("PriorSample".into()));
+        }
         // `sample_c2(scan, t)`: the scan is named, not passed as a value.
         if matches!(callee.name.as_str(), "sample_c2" | "loft_dsample") {
             let want = if callee.name == "sample_c2" { 2 } else { 3 };
@@ -1076,11 +1105,29 @@ impl<'p,'a> Ck<'p,'a> {
         }
         if callee.name == "unknown" && !self.p.fns.contains_key("unknown") {
             if let [Arg { value: Expr { kind: ExprKind::Name(reason), .. }, .. }] = args
-                && reason.as_bytes().first().is_some_and(u8::is_ascii_uppercase)
+                && crate::fusion::reason(reason).is_some()
             {
                 return Ok(Ty::Verdict);
             }
             return Err(e003(span, "unknown verdict requires a reason tag", "write unknown(MissingSurface)"));
+        }
+        if callee.name == "emit_event" {
+            if self.ownership.is_none() && self.kernel.is_none() {
+                return Err(e003(span, "emit_event requires an effectful entry", "call it in a law, solver or kernel"));
+            }
+            let [tag, instance, site, payload] = args else {
+                return Err(e003(span, "emit_event needs four arguments", "provide tag, instance_id, site_id and payload"));
+            };
+            if !matches!(&tag.value.kind, ExprKind::Name(n) if n.as_bytes().first().is_some_and(u8::is_ascii_uppercase)) {
+                return Err(e003(tag.value.span, "expected an event symbol", "name the event tag with an initial capital"));
+            }
+            self.set(&tag.value, Ty::U32);
+            for (arg, want) in [(instance, Ty::U32), (site, Ty::U32), (payload, Ty::VecN(4))] {
+                let actual = self.expr(&arg.value)?;
+                self.assignable(&actual, &want, arg.value.span)?;
+                self.set(&arg.value, want);
+            }
+            return Ok(Ty::Void);
         }
         let ts: Vec<Ty> = args.iter().map(|a| self.expr(&a.value)).collect::<Res<_>>()?;
         let sp: Vec<Span> = args.iter().map(|a| a.value.span).collect();
@@ -1426,6 +1473,7 @@ fn builtin(name: &str, ts: &[Ty], sp: &[Span], span: Span) -> Res<Ty> {
         "acos" | "log" | "abs" | "sqrt" | "sin" | "cos" | "exp" | "floor" | "fract" | "sign" | "saturate" => componentwise(1),
         "min" | "max" | "pow" | "step" => componentwise(2),
         "clamp" | "smoothstep" => componentwise(3),
+        "fma" if matches!(ts, [Ty::F32, Ty::F32, Ty::F32]) => Ok(Ty::F32),
         "smootherstep" | "loft_dsmoothstep" | "loft_dsmootherstep" => {
             arity(3)?;
             for (t, s) in ts.iter().zip(sp) {

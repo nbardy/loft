@@ -310,6 +310,204 @@ impl<'src> Parser<'src, '_> {
         self.pop();
         Ok(n)
     }
+    fn columns(&mut self, close: &str) -> Res<Vec<RowField>> {
+        self.seps();
+        let mut fields = vec![];
+        while !self.eat(close) {
+            fields.push(self.column()?);
+            if !self.eat(",") && !self.is(close) {
+                self.end()?;
+            }
+            self.seps();
+        }
+        Ok(fields)
+    }
+
+    fn body_fields(&mut self) -> Res<BodyFields> {
+        self.expect("{")?;
+        self.seps();
+        let mut fields = vec![];
+        while !self.eat("}") {
+            let key = self.ident()?;
+            self.expect(":")?;
+            let value = if key.name == "lens" && self.eat("[") {
+                // Length lists have one entry per segment, including single-segment chains.
+                BodyValue::Lengths(self.list("]")?.into_iter().map(|arg| arg.value).collect())
+            } else if self.is("{") {
+                BodyValue::Record(self.body_fields()?)
+            } else {
+                let lo = self.expr(0)?;
+                if self.eat("..") {
+                    BodyValue::Range(lo, self.expr(0)?)
+                } else {
+                    BodyValue::Value(lo)
+                }
+            };
+            fields.push((key, value));
+            if !self.eat(",") {
+                self.end()?;
+            }
+            self.seps();
+        }
+        Ok(fields)
+    }
+
+    fn body_items(&mut self, in_loop: bool) -> Res<Vec<BodyItem>> {
+        self.expect("{")?;
+        self.seps();
+        let mut items = vec![];
+        while !self.eat("}") {
+            let keyword = self.cur().span;
+            let item = if self.eat("trunk") {
+                BodyItem::Trunk(named("trunk", keyword), self.body_fields()?)
+            } else if self.eat("segment") {
+                BodyItem::Segment(self.ident()?, self.body_fields()?)
+            } else if self.eat("chain") {
+                let name = self.ident()?;
+                let index = if self.eat("[") {
+                    let e = self.expr(0)?;
+                    self.expect("]")?;
+                    Some(e)
+                } else {
+                    None
+                };
+                self.expect(":")?;
+                BodyItem::Chain(name, index, self.ident()?, self.body_fields()?)
+            } else if self.eat("build") {
+                self.expect("for")?;
+                let mut binders = vec![];
+                loop {
+                    let var = self.ident()?;
+                    self.expect("in")?;
+                    let lo = self.expr(0)?;
+                    self.expect("..")?;
+                    binders.push((var, lo, self.expr(0)?));
+                    if !self.eat(",") { break; }
+                }
+                let mut nested = self.body_items(true)?;
+                for (var, lo, hi) in binders.into_iter().rev() {
+                    nested = vec![BodyItem::For(var, lo, hi, nested)];
+                }
+                items.extend(nested);
+                self.end()?;
+                continue;
+            } else if in_loop && self.eat("let") {
+                let name = self.ident()?;
+                self.expect("=")?;
+                BodyItem::Let(name, self.expr(0)?)
+            } else if self.eat("waive") {
+                let name = self.upper_ident()?;
+                if self.cur().kind != Kind::String {
+                    return self.err("a quoted waiver reason");
+                }
+                let reason = self.pop();
+                BodyItem::Waive(name, named(reason.text, reason.span))
+            } else {
+                return self.err("a trunk, segment, chain, waiver or build loop");
+            };
+            items.push(item);
+            self.end()?;
+        }
+        Ok(items)
+    }
+
+    fn solver(&mut self) -> Res<SolverDecl> {
+        let name = self.upper_ident()?;
+        self.expect("over")?;
+        let mut table = vec![self.ident()?];
+        while self.is(".") && self.tokens.get(self.at + 1).is_some_and(|t| t.kind == Kind::Word) {
+            self.pop();
+            table.push(self.ident()?);
+        }
+        self.seps();
+        let writes = if self.eat("writes") {
+            let owner = self.ident()?;
+            let mut fields = vec![];
+            if self.eat(".") {
+                self.expect("{")?;
+                while !self.eat("}") {
+                    fields.push(self.ident()?);
+                    if !self.eat(",") {
+                        self.expect("}")?;
+                        break;
+                    }
+                }
+            }
+            Some((owner, fields))
+        } else {
+            None
+        };
+        self.seps();
+        self.expect("config")?;
+        self.expect("{")?;
+        let config = self.fields("}")?;
+        self.seps();
+        self.expect("{")?;
+        self.seps();
+        let locals = self.locals.clone();
+        let maps = self.maps.clone();
+        let mut steps = vec![];
+        while !self.eat("}") {
+            let step = if self.eat("constrain") {
+                let name = self.ident()?;
+                self.expect("(")?;
+                let a = self.ident()?;
+                self.expect(",")?;
+                let b = self.ident()?;
+                self.expect(")")?;
+                self.expect("in")?;
+                let lo = self.expr(0)?;
+                self.expect("..")?;
+                let hi = self.expr(0)?;
+                let block = self.block(false)?;
+                SolverStep::Constraint { name, a, b, lo, hi, block }
+            } else {
+                SolverStep::Statement(self.stmt()?)
+            };
+            steps.push(step);
+            self.end()?;
+        }
+        self.locals = locals;
+        self.maps = maps;
+        Ok(SolverDecl { name, table, writes, config, steps })
+    }
+
+    fn plan(&mut self) -> Res<PlanDecl> {
+        let name = self.upper_ident()?;
+        self.expect("(")?;
+        let params = self.columns(")")?;
+        self.expect("->")?;
+        let ret = self.ty()?;
+        self.expect("{")?;
+        self.seps();
+        let horizon = if self.eat("knots") {
+            self.expect(":")?;
+            let knots = self.integer()?;
+            self.expect(",")?;
+            self.expect("duration")?;
+            self.expect(":")?;
+            let duration = self.expr(0)?;
+            self.end()?;
+            Some((knots, duration))
+        } else {
+            None
+        };
+        self.expect("minimize")?;
+        let objective = self.expr(0)?;
+        self.end()?;
+        self.expect("subject_to")?;
+        self.expect("{")?;
+        self.seps();
+        let mut holds = vec![];
+        while !self.eat("}") {
+            holds.push(self.expr(0)?);
+            self.end()?;
+        }
+        self.seps();
+        self.expect("}")?;
+        Ok(PlanDecl { name, params, ret, horizon, objective, holds })
+    }
+
     fn item(&mut self) -> Res<Item> {
         let public = self.eat("pub");
         let build = self.eat("build");
@@ -377,6 +575,23 @@ impl<'src> Parser<'src, '_> {
                 ty: t,
                 value,
             }));
+        }
+        if self.eat("body") {
+            return Ok(Item::Body(self.upper_ident()?, self.body_items(false)?));
+        }
+        if self.eat("state") {
+            let name = self.upper_ident()?;
+            let checkpoint = self.eat("checkpoint").then(|| self.integer()).transpose()?;
+            let home = self.eat("home").then(|| self.ident()).transpose()?;
+            self.expect("{")?;
+            let fields = self.columns("}")?;
+            return Ok(Item::State(StateDecl { name, checkpoint, home, fields }));
+        }
+        if self.eat("solver") {
+            return self.solver().map(Item::Solver);
+        }
+        if self.eat("plan") {
+            return self.plan().map(Item::Plan);
         }
         if self.eat("kind") {
             return self.kind().map(Item::Kind);
@@ -569,7 +784,7 @@ impl<'src> Parser<'src, '_> {
         Err(Diag::new(
             if matches!(
                 self.cur().text,
-                "body" | "state" | "solver" | "plan" | "target" | "world" | "retarget" | "input"
+                "target" | "world" | "retarget" | "input"
             ) {
                 Code::E405
             } else {
