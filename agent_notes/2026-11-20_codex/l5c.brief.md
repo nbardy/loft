@@ -22,4 +22,10 @@ Hard rules:
 
 Write agent_notes/2026-11-20_v1/lanes/l5c.md covering: what you built, the proof results, the files you touched, and the integration notes.
 
+File ownership: change only files your lane owns, together with the new files it creates. Step 0 pre-declared the hub entries in Cargo.toml, lib.rs and the CLI; fill in the stubs and do not add new ones. The integrator runs tools/lane_check.sh and rejects a lane that touches unowned files, adds crates or `#[ignore]`, or edits crates/loft-abi or tests/golden*.
+
+Corpus rules:
+- **Binary.** Use the prebuilt `target/release/loft` binary from main. Never `cargo build` or `cargo run`.
+- **Quarantine.** A scene that fails twice goes to corpus/quarantine/<name>.loft, with a one-line .err file giving the code (E211, E307, E602, or R0g) and an entry in out/meta/p5/quarantine.md. Then move on. Never change the compiler to make a scene pass.
+
 Final message ≤120 words.

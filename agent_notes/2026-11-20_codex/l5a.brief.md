@@ -9,8 +9,8 @@ Read these first:
 - crates/loft-abi, the frozen shared types and golden vectors
 
 PHASE: 5. YOUR LANE: L1 gltf-retarget.
-Scope: the glTF 2.0 loader and exporter (06 §18), retarget, and live PosePacket
-Proof before you finish, with NO GPU: glTF export error ≤1 mm; retargeted walk drift ≤0.1 mm on the CPU twin
+Scope: glTF 2.0 IMPORT only (06 §18; export is dropped, glTF is an edge adapter), retarget, and live PosePacket
+Proof before you finish, with NO GPU: imported mesh rows render through the Mesh kind on the CPU twin; retargeted walk drift ≤0.1 mm
 
 Hard rules:
 - **Your workspace.** Work only in your cambium workspace: `cd ~/git/loft && git cambium add -b loft/l5a -name loft-l5a -ephemeral ~/git/_wt/loft-l5a` (continue in it if it exists). Touch only your lane's files.
@@ -21,5 +21,7 @@ Hard rules:
 - **Commits.** Commit and push your branch after each milestone, staging by path. End each message with "Co-Authored-By: GPT (codex) <noreply@openai.com>". Do NOT merge into main.
 
 Write agent_notes/2026-11-20_v1/lanes/l5a.md covering: what you built, the proof results, the files you touched, and the integration notes.
+
+File ownership: change only files your lane owns, together with the new files it creates. Step 0 pre-declared the hub entries in Cargo.toml, lib.rs and the CLI; fill in the stubs and do not add new ones. The integrator runs tools/lane_check.sh and rejects a lane that touches unowned files, adds crates or `#[ignore]`, or edits crates/loft-abi or tests/golden*.
 
 Final message ≤120 words.
