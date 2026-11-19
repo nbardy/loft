@@ -499,6 +499,8 @@ impl Loaded {
             g.queue.write_buffer(&b, 0, bytes);
             b
         };
+        // Even a zero-workgroup cull validates the array binding against one 32-byte element.
+        if inst.is_empty() { inst.resize(32, 0); }
         let insts = init("instances", &inst, U::STORAGE);
         let bases_buf = init("bases", &bytes_of(&bases), U::STORAGE);
         let visible = buffer(d, "visible", u64::from(n_inst.max(1)) * 4, U::STORAGE);
@@ -638,7 +640,7 @@ impl Loaded {
             g.queue.submit([enc.finish()]);
             if let Some(c) = clock {
                 let times = read_clock(g, &c)?;
-                let ticks: u64 = times.chunks_exact(2).map(|pair| pair[1].saturating_sub(pair[0])).sum();
+                let ticks = times[times.len()-1].checked_sub(times[0]).ok_or("unordered load-bake timestamps")?;
                 stats.load_bake_gpu_ms = Some(ticks as f64 * c.period_ns / 1e6);
             }
         }
