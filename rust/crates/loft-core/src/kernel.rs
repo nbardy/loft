@@ -385,16 +385,17 @@ fn tape_width(ty: Ty) -> u8 {
     ty.lits()
 }
 
-/// Graph to tape: vectors become component registers, calls are inlined over their arguments.
-struct Lower<'g> {
-    g: &'g Graph,
-    ssa: Ssa,
+/// Graph to tape: vectors become component registers, calls are inlined over their arguments. The driver's Check
+/// and Solve programs lower their formulas and holds through it too (`analyses`).
+pub(crate) struct Lower<'g> {
+    pub(crate) g: &'g Graph,
+    pub(crate) ssa: Ssa,
 }
 
 impl Lower<'_> {
     /// The component registers of each root, with `binds` (binder node -> registers) in scope. Operands precede
     /// their users, so the reached nodes in id order are a valid evaluation order (no recursion on depth).
-    fn lower(&mut self, roots: &[u32], binds: &[(u32, Vec<Id>)]) -> Option<Vec<Vec<Id>>> {
+    pub(crate) fn lower(&mut self, roots: &[u32], binds: &[(u32, Vec<Id>)]) -> Option<Vec<Vec<Id>>> {
         let g = self.g;
         let mut memo: HashMap<u32, Vec<Id>> = binds.iter().cloned().collect();
         let (mut reach, mut stack) = (Vec::new(), roots.to_vec());

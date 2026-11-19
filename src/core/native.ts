@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import type { Precision } from "../host/manifest.ts";
 
 /** The addon this checkout expects (rust/crates/loft-node STAMP): bump both with any change to run's arguments or answer. */
-const STAMP = "loft-node abi 4 wire 2";
+const STAMP = "loft-node abi 5 wire 2";
 const BUILD = "tools/dev.sh build loft-node --fast";
 
 export type Program = "Scene" | "Solve" | "Evaluate" | "Check";
@@ -20,10 +20,25 @@ export type SceneReport = {
    * refused by the host). Under "f32": "NotAsked". */
   readonly mixed: "Valid" | "NotAsked" | { readonly Refused: string };
 };
-/** Rust's own time per phase, ns (loft-core `Phases`). */
-export type Phases = { readonly decode: number; readonly plan: number; readonly emit: number; readonly f16: number; readonly bundle: number };
+/** Rust's own time per phase, ns (loft-core `Phases`). `solve` and `prove` are a Solve or Check job's. */
+export type Phases = { readonly decode: number; readonly plan: number; readonly emit: number; readonly f16: number; readonly bundle: number; readonly solve: number; readonly prove: number };
+/** loft-core `check::Verdict` as serde writes it. */
+export type Verdict = {
+  readonly truth: "Holds" | "Fails" | { readonly Undecided: unknown }; readonly margin: number; readonly bounds: readonly [number, number];
+  readonly witness: readonly (readonly [number, number])[]; readonly work: { readonly boxes: number }; readonly scope: "Proved" | { readonly Sampled: { readonly n: number } };
+};
+export type Site = { readonly file: string; readonly line: number; readonly col: number };
+/** A Solve job leaves every hold "Unproved" (never a pass); a Check job proves each (loft-core `solve::Proof`). */
+export type Proof = "Unproved" | { readonly Checked: Verdict };
+export type SolveReport = {
+  readonly label: string; readonly curves: readonly (readonly [string, readonly number[]])[]; readonly holds: readonly (readonly [Site, Proof])[];
+  readonly rounds: number; readonly steps: number; readonly tape_ops: number;
+};
 /** The program driver's answer (loft-core `Report`). */
-export type Report = { readonly program: Program; readonly nodes: number; readonly decls: number; readonly scene: SceneReport | null; readonly phases: Phases };
+export type Report = {
+  readonly program: Program; readonly nodes: number; readonly decls: number; readonly scene: SceneReport | null;
+  readonly checks: readonly { readonly label: string; readonly verdict: Verdict }[]; readonly solves: readonly SolveReport[]; readonly phases: Phases;
+};
 type Kind = "usage" | "load" | "scene" | "budget" | "environment" | "internal";
 
 /** A typed refusal from the engine, or from loading it. `error` is the Rust `Error` as serde JSON (null for load faults). */

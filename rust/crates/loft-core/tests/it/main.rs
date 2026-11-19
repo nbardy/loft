@@ -5,6 +5,7 @@ mod analyses;
 mod draws;
 mod emit;
 mod kernels;
+mod solve;
 
 /// An f32 tolerance (plan §3.4): `got` holds against `want` when |got - want| <= rel · max(|want|, 1). The floor at 1
 /// holds a value that cancels to near zero to `rel` absolute, where a relative or ulp bound has no scale. Made only by

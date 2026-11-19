@@ -117,6 +117,14 @@ and last line.
   expression at that time. Holds must also have a CPU evaluator and derivatives, and read each unknown at the hold's own time.
   A clearance from a `skin` target is measured by a search, not an expression, and is refused as a hold the same way.
 
+**Proved holds come from `loft check`, not from the build** (decision 19 Nov 2026; Rust `loft_core::solve::Proof`).
+The build solves and reports each hold as `unproved`: the search met it at its samples in f64, and nothing has
+proved it over its window on the returned f32 curve. An `unproved` hold is never a pass, and a build never fails on
+one. `loft check` solves the same job and proves every hold over its window on the curve that is drawn. Each hold then
+reads `holds`, `undecided` (as for any ranged check, below), or the solve fails with `unsolved` naming the hold, the
+margin and the time where the returned curve breaks it. Proofs over rig holds take seconds (heron: about 145,000
+boxes), which is why the build does not run them.
+
 A hold the solver cannot read as a target or a bound is a scene error naming it: `eventually in a hold`, `a hold built
 by or` (or `not`), `a hold compared by eq`, and `a hold quantified over <param>` (params take their defaults while
 solving). Name the instant with `always([time, t, t], ...)`, choose the branch, and check other ranges after solving

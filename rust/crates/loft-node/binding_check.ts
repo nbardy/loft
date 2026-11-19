@@ -76,7 +76,7 @@ check(missing?.kind === "environment" && missing.code === 6, "a missing addon is
 const dir = mkdtempSync(join(tmpdir(), "loft-stale-"));
 const stale = join(dir, "libloft_node_stale.dylib");
 copyFileSync(addon, stale);
-const bytes = readFileSync(stale), at = bytes.indexOf("loft-node abi 4 wire 1");
+const bytes = readFileSync(stale), at = bytes.indexOf("loft-node abi 5 wire 2");
 check(at >= 0, "the stamp is in the binary");
 bytes[at + 14] = "9".charCodeAt(0);
 writeFileSync(stale, bytes);

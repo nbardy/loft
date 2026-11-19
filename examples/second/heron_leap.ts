@@ -89,22 +89,27 @@ export function holds(n: N, c: Parameters<typeof rig>[0]) {
   ];
 }
 
-/** The leap for these numbers: solved once, here, at build time. */
-export function leap(n: N, budget?: { readonly ms: number }) {
+/** The leap's problem for these numbers (what `leap` solves; the Rust solve bridge reads it too). */
+export function leapSpec(n: N, budget?: { readonly ms: number }) {
   // The search starts from a rough leap that goes over the rail (a local search keeps the side it starts on: from
   // feet at rest it finds the feet passing under the rail and the legs through it). The answer does not lean on it.
   const flight = clamp(div(sub(time, T.off), T.land - T.off), 0, 1), arch = sin(mul(flight, Math.PI)), across = smoothstep(T.off, T.land, time);
-  const solved = solve({
-    over: [0, T.end], budget,
+  return {
+    over: [0, T.end] as const, budget,
     // One number per 0.15 s, so takeoff (0.6) and landing (1.2) fall on knots: the flight's parabola starts and ends
     // exactly there, and the push before it is free to differ.
     vary: {
       x: spline(15, mul(across, n.deck.land)), y: spline(15, add(add(HIP, mul(across, n.deck.top)), mul(arch, 0.8))), pitch: spline(15),
       fx: spline(15, mul(across, n.deck.land)), fy: spline(15, add(mul(across, n.deck.top), mul(arch, 1.3))),
     },
-    hold: (c) => holds(n, c),
+    hold: (c: Parameters<typeof rig>[0]) => holds(n, c),
     prefer: { jerk: 1 },
-  });
+  };
+}
+
+/** The leap for these numbers: solved once, here, at build time. */
+export function leap(n: N, budget?: { readonly ms: number }) {
+  const solved = solve(leapSpec(n, budget));
   const { body, foot } = rig(solved.curves);
   const bird = heron(body, foot, { x: vec3(1, 0, 0), z: vec3(0, 0, 1) });
   return { solved, body, foot, bird };
