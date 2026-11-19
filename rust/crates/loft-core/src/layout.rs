@@ -45,8 +45,15 @@ enum Kind {
 }
 
 pub fn layout(plan: &Plan) -> Result<Layout, Error> {
+    with_outputs(plan, &[])
+}
+
+pub fn with_outputs(plan: &Plan, outputs: &[u32]) -> Result<Layout, Error> {
     let refuse = |what: String| Error::Scene { site: None, fault: SceneFault::Unsupported { what: what.into() } };
     let mut kind = vec![Kind::Read; plan.resources.len()];
+    for &output in outputs {
+        kind[output as usize] = Kind::Stepped;
+    }
     let mut states = vec![1u64; plan.resources.len()];
     for k in &plan.kernels {
         let w = k.writes as usize;

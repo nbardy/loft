@@ -87,7 +87,7 @@ pub fn run(a: Args, f: Flags) -> Result<(), Verdict> {
     let report = json!({"profile": {
         "bundle": a.dir, "size": a.size, "adapter": g.info.name, "backend": format!("{:?}", g.info.backend),
         "precision": format!("{:?}", loft.precision()), "loads_ms": loads, "frames": f.frames,
-        "modules": modules, "render_pipelines": render, "compute_pipelines": compute,
+        "frame_kernel_dispatches": loft.frame_dispatches(), "modules": modules, "render_pipelines": render, "compute_pipelines": compute,
         "cold_nonce": f.nonce, "pass_ms": t.by_pass.iter().map(|v| (!v.is_empty()).then(|| quantiles(v))).collect::<Vec<_>>(),
         "cache": cache.as_ref().map(|(_, read)| json!({"dir": f.cache, "read": read, "saved": saved})),
         "cpu_ms": cpu, "gpu_ms": gpu_q, "quantiles": ["least", "median", "p95", "most"],

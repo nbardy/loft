@@ -73,11 +73,11 @@ type Request = {
   readonly params: Readonly<Record<string, number>>; readonly inputs: InputValues;
 };
 
-/** An answer's identity: every part but the frame's time, which each frame carries. */
+/** An answer's identity: common parts; each frame carries its own time and optional stepped history. */
 type Shared = Omit<Identity, "frame"> & { readonly frame: Omit<Identity["frame"], "time"> };
 
 type Answer =
-  | { readonly id: string | number | null; readonly ok: true; readonly identity: Shared; readonly frames: readonly { readonly time: number; readonly file: string; readonly sha256: string; readonly id: string }[];
+  | { readonly id: string | number | null; readonly ok: true; readonly identity: Shared; readonly frames: readonly { readonly steps?: Identity["frame"]["steps"]; readonly time: number; readonly file: string; readonly sha256: string; readonly id: string }[];
       readonly ms: { readonly compile?: number; readonly load: number; readonly frames: number }; readonly cache?: ReturnType<CachingDevice["counts"]> }
   | { readonly id: string | number | null; readonly ok: false; readonly exit: number; readonly line: string; readonly detail: readonly string[] };
 
@@ -358,7 +358,7 @@ function rustValues(req: Request, h: LoftHeader): Pick<Identity["frame"], "param
 /** The child's lines (rust/crates/loft-draw/src/serve.rs): `ready` once, then one reply per request, in order. */
 type DrawReady = { readonly wire: number; readonly adapter: Extract<DrawMessage, { kind: "ready" }>["adapter"]; readonly device: Identity["device"] };
 type DrawReply =
-  | { readonly ok: true; readonly precision: FramePrecision; readonly frames: readonly { readonly file: string; readonly sha256: string; readonly previous?: readonly number[] }[]; readonly ms: { readonly load: number; readonly frames: number } }
+  | { readonly ok: true; readonly precision: FramePrecision; readonly frames: readonly { readonly file: string; readonly sha256: string; readonly previous?: readonly number[]; readonly steps?: Identity["frame"]["steps"] }[]; readonly ms: { readonly load: number; readonly frames: number } }
   | { readonly ok: false; readonly verdict: Verdict };
 
 /**
@@ -428,13 +428,14 @@ function startRustDraw(checkPath: string | undefined, stopped: (v: Verdict) => v
     if (!r.ok) return failed(req.id, r.verdict);
     // A Bundle V1 file is the whole program (plan §1.9: one identity, the file's hash), and one text serves both precisions.
     const build: Identity["build"] = { program: { kind: "files", sha256: loft.sha256 }, library: loft.header.compiler, tier: "compiled", precision: "mixed" };
-    const frameAt = (time: number): Identity["frame"] => ({ camera, time, size: [req.size.width, req.size.height], ...values, precision: r.precision, drawn: { kind: "frame" }, construction: false });
-    const identities = req.times.map((time,k): Identity => {
-      const previous=r.frames[k].previous;
-      return {build,frame:{...frameAt(time),...(previous ? {previous}: {})},device};
-    });
-    // History belongs to each observation. The response header contains only values shared across the batch.
-    const { time: _, ...frame } = frameAt(req.times[0]!);
+    // History belongs to each observation: its previous-image prefix and its step keys. The response header contains
+    // only values shared across the batch.
+    const frameAt = (time: number, k: number): Identity["frame"] => {
+      const { previous, steps } = r.frames[k]!;
+      return { ...(previous ? { previous } : {}), ...(steps ? { steps } : {}), camera, time, size: [req.size.width, req.size.height], ...values, precision: r.precision, drawn: { kind: "frame" }, construction: false };
+    };
+    const identities = req.times.map((time, k): Identity => ({ build, frame: frameAt(time, k), device }));
+    const { time: _, steps: _steps, previous: _previous, ...frame } = identities[0]!.frame;
     const frames = r.frames.map((f, k) => ({ time: req.times[k]!, ...f, id: identityId(identities[k]!) }));
     return { id: req.id, ok: true, identity: { build, frame, device }, frames, ms: r.ms };
   };

@@ -72,6 +72,10 @@ export async function shownModules(path: string, variant: VariantArg): Promise<S
     if(variant.kind!=="default") throw new UsageError("ordered scene: choose its variant in the authored scene");
     return (await import("./ordered.ts")).showOrdered(subject.scene);
   }
+  if (subject.kind === "recorded") {
+    if (variant.kind === "ask") throw new UsageError("these explicit passes have one variant: drop --variant");
+    return (await import("./trace.ts")).recordedModules(subject.scene);
+  }
   const artefact = await loadArtefact({ kind: "file", path, style: { kind: "scene" }, light: { kind: "scene" }, variant });
   return modulesOf(lower(artefact, "f32"));
 }

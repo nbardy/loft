@@ -29,6 +29,12 @@ export async function check(cmd: Extract<Command, { kind: "check" }>): Promise<v
   // Before the scene is imported: a call-form node's line is the stack it was built with.
   if (cmd.explain) (await import("../expr.ts")).recordStacks();
   const subject = await subjectAt(cmd.path);
+  if (subject.kind === "recorded") {
+    if (cmd.at.size || cmd.combinations || cmd.variant.kind === "ask" || cmd.explain)
+      throw new UsageError("a GPU trace measures the recorded take: drop the range, variant or explanation flags");
+    const { checkRecorded } = await import("./trace.ts");
+    return checkRecorded(subject.scene);
+  }
   const { runChecks, formatChecks, checkOutcome, Probe } = await import("../check.ts");
   const { pinned } = await import("../ranged.ts");
   const { compileScene } = await import("../compile/index.ts");

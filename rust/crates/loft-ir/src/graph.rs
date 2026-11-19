@@ -751,6 +751,7 @@ pub struct Graph {
     pub passes: Box<[Pass]>,
     pub media: Box<[Medium]>,
     pub cameras: Box<[Camera]>,
+    pub row_steps: Vec<(crate::bundle::RowStep, crate::bundle::InputKind)>,
     pub checks: Box<[Check]>,
     pub solves: Box<[Solve]>,
     /// The program's roots.

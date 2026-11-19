@@ -7,6 +7,7 @@ use loft_ir::error::{LoadFault, SceneFault};
 use loft_ir::identity::Precision;
 
 mod instances;
+mod motion_live;
 
 /// Emit's prelude frame (loft-core emit/prelude.rs, bytes in `loft_ir::frame`), with one param and one input vec4.
 pub(crate) const PRE: &str =
@@ -60,6 +61,7 @@ fn text(s: &[&str]) -> Box<[Box<[u8]>]> {
 /// Sky (surroundings, a screen draw) then a red subject quad at depth 0.5 whose colour a load kernel fills.
 fn subject() -> Bundle {
     Bundle {
+        row_steps: vec![],
         format: Format::V1,
         compiler: "test".into(),
         names: ["fill", "paint", "sky", "subject", "backdrop"].map(Into::into).into(),

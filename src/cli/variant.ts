@@ -8,7 +8,7 @@ import { UsageError, type VariantArg } from "./args.ts";
 import { LoadError, siteOf } from "../errors.ts";
 import { isTypedRefusal } from "./verdict.ts";
 
-export async function subjectAt(path: string): Promise<Subject> {
+async function moduleAt(path: string): Promise<Record<string, unknown>> {
   let mod: Record<string, unknown>;
   try {
     mod = (await import(resolve(path))) as Record<string, unknown>;
@@ -25,7 +25,11 @@ export async function subjectAt(path: string): Promise<Subject> {
     if (parse !== undefined) throw new LoadError(`${path} failed to load: ${parse}`);
     throw new LoadError(`${path} failed to load: ${said}${site === undefined ? "" : ` (at ${site})`}${await importHint(said)}`);
   }
-  return subjectOf(mod, path);
+  return mod;
+}
+
+export async function subjectAt(path: string): Promise<Subject> {
+  return subjectOf(await moduleAt(path), path);
 }
 
 /** The parse or resolve errors Bun attaches to a failed build, each as `file:line:column: what`, at most three; undefined when `e` carries none. */
@@ -75,6 +79,7 @@ export type Chosen = {
 export function choose(subject: Subject, path: string, v: VariantArg): Chosen {
   switch (subject.kind) {
     case "ordered": throw new UsageError("use loft build and loft-draw for this ordered program, or loft render for a still");
+    case "recorded": throw new UsageError("these explicit passes have one variant and run on the Rust path: use loft build, loft check or loft show");
     case "scene":
       if (v.kind === "ask") throw new UsageError(`--variant ${v.text}: ${path} exports a scene, not a design: it has no variants (drop --variant)`);
       return { label: "scene", scene: subject.scene, checks: subject.checks };

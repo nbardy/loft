@@ -18,7 +18,11 @@ function scratch() {
 
 export async function orderedAt(source: Extract<Source, { kind: "file" }>) {
   const { subjectAt } = await import("./variant.ts");
-  const subject = await subjectAt(source.path);
+  return orderedOf(await subjectAt(source.path), source);
+}
+
+/** The ordered scene a classified subject draws, with `--engine` applied; undefined for every other kind. */
+export async function orderedOf(subject: import("../design.ts").Subject, source: Extract<Source, { kind: "file" }>) {
   if (subject.kind !== "ordered") {
     if (source.renderEngine)
       throw new UsageError("--engine applies to a scene from loft/render. Choose --style for a wire-4 scene");

@@ -237,6 +237,8 @@ export function design<N, T extends SlotTable<N>, B extends Built = Built, H = n
 export type AnyDesign = Design<unknown, SlotTable<unknown>>;
 export type Subject =
   | { readonly kind: "ordered"; readonly scene: import("./render/record.ts").OrderedScene }
+  /** Explicit passes (`recorded` in src/record/decls.ts): the Rust build consumes the declarations directly. */
+  | { readonly kind: "recorded"; readonly scene: import("./record/decls.ts").Scene }
   | { readonly kind: "design"; readonly design: AnyDesign }
   /** `checks` is what the module exports: an array, or nothing (`check` refuses that; drawing does not care). */
   | { readonly kind: "scene"; readonly scene: Scene; readonly checks: { readonly kind: "exported"; readonly list: readonly Check[] } | { readonly kind: "absent" } };
@@ -253,5 +255,7 @@ export function subjectOf(mod: Record<string, unknown>, path: string): Subject {
     }
     return {kind:"ordered",scene:mod.default as import("./render/record.ts").OrderedScene};
   }
+  if (typeof mod.default === "object" && mod.default !== null && "kind" in mod.default && mod.default.kind === "recorded" && "scene" in mod.default)
+    return { kind: "recorded", scene: mod.default.scene as import("./record/decls.ts").Scene };
   return { kind: "scene", scene: mod.default as Scene, checks: mod.checks === undefined ? { kind: "absent" } : { kind: "exported", list: mod.checks as readonly Check[] } };
 }

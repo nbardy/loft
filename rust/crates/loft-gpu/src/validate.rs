@@ -229,6 +229,55 @@ pub fn validate(b: &Bundle, precision: Precision, limits: &wgpu::Limits) -> Resu
         at(&b.names, c.name, "camera name")?;
         entry(c.lens, "camera lens module")?;
     }
+    let mut outputs = std::collections::HashSet::new();
+    for s in &b.row_steps {
+        at(&b.modules, s.module, "row-local module")?;
+        let input = at(&b.inputs, s.input, "row-local input")?;
+        let supplied = |r, what| match at(&b.resources, r, what)? {
+            loft_ir::bundle::Resource { shape: Shape::Rows { rows, lanes }, init: Init::Bytes(_) } => {
+                Ok((*rows, u64::from(*rows) * u64::from(*lanes) * 16))
+            }
+            _ => Err(bad(format!("{what}: supply a nonempty table of initial rows"))),
+        };
+        let (count, size) = supplied(s.seed, "initial state")?;
+        let (n, _) = supplied(s.plan, "immutable plans")?;
+        supplied(s.output, "presented rows")?;
+        if n != count
+            || !outputs.insert(s.output)
+            || b.kernels.iter().any(|k| k.writes.contains(&s.output))
+            || !b.packs.iter().any(|p| p.holds.as_ref() == [(s.output, 0)] && p.access == Access::Write)
+        {
+            return Err(bad(
+                "row-local step: supply one plan per initial row and an exclusively written output pack".into()
+            ));
+        }
+        let (keep, packets) = match input.kind {
+            loft_ir::bundle::InputKind::Script { samples } => {
+                let (_, n) = supplied(samples, "script")?;
+                if n != 16 * (u64::from(s.ticks) + 1) {
+                    return Err(bad("script needs one packet per tick, including zero".into()));
+                }
+                (1, u64::from(s.ticks) + 1)
+            }
+            loft_ir::bundle::InputKind::Level => (60, 65),
+            loft_ir::bundle::InputKind::Events { slots } if slots > 0 => (60, 65 * input.kind.packet_lanes()),
+            loft_ir::bundle::InputKind::Events { .. } => {
+                return Err(bad("an event input needs capacity: declare at least one slot per tick".into()));
+            }
+        };
+        let limit = limits.max_storage_buffer_binding_size.min(limits.max_buffer_size);
+        if s.hz == 0
+            || s.ticks == 0
+            || s.ticks >= u32::MAX - 64
+            || size > limit / (2 + u64::from(s.ticks / keep))
+            || u64::from(count) > limit / (16 * packets)
+            || count.div_ceil(32) > limits.max_compute_workgroups_per_dimension
+        {
+            return Err(bad(
+                "row-local clock or storage exceeds device limits: shorten the take or reduce the row count".into(),
+            ));
+        }
+    }
     packs(b, limits)?;
     for (k, m) in b.modules.iter().enumerate() {
         let text = std::str::from_utf8(at(&b.sections, m.wgsl, "module text")?)
@@ -247,6 +296,27 @@ pub fn validate(b: &Bundle, precision: Precision, limits: &wgpu::Limits) -> Resu
         };
         let module = naga::front::wgsl::parse_str(&src)
             .map_err(|e| refuse(e.location(&src).map(|l| l.line_number), e.message().into()))?;
+        for spec in b.row_steps.iter().filter(|s| s.module as usize == k) {
+            let Shape::Rows { rows: count, .. } = b.resources[spec.seed as usize].shape else { unreachable!() };
+            for (binding, r) in [(1, spec.plan), (2, spec.seed), (4, spec.output)] {
+                let expected = state_bytes(&b.resources[r as usize].shape);
+                let stride = module
+                    .global_variables
+                    .iter()
+                    .find(|(_, g)| g.binding.as_ref().is_some_and(|v| v.group == 0 && v.binding == binding))
+                    .and_then(|(_, g)| {
+                        let naga::TypeInner::Array { stride, .. } = module.types[g.ty].inner else {
+                            return None;
+                        };
+                        Some(stride)
+                    });
+                if stride.is_none_or(|v| u64::from(v) * u64::from(count) != expected) {
+                    return Err(bad(format!(
+                        "table {r}: {expected} supplied bytes for {count} rows disagree with the WGSL array stride {stride:?}. Fix: match the record and shader layouts"
+                    )));
+                }
+            }
+        }
         let caps = naga::valid::Capabilities::default() | naga::valid::Capabilities::SHADER_FLOAT16;
         naga::valid::Validator::new(naga::valid::ValidationFlags::all(), caps)
             .validate(&module)

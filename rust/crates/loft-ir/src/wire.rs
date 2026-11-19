@@ -125,7 +125,7 @@ enum FnSlot {
 }
 
 /// The header and the eleven spans, each checked for length, padding and whole elements.
-fn spans(buf: &[u8]) -> Result<(Program, [&[u8]; 11], Option<crate::pass::Declarations>), Error> {
+fn spans(buf: &[u8]) -> Result<(u32, Program, [&[u8]; 11], Option<crate::pass::Declarations>), Error> {
     let word = |at: usize| buf.get(at..at + 4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]));
     let h = |i: usize| word(4 * i).ok_or_else(|| bad(Span::Header, i, Fault::Truncated));
     (h(0)? == MAGIC).then_some(()).ok_or_else(|| bad(Span::Header, 0, Fault::Magic))?;
@@ -178,7 +178,7 @@ fn spans(buf: &[u8]) -> Result<(Program, [&[u8]; 11], Option<crate::pass::Declar
         None
     };
     (at == buf.len()).then_some(()).ok_or_else(|| bad(Span::Header, 3, Fault::Length))?;
-    Ok((program, out, declarations))
+    Ok((wire, program, out, declarations))
 }
 
 /// The decls of a job, classified into `Graph`'s per-kind arrays, with each Fn ordinal's kind and each decl's word
@@ -202,6 +202,7 @@ struct Decls {
     passes: Vec<Pass>,
     media: Vec<Medium>,
     cameras: Vec<Camera>,
+    row_steps: Vec<(crate::bundle::RowStep, crate::bundle::InputKind)>,
     checks: Vec<Check>,
     solves: Vec<Solve>,
     /// Each scene-level decl's word offset, for refusing a reference checked after all decls are read.
@@ -618,6 +619,7 @@ fn decls(d: &[u32], roots: &[u32], z: &Sizes) -> Result<Decls, Error> {
         passes: Vec::new(),
         media: Vec::new(),
         cameras: Vec::new(),
+        row_steps: Vec::new(),
         checks: Vec::new(),
         solves: Vec::new(),
         top_at: Vec::new(),
@@ -749,6 +751,38 @@ fn decls(d: &[u32], roots: &[u32], z: &Sizes) -> Result<Decls, Error> {
                 };
                 out.kernel_at.push(at);
                 out.kernels.push(Kernel::Table { name: sym(*name)?, lanes: *lanes, entries: *entries, role, fill });
+            }
+            (11, [text, plan, seed, output, input, hz, ticks, how, arg]) if z.typed => {
+                use crate::bundle::{InputKind, RowStep};
+                let table =
+                    |r: u32| matches!(out.kernels.get(r as usize), Some(Kernel::Table { fill: Fill::Data { .. }, .. }));
+                layout(
+                    rs.is_empty()
+                        && table(*plan)
+                        && table(*seed)
+                        && table(*output)
+                        && (*input as usize) < out.inputs.len()
+                        && *hz > 0
+                        && *ticks > 0,
+                )?;
+                let kind = match (*how, *arg) {
+                    (0, 0) => InputKind::Level,
+                    (1, r) if table(r) => InputKind::Script { samples: r },
+                    (2, slots) if slots > 0 => InputKind::Events { slots },
+                    _ => return Err(bad(Span::Decls, at, Fault::Layout)),
+                };
+                out.row_steps.push((
+                    RowStep {
+                        module: sym(*text)?,
+                        plan: *plan,
+                        seed: *seed,
+                        output: *output,
+                        input: *input,
+                        hz: *hz,
+                        ticks: *ticks,
+                    },
+                    kind,
+                ));
             }
             (8, [name, def, min, max]) => {
                 layout(rs.is_empty())?;
@@ -887,7 +921,7 @@ impl Top {
 
 /// Decodes and validates a job: every bound, reference, layout, quota and type rule, before any pass sees it.
 pub fn decode(buf: &[u8]) -> Result<Job, Error> {
-    let (program, spans, declarations) = spans(buf)?;
+    let (wire, program, spans, declarations) = spans(buf)?;
     let [nodes_b, args_b, lits_b, rows_b, blobs_b, syms_b, at_b, sites_b, nsites_b, decls_b, roots_b] = spans;
 
     let n_nodes = nodes_b.len() / 16;
@@ -928,7 +962,7 @@ pub fn decode(buf: &[u8]) -> Result<Job, Error> {
     if let Some(i) = roots.iter().position(|r| *r as usize >= n_nodes) {
         return Err(bad(Span::Roots, i, Fault::Ref { found: roots[i] }));
     }
-    let sizes = Sizes { typed: buf[4] == 5, nodes: n_nodes, lits: lits.len(), rows: rows.len(), syms: n_syms };
+    let sizes = Sizes { typed: wire == WIRE, nodes: n_nodes, lits: lits.len(), rows: rows.len(), syms: n_syms };
     let d = decls(&words(decls_b), &roots, &sizes)?;
 
     let nodes = nodes(&words(nodes_b), &args, &d, &sizes)?;
@@ -954,6 +988,7 @@ pub fn decode(buf: &[u8]) -> Result<Job, Error> {
         passes: d.passes.into(),
         media: d.media.into(),
         cameras: d.cameras.into(),
+        row_steps: d.row_steps,
         checks: d.checks.into(),
         solves: d.solves.into(),
         roots: roots[..d.program_roots as usize].into(),

@@ -33,7 +33,7 @@
 //                       dispatch x y z, text sym, n libs, raw Fn ordinal..., n writes, (key sym, symbol sym, shape)...]
 //                       roots [values]; shape 0 buffer [entries, lanes] | 1 texture [dims, x, y, z, format sym]. No
 //                       head: a compute pass is not a table, and raw text reads its outputs by symbol
-//   Wire 5 tags 12/13 are Kind/Open (11 belongs to the motion lane). A Kind's words are name and
+//   Wire 5 tag 11 is RowStep, tags 12/13 are Kind/Open. A Kind's words are name and
 //   (member name, type) pairs. Its roots identify every nominal node of this type. This keeps node ids and
 //   kind ids 32 bit. Type 5 is u32, 6 is nominal in node headers, and 6+k names kind k in declarations.
 //   An Open's words are name, fallback Fn ordinal, then (u32 tag, Fn ordinal) cases. Its first argument is the tag.
@@ -46,7 +46,7 @@ export const MAGIC = 0x5754464c; // "LFTW", little-endian
 const WIRE = 4;
 
 export enum Program { Scene, Solve, Evaluate, Check }
-export enum Decl { Fn, Loop, Kernel, Draw, Pass, Medium, Check, Solve, Param, Input, Camera, Kind = 12, Open }
+export enum Decl { Fn, Loop, Kernel, Draw, Pass, Medium, Check, Solve, Param, Input, Camera, RowStep, Kind, Open }
 /** How a Kernel decl fills its resource: the first word of its layout. */
 export enum Fill { Map, Rows, Scan, Data, Recurrence, Compute }
 export enum Op { Lit, Time, Param, Input, Bind, Call, Fetch, Loop, Grad, Raw, Swizzle, Vec, Field, Make, Open } // then PRIMS from PRIM0
@@ -71,7 +71,7 @@ void _every;
 export const swizzleCode = (sel: string): number => [...sel].reduce((c, ch, k) => c | ("xyzw".indexOf(ch) << (2 * k)), sel.length << 8);
 export const swizzleSel = (code: number): string => Array.from({ length: code >> 8 }, (_, k) => "xyzw"[(code >> (2 * k)) & 3]).join("");
 
-/** One job, span by span (N-API borrows each typed array). */
+/** One job, span by span (N-API borrows each typed array). `wire: 5` marks a job with row steps (decl 11). */
 export type Job = {
   readonly wire?: 5;
   readonly program: Program;
@@ -87,6 +87,7 @@ export function pack(job: Job, declarations?: import("./passes.ts").Declarations
   if (declarations) parts.push(new TextEncoder().encode(JSON.stringify(declarations)));
   const out = new Uint8Array(16 + parts.reduce((n, p) => n + 8 + ((p.length + 7) & ~7), 0));
   const w = new DataView(out.buffer);
+  // Wire 4 bytes and identity stay unchanged for a job with neither ordered declarations nor row steps.
   [MAGIC, declarations ? 5 : job.wire ?? WIRE, job.program, parts.length].forEach((v, k) => w.setUint32(4 * k, v, true));
   let at = 16;
   for (const p of parts) { w.setUint32(at, p.length, true); out.set(p, at + 8); at += 8 + ((p.length + 7) & ~7); }
