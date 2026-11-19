@@ -101,12 +101,20 @@ pub fn sample_prior_cpu(luts: &[f32], header_word: u32, time: f32) -> Option<[[f
         return None;
     }
     let q = ((time / duration) * spans as f32).clamp(0.0, spans as f32);
-    let i = (q as u32).min(spans - 1);
+    let i = q as u32;
     let u = q - i as f32;
-    let dt = duration / spans as f32;
     let first = (i as usize)
         .checked_mul(SAMPLE_WORDS)?
         .checked_add(header[2].to_bits() as usize)?;
+    // Preserve the baked jet exactly at a knot, including the final row
+    // where evaluating the preceding cubic at u=1 introduces rounding.
+    if u == 0.0 {
+        let row = luts.get(first..)?.get(..SAMPLE_WORDS)?;
+        return Some(std::array::from_fn(|k| {
+            row[4 * k..4 * k + 4].try_into().unwrap()
+        }));
+    }
+    let dt = duration / spans as f32;
     let rows = luts.get(first..)?.get(..2 * SAMPLE_WORDS)?;
     let mut out = [[0.0; 4]; 3];
     for axis in 0..3 {
@@ -146,12 +154,15 @@ fn sample_prior(header: u32, t: f32) -> PriorSample {
   let duration = luts[header];
   let spans = bitcast<u32>(luts[header + 1u]) - 1u;
   let q = clamp(t / duration * f32(spans), 0.0, f32(spans));
-  let i = min(u32(q), spans - 1u);
+  let i = u32(q);
   let u = q - f32(i);
-  let dt = duration / f32(spans);
   let o = bitcast<u32>(luts[header + 2u]) + i * 12u;
   let p = prior_row(o);
   let v = prior_row(o + 4u);
+  if u == 0.0 {
+    return PriorSample(p, v, prior_row(o + 8u));
+  }
+  let dt = duration / f32(spans);
   let d = prior_row(o + 12u).xyz - p.xyz;
   let v0 = v.xyz * dt;
   let v1 = prior_row(o + 16u).xyz * dt;
@@ -218,6 +229,9 @@ mod tests {
             assert_eq!(v[3], 1.0);
             assert_eq!(q, [0.05f32.sin(), 0.0, 0.0, 0.05f32.cos()]);
         }
+        let last = &lut[lut.len() - SAMPLE_WORDS..];
+        let endpoint = sample_prior_cpu(&lut, prior.header_word, 1.0).unwrap();
+        assert!(endpoint.iter().flatten().zip(last).all(|(a, b)| a.to_bits() == b.to_bits()));
         println!("f32 Hermite flight position error {max_error:.3e} m");
         assert!(max_error < 1e-6);
         let bad = lower(

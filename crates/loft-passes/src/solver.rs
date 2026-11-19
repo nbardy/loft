@@ -168,6 +168,14 @@ pub fn lower(
         calls.extend(References::function(f).calls);
     }
     for call in calls {
+        if call.name == "sample_prior" {
+            return Err(Diag::new(
+                Code::E405,
+                call.span,
+                "a dedicated state solver has no prior table binding",
+                "sample the plan from a row-local law",
+            ));
+        }
         has_events |= call.name == "emit_event";
         if !p.fns.contains_key(call.name.as_str())
             && matches!(motion_math(&call.name), MotionMath::Unavailable)
@@ -364,4 +372,34 @@ fn nondeterministic(span: Span) -> Diag {
         "solver reaches an operation without a deterministic implementation",
         "use deterministic Loft math or verified WGSL",
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn authored_solver_uses_the_fixed_tick_outbox() {
+        let mut source = loft_ir::Sources::default();
+        source.add("solver-event.loft", r"
+state Contact { count: f = 0.0 }
+solver Impact over Contact writes Contact.{count} config { substeps: 4 } {
+  if count == 0.0 {
+    emit_event(ClawHit, 0, 1, [-1800.0, -900.0, 0.0, 420.0])
+  }
+  count = count + 1.0
+}
+schedule Main { run_solver(Impact) }
+");
+        let (modules, mut types) =
+            crate::front(&source).unwrap_or_else(|e| panic!("{}", e.render(&source)));
+        let program = Prog::index(&modules).unwrap();
+        let (wgsl, dispatch) = lower(&program, &mut types, 0, program.solvers["Impact"], &[])
+            .unwrap_or_else(|e| panic!("{}", e.render(&source)));
+        assert!(
+            dispatch.bindings.iter().any(|b| matches!(b.resource, DispatchResource::Outbox))
+        );
+        crate::naga_module("Impact.advance", wgsl, &source, loft_ir::GpuFeatures::empty())
+            .unwrap_or_else(|e| panic!("{}", e.render(&source)));
+    }
 }
