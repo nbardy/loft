@@ -179,61 +179,109 @@ async function cross(other: string) {
 }
 
 /**
- * Every entry through the Rust program driver (`LOFT_ENGINE=rust loft build`), in its own process, against how R0's
- * build ended: built against built (the bundle's sha256 and its draw count recorded), a refusal against a refusal of the
- * same verdict and head. Built with `--naga --precision mixed`: exit 0 is a bundle whose module Naga accepted as f32,
- * with its f16 verdict printed. A bundle with draws is drawn by loft-draw at R0's frames (R0's camera names: the bundle
- * must carry them) and each frame compared with R0's under the picture rule (a Dawn reference under the cross rule).
+ * Every entry through the Rust program driver (`LOFT_ENGINE=rust loft build`), in its own process, scored strictly
+ * against R0's record (the audit, agent_notes/2026-11-19_audits/cut_rust.md, parity runner): every R0 outcome and every
+ * R0 frame (native and Dawn) is an expected item, keyed exactly (entry; camera, time, size, executor), and each ends
+ * `pass`, a named `refused` that equals R0's (an outcome only: a refusal that matches R0's verdict and head), or a
+ * failure with a named reason. A frame is never skipped: a build refused, a bundle with no draws, a draw that failed or
+ * a reference whose bytes moved is a failed frame saying so. Exit 0 only when nothing fails and the run was unfiltered
+ * (a filtered run diagnoses; it cannot pass the gate). Built with `--naga --precision mixed`.
  */
+/**
+ * Build outcomes that moved on purpose, each with its reason (plan §2.2c: opaque CPU fills are gone, so a scene that R0
+ * refused for one builds through the rewritten library). Their R0 frames are Dawn's and are compared under the cross rule.
+ */
+const DELIBERATE: Readonly<Record<string, string>> = {
+  examples__open: "R0 refused its JavaScript-filled tables (plan §2.2c); the recorder has no slot for them",
+  examples__storm: "as open",
+  examples__scenes__stormfront: "as open",
+};
+
 async function rust(only: string) {
   const out = join(ROOT, "out/parity/rust"), list = await entries(only);
   if (!existsSync(VIEW)) throw new ParityError(`${VIEW} is missing. Fix: tools/dev.sh build loft-draw --fast`);
   if (!existsSync(DIFF)) throw new ParityError(`${DIFF} is missing. Fix: cargo build --release --manifest-path tools/parity/Cargo.toml`);
-  type Compared = Frame & { pass?: boolean; diff?: unknown };
-  const rows: { id: string; r0: string; rust: string; same: boolean; build?: string; draws?: number; bytes?: number; ms: number; frames?: Compared[] }[] = [];
+  // The expected set is R0's entry records, whole: an R0 entry the corpus no longer lists fails as `unlisted`.
+  const expected = new Map([...new Bun.Glob("entries/*.json").scanSync({ cwd: OUT })].map((f) => JSON.parse(readFileSync(join(OUT, f), "utf8")) as Rec).map((r) => [r.entry.id, r] as const));
+  type Scored = Shot & { executor: Executor; result: "pass" | "fail"; reason: string; file?: string; diff?: unknown };
+  type Row = { id: string; r0: string; rust: string; outcome: "same" | "refused-same" | "fail"; build?: string; draws?: number; bytes?: number; ms: number; frames: Scored[] };
+  const rows: Row[] = [];
   const outcome = (b: Built) => b.kind === "refused" ? `refused:${b.verdict}:${b.head}` : b.kind === "built" ? "built" : `crashed:${b.exit}`;
   const queue = [...list];
   const worker = async () => {
     for (let e = queue.shift(); e !== undefined; e = queue.shift()) {
       const dir = join(out, "build", e.id), t = performance.now();
       rmSync(dir, { recursive: true, force: true });
+      rmSync(join(out, "frames", e.id), { recursive: true, force: true });
       const r = await spawn(["env", "LOFT_ENGINE=rust", process.execPath, "src/cli/main.ts", "build", e.path, "--out", dir, "--naga", "--precision", "mixed"]);
       const ms = Math.round(performance.now() - t);
-      const r0 = existsSync(join(OUT, "entries", `${e.id}.json`)) ? outcome((JSON.parse(readFileSync(join(OUT, "entries", `${e.id}.json`), "utf8")) as Rec).build) : "absent";
+      const rec = expected.get(e.id);
+      const r0 = rec === undefined ? "absent" : outcome(rec.build);
+      // Every R0 frame of this entry, deduplicated by its exact key (a duplicate key in R0 is itself a failure).
+      const refs = (rec?.frames ?? []).filter((f) => f.kind === "drawn");
+      const keys = new Set<string>();
+      const missing = (ref: Frame, reason: string): Scored => ({ camera: ref.camera, time: ref.time, size: ref.size, executor: ref.executor, result: "fail", reason });
+      const frames: Scored[] = [];
+      let rust: string, build: string | undefined, draws: number | undefined, size: number | undefined;
       if (r.exit === 0) {
         const bytes = readFileSync(join(dir, "scene.loft")), n = Number(new DataView(bytes.buffer, bytes.byteOffset).getBigUint64(8, true));
-        const draws = (JSON.parse(new TextDecoder().decode(bytes.subarray(16, 16 + n))) as { draws: unknown[] }).draws.length;
-        // R0's frames (§2.2), drawn only when the bundle draws anything; each compared under the picture rule.
-        const rec = existsSync(join(OUT, "entries", `${e.id}.json`)) ? JSON.parse(readFileSync(join(OUT, "entries", `${e.id}.json`), "utf8")) as Rec : null;
-        const frames: Compared[] = [];
-        for (const ref of draws === 0 ? [] : (rec?.frames ?? []).filter((f) => f.kind === "drawn")) {
-          mkdirSync(join(out, "frames", e.id), { recursive: true });
-          const f = await draw(dir, ref, join(out, "frames", e.id, frameName(ref)));
-          if (f.kind !== "drawn" || ref.kind !== "drawn") { frames.push(f); continue; }
-          const d = await spawn([DIFF, join(OUT, ref.file), f.file, "--rule", ref.executor === "dawn" ? "cross" : "picture"]);
-          frames.push({ ...f, pass: d.exit === 0, diff: d.exit <= 1 ? JSON.parse(d.stdout) : d.stderr.trim() });
-        }
-        rows.push({ id: e.id, r0, rust: "built", same: r0 === "built", build: sha(bytes), draws, bytes: bytes.length, ms, frames });
+        draws = (JSON.parse(new TextDecoder().decode(bytes.subarray(16, 16 + n))) as { draws: unknown[] }).draws.length;
+        rust = "built", build = sha(bytes), size = bytes.length;
       } else {
         const verdict = KIND[r.exit as keyof typeof KIND], last = r.stderr.trimEnd().split("\n").at(-1) ?? "";
-        const rust = verdict === undefined ? `crashed:${r.exit}` : `refused:${verdict}:${last.replace(/^loft: [^:]+: /, "").replace(/ \(at [^()]+\)$/, "")}`;
-        rows.push({ id: e.id, r0, rust, same: rust === r0, ms });
+        rust = verdict === undefined ? `crashed:${r.exit}: ${last}` : `refused:${verdict}:${last.replace(/^loft: [^:]+: /, "").replace(/ \(at [^()]+\)$/, "")}`;
       }
-      const x = rows.at(-1)!;
-      console.log(`${rows.length}/${list.length} ${x.same ? "same" : "DIFF"} ${e.id}: ${x.rust}${x.same ? "" : ` (R0 ${x.r0})`}`);
+      for (const ref of refs) {
+        const key = `${ref.executor} ${frameName(ref)}`;
+        if (keys.has(key)) { frames.push(missing(ref, `duplicate R0 key ${key}`)); continue; }
+        keys.add(key);
+        if (ref.kind !== "drawn") continue;
+        const refFile = join(OUT, ref.file);
+        if (!existsSync(refFile) || sha(readFileSync(refFile)) !== ref.sha256) { frames.push(missing(ref, `R0 reference ${ref.file} is missing or its sha256 moved`)); continue; }
+        if (rust !== "built") { frames.push(missing(ref, `not built: ${rust}`)); continue; }
+        if (draws === 0) { frames.push(missing(ref, "built with no draws")); continue; }
+        mkdirSync(join(out, "frames", e.id), { recursive: true });
+        const f = await draw(dir, ref, join(out, "frames", e.id, frameName(ref)));
+        if (f.kind !== "drawn") { frames.push(missing(ref, `loft-draw refused (exit ${f.exit}): ${f.stderr.trim().split("\n").at(-1) ?? ""}`)); continue; }
+        const d = await spawn([DIFF, refFile, f.file, "--rule", ref.executor === "dawn" ? "cross" : "picture"]);
+        const diff = d.exit <= 1 ? JSON.parse(d.stdout) : d.stderr.trim();
+        frames.push({ ...missing(ref, d.exit === 0 ? "" : d.exit === 1 ? "picture rule" : `parity-diff exit ${d.exit}`), result: d.exit === 0 ? "pass" : "fail", file: f.file, diff });
+      }
+      // An outcome passes when it ends as R0's did: built as built, or the same refusal (verdict and head), or a
+      // deliberate change listed in DELIBERATE (its frames are still scored, against R0's Dawn pictures).
+      const same = r0 === rust || (DELIBERATE[e.id] !== undefined && rust === "built" && r0.startsWith("refused:"));
+      rows.push({ id: e.id, r0, rust, outcome: same ? (rust === "built" ? "same" : "refused-same") : "fail", build, draws, bytes: size, ms, frames });
+      const x = rows.at(-1)!, fp = x.frames.filter((f) => f.result === "pass").length;
+      console.log(`${rows.length}/${list.length} ${x.outcome === "fail" ? "DIFF" : "same"} ${e.id}: ${x.rust}${x.outcome === "fail" ? ` (R0 ${x.r0})` : ""}; frames ${fp}/${x.frames.length}`);
     }
   };
   await Promise.all([worker(), worker(), worker()]);
   rows.sort((a, b) => a.id.localeCompare(b.id));
+  // R0 entries the corpus did not list (unfiltered runs only: a filter leaves them out on purpose).
+  const listed = new Set(list.map((e) => e.id));
+  const unlisted = only === "" ? [...expected.keys()].filter((id) => !listed.has(id)) : [];
   const count = <T,>(xs: T[], k: (x: T) => string) => xs.reduce<{ [k: string]: number }>((o, x) => ({ ...o, [k(x)]: (o[k(x)] ?? 0) + 1 }), {});
-  const report = { head: git("rev-parse", "HEAD"), dirty: git("status", "--porcelain", "--", "src", "rust", "tools/parity") !== "", r0: OUT, only, entries: rows.length, same: rows.filter((r) => r.same).length,
-    outcomes: count(rows, (r) => r.rust.split(":").slice(0, 2).join(":")), drawable: rows.filter((r) => (r.draws ?? 0) > 0).length,
-    drawn: rows.filter((r) => (r.frames ?? []).some((f) => f.kind === "drawn")).length,
-    passing: rows.filter((r) => (r.frames ?? []).length > 0 && r.frames!.every((f) => f.pass === true)).length,
-    frames: count(rows.flatMap((r) => r.frames ?? []), (f) => f.kind === "refused" ? "refused" : f.pass ? "pass" : "fail"), rows };
+  const frames = rows.flatMap((r) => r.frames);
+  const expectedFrames = only === "" ? [...expected.values()].reduce((n, r) => n + r.frames.filter((f) => f.kind === "drawn").length, 0) : frames.length;
+  const failedOutcomes = rows.filter((r) => r.outcome === "fail").length + unlisted.length;
+  const failedFrames = frames.filter((f) => f.result === "fail").length + (expectedFrames - frames.length);
+  const report = {
+    head: git("rev-parse", "HEAD"), dirty: git("status", "--porcelain", "--", "src", "rust", "tools/parity") !== "", r0: OUT, only, authoritative: only === "",
+    strict: {
+      outcomes: { expected: only === "" ? expected.size : rows.length, same: rows.filter((r) => r.outcome === "same").length, refusedSame: rows.filter((r) => r.outcome === "refused-same").length, failed: failedOutcomes, unlisted },
+      frames: { expected: expectedFrames, pass: frames.filter((f) => f.result === "pass").length, failed: failedFrames, reasons: count(frames.filter((f) => f.result === "fail"), (f) => f.reason.replace(/:.*$/s, "")) },
+    },
+    built: rows.filter((r) => r.rust === "built").length,
+    drawable: rows.filter((r) => (r.draws ?? 0) > 0).length,
+    drawn: rows.filter((r) => r.frames.some((f) => f.file !== undefined)).length,
+    passing: rows.filter((r) => r.frames.length > 0 && r.frames.every((f) => f.result === "pass")).length,
+    outcomes: count(rows, (r) => r.rust.split(":").slice(0, 2).join(":")), rows,
+  };
   mkdirSync(out, { recursive: true });
   writeFileSync(join(out, only === "" ? "rust.json" : `rust.only-${only}.json`), json(report));
-  console.log(`rust: ${report.entries} entries, ${report.same} end as R0 did; ${json(report.outcomes, 0).trim()}; ${report.drawable} with draws, ${report.drawn} drawn, ${report.passing} passing; frames ${json(report.frames, 0).trim()}`);
+  const s = report.strict;
+  console.log(`rust: outcomes ${s.outcomes.same} built-as-R0 + ${s.outcomes.refusedSame} refused-as-R0 of ${s.outcomes.expected}, ${s.outcomes.failed} failed; frames ${s.frames.pass}/${s.frames.expected} pass, ${s.frames.failed} failed ${json(s.frames.reasons, 0).trim()}; built ${report.built}, with draws ${report.drawable}, drawn ${report.drawn}, all frames passing ${report.passing}${only === "" ? "" : " (filtered: not the gate)"}`);
+  process.exit(failedOutcomes + failedFrames === 0 && only === "" ? 0 : 1);
 }
 
 /** Child: the verdicts `loft check` computes (src/cli/check.ts), for the variant `loft build` builds, whole. */
