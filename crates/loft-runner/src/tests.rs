@@ -249,8 +249,62 @@ fn reflected_texture_group_accepts_sparse_slots() {
     b.passes[0].bindings = bindings.into();
     let id = r.load_bundle(&b).unwrap();
     let mut encoder = r.device.create_command_encoder(&Default::default());
-    assert!(matches!(
+    assert_eq!(
         r.encode_into(id, &mut encoder, &view, None, 0., 0.),
-        Err(RunnerError::Unsupported(_))
-    ));
+        Err(RunnerError::UnknownResource)
+    );
+}
+
+#[test]
+fn host_edits_parameters_and_external_handles_at_frame_boundary() {
+    let (mut r, view) = device();
+    let mut b = bundle();
+    let src = "@group(0) @binding(2) var<storage,read> params:array<vec4f>;
+@group(1) @binding(0) var<storage,read> external:array<u32>;
+@group(2) @binding(5) var<storage,read_write> rows:array<u32>;
+@group(3) @binding(0) var image:texture_2d<u32>;
+@compute @workgroup_size(1) fn update() {
+    rows[0] = external[0] + textureLoad(image,vec2i(0),0).x
+        + u32(params[0].x*8.0) + u32(params[1].y*16.0);
+}";
+    b.modules[0].bytes = src.as_bytes().into();
+    b.modules[0].hash = *blake3::hash(src.as_bytes()).as_bytes();
+    for (id, group, access) in [(20,1,BindAccess::ReadStorage),(21,3,BindAccess::SampledTex)] {
+        b.tables.push(TableDecl { id: TableId(id), lifetime: TableLifetime::External,
+            format: ElemFormat::U32, stride_bytes: 4, capacity: 1, initial: Box::default() });
+        let mut bindings = b.passes[0].bindings.to_vec();
+        bindings.push(PassBinding {group, slot:0, resource:TableId(id), access});
+        b.passes[0].bindings = bindings.into();
+    }
+    for (id,name,ty) in [(0,"roughness",IrTy::F32),(1,"sun",IrTy::Vec3)] {
+        b.params.push(ParamMeta {id:ParamId(id),name:name.into(),ty,offset_bytes:id*16,
+            default:[0.;4],range:Some(([0.;4],[1.;4]))});
+    }
+    let id = r.load_bundle(&b).unwrap();
+    let pipe = r.instances[0].compute.pipeline(PassId(1)).unwrap().clone();
+    let texture = Arc::new(r.device.create_texture(&wgpu::TextureDescriptor {
+        label:None, size:wgpu::Extent3d {width:1,height:1,depth_or_array_layers:1},
+        mip_level_count:1, sample_count:1, dimension:wgpu::TextureDimension::D2,
+        format:wgpu::TextureFormat::R32Uint, usage:wgpu::TextureUsages::TEXTURE_BINDING, view_formats:&[],
+    }));
+    r.bind_external_texture(id, TableId(21), texture.clone()).unwrap();
+    assert!(Arc::ptr_eq(&texture, &r.export_texture(id,TableId(21)).unwrap()));
+    let host = allocate(&r.device,4);
+    r.bind_external_buffer(id,TableId(20),host.clone()).unwrap();
+    assert!(Arc::ptr_eq(&host,&r.export_buffer(id,TableId(20)).unwrap()));
+    for (i,v) in [0.,0.25,0.5,0.75,1.].into_iter().enumerate() {
+        r.set_param(id, ParamId(0), &[v]).unwrap();
+        r.set_param(id, ParamId(1), &[0.,v,0.]).unwrap();
+        r.queue.write_buffer(&host,0,&(100+i as u32).to_le_bytes());
+        assert_eq!(step(&mut r,id,&view)[0],100+i as u32+(v*24.) as u32);
+    }
+    let before = r.instances[0].compute.bound_groups(PassId(1));
+    let other = allocate(&r.device,4);
+    r.queue.write_buffer(&other,0,&230u32.to_le_bytes());
+    r.bind_external_buffer(id,TableId(20),other).unwrap();
+    assert_eq!(step(&mut r,id,&view)[0],254);
+    let after = r.instances[0].compute.bound_groups(PassId(1));
+    assert_ne!(before[0],after[0]);
+    assert_eq!(&before[1..],&after[1..]);
+    assert_eq!(r.instances[0].compute.pipeline(PassId(1)).unwrap(), &pipe);
 }

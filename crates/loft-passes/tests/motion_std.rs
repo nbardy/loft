@@ -98,6 +98,7 @@ fn build(name: &str) -> Compiled {
 struct Scene<'p, 'a> {
     ev: Eval<'p, 'a, f32>,
     table: usize,
+    events: Vec<(u32, String)>,
     columns: &'a [loft_parse::ast::RowField],
     laws: Vec<&'a FnDecl>,
     checks: Vec<&'a FnDecl>,
@@ -133,6 +134,7 @@ impl<'p, 'a> Scene<'p, 'a> {
         Self {
             ev,
             table,
+            events: vec![],
             columns: &prog.kinds[kind].row,
             laws,
             checks,
@@ -196,6 +198,14 @@ impl<'p, 'a> Scene<'p, 'a> {
                         };
                         assert!(x.is_finite(), "{} at tick {tick}", field.name);
                         self.set(&field.name, x);
+                    }
+                    Stmt::If { cond, then, otherwise: None } => {
+                        let [Stmt::Expr(Expr { kind: ExprKind::Call { callee, args }, .. })] =
+                            then.stmts.as_slice() else { panic!("expected a guarded event") };
+                        assert_eq!(callee.name, "emit_event");
+                        let ExprKind::Name(tag) = &args[0].value.kind else { panic!("expected event tag") };
+                        let Val::B(Some(emit)) = self.ev.expr(cond).unwrap() else { panic!("expected event condition") };
+                        if emit { self.events.push((tick, tag.to_string())); }
                     }
                     stmt => panic!("unsupported row adapter statement: {stmt:?}"),
                 }
@@ -355,6 +365,7 @@ fn boss_slips_then_takes_the_second_hit() {
         }
     }
     assert_eq!(hit_ticks, [60, 75]);
+    assert_eq!(scene.events, [(60, "ClawHit".into()), (60, "FootSlip".into())]);
     assert!((windup - 0.69).abs() < 1e-6);
     println!(
         "boss: windup {windup:.6} m, hits {hit_ticks:?}, replant tick {}",

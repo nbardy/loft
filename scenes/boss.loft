@@ -73,6 +73,12 @@ law boss_impact(h: HermitBoss, dt) writes h.{x, z, vx, vz, foot_x, foot_z, pin_x
   let impulse = if first { [-1800.0, -900.0] } else { select(v2(0.0), [-1400.0, -600.0], second) }
   let force_limit = BOSS_MU_STATIC * BOSS_MASS * 9.81 * dt
   let sheared = length(impulse) > force_limit
+  if first {
+    emit_event(ClawHit, 0, 1, [impulse.x, impulse.y, 0.0, BOSS_MASS])
+  }
+  if sheared && h.slipping == 0.0 {
+    emit_event(FootSlip, 0, 0, [h.foot_x, BOSS_TOE_R, h.foot_z, BOSS_MU_SLIP])
+  }
   let velocity = [h.vx, h.vz] + impulse / BOSS_MASS
   let sliding = h.slipping > 0.0 || sheared
   let slide = if sliding { act_slip(velocity, BOSS_MU_SLIP, dt) } else { v4(0.0) }

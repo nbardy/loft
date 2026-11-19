@@ -41,6 +41,9 @@ struct Instance {
     decl: Bundle,
     resource_epoch: u64,
     checkpoints: Vec<Arc<wgpu::Buffer>>,
+    history: stepping::History,
+    outbox: Option<events::Outbox>,
+    pick_source: Option<pick::Source>,
     compute: encode::ComputeCache,
     edits: tier0::Edits,
 }
@@ -128,6 +131,9 @@ impl Instance {
             edits: tier0::Edits::default(),
             resource_epoch: 0,
             checkpoints,
+            history: Default::default(),
+            outbox: None,
+            pick_source: None,
         })
     }
     fn arena(&mut self, k: KindId) -> Result<&mut Table> {
@@ -281,6 +287,7 @@ impl Runner {
                 new.active = current.active;
                 new.decl.capacity = current.decl.capacity;
                 next.checkpoints = std::mem::take(&mut old.checkpoints);
+                next.history = std::mem::take(&mut old.history);
                 // Ring history survives code/configuration swaps along with its live allocation.
                 next.decl.state.as_mut().unwrap().checkpoint_slots = a.checkpoint_slots;
             }
@@ -312,6 +319,13 @@ impl Runner {
             inst.resource_epoch,
             time_s,
             dt_s,
+            &mut inst.history,
+            &inst.checkpoints,
+            inst.decl.state.as_ref().map(|s| s.table),
+            id,
+            (time_s * 120.).round() as u32,
+            0,
+            &mut inst.outbox,
         )?;
         Ok(FrameIdentity {
             instance: id,
