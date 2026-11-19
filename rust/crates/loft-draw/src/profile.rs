@@ -22,6 +22,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 pub struct Flags {
+    pub nonce: Option<u32>,
     pub frames: usize,
     pub loads: usize,
     pub cache: Option<PathBuf>,
@@ -30,7 +31,7 @@ pub struct Flags {
 
 impl Default for Flags {
     fn default() -> Flags {
-        Flags { frames: 16, loads: 1, cache: None, budget_ms: None }
+        Flags { nonce: None, frames: 16, loads: 1, cache: None, budget_ms: None }
     }
 }
 
@@ -53,11 +54,16 @@ pub fn run(a: Args, f: Flags) -> Result<(), Verdict> {
     let g = gpu(true)?;
     let cache = f.cache.as_deref().map(|dir| PipelineCache::open(&g.device, dir)).transpose()?;
     let bytes = read_bundle(&a.dir)?;
+    let bytes = match f.nonce {
+        Some(n) => crate::nonce::apply(&bytes, n)?,
+        None => bytes,
+    };
     let mut loads = vec![];
     let mut loft = None;
     for _ in 0..f.loads {
         let t = ms(Instant::now());
         loft = Some(load(&g, &bytes, Precision::F32, cache.as_ref().map(|(c, _)| c.raw()))?);
+        g.device.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| Verdict::Environment(e.to_string()))?;
         loads.push(t());
     }
     let saved = cache.as_ref().map(|(c, _)| c.save()).transpose()?;
@@ -82,6 +88,7 @@ pub fn run(a: Args, f: Flags) -> Result<(), Verdict> {
         "bundle": a.dir, "size": a.size, "adapter": g.info.name, "backend": format!("{:?}", g.info.backend),
         "precision": format!("{:?}", loft.precision()), "loads_ms": loads, "frames": f.frames,
         "modules": modules, "render_pipelines": render, "compute_pipelines": compute,
+        "cold_nonce": f.nonce, "pass_ms": t.by_pass.iter().map(|v| (!v.is_empty()).then(|| quantiles(v))).collect::<Vec<_>>(),
         "cache": cache.as_ref().map(|(_, read)| json!({"dir": f.cache, "read": read, "saved": saved})),
         "cpu_ms": cpu, "gpu_ms": gpu_q, "quantiles": ["least", "median", "p95", "most"],
     }});
@@ -103,6 +110,7 @@ pub fn run(a: Args, f: Flags) -> Result<(), Verdict> {
 struct Times {
     cpu: Vec<f64>,
     gpu: Vec<f64>,
+    by_pass: Vec<Vec<f64>>,
     pose: Vec<f64>,
     passes: Vec<f64>,
 }
@@ -159,7 +167,11 @@ fn frames(f: &Flags, g: &Gpu, loft: &mut Loft, target: &Target) -> Result<Times,
     let poll =
         || g.device.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| Verdict::Environment(format!("poll: {e}")));
     // loft-gpu's timestamps: the kernel pass at 0 and 1, render pass k at 2 + 2k and 3 + 2k.
-    let n = 2 + 2 * loft.bundle().passes.len() as u32;
+    let passes = match &loft.bundle().format {
+        loft_ir::bundle::Format::V1 => loft.bundle().passes.len(),
+        loft_ir::bundle::Format::V2(s) => s.passes.len(),
+    };
+    let n = 2 + 2 * passes as u32;
     let clock = g.timing.then(|| {
         let set = g.device.create_query_set(&wgpu::QuerySetDescriptor {
             label: Some("loft frame"),
@@ -169,7 +181,7 @@ fn frames(f: &Flags, g: &Gpu, loft: &mut Loft, target: &Target) -> Result<Times,
         (set, Clock::new(g, n as u64))
     });
     loft.set_timestamps(clock.as_ref().map(|(set, _)| set.clone()));
-    let mut t = Times { cpu: vec![], gpu: vec![], pose: vec![], passes: vec![] };
+    let mut t = Times { by_pass: vec![vec![]; passes], cpu: vec![], gpu: vec![], pose: vec![], passes: vec![] };
     for _ in 0..f.frames {
         let start = Instant::now();
         let mut encoder = g.device.create_command_encoder(&Default::default());
@@ -187,9 +199,16 @@ fn frames(f: &Flags, g: &Gpu, loft: &mut Loft, target: &Target) -> Result<Times,
             let last = n as usize - 1;
             // An empty kernel pass or no pass at all writes no timestamps; resolved, they read 0.
             let (kernels, passes) = (c.ms(k[0], k[1]), if last > 1 { c.ms(k[2], k[last]) } else { 0.0 });
+            for (p, ticks) in k[2..].chunks_exact(2).enumerate() {
+                t.by_pass[p].push(c.ms(ticks[0], ticks[1]));
+            }
             t.pose.push(kernels);
             t.passes.push(passes);
-            t.gpu.push(kernels + passes);
+            let elapsed = match &loft.bundle().format {
+                loft_ir::bundle::Format::V2(_) if k[0] != 0 => c.ms(k[0], k[last]),
+                loft_ir::bundle::Format::V2(_) | loft_ir::bundle::Format::V1 => kernels + passes,
+            };
+            t.gpu.push(elapsed);
         }
     }
     Ok(t)

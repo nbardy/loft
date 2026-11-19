@@ -17,9 +17,10 @@ pub struct F32(pub u32);
 
 /// The only format. Any other header value is `Load(FormatMismatch)`; an incompatible change adds `V2` and deletes
 /// `V1` in the same commit unless a persisted consumer exists (plan §2.4).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Format {
     V1,
+    V2(crate::pass::Schedule),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -73,6 +74,8 @@ pub enum Shape {
 pub enum TexFormat {
     Rgba8Unorm,
     Rgba16Float,
+    Rgba16Uint,
+    Rgba32Float,
     R32Float,
     Depth32Float,
 }
@@ -285,7 +288,13 @@ impl Bundle {
         let mut out =
             Vec::with_capacity(16 + json.len() + self.sections.iter().map(|s| s.len() + ALIGN).sum::<usize>());
         out.extend_from_slice(&MAGIC);
-        out.extend_from_slice(&1u32.to_le_bytes());
+        out.extend_from_slice(
+            &(match self.format {
+                Format::V1 => 1u32,
+                Format::V2(_) => 2,
+            })
+            .to_le_bytes(),
+        );
         out.extend_from_slice(&(json.len() as u64).to_le_bytes());
         out.extend_from_slice(&json);
         for s in &self.sections {
@@ -303,7 +312,7 @@ impl Bundle {
         let len = u64::from_le_bytes([head[8], head[9], head[10], head[11], head[12], head[13], head[14], head[15]]);
         let end = usize::try_from(len).ok().and_then(|l| l.checked_add(16)).ok_or_else(|| short(usize::MAX))?;
         let json = bytes.get(16..end).ok_or_else(|| short(end))?;
-        if format != 1 {
+        if !matches!(format, 1 | 2) {
             #[derive(Deserialize)]
             struct Stamp {
                 compiler: Box<str>,
@@ -324,6 +333,16 @@ impl Bundle {
             .try_fold(end as u64, |at, n| at.checked_next_multiple_of(ALIGN as u64)?.checked_add(*n));
         need.filter(|n| *n <= bytes.len() as u64).ok_or_else(|| short(need.map_or(usize::MAX, |n| n as usize)))?;
         let mut b: Bundle = serde_json::from_slice(json).map_err(refuse)?;
+        if !matches!((&b.format, format), (Format::V1, 1) | (Format::V2(_), 2)) {
+            return Err(Error::Load(LoadFault::FormatMismatch {
+                found: format,
+                expected: match b.format {
+                    Format::V1 => 1,
+                    Format::V2(_) => 2,
+                },
+                compiler: Some(b.compiler),
+            }));
+        }
         let mut at = end;
         for s in b.sections.iter_mut() {
             at = at.next_multiple_of(ALIGN);

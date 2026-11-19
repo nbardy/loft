@@ -74,6 +74,7 @@ export type Chosen = {
 
 export function choose(subject: Subject, path: string, v: VariantArg): Chosen {
   switch (subject.kind) {
+    case "ordered": throw new UsageError("use loft build and loft-draw for this ordered program, or loft render for a still");
     case "scene":
       if (v.kind === "ask") throw new UsageError(`--variant ${v.text}: ${path} exports a scene, not a design: it has no variants (drop --variant)`);
       return { label: "scene", scene: subject.scene, checks: subject.checks };

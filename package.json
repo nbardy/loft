@@ -5,7 +5,8 @@
   "type": "module",
   "description": "Loft: 3D bodies as coordinate systems, authored as code, compiled to WGSL + tables for any WebGPU host.",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./render": "./src/render/index.ts"
   },
   "scripts": {
     "test": "bun test --timeout 120000",
@@ -19,5 +20,8 @@
     "playwright": "^1.65.0",
     "typescript": "^7.0.2",
     "typescript-ast": "npm:typescript@5.9.3"
+  },
+  "dependencies": {
+    "wgsl_reflect": "1.6.0"
   }
 }

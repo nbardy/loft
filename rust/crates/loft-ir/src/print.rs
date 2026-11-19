@@ -183,6 +183,18 @@ impl Printer<'_> {
         let ty = n.ty.name();
         let kids = |p: &mut Self| g.args_of(n).iter().map(|a| p.walk(*a, s, in_call)).collect::<Result<Vec<_>, _>>();
         Ok(match n.op {
+            Op::Make(k) => {
+                let xs = kids(self)?;
+                self.op(format!("make {}", g.sym(g.kinds[k as usize].name)), &xs)
+            }
+            Op::Field(j) => {
+                let xs = kids(self)?;
+                self.op(format!("field {j}"), &xs)
+            }
+            Op::Open(k) => {
+                let xs = kids(self)?;
+                self.op(format!("open {}", g.sym(g.opens[k as usize].name)), &xs)
+            }
             Op::Prim(prim) => {
                 let ks = kids(self)?;
                 self.op(format!("{} {ty}", prim.name()), &ks)

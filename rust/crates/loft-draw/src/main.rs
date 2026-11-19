@@ -6,6 +6,7 @@
 //!   loft-draw still BUNDLE [flags]       one PNG (still.rs)
 //!   loft-draw profile BUNDLE [flags]     load and frame timings, the Vulkan cache, the frame budget (profile.rs)
 
+mod nonce;
 mod profile;
 mod serve;
 mod still;
@@ -100,7 +101,8 @@ pub fn gpu(f16: bool) -> Result<Gpu, Verdict> {
     }))
     .map_err(|e| env(&format!("no adapter: {e}")))?;
     // PIPELINE_CACHE where the adapter has it (Vulkan), for `profile --pipeline-cache`.
-    let wanted = wgpu::Features::TIMESTAMP_QUERY
+    let wanted = wgpu::Features::FLOAT32_BLENDABLE
+        | wgpu::Features::TIMESTAMP_QUERY
         | wgpu::Features::PIPELINE_CACHE
         | if f16 { wgpu::Features::SHADER_F16 } else { wgpu::Features::empty() };
     let features = adapter.features() & wanted;

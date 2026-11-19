@@ -33,7 +33,8 @@ pub fn rates(g: &Graph, frame_res: &[bool], items: &[u32]) -> Vec<Rate> {
             Op::Lit(_) => Rate::default(),
             Op::Time | Op::Param(_) | Op::Input(_) => frame,
             Op::Bind(_) | Op::Var(_) => Rate { frame: false, item: items.binary_search(&(id as u32)).is_ok() },
-            Op::Prim(_) | Op::Swizzle(_) | Op::Vec | Op::Grad => args,
+            Op::Make(_) | Op::Field(_) | Op::Prim(_) | Op::Swizzle(_) | Op::Vec | Op::Grad => args,
+            Op::Open(k) => over(&mut g.opens[k as usize].targets().map(|f| g.fns[f as usize].body)),
             Op::Fetch { kernel, .. } => args.join(Rate { frame: frame_res[kernel as usize], item: false }),
             Op::Call(f) => over(&mut std::iter::once(g.fns[f as usize].body)),
             Op::Loop { decl, .. } => over(&mut g.loops[decl as usize].nodes()),
@@ -49,9 +50,18 @@ pub const LIFT_MIN: u32 = 3;
 /// What evaluating a node costs in operations, as src/compile/rates.ts counts (a move is free; a loop is large).
 fn own_cost(op: Op) -> u32 {
     match op {
-        Op::Lit(_) | Op::Time | Op::Param(_) | Op::Input(_) | Op::Bind(_) | Op::Var(_) | Op::Swizzle(_) | Op::Vec => 0,
+        Op::Lit(_)
+        | Op::Time
+        | Op::Param(_)
+        | Op::Input(_)
+        | Op::Bind(_)
+        | Op::Var(_)
+        | Op::Swizzle(_)
+        | Op::Make(_)
+        | Op::Field(_)
+        | Op::Vec => 0,
         Op::Prim(_) | Op::Fetch { .. } | Op::Grad => 1,
-        Op::Call(_) | Op::Raw(_) => 4,
+        Op::Open(_) | Op::Call(_) | Op::Raw(_) => 4,
         Op::Loop { .. } => 64,
     }
 }

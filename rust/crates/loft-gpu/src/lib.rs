@@ -48,6 +48,7 @@
 //! ```
 #[cfg(not(target_arch = "wasm32"))]
 mod cache;
+mod pass;
 mod validate;
 mod view;
 
@@ -206,6 +207,7 @@ struct Packs<T> {
 
 pub struct Loft {
     b: Bundle,
+    ordered: Option<pass::Ordered>,
     build: [u8; 32],
     precision: Precision,
     canvases: Vec<Canvas>,
@@ -219,7 +221,7 @@ pub struct Loft {
     /// `loft_scene_depth`, `loft_scene_clearance` and `loft_post_colour` (emit's prelude, bindings 2 to 4): 1 × 1, far
     /// and clear, until a pass resolves the opaque draws into them (view.rs).
     scene: view::Scene,
-    resolve: view::Resolve,
+    resolve: Option<view::Resolve>,
     /// Per pass: the item before which it resolves the scene (view.rs's rule), if any.
     resolve_at: Vec<Option<usize>>,
     cameras: view::Cameras,
@@ -254,6 +256,8 @@ pub(crate) fn prelude(m: &Module, p: Precision) -> &'static str {
 fn texel(f: TexFormat) -> (TextureFormat, u64) {
     match f {
         TexFormat::Rgba8Unorm => (TextureFormat::Rgba8Unorm, 4),
+        TexFormat::Rgba16Uint => (TextureFormat::Rgba16Uint, 8),
+        TexFormat::Rgba32Float => (TextureFormat::Rgba32Float, 16),
         TexFormat::Rgba16Float => (TextureFormat::Rgba16Float, 8),
         TexFormat::R32Float => (TextureFormat::R32Float, 4),
         TexFormat::Depth32Float => (TextureFormat::Depth32Float, 4),
@@ -472,6 +476,9 @@ impl Loft {
             Precision::Mixed | Precision::F32 => Precision::F32,
         };
         validate(&b, precision, &device.limits())?;
+        if let loft_ir::bundle::Format::V2(s) = &b.format {
+            pass::validate(s, &b, device)?;
+        }
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let loft = Loft::create(device, queue, b, loft_ir::identity::build(bytes), precision, canvases, cache);
         match scope.pop().await {
@@ -549,11 +556,16 @@ impl Loft {
                 device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: None, entries: &entries })
             })
             .collect();
+        let roles = match &b.format {
+            loft_ir::bundle::Format::V2(s) => pass::buffer_roles(s),
+            loft_ir::bundle::Format::V1 => Default::default(),
+        };
         let packs: Vec<Buffer> = b
             .packs
             .iter()
             .map(|p| {
                 let usage = wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC;
+                let usage = p.holds.iter().filter_map(|(r, _)| roles.get(r)).fold(usage, |bits, role| bits | *role);
                 device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("loft pack"),
                     size: p.vec4s * 16,
@@ -737,7 +749,14 @@ impl Loft {
                 Target::Texture(_) | Target::Shadow { .. } => None,
             })
             .collect();
+        let ordered = match &b.format {
+            loft_ir::bundle::Format::V1 => None,
+            loft_ir::bundle::Format::V2(s) => {
+                Some(pass::Ordered::new(device, queue, s, &b, &modules, &packs, [&bgl0, &bgl1.render], canvases, cache))
+            }
+        };
         let mut loft = Loft {
+            ordered,
             res: Vec::new(),
             packs,
             build,
@@ -747,7 +766,7 @@ impl Loft {
             steps,
             detail,
             scene,
-            resolve: view::Resolve::new(device),
+            resolve: matches!(b.format, loft_ir::bundle::Format::V1).then(|| view::Resolve::new(device)),
             resolve_at,
             cameras,
             aim: Aim::Matrices(NO_CAMERA),
@@ -949,22 +968,25 @@ impl Loft {
         (&self.g0[0], &self.g1.compute, &self.g2)
     }
 
+    fn compute_clock(&self, begin: bool, end: bool) -> Option<wgpu::ComputePassTimestampWrites<'_>> {
+        self.timestamps.as_ref().map(|query_set| wgpu::ComputePassTimestampWrites {
+            query_set,
+            beginning_of_pass_write_index: begin.then_some(0),
+            end_of_pass_write_index: end.then_some(1),
+        })
+    }
+
     /// One compute pass: `kernels` in order for each set of bind groups (the loft's own, or one per instance).
     fn dispatch_all(
         &self,
         enc: &mut wgpu::CommandEncoder,
         kernels: &[usize],
-        timestamps: Option<&wgpu::QuerySet>,
+        timestamp_writes: Option<wgpu::ComputePassTimestampWrites<'_>>,
         sets: &[Groups],
     ) {
         if kernels.is_empty() || sets.is_empty() {
             return;
         }
-        let timestamp_writes = timestamps.map(|query_set| wgpu::ComputePassTimestampWrites {
-            query_set,
-            beginning_of_pass_write_index: Some(0),
-            end_of_pass_write_index: Some(1),
-        });
         let mut pass =
             enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("loft kernels"), timestamp_writes });
         for &(g0, g1, g2) in sets {
@@ -985,7 +1007,12 @@ impl Loft {
     }
 
     fn frame_bytes(&self, time: f32) -> Vec<u8> {
-        frame_bytes(&self.host_camera(), self.size, time, &self.params, &self.inputs)
+        let mut bytes = frame_bytes(&self.host_camera(), self.size, time, &self.params, &self.inputs);
+        if let Some(o) = &self.ordered {
+            let index = if self.size == o.extent() { o.frame } else { 0 };
+            bytes[frame::TIME + 4..frame::TIME + 8].copy_from_slice(&index.to_le_bytes());
+        }
+        bytes
     }
 
     /// The camera the CPU writes with the frame: the host's matrices, or a stand-in the GPU camera then overwrites.
@@ -1048,7 +1075,13 @@ impl Loft {
     /// What loading built: shader modules, render pipelines and compute pipelines (the camera builder's included). Load
     /// time grows with these (CORE.md: score them beside frame time).
     pub fn built(&self) -> [usize; 3] {
-        [self.b.modules.len(), self.render.len(), self.compute.len() + self.b.cameras.len()]
+        match &self.ordered {
+            Some(p) => {
+                let [r, c] = p.counts();
+                [self.b.modules.len() + 1, r, c + self.compute.len() + self.b.cameras.len() + 1]
+            }
+            None => [self.b.modules.len(), self.render.len(), self.compute.len() + self.b.cameras.len()],
+        }
     }
 
     pub fn precision(&self) -> Precision {
@@ -1062,17 +1095,25 @@ impl Loft {
     }
     /// The host's camera matrices for every pass (`loft_ir::frame`); the viewport comes from the view's size.
     pub fn set_camera(&mut self, camera: Camera) {
-        self.aim = Aim::Matrices(camera);
+        self.select_aim(Aim::Matrices(camera));
     }
     /// A host look camera (perspective, `fovy` radians), built on the GPU as a bundle's look cameras are.
     pub fn set_look(&mut self, eye: [f32; 3], target: [f32; 3], up: [f32; 3], fovy: f32) {
-        self.aim = Aim::Look(frame::look(eye, target, up, fovy));
+        self.select_aim(Aim::Look(frame::look(eye, target, up, fovy)));
     }
     /// The bundle camera named `name`, evaluated on the GPU every frame.
     pub fn use_camera(&mut self, name: &str) -> Result<(), Error> {
         let (k, _) = self.named(&self.b.cameras, |c| c.name, name, "camera")?;
-        self.aim = Aim::Named(k);
+        self.select_aim(Aim::Named(k));
         Ok(())
+    }
+    fn select_aim(&mut self, next: Aim) {
+        if self.aim != next
+            && let Some(p) = &mut self.ordered
+        {
+            p.reset_history();
+        }
+        self.aim = next;
     }
     /// The bundle's camera names, in order.
     pub fn cameras(&self) -> impl Iterator<Item = &str> {
@@ -1132,6 +1173,10 @@ impl Loft {
             .flat_map(|(k, d)| self.inputs[k * 4..k * 4 + d.def.len()].to_vec())
             .collect();
         FrameKey {
+            previous: self
+                .ordered
+                .as_ref()
+                .and_then(|o| o.previous.map(|prefix| if o.extent() == size { prefix } else { [0; 32] })),
             camera,
             time: self.time.to_bits(),
             size,
@@ -1176,8 +1221,12 @@ impl Loft {
             self.group0s(device);
         }
         queue.write_buffer(&self.frame, 0, &self.frame_bytes(self.time));
-        self.cameras.encode(queue, enc, &self.aim, (&self.g0[0], &self.g1.render), &[&self.frame]);
-        self.dispatch_all(enc, &self.frame_kernels(), self.timestamps.as_ref(), &[self.own()]);
+        let frame_kernels = self.frame_kernels();
+        // Each query slot has one writer. The ordered interval spans both the GPU camera and the graph fills.
+        let measure_camera = self.ordered.is_some() && !matches!(self.aim, Aim::Matrices(_));
+        let camera_clock = if measure_camera { self.compute_clock(true, frame_kernels.is_empty()) } else { None };
+        self.cameras.encode(queue, enc, &self.aim, (&self.g0[0], &self.g1.render), &[&self.frame], camera_clock);
+        self.dispatch_all(enc, &frame_kernels, self.compute_clock(!measure_camera, true), &[self.own()]);
         for s in 0..self.steppers.len() {
             let st = &self.steppers[s];
             let Keep::Latest = st.s.keep else { continue };
@@ -1200,6 +1249,22 @@ impl Loft {
                 }
                 self.steppers[s].done = to;
             }
+        }
+        if self.ordered.is_some() {
+            let next = self.ordered.as_ref().and_then(|o| o.previous).map(|_| {
+                let camera = match self.aim {
+                    Aim::Named(i) => i as u32,
+                    Aim::Look(_) | Aim::Matrices(_) => u32::MAX,
+                };
+                self.frame_key(camera, view.size).prefix()
+            });
+            let ordered = self.ordered.as_mut().expect("checked above");
+            let loft_ir::bundle::Format::V2(s) = &self.b.format else {
+                unreachable!("ordered bundles carry a schedule")
+            };
+            ordered.encode(device, enc, view, s, [&self.g0[0], &self.g1.render], self.timestamps.as_ref())?;
+            ordered.previous = next;
+            return Ok(());
         }
         for (p, pass) in self.b.passes.iter().enumerate() {
             let clear = |owned: bool| match (owned, &pass.clear) {
@@ -1243,7 +1308,7 @@ impl Loft {
                     }
                     // A multisampled view resolves its colour each segment: the scene colour is copied from there.
                     let picture = into.or(color).expect("a View pass has colour");
-                    self.resolve.encode(device, enc, &self.scene, picture, depth)?;
+                    self.resolve.as_ref().expect("wire 4 resolve").encode(device, enc, &self.scene, picture, depth)?;
                 }
                 let load = if seg == 0 { ops } else { (wgpu::LoadOp::Load, wgpu::LoadOp::Load) };
                 let colors: Vec<_> = color
@@ -1302,6 +1367,11 @@ impl Loft {
     /// A new copy at this loft's current time, params and inputs. Refused when a copy would share per-frame state it
     /// cannot share: a live (`Keep::Latest`) stepped kernel, an offscreen pass, or a view-sized `Frame` write.
     pub fn instance(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Instance, Error> {
+        if self.ordered.is_some() {
+            return Err(Error::Usage(
+                "an ordered program must run through encode_into; use a separate Loft per instance".into(),
+            ));
+        }
         let live = self
             .steppers
             .iter()
@@ -1411,9 +1481,9 @@ impl Loft {
         // A GPU camera is built once, on the loft's own frame, and copied into every copy's.
         queue.write_buffer(&self.frame, 0, &self.frame_bytes(self.time));
         let frames: Vec<&Buffer> = instances.iter().map(|i| &i.frame).collect();
-        self.cameras.encode(queue, enc, &self.aim, (&self.g0[0], &self.g1.render), &frames);
+        self.cameras.encode(queue, enc, &self.aim, (&self.g0[0], &self.g1.render), &frames, None);
         let sets: Vec<Groups> = instances.iter().map(|i| (&i.g0, &i.g1.compute, &i.g2[..])).collect();
-        self.dispatch_all(enc, &self.frame_kernels(), self.timestamps.as_ref(), &sets);
+        self.dispatch_all(enc, &self.frame_kernels(), self.compute_clock(true, true), &sets);
     }
 
     /// Records every instance's subject draws of the view passes into the caller's render pass, whose attachments are

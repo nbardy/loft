@@ -33,6 +33,11 @@
 //                       dispatch x y z, text sym, n libs, raw Fn ordinal..., n writes, (key sym, symbol sym, shape)...]
 //                       roots [values]; shape 0 buffer [entries, lanes] | 1 texture [dims, x, y, z, format sym]. No
 //                       head: a compute pass is not a table, and raw text reads its outputs by symbol
+//   Wire 5 tags 12/13 are Kind/Open (11 belongs to the motion lane). A Kind's words are name and
+//   (member name, type) pairs. Its roots identify every nominal node of this type. This keeps node ids and
+//   kind ids 32 bit. Type 5 is u32, 6 is nominal in node headers, and 6+k names kind k in declarations.
+//   An Open's words are name, fallback Fn ordinal, then (u32 tag, Fn ordinal) cases. Its first argument is the tag.
+//   Field, Make, Open (ops 12/13/14) carry a member ordinal, kind ordinal and open ordinal respectively.
 //   Param   [name, def lit, min lit, max lit]        Input  [name, ty, first def lit]
 
 import type { Fn, TableSource, Ty } from "../expr.ts";
@@ -41,10 +46,10 @@ export const MAGIC = 0x5754464c; // "LFTW", little-endian
 const WIRE = 4;
 
 export enum Program { Scene, Solve, Evaluate, Check }
-export enum Decl { Fn, Loop, Kernel, Draw, Pass, Medium, Check, Solve, Param, Input, Camera }
+export enum Decl { Fn, Loop, Kernel, Draw, Pass, Medium, Check, Solve, Param, Input, Camera, Kind = 12, Open }
 /** How a Kernel decl fills its resource: the first word of its layout. */
 export enum Fill { Map, Rows, Scan, Data, Recurrence, Compute }
-export enum Op { Lit, Time, Param, Input, Bind, Call, Fetch, Loop, Grad, Raw, Swizzle, Vec } // then PRIMS from PRIM0
+export enum Op { Lit, Time, Param, Input, Bind, Call, Fetch, Loop, Grad, Raw, Swizzle, Vec, Field, Make, Open } // then PRIMS from PRIM0
 export const BOUND = 1, FREE = 0;
 export const TYS = ["f32", "vec2", "vec3", "vec4", "bool"] as const satisfies readonly Ty[];
 export const ROLES = ["stations", "data", "static"] as const satisfies readonly TableSource["role"][];
@@ -68,6 +73,7 @@ export const swizzleSel = (code: number): string => Array.from({ length: code >>
 
 /** One job, span by span (N-API borrows each typed array). */
 export type Job = {
+  readonly wire?: 5;
   readonly program: Program;
   readonly nodes: Uint32Array; readonly args: Uint32Array; readonly lits: Float64Array; readonly rows: Float32Array;
   readonly blobs: Uint8Array; readonly syms: Uint8Array; readonly symAt: Uint32Array;
@@ -76,11 +82,12 @@ export type Job = {
 const SPANS = ["nodes", "args", "lits", "rows", "blobs", "syms", "symAt", "sites", "siteOf", "decls", "roots"] as const;
 
 /** The job as one byte string: the header, then each span as its byte length and its bytes padded to 8. What is hashed and dumped. */
-export function pack(job: Job): Uint8Array {
+export function pack(job: Job, declarations?: import("./passes.ts").Declarations): Uint8Array {
   const parts = SPANS.map((s) => new Uint8Array(job[s].buffer, job[s].byteOffset, job[s].byteLength));
+  if (declarations) parts.push(new TextEncoder().encode(JSON.stringify(declarations)));
   const out = new Uint8Array(16 + parts.reduce((n, p) => n + 8 + ((p.length + 7) & ~7), 0));
   const w = new DataView(out.buffer);
-  [MAGIC, WIRE, job.program, SPANS.length].forEach((v, k) => w.setUint32(4 * k, v, true));
+  [MAGIC, declarations ? 5 : job.wire ?? WIRE, job.program, parts.length].forEach((v, k) => w.setUint32(4 * k, v, true));
   let at = 16;
   for (const p of parts) { w.setUint32(at, p.length, true); out.set(p, at + 8); at += 8 + ((p.length + 7) & ~7); }
   return out;

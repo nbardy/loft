@@ -36,7 +36,7 @@ enum Use {
 /// What the module needs from a body: functions it calls and raw functions.
 #[derive(Default)]
 pub struct Needs {
-    pub calls: Vec<u32>,
+    pub opens: Vec<u32>,
     /// (calling node, raw function) per raw call.
     pub raws: Vec<(u32, u32)>,
 }
@@ -160,6 +160,9 @@ impl<'g> Body<'g> {
                 | Op::Param(_)
                 | Op::Input(_)
                 | Op::Var(_)
+                | Op::Field(_)
+                | Op::Make(_)
+                | Op::Open(_)
                 | Op::Vec
                 | Op::Prim(_)
                 | Op::Swizzle(_)
@@ -211,6 +214,9 @@ impl<'g> Body<'g> {
                     }
                 }
                 Op::Prim(_)
+                | Op::Field(_)
+                | Op::Make(_)
+                | Op::Open(_)
                 | Op::Vec
                 | Op::Swizzle(_)
                 | Op::Call(_)
@@ -225,24 +231,24 @@ impl<'g> Body<'g> {
                 | Op::Var(_) => args.iter().for_each(|&m| push(m, Use::At(b))),
             }
         }
-        live.iter()
-            .filter_map(|&n| match self.node(n).op {
-                Op::Call(d) => Some(d),
-                Op::Lit(_)
-                | Op::Time
-                | Op::Param(_)
-                | Op::Input(_)
-                | Op::Bind(_)
-                | Op::Var(_)
-                | Op::Vec
-                | Op::Prim(_)
-                | Op::Swizzle(_)
-                | Op::Fetch { .. }
-                | Op::Loop { .. }
-                | Op::Grad
-                | Op::Raw(_) => None,
-            })
-            .collect()
+        let mut calls = Vec::new();
+        for n in live {
+            let node = self.node(n);
+            match node.op {
+                Op::Call(f) => calls.push(f),
+                Op::Open(k) => {
+                    let o = &g.opens[k as usize];
+                    let tag = &g.nodes[g.args_of(node)[0] as usize];
+                    if let Op::Lit(at) = tag.op {
+                        calls.push(o.at(f64::from_bits(g.lits[at as usize]) as u32));
+                    } else {
+                        calls.extend(o.targets());
+                    }
+                }
+                _ => {}
+            }
+        }
+        calls
     }
 
     fn emit(&mut self, block: u32, text: String, node: Option<u32>) {
@@ -288,7 +294,8 @@ impl<'g> Body<'g> {
                 return Err(unsupported(g, n, "a gradient request (rewritten during interning, which has not run)"));
             }
             Op::Prim(Prim::Select) => return self.select(n, args, ty),
-            Op::Vec => {
+            Op::Field(j) => format!("{}.v{j}", self.need(args[0])?),
+            Op::Make(_) | Op::Vec => {
                 let xs = args.iter().map(|&a| self.need(a)).collect::<Result<Vec<_>, _>>()?;
                 format!("{}({})", ty_name(ty, "lf"), xs.join(", "))
             }
@@ -302,16 +309,27 @@ impl<'g> Body<'g> {
                 match (self.node(args[0]).ty, sel.len) {
                     (Ty::F32, 1) => x,
                     (Ty::F32, _) => format!("{}({x})", ty_name(ty, "lf")),
-                    (Ty::V2 | Ty::V3 | Ty::V4 | Ty::Bool, _) => {
+                    (Ty::V2 | Ty::V3 | Ty::V4 | Ty::Bool | Ty::U32 | Ty::Kind(_), _) => {
                         let c: String =
                             (0..sel.len).map(|k| ["x", "y", "z", "w"][(sel.comps >> (2 * k)) as usize & 3]).collect();
                         format!("{x}.{c}")
                     }
                 }
             }
+            Op::Open(k) => {
+                let xs = args[1..].iter().map(|&a| self.need(a)).collect::<Result<Vec<_>, _>>()?;
+                let o = &g.opens[k as usize];
+                if let Op::Lit(at) = self.node(args[0]).op {
+                    let f = o.at(f64::from_bits(g.lits[at as usize]) as u32);
+                    format!("{}({})", self.fn_names[&f], xs.join(", "))
+                } else {
+                    self.needs.opens.push(k);
+                    let params = std::iter::once(self.need(args[0])?).chain(xs).collect::<Vec<_>>().join(", ");
+                    format!("loft_open{k}({params})")
+                }
+            }
             Op::Call(d) => {
                 let xs = args.iter().map(|&a| self.need(a)).collect::<Result<Vec<_>, _>>()?;
-                self.needs.calls.push(d);
                 format!("{}({})", self.fn_names[&d], xs.join(", "))
             }
             Op::Raw(r) => {

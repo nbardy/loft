@@ -114,6 +114,9 @@ fn frame(g: &Graph, ssa: &mut Ssa, roots: &[u32], fixed: &[(u32, Slot)], first: 
             | Op::Grad
             | Op::Raw(_)
             | Op::Swizzle(_)
+            | Op::Field(_)
+            | Op::Make(_)
+            | Op::Open(_)
             | Op::Vec
             | Op::Prim(_)
             | Op::Loop { .. } => continue,

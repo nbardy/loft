@@ -18,3 +18,7 @@ sha2.workspace = true
 
 [lints]
 workspace = true
+
+[[example]]
+name = "parity-diff"
+path = "../../../tools/parity/diff.rs"
