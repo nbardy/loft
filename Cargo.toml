@@ -12,11 +12,12 @@ publish = false
 
 # Same pins as the legacy workspace and Keel.
 [workspace.dependencies]
-wgpu = { version = "=30.0.1", default-features = false, features = ["std", "parking_lot", "metal", "vulkan", "wgsl"] }
+wgpu = { version = "=30.0.1", default-features = false, features = ["std", "parking_lot", "metal", "vulkan", "wgsl", "naga-ir"] }
 naga = { version = "=30.0.1", default-features = false, features = ["wgsl-in"] }
 pollster = "0.4"
 png = "0.18"
 serde_json = "1.0.149"
+sha2 = "0.10.9"
 
 [workspace.lints.rust]
 unsafe_code = "deny"

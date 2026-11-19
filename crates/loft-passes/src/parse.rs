@@ -54,15 +54,14 @@ fn lex(file: u16, text: &str) -> Res<Vec<(Tok, Span)>> {
         } else if c.is_ascii_digit() || (c == b'.' && b.get(i + 1).is_some_and(u8::is_ascii_digit)) {
             let s = i;
             let mut float = false;
-            let value;
-            if b[i..].starts_with(b"0x") {
+            let value = if b[i..].starts_with(b"0x") {
                 i += 2;
                 while i < b.len() && b[i].is_ascii_hexdigit() {
                     i += 1;
                 }
-                value = u64::from_str_radix(&text[s + 2..i], 16).map_err(|_| {
+                u64::from_str_radix(&text[s + 2..i], 16).map_err(|_| {
                     Diag::new(Code::E001, span(s, i), "bad hex literal", "write hex digits after 0x")
-                })? as f64;
+                })? as f64
             } else {
                 while i < b.len() && b[i].is_ascii_digit() {
                     i += 1;
@@ -85,10 +84,10 @@ fn lex(file: u16, text: &str) -> Res<Vec<(Tok, Span)>> {
                         i += 1;
                     }
                 }
-                value = text[s..i].parse::<f64>().map_err(|_| {
+                text[s..i].parse::<f64>().map_err(|_| {
                     Diag::new(Code::E001, span(s, i), "bad number", "write a decimal number like 0.5 or 2")
-                })?;
-            }
+                })?
+            };
             let num_end = i;
             while i < b.len() && b[i].is_ascii_alphabetic() {
                 i += 1;
@@ -575,7 +574,7 @@ impl Parser<'_> {
                 Tok::Punct("*") => (BinOp::Mul, 9),
                 Tok::Punct("/") => (BinOp::Div, 9),
                 Tok::Punct("%") => (BinOp::Rem, 9),
-                _ => break,
+                Tok::Ident(_) | Tok::SpaceVar(_) | Tok::Num { .. } | Tok::Punct(_) | Tok::Eof => break,
             };
             if bp <= min {
                 break;

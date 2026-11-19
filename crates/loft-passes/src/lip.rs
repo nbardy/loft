@@ -136,7 +136,7 @@ impl Scalar for Iv {
             BinOp::Ge => (self.lo >= o.hi, self.hi < o.lo),
             BinOp::Eq => (self.exact().is_some() && self.exact() == o.exact(), self.hi < o.lo || self.lo > o.hi),
             BinOp::Ne => (self.hi < o.lo || self.lo > o.hi, self.exact().is_some() && self.exact() == o.exact()),
-            _ => unreachable!("comparison"),
+            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem | BinOp::And | BinOp::Or | BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => unreachable!("comparison"),
         };
         if all {
             Some(true)
@@ -205,22 +205,23 @@ pub struct Derived {
 type Cell = ([f64; 3], [f64; 3]);
 
 /// Derives one row's bounds and L for a kind's `trace` query.
-pub fn derive(ev: &mut Eval<'_, '_, Iv>, trace: &FnDecl, kind: usize, row: usize, span: Span) -> Res<Derived> {
+pub fn derive<'a>(ev: &mut Eval<'_, 'a, Iv>, trace: &'a FnDecl, kind: usize, row: usize, span: Span) -> Res<Derived> {
     let evals = std::cell::Cell::new(0u32);
-    let once = |ev: &mut Eval<'_, '_, Iv>, (lo, hi): Cell| -> Res<Iv> {
+    let once = |ev: &mut Eval<'_, 'a, Iv>, (lo, hi): Cell| -> Res<Iv> {
         evals.set(evals.get() + 1);
         let p = Val::V((0..3).map(|i| Iv { lo: lo[i], hi: hi[i], l: 1.0 }).collect(), 1.0);
         match ev.call_fn(trace, vec![Val::Row(kind, row), p], span)? {
             Val::S(s) => Ok(s),
-            other => unreachable!("checked: trace returns f32, got {other:?}"),
+            other @ Val::Void | other @ Val::V(..) | other @ Val::B(_) | other @ Val::U(_) | other @ Val::I(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) => unreachable!("checked: trace returns f32, got {other:?}"),
         }
     };
     // The natural interval, tightened by the centred (mean value) form f(c) ± L·r with the cell's own derived L.
     // Both enclose f over the cell, so their intersection does; for a distance field it is near exact, where the
     // natural interval alone loses to the dependency problem (`pa` appears twice in `sd_capsule`).
-    let field = |ev: &mut Eval<'_, '_, Iv>, c: Cell| -> Res<Iv> {
+    let field = |ev: &mut Eval<'_, 'a, Iv>, c: Cell| -> Res<Iv> {
         let iv = once(ev, c)?;
-        if !iv.l.is_finite() {
+        // Decided already (or no finite L to centre with): skip the second evaluation.
+        if iv.lo > 0.0 || iv.hi <= 0.0 || !iv.l.is_finite() {
             return Ok(iv);
         }
         let mid = [0, 1, 2].map(|i| 0.5 * (c.0[i] + c.1[i]));

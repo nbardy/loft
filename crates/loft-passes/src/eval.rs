@@ -116,7 +116,8 @@ pub struct Eval<'p, 'a, S> {
     pub types: &'p [Ty],
     pub tables: Tables,
     pub overrides: &'p [(String, f64)],
-    env: Vec<(String, Slot<S>)>,
+    /// Names borrow the source: no allocation per binding.
+    env: Vec<(&'a str, Slot<S>)>,
     /// The first expression that made a Lipschitz bound unbounded: where, and why.
     pub cause: Option<(Span, String)>,
     pub steps: u64,
@@ -148,11 +149,11 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
     }
 
     /// Calls `f` with arguments; a query's `self` is `Val::Row`.
-    pub fn call_fn(&mut self, f: &FnDecl, args: Vec<Val<S>>, span: Span) -> Res<Val<S>> {
+    pub fn call_fn(&mut self, f: &'a FnDecl, args: Vec<Val<S>>, span: Span) -> Res<Val<S>> {
         let mark = self.env.len();
         let saved = std::mem::take(&mut self.env);
         for (prm, a) in f.params.iter().zip(args.iter()) {
-            self.env.push((prm.name.name.clone(), Slot::Val(a.clone())));
+            self.env.push((prm.name.name.as_str(), Slot::Val(a.clone())));
         }
         let out = self.block(&f.body);
         self.env = saved;
@@ -175,12 +176,12 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
             ExprKind::Call { args, .. } => {
                 args.iter().filter_map(|x| if let ExprKind::Name(n) = &x.value.kind { Some(n.as_str()) } else { None }).collect()
             }
-            _ => vec![],
+            ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => vec![],
         };
         let lip_of = |x: &Val<S>| match x {
             Val::S(s) => s.lip(),
             Val::V(_, l) => *l,
-            _ => 0.0,
+            Val::Void | Val::B(_) | Val::U(_) | Val::I(_) | Val::X(_) | Val::Row(..) | Val::MapRef(..) => 0.0,
         };
         let mut l = 0.0f64;
         for (prm, x) in f.params.iter().zip(args) {
@@ -198,15 +199,15 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
         }
         match v {
             Val::S(s) => Val::S(s.with_lip(l)),
-            other => other,
+            other @ Val::Void | other @ Val::V(..) | other @ Val::B(_) | other @ Val::U(_) | other @ Val::I(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) => other,
         }
     }
 
     fn lookup(&self, n: &str) -> Option<&Slot<S>> {
-        self.env.iter().rev().find(|(k, _)| k == n).map(|(_, v)| v)
+        self.env.iter().rev().find(|(k, _)| *k == n).map(|(_, v)| v)
     }
 
-    fn block(&mut self, b: &Block) -> Res<Flow<S>> {
+    fn block(&mut self, b: &'a Block) -> Res<Flow<S>> {
         let mark = self.env.len();
         for s in &b.stmts {
             if let Flow::Ret(v) = self.stmt(s)? {
@@ -218,12 +219,12 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
         Ok(Flow::Next)
     }
 
-    fn stmt(&mut self, s: &Stmt) -> Res<Flow<S>> {
+    fn stmt(&mut self, s: &'a Stmt) -> Res<Flow<S>> {
         self.steps += 1;
         match s {
             Stmt::Let { name, value, .. } => {
                 let v = self.expr(value)?;
-                self.env.push((name.name.clone(), Slot::Val(v)));
+                self.env.push((name.name.as_str(), Slot::Val(v)));
             }
             Stmt::Assign { target, op, value } => {
                 let ExprKind::Name(n) = &target.kind else { unreachable!("checked: names only") };
@@ -240,7 +241,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                     ExprKind::Call { callee, args } if crate::check::MAP_OPS.contains(&callee.name.as_str()) => {
                         (self.expr(&args[0].value)?, vec![(callee.name.as_str(), vec![])])
                     }
-                    _ => (self.expr(head)?, vec![]),
+                    ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Call { .. } | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => (self.expr(head)?, vec![]),
                 };
                 for (op, args) in stages {
                     let vals = args.iter().map(|a| self.expr(a)).collect::<Res<Vec<_>>>()?;
@@ -260,7 +261,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                     p = self.stage(&stage, p, cell.as_ref(), true, true, true, head.span);
                     out.push(stage);
                 }
-                self.env.push((name.name.clone(), Slot::Map { p, cell, stages: out }));
+                self.env.push((name.name.as_str(), Slot::Map { p, cell, stages: out }));
             }
             Stmt::Return(v, _) => {
                 return Ok(Flow::Ret(match v {
@@ -292,7 +293,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 };
                 for i in a..b {
                     let v = if unsigned { Val::U(i as u32) } else { Val::I(i as i32) };
-                    self.env.push((var.name.clone(), Slot::Val(v)));
+                    self.env.push((var.name.as_str(), Slot::Val(v)));
                     let f = self.block(body)?;
                     self.env.pop();
                     if let Flow::Ret(v) = f {
@@ -349,12 +350,12 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
         }
     }
 
-    pub fn expr(&mut self, e: &Expr) -> Res<Val<S>> {
+    pub fn expr(&mut self, e: &'a Expr) -> Res<Val<S>> {
         let v = self.expr_inner(e)?;
         let inf = match &v {
             Val::S(s) => s.lip().is_infinite(),
             Val::V(_, l) => l.is_infinite(),
-            _ => false,
+            Val::Void | Val::B(_) | Val::U(_) | Val::I(_) | Val::X(_) | Val::Row(..) | Val::MapRef(..) => false,
         };
         if inf && self.cause.is_none() {
             self.cause = Some((e.span, "this expression has no finite Lipschitz bound over the region".into()));
@@ -366,14 +367,14 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
         &self.types[e.id as usize]
     }
 
-    fn expr_inner(&mut self, e: &Expr) -> Res<Val<S>> {
+    fn expr_inner(&mut self, e: &'a Expr) -> Res<Val<S>> {
         match &e.kind {
             ExprKind::Num { value, suffix, .. } => {
                 let v = if *suffix == NumSuffix::Deg { value.to_radians() } else { *value };
                 Ok(match self.ty(e) {
                     Ty::U32 => Val::U(v as u32),
                     Ty::I32 | Ty::AbstractInt => Val::I(v as i32),
-                    _ => Val::S(S::c(f64::from(v as f32))),
+                    Ty::Void | Ty::Bool | Ty::F32 | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) => Val::S(S::c(f64::from(v as f32))),
                 })
             }
             ExprKind::Bool(b) => Ok(Val::B(Some(*b))),
@@ -388,7 +389,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                     return Ok(match self.types[c.value.id as usize] {
                         Ty::U32 => Val::U(*x as u32),
                         Ty::I32 | Ty::AbstractInt => Val::I(*x as i32),
-                        _ => Val::S(S::c(*x)),
+                        Ty::Void | Ty::Bool | Ty::F32 | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) => Val::S(S::c(*x)),
                     });
                 }
                 let saved = std::mem::take(&mut self.env);
@@ -423,7 +424,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                             Ok(Val::V(idx.iter().map(|&i| c[i].clone().with_lip(l)).collect(), l))
                         }
                     }
-                    other => unreachable!("checked member of {other:?}"),
+                    other @ Val::Void | other @ Val::S(_) | other @ Val::B(_) | other @ Val::U(_) | other @ Val::I(_) | other @ Val::X(_) | other @ Val::MapRef(..) => unreachable!("checked member of {other:?}"),
                 }
             }
             ExprKind::Index(base, i) => {
@@ -431,11 +432,11 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 let i = match i {
                     Val::U(x) => x as usize,
                     Val::I(x) => x as usize,
-                    _ => return Err(err(e.span, "index not a known integer", "index with an integer")),
+                    Val::Void | Val::S(_) | Val::V(..) | Val::B(_) | Val::X(_) | Val::Row(..) | Val::MapRef(..) => return Err(err(e.span, "index not a known integer", "index with an integer")),
                 };
                 match b {
                     Val::V(c, l) => c.get(i).map(|x| Val::S(x.clone().with_lip(l))).ok_or_else(|| err(e.span, "index out of range", "index 0..n")),
-                    other => unreachable!("checked index of {other:?}"),
+                    other @ Val::Void | other @ Val::S(_) | other @ Val::B(_) | other @ Val::U(_) | other @ Val::I(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) => unreachable!("checked index of {other:?}"),
                 }
             }
             ExprKind::Unary(op, x) => {
@@ -463,7 +464,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                     Ty::Geo(Geo::Dir | Geo::Norm, _) => Ok(normalize(build(vals, 3))),
                     Ty::Geo(..) => Ok(build(vals, 3)),
                     Ty::VecN(n) => Ok(build(vals, n as usize)),
-                    other => unreachable!("checked ctor of {other}"),
+                    other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::F32 | other @ Ty::AbstractInt | other @ Ty::Map(..) | other @ Ty::Row(_) => unreachable!("checked ctor of {other}"),
                 }
             }
             ExprKind::Call { callee, args } => {
@@ -481,7 +482,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
         let sv = |i: &Val<S>| match i {
             Val::I(i) => Val::S(S::c(f64::from(*i))),
             Val::U(u) => Val::S(S::c(f64::from(*u))),
-            other => other.clone(),
+            other @ Val::Void | other @ Val::S(_) | other @ Val::V(..) | other @ Val::B(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) => other.clone(),
         };
         Ok(match (op, &x, &y) {
             (_, Val::MapRef(name, inverse), Val::V(..)) => {
@@ -565,7 +566,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                     Mul => Val::S(p.mul(&q)),
                     Div => Val::S(p.div(&q)),
                     Lt | Le | Gt | Ge | Eq | Ne => Val::B(p.cmp(op, &q)),
-                    _ => unreachable!("checked float op {op:?}"),
+                    Rem | And | Or | BitAnd | BitOr | BitXor | Shl | Shr => unreachable!("checked float op {op:?}"),
                 },
                 (Val::V(p, lp), Val::V(q, lq)) => {
                     let c: Vec<S> = p
@@ -576,13 +577,13 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                             Sub => u.sub(v),
                             Mul => u.mul(v),
                             Div => u.div(v),
-                            _ => unreachable!("checked vector op"),
+                            Rem | Lt | Le | Gt | Ge | Eq | Ne | And | Or | BitAnd | BitOr | BitXor | Shl | Shr => unreachable!("checked vector op"),
                         })
                         .collect();
                     let l = match op {
                         Add | Sub => lp + lq,
                         Mul => max_mag(&p) * lq + max_mag(&q) * lp,
-                        _ => {
+                        Div | Rem | Lt | Le | Gt | Ge | Eq | Ne | And | Or | BitAnd | BitOr | BitXor | Shl | Shr => {
                             let mig = q.iter().map(S::mig).fold(f64::INFINITY, f64::min);
                             if mig > 0.0 { (lp * max_mag(&q) + max_mag(&p) * lq) / (mig * mig) } else { f64::INFINITY }
                         }
@@ -610,7 +611,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
         })
     }
 
-    fn builtin(&mut self, name: &str, mut v: Vec<Val<S>>, e: &Expr) -> Val<S> {
+    fn builtin(&mut self, name: &str, mut v: Vec<Val<S>>, e: &'a Expr) -> Val<S> {
         let f32ty = matches!(self.ty(e), Ty::F32 | Ty::VecN(_) | Ty::Geo(..));
         // Integer literals meet f32 in componentwise maths.
         if f32ty {
@@ -627,11 +628,11 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 // abs is 1-Lipschitz componentwise, so it keeps the vector bound; the rest bound per component.
                 let l = match f {
                     Un::Abs => *l,
-                    _ => c.iter().map(|s| s.lip() * s.lip()).sum::<f64>().sqrt(),
+                    Un::Sin | Un::Cos | Un::Sqrt | Un::Exp | Un::Floor | Un::Fract | Un::Sign => c.iter().map(|s| s.lip() * s.lip()).sum::<f64>().sqrt(),
                 };
                 Val::V(c, l)
             }
-            other => unreachable!("checked unary builtin on {other:?}"),
+            other @ Val::Void | other @ Val::B(_) | other @ Val::U(_) | other @ Val::I(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) => unreachable!("checked unary builtin on {other:?}"),
         };
         let zip2 = |x: &Val<S>, y: &Val<S>, f: &dyn Fn(&S, &S) -> S| -> Val<S> {
             match (x, y) {
@@ -686,7 +687,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
             "select" => match &v[2] {
                 Val::B(Some(true)) => v[1].clone(),
                 Val::B(Some(false)) => v[0].clone(),
-                _ => match (&v[0], &v[1]) {
+                Val::Void | Val::S(_) | Val::V(..) | Val::B(_) | Val::U(_) | Val::I(_) | Val::X(_) | Val::Row(..) | Val::MapRef(..) => match (&v[0], &v[1]) {
                     (Val::S(a), Val::S(b)) => Val::S(a.join(b).with_lip(f64::INFINITY)),
                     (Val::V(a, _), Val::V(b, _)) => Val::V(a.iter().zip(b).map(|(p, q)| p.join(q)).collect(), f64::INFINITY),
                     other => unreachable!("checked select on {other:?}"),
@@ -695,14 +696,14 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
             "length" => match &v[0] {
                 Val::S(s) => Val::S(s.un(Un::Abs)),
                 Val::V(c, l) => Val::S(sum_sq(c).un(Un::Sqrt).with_lip(*l)),
-                other => unreachable!("checked length of {other:?}"),
+                other @ Val::Void | other @ Val::B(_) | other @ Val::U(_) | other @ Val::I(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) => unreachable!("checked length of {other:?}"),
             },
             "distance" => {
                 let d = self.arith(BinOp::Sub, v[0].clone(), v[1].clone());
                 match d {
                     Val::V(c, l) => Val::S(sum_sq(&c).un(Un::Sqrt).with_lip(l)),
                     Val::S(s) => Val::S(s.un(Un::Abs)),
-                    other => unreachable!("checked distance of {other:?}"),
+                    other @ Val::Void | other @ Val::B(_) | other @ Val::U(_) | other @ Val::I(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) => unreachable!("checked distance of {other:?}"),
                 }
             }
             "dot" => {
@@ -725,19 +726,19 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
             "normalize" => normalize(v[0].clone()),
             "inv" => match &v[0] {
                 Val::X(x) => Val::X(x.inv()),
-                other => unreachable!("checked inv of {other:?}"),
+                other @ Val::Void | other @ Val::S(_) | other @ Val::V(..) | other @ Val::B(_) | other @ Val::U(_) | other @ Val::I(_) | other @ Val::Row(..) | other @ Val::MapRef(..) => unreachable!("checked inv of {other:?}"),
             },
             "f32" => match &v[0] {
                 Val::U(u) => Val::S(S::c(f64::from(*u))),
                 Val::I(i) => Val::S(S::c(f64::from(*i))),
-                other => other.clone(),
+                other @ Val::Void | other @ Val::S(_) | other @ Val::V(..) | other @ Val::B(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) => other.clone(),
             },
             "u32" | "i32" => {
                 let x = match &v[0] {
                     Val::U(u) => f64::from(*u),
                     Val::I(i) => f64::from(*i),
                     Val::S(s) => s.exact().unwrap_or(f64::NAN),
-                    other => unreachable!("checked conversion of {other:?}"),
+                    other @ Val::Void | other @ Val::V(..) | other @ Val::B(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) => unreachable!("checked conversion of {other:?}"),
                 };
                 if name == "u32" { Val::U(x as u32) } else { Val::I(x as i32) }
             }
@@ -790,7 +791,7 @@ fn build<S: Scalar>(vals: Vec<Val<S>>, n: usize) -> Val<S> {
             }
             Val::I(i) => c.push(S::c(f64::from(i))),
             Val::U(u) => c.push(S::c(f64::from(u))),
-            other => unreachable!("checked component {other:?}"),
+            other @ Val::Void | other @ Val::B(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) => unreachable!("checked component {other:?}"),
         }
     }
     if c.len() == 1 {
@@ -819,7 +820,7 @@ pub fn concrete<S: Scalar>(v: &Val<S>, span: Span) -> Res<RowVal> {
         Val::I(i) => RowVal::I(*i),
         Val::B(Some(b)) => RowVal::B(*b),
         Val::X(x) => RowVal::X(*x),
-        other => return Err(err(span, format!("cannot store {other:?} in a row"), "store numbers, vectors, points or Xforms")),
+        other @ Val::Void | other @ Val::B(_) | other @ Val::Row(..) | other @ Val::MapRef(..) => return Err(err(span, format!("cannot store {other:?} in a row"), "store numbers, vectors, points or Xforms")),
     })
 }
 
@@ -880,7 +881,7 @@ impl Scalar for f32 {
             BinOp::Ge => self >= o,
             BinOp::Eq => self == o,
             BinOp::Ne => self != o,
-            _ => unreachable!("comparison"),
+            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem | BinOp::And | BinOp::Or | BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => unreachable!("comparison"),
         })
     }
     fn mag(&self) -> f64 {

@@ -146,7 +146,7 @@ impl Compiled {
         let q = |w| k.queries.iter().find(|(x, _)| *x == w).map(|(_, f)| f);
         let f32_of = |v: Val<f32>| match v {
             Val::S(s) => s,
-            other => unreachable!("query returns f32, got {other:?}"),
+            other @ Val::Void | other @ Val::V(..) | other @ Val::B(_) | other @ Val::U(_) | other @ Val::I(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) => unreachable!("query returns f32, got {other:?}"),
         };
         let trace = f32_of(ev.call_fn(q(QueryKind::Trace).expect("checked"), vec![Val::Row(*table, row), pt.clone()], Span::default())?);
         let visible = match q(QueryKind::Visible) {
@@ -155,7 +155,7 @@ impl Compiled {
         };
         let material = match ev.call_fn(q(QueryKind::Material).expect("checked"), vec![Val::Row(*table, row), pt, dir], Span::default())? {
             Val::V(c, _) => [c[0], c[1], c[2]],
-            other => unreachable!("material returns vec3, got {other:?}"),
+            other @ Val::Void | other @ Val::S(_) | other @ Val::B(_) | other @ Val::U(_) | other @ Val::I(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) => unreachable!("material returns vec3, got {other:?}"),
         };
         Ok(CpuQuery { trace, visible, material })
     }
@@ -167,7 +167,7 @@ fn arg<'e>(pd: &'e PassDecl, name: &str) -> Res<&'e Expr> {
     })
 }
 
-fn positional_name<'e>(pd: &'e PassDecl, i: usize) -> Res<&'e str> {
+fn positional_name(pd: &PassDecl, i: usize) -> Res<&str> {
     match pd.args.iter().filter(|a| a.name.is_none()).nth(i).map(|a| &a.value.kind) {
         Some(ExprKind::Name(n)) => Ok(n),
         _ => Err(Diag::new(Code::E501, pd.verb.span, format!("`{}` needs a name as argument {}", pd.verb.name, i + 1), "see the Phase 0 schedule verbs")),
@@ -178,7 +178,7 @@ fn fn_name_arg<'e>(p: &Prog, pd: &'e PassDecl, name: &str) -> Res<&'e str> {
     let e = arg(pd, name)?;
     match &e.kind {
         ExprKind::Name(n) if p.fns.contains_key(n.as_str()) => Ok(n),
-        _ => Err(Diag::new(Code::E002, e.span, format!("`{name}:` names a library fn"), "write the fn's name, e.g. `sky: sky_color`")),
+        ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Call { .. } | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => Err(Diag::new(Code::E002, e.span, format!("`{name}:` names a library fn"), "write the fn's name, e.g. `sky: sky_color`")),
     }
 }
 
@@ -192,13 +192,13 @@ fn stage0(p: &Prog, types: &mut Vec<Ty>, e: &Expr, overrides: &[(String, f64)]) 
 fn as_f32(v: RowVal, span: Span) -> Res<f32> {
     match v {
         RowVal::F(x) => Ok(x),
-        other => Err(Diag::new(Code::E003, span, format!("expected a number, found {other:?}"), "pass an f32")),
+        other @ RowVal::V(_) | other @ RowVal::U(_) | other @ RowVal::I(_) | other @ RowVal::B(_) | other @ RowVal::X(_) => Err(Diag::new(Code::E003, span, format!("expected a number, found {other:?}"), "pass an f32")),
     }
 }
 fn as_v3(v: RowVal, span: Span) -> Res<[f32; 3]> {
     match v {
         RowVal::V(c) if c.len() == 3 => Ok([c[0], c[1], c[2]]),
-        other => Err(Diag::new(Code::E003, span, format!("expected a vec3, found {other:?}"), "pass vec3(x, y, z) or Pt[S](...)")),
+        other @ RowVal::F(_) | other @ RowVal::V(_) | other @ RowVal::U(_) | other @ RowVal::I(_) | other @ RowVal::B(_) | other @ RowVal::X(_) => Err(Diag::new(Code::E003, span, format!("expected a vec3, found {other:?}"), "pass vec3(x, y, z) or Pt[S](...)")),
     }
 }
 
@@ -333,7 +333,7 @@ pub fn compile(src: &Sources, overrides: &[(String, f64)]) -> Res<(Program, Repo
                 if as_f32(stage0(&p, &mut types, tile, overrides).map(|v| match v {
                     RowVal::U(u) => RowVal::F(u as f32),
                     RowVal::I(i) => RowVal::F(i as f32),
-                    other => other,
+                    other @ RowVal::F(_) | other @ RowVal::V(_) | other @ RowVal::B(_) | other @ RowVal::X(_) => other,
                 })?, tile.span)? != abi::TILE as f32
                 {
                     return Err(Diag::new(Code::E405, tile.span, "Phase 0 classifies 8x8 tiles", "write `tile: 8u`"));

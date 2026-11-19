@@ -470,7 +470,7 @@ impl Ck<'_, '_> {
                 }
                 self.expr(&first.value)?
             }
-            _ => self.expr(head)?,
+            ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Call { .. } | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => self.expr(head)?,
         };
         let Ty::Geo(Geo::Pt, parent) = point else {
             return Err(e104(head.span, format!("a map takes a point, found `{point}`"), "map a `Pt[S]`"));
@@ -566,7 +566,7 @@ impl Ck<'_, '_> {
                 self.assignable(&it, &Ty::U32, i.span).or_else(|_| self.assignable(&it, &Ty::I32, i.span))?;
                 match b {
                     Ty::VecN(_) | Ty::Geo(..) => Ok(Ty::F32),
-                    other => Err(e003(base.span, format!("cannot index `{other}`"), "index a vector")),
+                    other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::F32 | other @ Ty::AbstractInt | other @ Ty::Xform(..) | other @ Ty::Map(..) | other @ Ty::Row(_) => Err(e003(base.span, format!("cannot index `{other}`"), "index a vector")),
                 }
             }
             ExprKind::Unary(op, x) => {
@@ -600,7 +600,7 @@ impl Ck<'_, '_> {
                 let n = match &target {
                     Ty::VecN(n) => *n,
                     Ty::Geo(..) => 3,
-                    other => return Err(e003(e.span, format!("cannot construct `{other}`"), "construct a vector or point")),
+                    other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::F32 | other @ Ty::AbstractInt | other @ Ty::Xform(..) | other @ Ty::Map(..) | other @ Ty::Row(_) => return Err(e003(e.span, format!("cannot construct `{other}`"), "construct a vector or point")),
                 };
                 components(&ts, n, e.span)?;
                 Ok(target)
@@ -646,7 +646,7 @@ impl Ck<'_, '_> {
             }
             Ty::VecN(n) => swizzle(&m.name, *n as usize, m.span),
             Ty::Geo(..) => swizzle(&m.name, 3, m.span),
-            other => Err(e003(m.span, format!("`{other}` has no member `{}`", m.name), "access a row field or a swizzle")),
+            other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::F32 | other @ Ty::AbstractInt | other @ Ty::Xform(..) | other @ Ty::Map(..) => Err(e003(m.span, format!("`{other}` has no member `{}`", m.name), "access a row field or a swizzle")),
         }
     }
 
@@ -722,7 +722,7 @@ fn subst(t: &Ty, vars: &HashMap<String, Space>) -> Ty {
     match t {
         Ty::Geo(g, x) => Ty::Geo(*g, s(x)),
         Ty::Xform(a, b) => Ty::Xform(s(a), s(b)),
-        other => other.clone(),
+        other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::F32 | other @ Ty::AbstractInt | other @ Ty::VecN(_) | other @ Ty::Map(..) | other @ Ty::Row(_) => other.clone(),
     }
 }
 
@@ -744,7 +744,7 @@ fn components(ts: &[Ty], n: u8, span: Span) -> Res<()> {
             Ty::Geo(..) => {
                 return Err(e104(span, "constructing from a value with a space", "drop the space explicitly with `.xyz`"));
             }
-            other => return Err(e003(span, format!("cannot build a vector from `{other}`"), "pass f32 components")),
+            other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::Xform(..) | other @ Ty::Map(..) | other @ Ty::Row(_) => return Err(e003(span, format!("cannot build a vector from `{other}`"), "pass f32 components")),
         };
     }
     if total == n || (ts.len() == 1 && total == 1) {
@@ -832,7 +832,7 @@ fn binary(op: BinOp, a: &Ty, b: &Ty, sa: Span, sb: Span, span: Span) -> Res<Ty> 
 fn geo_space(t: &Ty) -> Space {
     match t {
         Ty::Geo(_, s) => s.clone(),
-        other => unreachable!("geo_space of {other}"),
+        other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::F32 | other @ Ty::AbstractInt | other @ Ty::VecN(_) | other @ Ty::Xform(..) | other @ Ty::Map(..) | other @ Ty::Row(_) => unreachable!("geo_space of {other}"),
     }
 }
 
@@ -886,7 +886,7 @@ fn builtin(name: &str, ts: &[Ty], sp: &[Span], span: Span) -> Res<Ty> {
                 Ty::VecN(_) | Ty::F32 => Ok(Ty::F32),
                 Ty::Geo(g, _) if vec_like(*g) => Ok(Ty::F32),
                 Ty::Geo(Pt, s) => Err(e104(sp[0], format!("`length` of a point in `{s}`"), "subtract an origin: `length(p - o)`")),
-                other => Err(e003(sp[0], format!("`length` of `{other}`"), "pass a vector")),
+                other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::AbstractInt | other @ Ty::Geo(..) | other @ Ty::Xform(..) | other @ Ty::Map(..) | other @ Ty::Row(_) => Err(e003(sp[0], format!("`length` of `{other}`"), "pass a vector")),
             }
         }
         "distance" => {
@@ -916,7 +916,7 @@ fn builtin(name: &str, ts: &[Ty], sp: &[Span], span: Span) -> Res<Ty> {
                 Ty::VecN(n) => Ok(Ty::VecN(*n)),
                 Ty::Geo(Norm, s) => Ok(Ty::Geo(Norm, s.clone())),
                 Ty::Geo(g, s) if vec_like(*g) => Ok(Ty::Geo(Dir, s.clone())),
-                other => Err(e104(sp[0], format!("`normalize` of `{other}`"), "normalize a Vec")),
+                other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::F32 | other @ Ty::AbstractInt | other @ Ty::Geo(..) | other @ Ty::Xform(..) | other @ Ty::Map(..) | other @ Ty::Row(_) => Err(e104(sp[0], format!("`normalize` of `{other}`"), "normalize a Vec")),
             }
         }
         "inv" => match ts {

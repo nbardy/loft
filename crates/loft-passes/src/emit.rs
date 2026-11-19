@@ -224,7 +224,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                     ExprKind::Call { callee, args } if crate::check::MAP_OPS.contains(&callee.name.as_str()) => {
                         (self.expr(&args[0].value), vec![(callee.name.as_str(), vec![])])
                     }
-                    _ => (self.expr(head), vec![]),
+                    ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Call { .. } | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => (self.expr(head), vec![]),
                 };
                 for (op, args) in stages {
                     let a = args.iter().map(|x| self.expr(x)).collect();
@@ -273,7 +273,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
             Stmt::For { var, lo, hi, body, .. } => {
                 let t = wty(self.ty_of(lo)).replace("i32", match self.ty_of(hi) {
                     Ty::U32 => "u32",
-                    _ => "i32",
+                    Ty::Void | Ty::Bool | Ty::I32 | Ty::F32 | Ty::AbstractInt | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) => "i32",
                 });
                 let (a, b) = (self.expr(lo), self.expr(hi));
                 let v = &var.name;
@@ -314,7 +314,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 Ty::U32 => format!("{}u", *value as u32),
                 Ty::I32 => format!("{}i", *value as i32),
                 Ty::AbstractInt => text.clone(),
-                _ => f32_lit(if *suffix == NumSuffix::Deg { value.to_radians() } else { *value }),
+                Ty::Void | Ty::Bool | Ty::F32 | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) => f32_lit(if *suffix == NumSuffix::Deg { value.to_radians() } else { *value }),
             },
             ExprKind::Bool(b) => b.to_string(),
             ExprKind::Name(n) if n == "self" => "self_".into(),
@@ -356,7 +356,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 match self.ty_of(e) {
                     Ty::Geo(Geo::Dir | Geo::Norm, _) => format!("normalize(vec3<f32>({}))", a.join(", ")),
                     Ty::Xform(..) => format!("loft_xform_yaw({}, {})", a[0], a[1]),
-                    t => format!("{}({})", wty(t), a.join(", ")),
+                    t @ Ty::Void | t @ Ty::Bool | t @ Ty::U32 | t @ Ty::I32 | t @ Ty::F32 | t @ Ty::AbstractInt | t @ Ty::VecN(_) | t @ Ty::Geo(..) | t @ Ty::Map(..) | t @ Ty::Row(_) => format!("{}({})", wty(t), a.join(", ")),
                 }
             }
             ExprKind::Call { callee, args } => {
@@ -420,7 +420,7 @@ pub fn kind_module(p: &Prog, types: &[Ty], k: &KindDecl, light: &str) -> String 
                 w(10),
                 w(11)
             ),
-            other => unreachable!("checked row field type {other}"),
+            other @ Ty::Void | other @ Ty::AbstractInt | other @ Ty::Map(..) | other @ Ty::Row(_) => unreachable!("checked row field type {other}"),
         };
         fields.push(format!("  {}: {},", rf.name.name, wty(&t)));
         loads.push(load);
