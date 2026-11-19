@@ -1,0 +1,5 @@
+The [audit](</Users/nicholasbardy/git/loft/agent_notes/2026-11-19_audits/cut_tsengine.md>) identifies **18,386 lines to retire** from the 27,345 lines in the assigned TypeScript sources and old Rust loader. Allowing 5,348 lines for replacements leaves **14,307 lines**, a projected saving of **13,038 (47.7%)**. Halving this area requires another 635 lines of savings. The retirement counts are measured. Replacement sizes are budgets.
+
+The largest gains come from compiling directly to one bundle, retiring the old loader, and recording draws, resources and passes once. Wire 3 already carries recurrence, compute and offscreen-pass data. The Rust driver still needs to execute those records, and ordinary builds still depend on the TS compiler to discover roots.
+
+Five changes can land before picture parity. The largest replaces the handwritten API catalogue parser. Both parsers found the same 816 public names. The report ranks each cut by savings and risk and specifies the checks required before deleting code.

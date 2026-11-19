@@ -1,0 +1,5 @@
+The [Rust audit](/Users/nicholasbardy/git/loft/agent_notes/2026-11-19_audits/cut_rust.md) identifies 25 cuts that take the audited area from **21,149 to a projected 16,783 source lines**, saving **4,366 lines (20.6%)**. The deletion ranges contain 5,941 measured lines. The projection allows 1,425 replacement lines and 150 for stronger parity checks. Reaching half would require another 6,209 lines beyond these cuts.
+
+The immediate changes save 431 lines. Start by using the wire’s existing `Prim` throughout the compiler, then share fixture builders and remove uncalled parity drivers. Retiring the old loader contributes the largest projected saving, 2,514 lines after allowing for missing capabilities such as grid LOD, per-pass cameras and texture replay.
+
+The cutover blocker is the parity runner. It can exit successfully with missing or failed frames. The audit specifies how to score all 295 reference outcomes and 1,510 frames before retiring the loader. I verified the line counts and inspected stored references. Fresh rendering and GPU timing remain unverified.
