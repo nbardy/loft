@@ -1,41 +1,20 @@
 //! Execution on a caller-owned device.
 pub mod backend;
-mod bindings;
 mod encode;
-pub use encode::render_bundle_stale;
+pub use loft_std::interop::render_bundle_stale;
 mod interop;
-mod mips;
+pub mod mips;
 mod stepping;
 mod resources;
-mod inputs;
+use loft_std::inputs;
 pub use backend::{ExecutionBackend, WgpuBackend};
 pub type Runner = WgpuBackend;
 
 use loft_ir::*;
-use resources::Resource;
+use loft_std::{interop::Resource, storage};
 use std::{collections::BTreeMap, sync::Arc};
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum RunnerError {
-    UnknownInstance,
-    UnknownResource,
-    AbiMismatch,
-    Readback,
-    Bundle(bundle::BundleError),
-    Capacity,
-    InvalidShader(String),
-    Unsupported(&'static str),
-}
-impl From<loft_std::bundle::InvalidResources> for RunnerError {
-    fn from(error: loft_std::bundle::InvalidResources) -> Self {
-        use loft_std::bundle::InvalidResources;
-        match error {
-            InvalidResources::Layout => Self::AbiMismatch,
-            InvalidResources::AttachmentCount => Self::Unsupported("multiple host attachments of one kind"),
-        }
-    }
-}
-type Result<T> = std::result::Result<T, RunnerError>;
+pub use loft_std::error::{RunnerError, Result};
 #[derive(Debug, PartialEq)]
 pub struct FrameIdentity {
     pub instance: InstanceId,
@@ -69,99 +48,30 @@ fn allocate(d: &wgpu::Device, size: u64) -> Arc<wgpu::Buffer> {
         mapped_at_creation: false,
     }))
 }
-impl Table {
-    fn bytes(&self) -> Result<&wgpu::Buffer> {
-        self.buffer().map(Arc::as_ref).ok_or(RunnerError::AbiMismatch)
-    }
-    fn buffer(&self) -> Option<&Arc<wgpu::Buffer>> {
-        match &self.resource { Resource::Buffer(buffer) => buffer.as_ref(), _ => None }
-    }
-    fn attachment(&self) -> Option<(&wgpu::TextureView, TextureDecl)> {
-        match &self.resource { Resource::Attachment(view, decl) => Some((view, *decl)), _ => None }
-    }
-    fn bounds(&self, n: u32, d: &wgpu::Device) -> Result<u64> {
-        let bytes = u64::from(n) * u64::from(self.decl.stride_bytes);
-        if bytes > d.limits().max_buffer_size
-            || matches!(self.decl.lifetime,TableLifetime::DynamicArena{max_rows} if n>max_rows)
-        {
-            return Err(RunnerError::Capacity);
-        }
-        Ok(bytes)
-    }
+impl std::ops::Deref for Table {
+    type Target = Resource;
+    fn deref(&self) -> &Resource { &self.resource }
 }
 impl Instance {
     fn new(device: &wgpu::Device, queue: &wgpu::Queue, decl: &Bundle) -> Result<Self> {
-        let mut tables = BTreeMap::new();
-        let roles = loft_std::bundle::Resources::new(decl).map_err(RunnerError::from)?;
-        for t in &decl.tables {
-            use loft_std::bundle::Role;
-            if t.stride_bytes == 0
-                || !t.stride_bytes.is_multiple_of(4)
-                || !t.initial.len().is_multiple_of(t.stride_bytes as usize)
-                || matches!(t.format,ElemFormat::Struct(i) if decl.struct_layouts.get(i as usize).is_none_or(|s|s.stride_bytes!=t.stride_bytes))
-                || matches!(t.format,ElemFormat::F64 if t.stride_bytes < 8)
-            {
-                return Err(RunnerError::AbiMismatch);
-            }
-            let active = u32::try_from(t.initial.len() / t.stride_bytes as usize)
-                .map_err(|_| RunnerError::Capacity)?;
-            let role = roles.role(t.id);
-            if active > t.capacity || tables.contains_key(&t.id)
-                || active != 0 && (t.lifetime == TableLifetime::External || !matches!(role, Role::Buffer))
-            {
-                return Err(RunnerError::AbiMismatch);
-            }
-            let resource = match role {
-                Role::Buffer if t.lifetime == TableLifetime::External => Resource::Buffer(None),
-                Role::Buffer => {
-                    let bytes = u64::from(t.capacity) * u64::from(t.stride_bytes);
-                    if bytes > device.limits().max_buffer_size
-                        || matches!(t.lifetime, TableLifetime::DynamicArena { max_rows } if t.capacity > max_rows)
-                    {
-                        return Err(RunnerError::Capacity);
-                    }
-                    let buf = allocate(device, bytes);
-                    if active != 0 { queue.write_buffer(&buf, 0, &t.initial); }
-                    Resource::Buffer(Some(buf))
-                }
-                Role::Texture => Resource::Texture { handle: None, contract: None },
-                Role::Attachment(desc) => resources::texture(device, desc)?,
-                Role::Sampler => resources::sampler(device),
-                Role::HostAttachment => Resource::HostAttachment,
-            };
-            tables.insert(t.id, Table { decl: t.clone(), resource, active, epoch: 0 });
-        }
-        if decl.rows.values().any(|id| !tables.get(id).is_some_and(|t| matches!(t.resource, Resource::Buffer(_)))) {
-            return Err(RunnerError::UnknownResource);
-        }
+        let tables = storage::allocations(decl, &device.limits())?.into_iter().map(|(t,active,alloc)| {
+            let resource = resources::create(device,queue,t,alloc)?;
+            Ok((t.id, Table { decl:t.clone(), resource, active, epoch:0 }))
+        }).collect::<Result<BTreeMap<_,_>>>()?;
         let checkpoints = if let Some(s) = &decl.state {
             let table = tables.get(&s.table).ok_or(RunnerError::UnknownResource)?;
             let size = table.bytes()?.size();
-            (0..s.checkpoint_slots)
-                .map(|_| allocate(device, size))
-                .collect()
+            (0..s.checkpoint_slots).map(|_| allocate(device,size)).collect()
         } else {
             Vec::new()
         };
-        let compute = encode::ComputeCache::new(device, decl, &tables)?;
-        Ok(Self {
-            tables,
-            decl: decl.clone(),
-            compute,
-            edits: tier0::Edits::default(),
-            resource_epoch: 0,
-            checkpoints,
-            history: Default::default(),
-            outbox: None,
-            pick_source: None,
-        })
+        let compute = encode::ComputeCache::new(device, decl)?;
+        Ok(Self { tables, decl:decl.clone(), compute, checkpoints, resource_epoch:0,
+            edits:Default::default(), history:Default::default(), outbox:None, pick_source:None })
     }
     fn arena(&mut self, k: KindId) -> Result<&mut Table> {
         let id = self.decl.rows.get(&k).ok_or(RunnerError::UnknownResource)?;
-        let t = self
-            .tables
-            .get_mut(id)
-            .ok_or(RunnerError::UnknownResource)?;
+        let t = self.tables.get_mut(id).ok_or(RunnerError::UnknownResource)?;
         if !matches!(t.decl.lifetime, TableLifetime::DynamicArena { .. }) {
             return Err(RunnerError::AbiMismatch);
         }
@@ -170,49 +80,22 @@ impl Instance {
 }
 impl Runner {
     pub fn attach(device: Arc<wgpu::Device>, queue: Arc<wgpu::Queue>, caps: HostCaps) -> Self {
-        Self {
-            device,
-            queue,
-            caps,
-            instances: Vec::new(),
-        }
+        Self { device, queue, caps, instances:Vec::new() }
     }
     fn instance(&mut self, id: InstanceId) -> Result<&mut Instance> {
-        self.instances
-            .get_mut(id.0 as usize)
-            .ok_or(RunnerError::UnknownInstance)
+        self.instances.get_mut(id.0 as usize).ok_or(RunnerError::UnknownInstance)
     }
     pub fn load_bundle(&mut self, b: &Bundle) -> Result<InstanceId> {
-        let id =
-            InstanceId(u32::try_from(self.instances.len()).map_err(|_| RunnerError::Capacity)?);
-        self.instances
-            .push(Instance::new(&self.device, &self.queue, b)?);
+        let id = InstanceId(self.instances.len().try_into().map_err(|_| RunnerError::Capacity)?);
+        self.instances.push(Instance::new(&self.device,&self.queue,b)?);
         Ok(id)
     }
-    pub fn upsert_rows(
-        &mut self,
-        id: InstanceId,
-        kind: KindId,
-        start: u32,
-        bytes: &[u8],
-    ) -> Result<()> {
+    pub fn upsert_rows(&mut self, id: InstanceId, kind: KindId, start: u32, bytes: &[u8]) -> Result<()> {
         let queue = self.queue.clone();
         let t = self.instance(id)?.arena(kind)?;
-        if !bytes.len().is_multiple_of(t.decl.stride_bytes as usize) {
-            return Err(RunnerError::AbiMismatch);
-        }
-        let count = u32::try_from(bytes.len() / t.decl.stride_bytes as usize)
-            .map_err(|_| RunnerError::Capacity)?;
-        let end = start
-            .checked_add(count)
-            .filter(|&n| n <= t.decl.capacity)
-            .ok_or(RunnerError::Capacity)?;
+        let (offset,end) = storage::rows(&t.decl,start,bytes)?;
         if !bytes.is_empty() {
-            queue.write_buffer(
-                t.bytes()?,
-                u64::from(start) * u64::from(t.decl.stride_bytes),
-                bytes,
-            );
+            queue.write_buffer(t.bytes()?,offset,bytes);
             t.active = t.active.max(end);
         }
         Ok(())
@@ -228,21 +111,15 @@ impl Runner {
     pub fn resize_table(&mut self, id: InstanceId, table: TableId, n: u32) -> Result<()> {
         let (device, queue) = (self.device.clone(), self.queue.clone());
         let inst = self.instance(id)?;
-        let t = inst
-            .tables
-            .get_mut(&table)
-            .ok_or(RunnerError::UnknownResource)?;
+        let t = inst.tables.get_mut(&table).ok_or(RunnerError::UnknownResource)?;
         if !matches!(t.decl.lifetime, TableLifetime::DynamicArena { .. }) {
             return Err(RunnerError::AbiMismatch);
         }
         if t.active > n {
             return Err(RunnerError::Capacity);
         }
-        let size = t.bounds(n, &device)?;
-        let epoch = inst
-            .resource_epoch
-            .checked_add(1)
-            .ok_or(RunnerError::Capacity)?;
+        let size = storage::bounds(&t.decl,n,&device.limits())?;
+        let epoch = interop::next_epoch(inst.resource_epoch)?;
         let mut enc = device.create_command_encoder(&Default::default());
         let replace = |enc: &mut wgpu::CommandEncoder, old: &wgpu::Buffer| {
             let buf = allocate(&device, size);
@@ -268,16 +145,12 @@ impl Runner {
             return Ok(());
         }
         let mut decl = inst.decl.clone();
-        let m = decl
-            .modules
-            .iter_mut()
-            .find(|m| m.id == module)
-            .ok_or(RunnerError::UnknownResource)?;
+        let m = decl.modules.iter_mut().find(|m| m.id == module).ok_or(RunnerError::UnknownResource)?;
         m.bytes = wgsl.as_bytes().into();
         m.target = ShaderTarget::Wgsl;
         m.hash = *blake3::hash(wgsl.as_bytes()).as_bytes();
-        let mut replacement = encode::ComputeCache::new(&device, &decl, &inst.tables)?;
-        replacement.keep_parameters(&inst.compute);
+        let mut replacement = encode::ComputeCache::new(&device, &decl)?;
+        replacement.params.copy_from(&inst.compute.params);
         inst.decl = decl;
         inst.compute = replacement;
         inst.edits = tier0::Edits::default();
@@ -286,40 +159,22 @@ impl Runner {
     pub fn hot_swap_bundle(&mut self, id: InstanceId, b: &Bundle) -> Result<()> {
         let mut next = Instance::new(&self.device, &self.queue, b)?;
         let old = self.instance(id)?;
-        next.resource_epoch = old
-            .resource_epoch
-            .checked_add(1)
-            .ok_or(RunnerError::Capacity)?;
-        if let (Some(a), Some(b)) = (&old.decl.state, &b.state) {
-            if a.layout_hash == b.layout_hash {
-                let current = &old.tables[&a.table];
-                let new = next
-                    .tables
-                    .get_mut(&b.table)
-                    .ok_or(RunnerError::UnknownResource)?;
-                if new.decl.stride_bytes != current.decl.stride_bytes
-                    || matches!(new.decl.lifetime, TableLifetime::DynamicArena{max_rows} if max_rows<current.decl.capacity)
-                {
-                    return Err(RunnerError::AbiMismatch);
-                }
-                // Content and history belong to the state layout, independent of module IDs and source hashes.
-                new.resource = Resource::Buffer(current.buffer().cloned());
-                new.active = current.active;
-                new.decl.capacity = current.decl.capacity;
-                next.checkpoints = std::mem::take(&mut old.checkpoints);
-                next.history = std::mem::take(&mut old.history);
-                // Ring history survives code/configuration swaps along with its live allocation.
-                next.decl.state.as_mut().unwrap().checkpoint_slots = a.checkpoint_slots;
-            }
+        next.resource_epoch = interop::next_epoch(old.resource_epoch)?;
+        if let Some((from, state)) = storage::compatible_state(old.decl.state.as_ref(),next.decl.state.as_mut()) {
+            let current = &old.tables[&from];
+            let dest = next.tables.get_mut(&state.table).ok_or(RunnerError::UnknownResource)?;
+            storage::preserve_capacity(&mut dest.decl, &current.decl)?;
+            dest.resource = Resource::Buffer(current.buffer().cloned());
+            dest.active = current.active;
+            next.checkpoints = std::mem::take(&mut old.checkpoints);
+            next.history = std::mem::take(&mut old.history);
         }
-        for t in next.tables.values_mut() {
-            t.epoch = next.resource_epoch
-        }
+        for t in next.tables.values_mut() { t.epoch = next.resource_epoch; }
         *old = next;
         Ok(())
     }
     pub fn push_input(&mut self, id: InstanceId, slot: InputId, tick: u64, value: InputValue<'_>) -> Result<()> {
-        Ok(self.instance(id)?.compute.input.push(slot, tick, value)?)
+        self.instance(id)?.compute.input.push(slot, tick, value)
     }
 
     /// Record the bundle into the caller's encoder without submitting it.
@@ -328,45 +183,14 @@ impl Runner {
     /// Use 2D renderable views in their textures' base formats with the sample count
     /// and depth convention supplied at attachment. Shader outputs must use that
     /// depth convention. The caller initializes and, for MSAA, resolves the views.
-    pub fn encode_into(
-        &mut self,
-        id: InstanceId,
-        encoder: &mut wgpu::CommandEncoder,
-        target: &wgpu::TextureView,
-        depth: Option<&wgpu::TextureView>,
-        time_s: f64,
-        dt_s: f32,
-    ) -> Result<FrameIdentity> {
-        let device = self.device.clone();
-        let target = embed::Target {
-            color: target,
-            depth,
-            caps: self.caps,
-        };
+    pub fn encode_into(&mut self, id: InstanceId, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView,
+                       depth: Option<&wgpu::TextureView>, time_s: f64, dt_s: f32) -> Result<FrameIdentity> {
+        let d = self.device.clone();
+        let target = embed::Target { color: target, depth, caps: self.caps };
         let inst = self.instance(id)?;
-        inst.edits.update(&device, &mut inst.compute)?;
-        inst.compute.encode(
-            &device,
-            encoder,
-            &inst.tables,
-            inst.resource_epoch,
-            time_s,
-            dt_s,
-            &mut inst.history,
-            &inst.checkpoints,
-            inst.decl.state.as_ref().map(|s| s.table),
-            id,
-            (time_s * 120.).round() as u32,
-            0,
-            &mut inst.outbox,
-            Some(&target),
-            None,
-        )?;
-        Ok(FrameIdentity {
-            instance: id,
-            resource_epoch: inst.resource_epoch,
-            time_s,
-        })
+        inst.record(&d, encoder, encode::Clock { id, time: time_s, dt: dt_s, to: (time_s * 120.).round() as u32,
+            keep: 0, timer: None }, Some(&target))?;
+        Ok(FrameIdentity { instance:id, resource_epoch:inst.resource_epoch, time_s })
     }
 }
 pub mod bundle;
@@ -381,3 +205,4 @@ pub use loft_std::promotion;
 
 #[cfg(test)]
 mod tests;
+pub mod command;

@@ -7,6 +7,7 @@ publish.workspace = true
 description = "Host-side standard library for CPU shader evaluation and native pipeline promotion."
 
 [dependencies]
+loft-format = { path = "../loft-format" }
 loft-abi = { path = "../loft-abi" }
 naga.workspace = true
 loft-ir = { path = "../loft-ir" }
@@ -15,3 +16,9 @@ wgpu-naga-bridge = "=30.0.1"
 
 [lints]
 workspace = true
+
+[features]
+web-sys = ["wgpu/webgpu", "dep:web-sys"]
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-sys = { version = "0.3", optional = true, features = ["GpuDevice"] }

@@ -577,9 +577,7 @@ dependencies = [
  "loft-std",
  "naga",
  "pollster",
- "web-sys",
  "wgpu",
- "wgpu-naga-bridge",
 ]
 
 [[package]]
@@ -587,8 +585,10 @@ name = "loft-std"
 version = "0.1.0"
 dependencies = [
  "loft-abi",
+ "loft-format",
  "loft-ir",
  "naga",
+ "web-sys",
  "wgpu",
  "wgpu-naga-bridge",
 ]

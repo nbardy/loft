@@ -3,6 +3,7 @@
 // request draws on a fresh child, and a child that dies answers every request in flight before the server exits 6.
 // The bundle is tests/fixtures/ball_bundle.ts's (no corpus scene records draws yet). The --check hook runs in the
 // supervisor here, so it stops or kills the child by pid, as a hung driver or a crash would.
+// A fresh checkout needs the lab builds of loft-node and loft-draw.
 import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -41,7 +42,8 @@ const sha = (a: Answer | undefined) => a!.frames!.map((f) => f.sha256);
 function ball(out: string): string {
   const dir = join(out, "ball");
   mkdirSync(dir);
-  expect(Bun.spawnSync([process.execPath, join(ROOT, "tests/fixtures/ball_bundle.ts"), dir]).exitCode).toBe(0);
+  const fixture = Bun.spawnSync([process.execPath, join(ROOT, "tests/fixtures/ball_bundle.ts"), dir]);
+  expect(fixture.exitCode, fixture.stderr.toString()).toBe(0);
   return dir;
 }
 

@@ -4,24 +4,8 @@ use loft_abi::{AdvanceArgs, advance};
 use loft_ir::*;
 use std::{collections::BTreeMap, ops::Range};
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum Error {
-    Capacity,
-    AbiMismatch,
-    UnknownResource,
-    InvalidShader(String),
-    Unsupported(&'static str),
-}
-type Result<T> = std::result::Result<T, Error>;
-impl From<crate::params::Error> for Error {
-    fn from(error: crate::params::Error) -> Self {
-        match error {
-            crate::params::Error::AbiMismatch => Self::AbiMismatch,
-            crate::params::Error::Capacity => Self::Capacity,
-        }
-    }
-}
-
+pub use crate::error::RunnerError as Error;
+use crate::error::Result;
 pub enum Tick {
     Dispatch(Range<u32>, AdvanceArgs, bool),
     Checkpoint(usize),
@@ -310,4 +294,71 @@ fn run(
         twin::Error::Capacity => Error::Capacity,
         twin::Error::MissingEntry => Error::UnknownResource,
     })
+}
+
+impl History {
+    pub fn step_live(&mut self, f: &Fused, decl: &PassDecl, active: u32, stride_bytes: u32,
+        rows: Range<u32>, ticks: u32, inst: InstanceId, outbox: Option<TableId>, params: &[u8],
+        mut read: impl FnMut(TableId) -> Result<Vec<u8>>, mut write: impl FnMut(TableId, &[u8]) -> Result<()>) -> Result<&[u8]> {
+        let pass = decl.id;
+            if rows.start > rows.end || rows.end > active {
+                return Err(Error::Capacity);
+            }
+            if rows.is_empty() {
+                self.returned.clear();
+                return Ok(&self.returned);
+            }
+            let mut buffers = BTreeMap::new();
+            for b in decl.bindings.iter().filter(|b| **b != f.args) {
+                let mut bytes =
+                    read(b.resource)?;
+                if outbox == Some(b.resource) {
+                    let n = crate::events::capacity(bytes.len() as u64)?;
+                    bytes[4..8].copy_from_slice(&n.to_le_bytes());
+                }
+                buffers.insert(key(*b), bytes);
+            }
+            buffers.insert((0, 2), params.to_vec());
+            self.step(f, pass, active, rows.clone(), ticks, inst, &mut buffers)?;
+            let state_binding = decl
+                .bindings
+                .iter()
+                .find(|b| b.resource == f.rows)
+                .ok_or(Error::AbiMismatch)?;
+            let stride = stride_bytes as usize;
+            let byte_range = rows.start as usize * stride..rows.end as usize * stride;
+            for binding in decl
+                .bindings
+                .iter()
+                .filter(|b| b.access == BindAccess::ReadWriteStorage)
+            {
+                write(binding.resource, &buffers[&key(*binding)])?;
+            }
+            self.returned = buffers[&key(*state_binding)][byte_range].to_vec();
+            Ok(&self.returned)
+    }
+}
+#[cfg(test)]
+#[test]
+fn checkpoint_windows() {
+    let windows: Vec<_> = chunks(58, 130, 64, 60)
+        .map(|a| (a.from_tick, a.to_tick))
+        .collect();
+    assert_eq!(windows, [(58, 60), (60, 120), (120, 130)]);
+    assert_eq!(chunks(8, 8, 64, 0).count(), 1);
+}
+
+impl History {
+    pub fn checkpoint(&self, tick: u32) -> Result<usize> {
+        self.saved.iter().position(|t| *t == Some(tick)).ok_or(Error::UnknownResource)
+    }
+    pub fn restored(&mut self, tick: u32, mut writes_state: impl FnMut(PassId)->bool) {
+        for (&id, rows) in &mut self.ticks {
+            if writes_state(id) { rows.fill(tick); }
+        }
+        // Rewinding invalidates snapshots on the abandoned timeline.
+        for saved in &mut self.saved {
+            if saved.is_some_and(|t| t > tick) { *saved = None; }
+        }
+    }
 }

@@ -9,6 +9,42 @@ The alpha uses the lead’s release rule. The locked Apple M4 Metal run on `07ac
 | Runner size and shared execution | 3,758 physical lines against 1,000 before counting the separate native executor. The 16 runner tests passed and an external host drew two frames. Native source and embed still need shared bake/path resources, cross-caller pixel and state parity, and browser frames. Three- and four-section persisted layouts both report ABI 1. |
 | Tier 0 authored edits | Literal, structural, bounded-loop and rejected edits all exited 6 at WGSL line 140 on the U+FDD0 source marker. The three independently compiled controls rendered. The manual GPU fixture uploaded in 0.021 ms, added 0.490 ms p95 and had 0/140,000 pixels above 1/255. The public path still needs source-to-upload ≤2 ms, zero foreground pipeline creations, overhead ≤0.5 ms, field and image parity, typed rejection and browser promotion. |
 
+### Runner cut
+
+The workspace build and external host passed. All five locked gate scores and individual verdicts matched alpha. The
+strict release-frame comparison held **16/18**. Capsules-20 differed at two pixels at 0 s and one at 9 s. The 4 s frame
+matched in the gate. Both archived binaries reproduced both variants at 4 s and 9 s in four fresh renders per time.
+The alpha binary also reproduced the exact two-pixel variant at 0 s in three of 16 replays. The alpha ID AOV
+alternated between rows 63 and 64 at 4 s, and between rows 63 and 69 at 9 s. The observed row switches are consistent
+with the unchanged cull shader's atomic survivor append and the strict Less depth test, which keeps the first hit
+when stored depths tie. A deterministic tie policy and a reproducible reference are still open.
+[Strict comparison](../../out/meta/fxcut/comparison.json) · [Replay evidence](../../out/meta/fxcut/probe/comparison.json)
+
+`Loaded::prepare_passes` still translates source-program passes while the embedded runner prepares persisted
+`PassDecl` records. Both record through `command::Pass::record`. A single preparation path must carry native
+load and dirty bakes, the path/photon resources and edit-time bundle refresh. Portable lowering still refuses programs
+with bakes or path resources. The native load and pass preparation span over 400 lines and the shared route requires
+changes to the resource contract and edit path, beyond the 150-line cut.
+
+D1 charges device setup, binding and attachment validation, pipeline preparation, and command recording and transfer
+where they live. Count physical tracked Rust/WGSL lines including blank lines and inline tests, following runner
+source inclusions and excluding its two standalone test modules. The Std subtotal includes the device-facing parts
+of mixed modules, with CPU-only pick decoding and the bake dirty clock excluded. Native adds device execution
+including the separate source renderer, bakes, path, edits, motion readback and hardware ray setup. The camera
+matrix helpers, instance packing and CPU motion decoding are outside that count.
+
+| L0 source | Physical lines |
+| --- | ---: |
+| Runner | 983 |
+| Execution and preparation moved into Std | 2,429 |
+| Pre-existing Std pipeline worker | 67 |
+| Native CLI device execution | 1,938 |
+| **Total** | **5,417** |
+
+Runner plus displaced Std work alone is **3,412**, or **2,412 over** the 1,000-line ceiling. Including the worker
+and native execution, L0 is **4,417 over**. Std grew from 1,772 to 4,321 lines and the CLI shrank from 5,246 to
+4,948 lines under the crate-wide count. [Per-file source spans](../../out/meta/fxcut/l0.json)
+
 ## Motion
 
 | Target | Alpha measurement and work remaining |
@@ -39,5 +75,13 @@ The alpha uses the lead’s release rule. The locked Apple M4 Metal run on `07ac
 ## Workspace tests and appearance review
 
 Bun passed all 315 tests. Native tests recorded 108 passes, 38 failures and zero ignored. Of those failures, 36 read `lib/migration/` as a file. The Shrine test prelude lacks `loft_user_paper_grain` (E701). The custom Radiance medium fixture returns E405. [Named failures](../../out/meta/rel/gate.json) · [Native logs](../../out/meta/rel/tests/)
+
+The full TypeScript suite passed **315/315** after provisioning the legacy `loft-node` and `loft-draw` lab binaries.
+The runner-cut recheck ran all 25 native test executables and reproduced **108 passed, 38 failed, 0 ignored**, with
+the same failing test names. The 36 directory-read failures comprise ten tests in `bakeoff`, 25 in `diagnostics`
+and `tier0::tests::l23a_sphere_tape_matches_the_e_plus_twin`. The two other failures are
+`coral_shrine_has_analytic_branches_and_two_lantern_snapshots` (E701) and
+`checked_contract_reaches_lowering` (E405). All 38 remain open.
+[Named cut failures](../../out/meta/fxcut/comparison.json) · [Cut test logs](../../out/meta/fxcut/tests/)
 
 All 18 layered frames exceeded frozen picture tolerance. Each independent still was within one pixel above 2/255 of its queued Phase 4 proposal, against an allowance of 1,024. The woodblock look and 187 corpus beauty pairs across 17 batches, including the revised bead proposal, remain queued for owner review. Texture bundle serialization still needs a format decision. [Release image comparisons](../../out/meta/rel/picture-diffs.json) · [Original appearance queue](../../out/meta/i6/approval_needed.md) · [Format request](../../out/meta/i4-r2/approval_needed.md)

@@ -2,13 +2,8 @@
 use loft_ir::{InputId, InputKind, InputSlot, InputValue};
 use std::collections::BTreeMap;
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum Error {
-    Capacity,
-    AbiMismatch,
-    UnknownResource,
-}
-type Result<T> = std::result::Result<T, Error>;
+pub use crate::error::RunnerError as Error;
+use crate::error::Result;
 
 pub struct Inputs {
     slots: Vec<InputSlot>,
