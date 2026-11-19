@@ -104,15 +104,15 @@ The product is the picture. The reward we train on is aesthetic; checks and `sol
 | Want | State | Owner |
 |---|---|---|
 | Analytic impostors, raymarching, raster surfaces, instancing, media, post | Built in the TS engine | DESIGN.md |
-| Rust path | Builds 232/295 corpus entries, loads 232, draws 0 (the TS library records no draws yet) | lean Rust plan, `agent_notes/2026-11-19_lean_rust_*.md` |
+| Rust path | Builds 233/295 corpus entries, loads and draws 233; 13 pass picture parity in every frame (full run at 963c667, before the grain fix) | lean Rust plan, `agent_notes/2026-11-19_lean_rust_draws.md` |
 | Compact graph | Not yet: the TS engine inlines every call (Titan records 308k nodes) | switch-to-Rust lane |
 | Spatial lookup for many-part fields | Not yet | — |
 | State-of-the-art PBR | PBR with AO and a moving sun; gap to the state of the art not assessed | — |
-| Frame time on the Rust path | Unscored until it draws | parity run |
+| Frame time on the Rust path | Scored per entry at 960×540: median p95 6.1 ms; five-crab lineup 97/109 ms p50/p95, 5,538 modules, 23 s load | parity run |
 | Checks and solve never false | Rust solve built (holds `Unproved` in builds, proofs in `loft check`); heron "moved" is a named ill-conditioned exception | `agent_notes/2026-11-19_lean_rust_solve2.md` |
 | Keel embedding | loft-gpu instances and pins built; Keel side not wired | `docs/keel.md` |
 | Creative training on latest Loft | Pinned at c8502c2; re-pin after the switch | creative `vendor/loft` |
 
-Next, in order: the library records draws, passes and cameras; the parity run with frame time per scene; the switch
+Next, in order: the switch
 to Rust with the compact graph (TS engine, host and old loader deleted); GPU work from the measured frame times; the
 PBR audit.
