@@ -68,38 +68,27 @@ impl<const N: usize> Wire for [u8; N] {
         Ok(input.take(N)?.try_into().unwrap())
     }
 }
-impl<const N: usize> Wire for [f32; N] {
-    fn put(&self, out: &mut Vec<u8>) {
-        for value in self {
-            value.put(out);
+// Every lane has a fixed width and a zero initializer. Bytes above use a bulk read.
+macro_rules! numeric_arrays {
+    ($($ty:ty),+) => {$(
+        impl<const N: usize> Wire for [$ty; N] {
+            fn put(&self, out: &mut Vec<u8>) {
+                for value in self {
+                    value.put(out);
+                }
+            }
+
+            fn get(input: &mut Reader<'_>) -> Result<Self> {
+                let mut values = [<$ty>::default(); N];
+                for value in &mut values {
+                    *value = <$ty>::get(input)?;
+                }
+                Ok(values)
+            }
         }
-    }
-    fn get(input: &mut Reader<'_>) -> Result<Self> {
-        let mut values = [0.; N];
-        for value in &mut values {
-            *value = f32::get(input)?;
-        }
-        Ok(values)
-    }
+    )+};
 }
-impl Wire for [f64; 4] {
-    fn put(&self, out: &mut Vec<u8>) {
-        for value in self { value.put(out); }
-    }
-    fn get(input: &mut Reader<'_>) -> Result<Self> {
-        Ok([f64::get(input)?, f64::get(input)?, f64::get(input)?, f64::get(input)?])
-    }
-}
-impl Wire for [u32; 3] {
-    fn put(&self, out: &mut Vec<u8>) {
-        for value in self {
-            value.put(out);
-        }
-    }
-    fn get(input: &mut Reader<'_>) -> Result<Self> {
-        Ok([u32::get(input)?, u32::get(input)?, u32::get(input)?])
-    }
-}
+numeric_arrays!(f32, f64, u32);
 
 impl Wire for bool {
     fn put(&self, out: &mut Vec<u8>) {
@@ -143,12 +132,25 @@ pub(crate) fn length(input: &mut Reader<'_>) -> Result<usize> {
         .ok_or(BundleError::Truncated)
 }
 
+impl<T: Wire> Wire for Box<[T]> {
+    fn put(&self, out: &mut Vec<u8>) {
+        put_slice(self, out);
+    }
+    fn get(input: &mut Reader<'_>) -> Result<Self> {
+        Ok(Vec::get(input)?.into_boxed_slice())
+    }
+}
+
+fn put_slice<T: Wire>(values: &[T], out: &mut Vec<u8>) {
+    (values.len() as u64).put(out);
+    for value in values {
+        value.put(out);
+    }
+}
+
 impl<T: Wire> Wire for Vec<T> {
     fn put(&self, out: &mut Vec<u8>) {
-        (self.len() as u64).put(out);
-        for value in self {
-            value.put(out);
-        }
+        put_slice(self, out);
     }
     fn get(input: &mut Reader<'_>) -> Result<Self> {
         // Every element on this wire takes at least one byte.
@@ -192,8 +194,21 @@ macro_rules! fields {
     };
 }
 
-macro_rules! variants {
-    ($ty:ident { $($tag:literal => $variant:ident $({ $($field:ident),+ })? $(($item:ident))?),+ $(,)? }) => {
+macro_rules! sum {
+    (pub enum $(#[$attr:meta])* $ty:ident {
+        $($tag:literal => $variant:ident $({ $($field:ident: $field_ty:ty),+ $(,)? })?),+ $(,)?
+    }) => {
+        $(#[$attr])*
+        pub enum $ty { $($variant $({ $($field: $field_ty),+ })?),+ }
+        $crate::bundle::wire::sum! {
+            $ty { $($tag => $variant $({ $($field: $field_ty),+ })?),+ }
+        }
+    };
+    ($(#[$attr:meta])* $ty:ident {
+        $($tag:literal => $variant:ident
+            $({ $($field:ident: $field_ty:ty),+ $(,)? })?
+            $(($item:ident: $item_ty:ty))?),+ $(,)?
+    }) => {
         impl Wire for $ty {
             fn put(&self, out: &mut Vec<u8>) {
                 match self {
@@ -204,10 +219,11 @@ macro_rules! variants {
                     }),+
                 }
             }
+
             fn get(input: &mut Reader<'_>) -> $crate::bundle::wire::Result<Self> {
                 Ok(match u32::get(input)? {
-                    $($tag => Self::$variant $({ $($field: Wire::get(input)?),+ })?
-                       $(($crate::bundle::wire::get_named(input, stringify!($item))?))?,)+
+                    $($tag => Self::$variant $({ $($field: <$field_ty>::get(input)?),+ })?
+                        $( ( <$item_ty>::get(input)? ) )?,)+
                     _ => return Err(BundleError::Encoding),
                 })
             }
@@ -215,7 +231,4 @@ macro_rules! variants {
     };
 }
 
-pub(crate) fn get_named<T: Wire>(input: &mut Reader<'_>, _: &str) -> Result<T> {
-    T::get(input)
-}
-pub(crate) use {fields, variants};
+pub(crate) use {fields, sum};
