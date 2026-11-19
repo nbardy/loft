@@ -31,6 +31,9 @@ importers:
       typescript-ast:
         specifier: npm:typescript@5.9.3
         version: typescript@5.9.3
+      wgsl_reflect:
+        specifier: 1.6.0
+        version: 1.6.0
 
 packages:
 
@@ -215,6 +218,9 @@ packages:
   undici-types@8.9.0:
     resolution: {integrity: sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg==}
 
+  wgsl_reflect@1.6.0:
+    resolution: {integrity: sha512-p2bJTZXaS4/2L2NlvRIcnI6ZJJSF1kxvH5RYZzGw958Z2PDAw6Cl13cgbE9CWEqWZOFtnlCLXM9ZYdifnJ0FJg==}
+
 snapshots:
 
   '@types/bun@1.4.4':
@@ -347,3 +353,5 @@ snapshots:
   undici-types@8.12.4: {}
 
   undici-types@8.9.0: {}
+
+  wgsl_reflect@1.6.0: {}

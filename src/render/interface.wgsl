@@ -15,7 +15,7 @@ fn unproject(px: vec2f, z: f32) -> vec3f {
 fn camera_ray(px: vec2f) -> Ray {
   let near = unproject(px,0);
   let eye = select(near,frame.eye.xyz,frame.eye.w!=0);
-  let dir = select(frame.forward.xyz,normalize(near-eye),frame.eye.w!=0);
+  let dir = select(frame.forward.xyz,normalize(unproject(px,1)-near),frame.eye.w!=0);
   let scale = 2.0 / (frame.viewport.y * length(vec3f(frame.vp[0].y,frame.vp[1].y,frame.vp[2].y)));
   return Ray(eye,dir,0,1e30,select(vec2f(scale,0),vec2f(0,scale*dot(frame.forward.xyz,dir)),frame.eye.w!=0));
 }

@@ -17,3 +17,7 @@ Branch `feat/design-render` starts at 5d94531, which contains the draws merge 4e
 | 14 | Isolated still, clip and static viewer | Same still bytes. Viewer vs 64-sample still ≤1% |
 | 15 | 9 bead frames from R0's commit in flat colour and log depth | 9/9 under rule (a) |
 | 16–17 | Added core identifiers and o200k_base over runnable consumer cases | Zero domain identifiers. Cases 263, 231, 171+69, 377, 107 tokens within 15% |
+
+The initial R0g score was 5/9. The four oblique 512² frames had 53 over-threshold pixels each, all on reference edges. A ray made by subtracting the eye from an unprojected near point loses precision at the near plane. R0 derives its ray from the interpolated proxy position. Matching that arithmetic on the cover should put the oblique count below 26.
+
+The corrected cover passes all nine RGBA comparisons with the existing parity-diff rule, including log distance in alpha. The high camera had 3 pixels over one code, the oblique camera 16, and the detail view 6. All clusters were singletons on reference edges. The washer masks had zero wrong bits, with 9,664/12,080/12,892 blocked as predicted. Picks and secondary queries gave the predicted IDs and distances. The same bead WGSL ran in a CPU interpreter and on Metal, with maximum distance error below 2e-7. Both 512² record/trace views had zero mismatched interior pixels. The oblique view had 197 mixed-coverage edge pixels.
