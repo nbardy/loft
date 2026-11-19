@@ -372,6 +372,31 @@ impl Compiled {
         Prog::index(&self.modules).expect("indexed once already")
     }
 
+    /// Reflected slots follow the same ordering and offsets used by WGSL lowering.
+    pub fn param_meta(&self, program: &Program) -> Res<Vec<loft_ir::ParamMeta>> {
+        use loft_ir::{IrTy, ParamId, ParamMeta};
+        let prog = self.prog();
+        let mut eval: Eval<f32> = Eval::new(&prog, &self.types, vec![], &[]);
+        prog.continuous_params().enumerate().map(|(i, (name, decl))| {
+            let range = decl.range.as_ref().map(|r| -> Res<_> {
+                let lo = as_f32(eval::concrete(&eval.module_expr(&r.lo)?, r.lo.span)?, r.lo.span)?;
+                let lo = if r.strict { lo.next_up() } else { lo };
+                let hi = match &r.hi {
+                    Some(e) => as_f32(eval::concrete(&eval.module_expr(e)?, e.span)?, e.span)?,
+                    None => f32::MAX,
+                };
+                Ok(([lo, 0., 0., 0.], [hi, 0., 0., 0.]))
+            }).transpose()?;
+            let offset = (3 + i) * 4;
+            Ok(ParamMeta {
+                id: ParamId(i as u32), name: name.to_owned(), ty: IrTy::F32,
+                offset_bytes: (offset * 4) as u32,
+                default: [program.params[offset], 0., 0., 0.],
+                range,
+            })
+        }).collect()
+    }
+
     /// The row's placement in World (identity for a kind asked in World).
     pub fn pose(&self, kind_id: usize, row: usize) -> eval::Rigid {
         let prog = self.prog();
