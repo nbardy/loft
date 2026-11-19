@@ -593,9 +593,13 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 }
                 if callee.name=="coords"{return a[0].clone()}
                 if self.p.fns.contains_key(callee.name.as_str()) {return format!("{}{}({})",if self.motion{"motion_"}else{""},fn_symbol(&callee.name),a.join(", "));}
+                if let Some(op) = crate::quant::Quant::resolve(&callee.name) {
+                    return format!("loft_quant_{}({})", op.name(), a.join(", "));
+                }
                 if self.motion && matches!(motion_math(&callee.name), MotionMath::Fixed){return format!("det_{}({})",callee.name,a.join(", "));}
                 if matches!(callee.name.as_str(),"held"|"missed"){return format!("vec2<f32>({}, {})",if callee.name=="held"{"1.0"}else{"2.0"},a[0]);}
                 let name = match callee.name.as_str() {
+                    "ggx_energy" => "loft_ggx_energy".into(),
                     "frame_axes" => "LoftFrame".into(),
                     "dir" => "normalize".into(),
                     "dist"=>"distance".into(),
@@ -770,12 +774,18 @@ pub fn kind_module(p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[Lu
             bfields.push(format!("  l{i}_{j}: {},", wty(&em.resolve(prm.ty.as_ref().expect("typed")))));
             names.push(format!("b.l{i}_{j}"));
         }
-        let name=fn_symbol(name);let _ = write!(evals, "  let r{i} = {name}({}, n, v, l);\n  c = c * r{i}.w + r{i}.xyz;\n", names.join(", "));
+        names.extend(["n".into(), "v".into(), "l".into()]);
+        let _ = writeln!(evals, "  let r{i} = {}({});", fn_symbol(name), names.join(", "));
+        if *name == "emit_lobe" {
+            let _ = writeln!(evals, "  emission += r{i}.xyz;");
+        } else {
+            let _ = writeln!(evals, "  c = c * r{i}.w + r{i}.xyz;");
+        }
     }
     let _ = write!(
         em.out,
         "// The material's lobes, bottom first; `l = 0` asks for emitted radiance.\nstruct Bsdf {{\n{}\n}}\n\
-         fn eval_bsdf(b: Bsdf, n: vec3<f32>, v: vec3<f32>, l: vec3<f32>) -> vec3<f32> {{\n  var c = vec3<f32>(0.0);\n{evals}  return c;\n}}\n\n",
+         fn eval_bsdf(b: Bsdf, n: vec3<f32>, v: vec3<f32>, l: vec3<f32>) -> vec3<f32> {{\n  var c = vec3<f32>(0.0);\n  var emission = vec3<f32>(0.0);\n{evals}  return c + emission;\n}}\n\n",
         bfields.join("\n")
     );
     em.library(&lib, &consts);
