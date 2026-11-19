@@ -33,6 +33,47 @@ pub fn read(text: &str) -> Result<Program, String> {
             ));
         }
     }
+    let valid_module = |i: usize| i < p.modules.len();
+    if ![p.cull, p.classify, p.present]
+        .into_iter()
+        .all(valid_module)
+    {
+        return Err(
+            "invalid shared module index; restore the cull, classify and present modules".into(),
+        );
+    }
+    for pass in &p.passes {
+        use crate::program::Pass;
+        match pass {
+            Pass::Vis(k) | Pass::Shadow(k) | Pass::Shade(k)
+                if k.iter().any(|id| *id as usize >= p.kinds.len()) =>
+            {
+                return Err("invalid pass kind index; name a kind in the bundle".into());
+            }
+            Pass::Vis(_)
+            | Pass::Shadow(_)
+            | Pass::Shade(_)
+            | Pass::Cull
+            | Pass::Classify
+            | Pass::Present => {}
+        }
+    }
+    for instance in &p.instances {
+        if !p
+            .kinds
+            .get(instance.kind as usize)
+            .is_some_and(|k| instance.row < k.n_rows)
+        {
+            return Err("invalid instance; restore its kind and row indices".into());
+        }
+    }
+    for step in &p.motion {
+        if step.kind >= p.kinds.len() || step.fields.is_empty() && step.checks.is_empty() {
+            return Err(
+                "invalid motion entry; supply an existing kind and its writes or checks".into(),
+            );
+        }
+    }
     Ok(p)
 }
 
@@ -63,8 +104,9 @@ mod tests {
         let shader =
             "// secret author comment\n@compute @workgroup_size(1) fn main() { let x = 2u; }";
         let p = Program {
-            motion:vec![],
+            motion: vec![],
             modules: vec![ShaderModule {
+                origins: vec![],
                 name: "example".into(),
                 wgsl: shader.into(),
                 naga: naga::front::wgsl::parse_str(shader).unwrap(),
@@ -79,7 +121,9 @@ mod tests {
                 period: 1.,
                 fov: 1.,
             },
-            sun: [0.; 3],sun_color:[1.;3],sky:None,
+            sun: [0.; 3],
+            sun_color: [1.; 3],
+            sky: None,
             shadow_size: 0,
             luts: vec![],
             passes: vec![Pass::Cull],

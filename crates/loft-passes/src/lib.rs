@@ -9,6 +9,7 @@ pub mod check;
 mod cache;
 mod defaults;
 mod refine;
+mod provenance;
 mod infer;
 pub mod emit;
 pub mod eval;
@@ -207,8 +208,10 @@ fn geometry_fields(k: &KindDecl) -> Vec<usize> {
             block(&f.body, &mut names);
         }
     }
-    let pose = pose_field(k);
-    (0..k.row.len()).filter(|i| Some(*i) != pose && names.contains(&k.row[*i].name.name)).collect()
+    // A placement applied by the draw is external to this proof. A query
+    // explicitly reading its placement (for world-space wind, for example)
+    // makes those words ordinary shape dependencies.
+    (0..k.row.len()).filter(|i| names.contains(&k.row[*i].name.name)).collect()
 }
 
 /// Per drawn kind: rows, distinct shapes (one bound derivation each) and the derived L range.
@@ -409,15 +412,13 @@ fn pack(row: &[RowVal], out: &mut Vec<f32>) {
     }
 }
 
-fn naga_module(name: &str, wgsl: String) -> Res<ShaderModule> {
-    let internal = |e: String| {
-        Diag::new(Code::E701, Span::NONE, format!("generated WGSL for `{name}` is invalid:\n{e}"), "run `loft show` to read the module; fix the library fn or the emitter")
-    };
-    let module = naga::front::wgsl::parse_str(&wgsl).map_err(|e| internal(e.emit_to_string(&wgsl)))?;
-    naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::default())
-        .validate(&module)
-        .map_err(|e| internal(e.emit_to_string(&wgsl)))?;
-    Ok(ShaderModule { name: name.into(), wgsl, naga: module, span: None })
+fn naga_module(name:&str,text:String,src:&Sources)->Res<ShaderModule>{
+    let map=provenance::Map::new(text);
+    let diagnostic=|at:Option<Span>,message:String|Diag::new(Code::E701,at.unwrap_or(Span::NONE),format!("WGSL validation in {name}: {message}"),"correct the WGSL expression at this source location");
+    let module=naga::front::wgsl::parse_str(&map.shader).map_err(|e|diagnostic(e.labels().find_map(|(s,_)|map.origin(s)),e.emit_to_string(&map.shader)))?;
+    naga::valid::Validator::new(naga::valid::ValidationFlags::all(),naga::valid::Capabilities::default()).validate(&module).map_err(|e|diagnostic(e.spans().find_map(|(s,_)|map.origin(*s)),e.emit_to_string(&map.shader)))?;
+    let origins=map.expressions(&module,src);
+    Ok(ShaderModule{name:name.into(),wgsl:map.shader,naga:module,span:None,origins})
 }
 
 /// The GPU passes in dependency order; `find_shadow_map` is optional, between the vis bundle and classification.
@@ -668,7 +669,9 @@ pub fn compile_snapshot(src:&Sources,overrides:&[(String,f64)],samples:&[loft_ir
         }
     };
     let sky_colors=environment("Sky")?;
-    let [sun,sun_color]=environment("Sun")?.unwrap_or([sun,loft_ir::program::default_sun_color()]);
+    let sun_row=environment("Sun")?;
+    let environment_defined=[sky_colors.is_some(),sun_row.is_some()];
+    let [sun,sun_color]=sun_row.unwrap_or([sun,loft_ir::program::default_sun_color()]);
     lap("stage0", &mut ms);
 
     // Derived bounds and L, once per distinct local shape: rows that differ only in pose (or in fields the geometry
@@ -786,7 +789,7 @@ pub fn compile_snapshot(src:&Sources,overrides:&[(String,f64)],samples:&[loft_ir
     let mut texts = vec![];
     let mut motion=vec![];
     for (id,(name, kt)) in drawn.iter().zip(&kinds).enumerate() {
-        let mut shader=emit::kind_module(&p, &types, p.kinds[*name], light, &lut_refs, kt.draw)?;
+        let mut shader=emit::kind_module(&p, &types, p.kinds[*name], light, &lut_refs, kt.draw,environment_defined)?;
         if let Some((entry,meta))=emit::motion_module(&p,&types,p.kinds[*name],id)?{
             shader.push_str(&entry);
             if samples.is_empty(){motion.push(meta);}
@@ -795,10 +798,10 @@ pub fn compile_snapshot(src:&Sources,overrides:&[(String,f64)],samples:&[loft_ir
     }
     texts.push(("cull".into(), emit::cull_module()));
     texts.push(("classify".into(), emit::classify_module()));
-    texts.push(("present".into(), emit::present_module(&p, &types, sky)));
+    texts.push(("present".into(), emit::present_module(&p, &types, sky,environment_defined)));
     lap("emit", &mut ms);
     let shader_modules = texts.into_iter().map(|(n,w)| {
-        let mut m=naga_module(&n,w)?;
+        let mut m=naga_module(&n,w,src)?;
         if let Some(k)=p.kinds.get(n.as_str()) {let (file,line,col,_,_)=src.locate(k.name.span); m.span=Some((file,line,col));}
         Ok(m)
     }).collect::<Res<Vec<_>>>()?;

@@ -58,14 +58,8 @@ pub(crate) fn kind_key(p: &Prog, k: &KindDecl, luts: &[Lut]) -> Res<blake3::Hash
         .filter(|(q, _)| *q != QueryKind::Material)
         .map(|(_, f)| f)
         .collect();
-    let (funcs, reachable_consts) = emit::reachable(p, &roots, &[]);
-    // Include transitive constant values, even when a constant uses a helper.
-    let constants: Vec<_> = p.consts.values().filter(|c| !c.comptime || reachable_consts.contains(&c.name.name)).collect();
-    let helpers: Vec<_> = if constants.is_empty() {
-        funcs
-    } else {
-        p.fns.values().filter(|f| !f.comptime).copied().collect()
-    };
+    let (helpers, names) = emit::reachable(p, &roots, &[]);
+    let constants: Vec<_> = names.iter().map(|n|p.consts[n.as_str()]).collect();
     let mut ir = serde_json::to_value((&k.name.name, &k.row, roots, helpers, constants))
         .map_err(|e| error(k.name.span, e))?;
     semantic(&mut ir);

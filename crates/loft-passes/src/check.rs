@@ -731,6 +731,9 @@ impl<'p,'a> Ck<'p,'a> {
             ExprKind::Index(base, i) => {
                 let b = self.expr(base)?;
                 let it = self.expr(i)?;
+                if let Ty::Table(k)=b{
+                    if it!=Ty::Id(k.clone()){return Err(Diag::new(Code::E108,i.span,format!("expected an id of {k}, found {it}"),"index the table with an id emitted for this kind"))}return Ok(Ty::Row(k))
+                }
                 self.assignable(&it, &Ty::U32, i.span).or_else(|_| self.assignable(&it, &Ty::I32, i.span))?;
                 match b {
                     Ty::VecN(_) | Ty::Geo(..) => Ok(Ty::F32),
@@ -1122,6 +1125,7 @@ fn builtin(name: &str, ts: &[Ty], sp: &[Span], span: Span) -> Res<Ty> {
     match name {
         "held"|"missed" if matches!(ts,[Ty::F32|Ty::AbstractInt])=>Ok(Ty::Verdict),
         "atan2" if matches!(ts,[Ty::F32,Ty::F32])=>Ok(Ty::F32),
+        "has_sky"=>{arity(0)?;Ok(Ty::Bool)},
         "sky_zenith"|"sky_horizon"|"sun_color"=>{arity(0)?;Ok(Ty::VecN(3))},
         "dist" => return builtin("distance",ts,sp,span),
         "place" => match ts { [Ty::Geo(Pt,s)] | [Ty::Geo(Pt,s),Ty::F32|Ty::AbstractInt] => Ok(Ty::Xform(Space::Open,s.clone())),_=>Err(e003(span,"placement requires a point and optional yaw","write place([x,y,z]@World, yaw)")) },

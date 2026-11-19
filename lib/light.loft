@@ -6,7 +6,7 @@ fn sky_dome(d: rgb) -> rgb {
   let up = clamp(d.y, -1.0, 1.0)
   let sky = mix(sky_horizon(), sky_zenith(), sqrt(max(up, 0.0)))
   let ground = mix([0.24, 0.21, 0.16], [0.12, 0.10, 0.08], sqrt(max(-up, 0.0)))
-  select(ground, sky, up >= 0.0)
+  select(ground, sky, up >= 0.0 || has_sky())
 }
 
 # The Bsdf under the sun (radiance factor 2.2, 2.0, 1.7, times the shadow map), plus the sky integrated by a fixed

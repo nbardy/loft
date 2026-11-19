@@ -28,7 +28,12 @@ pub mod abi {
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
+pub struct ExpressionOrigin { pub function:usize,pub expression:usize,pub span:(String,usize,usize) }
+
+#[derive(serde::Serialize,serde::Deserialize)]
 pub struct ShaderModule {
+    #[serde(default)]
+    pub origins:Vec<ExpressionOrigin>,
     pub name: String,
     #[serde(skip)]
     pub wgsl: String,

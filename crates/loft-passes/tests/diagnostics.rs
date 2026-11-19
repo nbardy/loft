@@ -187,3 +187,18 @@ fn raw_shader_islands_cannot_certify_geometry_or_unmarked_motion(){
     expect(Code::E504,&motion);
     assert!(compile(&motion.replace("wgsl (","wgsl det (")).is_ok());
 }
+
+#[test]
+fn forward_kind_map_and_bare_map_refusal(){
+    let scene=kind("", "sphere(sym.p - sym.pt(0,0,0),0.5)",OK_MATERIAL)
+        .replace("  material(q,n)", "  map sym(point) = point |> mirror_x\n  material(q,n)");
+    assert!(compile(&scene).is_ok());
+    expect(Code::E106,&scene.replace("sphere(sym.p","sphere(sym"));
+}
+
+#[test]
+fn branch_cannot_hide_a_row_divisor() {
+    let scene = kind("", "var d = 1.0; if scale < 1 { d = scale }; sphere(q - [0,0,0]@Body, 0.5) / d", OK_MATERIAL)
+        .replace("pose: xf@Body>World)", "pose: xf@Body>World, scale: f = 1)");
+    expect(Code::E211, &scene);
+}

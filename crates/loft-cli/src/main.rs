@@ -9,6 +9,7 @@
 //! A scene loads every `lib/*.loft` first (the library prelude), then the scene file.
 
 mod gates;
+mod budget;
 
 use loft_ir::{Diag, Sources};
 use std::path::{Path, PathBuf};
@@ -63,8 +64,7 @@ fn flag(args: &mut Vec<String>, name: &str) -> Option<String> {
     v
 }
 
-fn run() -> Result<(), String> {
-    let mut args: Vec<String> = std::env::args().skip(1).collect();
+fn command(mut args:Vec<String>) -> Result<(), String> {
     let set = overrides(&mut args)?;
     let cmd = args.first().cloned().unwrap_or_default();
     match cmd.as_str() {
@@ -120,11 +120,10 @@ fn run() -> Result<(), String> {
             let front = t.elapsed().as_secs_f64();
             let l = loft_runner::Loaded::new(&g, &p, (1280, 800), Some(nonce))?;
             l.frame(&g, 0.0);
-            l.gpu_ms(&g)?;
+            let gpu = l.gpu_ms(&g)?.map_or_else(|| "unavailable".into(), |(ms, _)| format!("{ms:.2} ms"));
             let st = &l.stats;
-            let gpu = l.gpu_ms(&g)?.map_or(0.0, |x| x.0);
             println!(
-                "load {:.3} s  front {:.3} s  pipelines {:.1} ms  frame {gpu:.2} ms  disk cache {}  ({})",
+                "load {:.3} s  front {:.3} s  pipelines {:.1} ms  frame {gpu}  disk cache {}  ({})",
                 t.elapsed().as_secs_f64(),
                 front,
                 st.pipelines_ms,
@@ -138,12 +137,26 @@ fn run() -> Result<(), String> {
     }
 }
 
+fn run()->Result<(),budget::Failure>{
+    use budget::Failure;
+    let mut args:Vec<_>=std::env::args().skip(1).collect();
+    if args.iter().any(|s|s=="--max-frame-ms"){
+        let ms=flag(&mut args,"--max-frame-ms").and_then(|s|s.parse::<f64>().ok()).filter(|x|x.is_finite() && *x>=0.).ok_or_else(||Failure(5,"--max-frame-ms requires a nonnegative finite budget".into()))?;
+        let g=loft_runner::gpu().map_err(|e|Failure(6,e))?;
+        budget::timestamps(g.timestamps)?;
+        let mut measured_args=args.clone();let set=overrides(&mut measured_args).map_err(|e|Failure(5,e))?;
+        let scene=measured_args.get(1).ok_or_else(||Failure(5,"frame budget requires a scene path".into()))?;
+        budget::check(&g,Path::new(scene),&set,ms)?;
+    }
+    command(args).map_err(|e|Failure(1,e))
+}
+
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
-        Err(e) => {
+        Err(budget::Failure(code,e)) => {
             eprintln!("{e}");
-            ExitCode::FAILURE
+            ExitCode::from(code)
         }
     }
 }

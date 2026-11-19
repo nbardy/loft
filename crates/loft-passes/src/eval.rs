@@ -789,6 +789,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
         };
         match name {
             "frame_axes" => build(v,12),
+            "has_sky"=>Val::B(Some(self.p.kind_order.iter().position(|k|*k=="Sky").and_then(|i|self.tables.get(i)).is_some_and(|t|!t.is_empty()))),
             "sky_zenith"|"sky_horizon"|"sun_color"=>{
                 let (k,i,default)=match name{"sky_zenith"=>("Sky",0,[0.16,0.29,0.55]),"sky_horizon"=>("Sky",1,[0.48,0.55,0.64]),_=>("Sun",1,loft_ir::program::default_sun_color())};
                 self.p.kind_order.iter().position(|n|*n==k).and_then(|k|self.tables.get(k)).and_then(|rows|rows.first()).and_then(|row|row.get(i)).map(Self::lift).unwrap_or_else(||Val::V(default.map(|x|S::c(f64::from(x))).to_vec(),0.))

@@ -23,7 +23,7 @@ const PRELUDE: &str = r"struct Frame {
 }
 @group(0) @binding(0) var<uniform> frame: Frame;
 struct LoftEnvironment { sun_color: vec4<f32>, zenith: vec4<f32>, horizon: vec4<f32> }
-@group(0) @binding(1) var<uniform> environment: LoftEnvironment;
+@group(0) @binding(2) var<storage, read> environment: LoftEnvironment;
 const LOFT_NONCE: u32 = {{NONCE}};
 const LOFT_EMPTY: u32 = 0xffffffffu;
 
@@ -119,6 +119,7 @@ pub struct Emitter<'p, 'a> {
     maps: Vec<(String, Vec<MapStage>)>,
     luts: &'p [LutRef],
     motion:bool,
+    environment:[bool;2],
 }
 
 /// The lobe calls of a `Bsdf` sum, bottom first.
@@ -190,6 +191,11 @@ pub(crate) fn reachable<'a>(p: &Prog<'a>, roots: &[&'a FnDecl], extra: &[&str]) 
     while let Some(f) = todo.pop() {
         let (mut calls, mut names) = (vec![], vec![]);
         walk_block(&f.body, &mut calls, &mut names);
+        while let Some(n)=names.pop(){
+            if let Some(c)=p.consts.get(n.as_str()) && consts.insert(n){
+                walk_expr(&c.value,&mut calls,&mut names);
+            }
+        }
         for c in calls {
             if let Some(g) = p.fns.get(c.as_str())
                 && !seen.iter().any(|s| std::ptr::eq(*s, *g))
@@ -199,11 +205,7 @@ pub(crate) fn reachable<'a>(p: &Prog<'a>, roots: &[&'a FnDecl], extra: &[&str]) 
                 todo.push(g);
             }
         }
-        for n in names {
-            if p.consts.contains_key(n.as_str()) {
-                consts.insert(n);
-            }
-        }
+
     }
     // Callees before callers: WGSL allows any order, but readers expect it.
     seen.reverse();
@@ -212,7 +214,7 @@ pub(crate) fn reachable<'a>(p: &Prog<'a>, roots: &[&'a FnDecl], extra: &[&str]) 
 
 impl<'p, 'a> Emitter<'p, 'a> {
     pub fn new(p: &'p Prog<'a>, types: &'p [Ty]) -> Self {
-        Emitter { p, types, out: String::new(), maps: vec![], luts: &[],motion:false }
+        Emitter { p, types, out: String::new(), maps: vec![], luts: &[],motion:false,environment:[false;2] }
     }
 
     fn ty_of(&self, e: &Expr) -> &Ty {
@@ -254,7 +256,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
         let ret = f.ret.as_ref().map(|t| format!(" -> {}", wty(&self.resolve(t)))).unwrap_or_default();
         let _ = writeln!(self.out, "fn {name}({}){ret} {{", params.join(", "));
         if let Some(raw)=&f.raw{
-            self.out.push_str(&raw.body[1..raw.body.len()-1]);self.out.push_str("\n}\n");return;
+            self.out.push_str(&crate::provenance::raw(f.name.span,&raw.body[1..raw.body.len()-1]));self.out.push_str("\n}\n");return;
         }
         self.maps.clear();
         self.block_body(&f.body, 1);
@@ -377,7 +379,9 @@ impl<'p, 'a> Emitter<'p, 'a> {
         v
     }
 
-    pub fn expr(&mut self, e: &Expr) -> String {
+    pub fn expr(&mut self,e:&Expr)->String{crate::provenance::expression(e.span,self.expression(e))}
+
+    fn expression(&mut self, e: &Expr) -> String {
         // A Bsdf value is the struct of its lobes' bound arguments, in the module's one layout (checked per kind).
         if *self.ty_of(e) == Ty::Bsdf && !matches!(e.kind, ExprKind::Name(_)) {
             let mut ls = vec![];
@@ -461,7 +465,13 @@ impl<'p, 'a> Emitter<'p, 'a> {
             ExprKind::Call { callee, args } => {
                 let a: Vec<String> = args.iter().map(|x| self.expr(&x.value)).collect();
                 if callee.name=="place"{return format!("loft_xform_yaw({}, {})",a[0],a.get(1).map(String::as_str).unwrap_or("0.0"))}
-                match callee.name.as_str(){"sky_zenith"=>return "environment.zenith.xyz".into(),"sky_horizon"=>return "environment.horizon.xyz".into(),"sun_color"=>return "environment.sun_color.xyz".into(),_=>{}}
+                match callee.name.as_str(){
+                    "sky_zenith"=>return if self.environment[0]{"environment.zenith.xyz"}else{"vec3<f32>(0.16,0.29,0.55)"}.into(),
+                    "sky_horizon"=>return if self.environment[0]{"environment.horizon.xyz"}else{"vec3<f32>(0.48,0.55,0.64)"}.into(),
+                    "has_sky"=>return self.environment[0].to_string(),
+                    "sun_color"=>return if self.environment[1]{"environment.sun_color.xyz"}else{"vec3<f32>(2.2,2.0,1.7)"}.into(),
+                    _=>{}
+                }
                 if callee.name=="coords"{return a[0].clone()}
                 if self.p.fns.contains_key(callee.name.as_str()) {return format!("{}{}({})",if self.motion{"motion_fn_"}else{""},wgsl_name(&callee.name),a.join(", "));}
                 if self.motion && matches!(callee.name.as_str(),"sin"|"cos"|"atan2"){return format!("det_{}({})",callee.name,a.join(", "));}
@@ -533,9 +543,9 @@ fn material_layout<'k>(p: &Prog, k: &'k KindDecl) -> Res<Vec<(&'k str, &'k [Arg]
 }
 
 /// The text of one kind's module. `light` is the library fn the shade pass calls (named in the schedule).
-pub fn kind_module(p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[LutRef], draw: Draw) -> Res<String> {
+pub fn kind_module(p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[LutRef], draw: Draw, environment:[bool;2]) -> Res<String> {
     let mut em = Emitter::new(p, types);
-    em.luts = luts;
+    em.luts = luts;em.environment=environment;
     em.header(abi::NONCE_PLACEHOLDER);
     let q = |which| k.query(which).is_some();
     let mut roots: Vec<&FnDecl> = k.queries.iter().map(|(_, f)| f).collect();
@@ -954,10 +964,10 @@ var<workgroup> mask: atomic<u32>;
 }
 
 /// `sky` is the library fn named by the schedule's present pass.
-pub fn present_module(p: &Prog, types: &[Ty], sky: &str) -> String {
+pub fn present_module(p: &Prog, types: &[Ty], sky: &str, environment:[bool;2]) -> String {
     let mut em = Emitter::new(p, types);
     em.header(abi::NONCE_PLACEHOLDER);
-    let (lib, consts) = reachable(p, &[], &[sky]);
+    em.environment=environment;let (lib, consts) = reachable(p, &[], &[sky]);
     em.library(&lib, &consts);
     let sky=wgsl_name(sky);
     em.out += &format!(

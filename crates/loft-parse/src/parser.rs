@@ -191,7 +191,25 @@ impl Parser<'_, '_> {
             self.expect("]")?;
             return Ok(TyExpr::Table(t));
         }
+        if unit(self.cur().text) || self.is("1") {
+            let span = self.cur().span;
+            loop {
+                if !unit(self.cur().text) && !self.is("1") {
+                    return self.err("a unit atom");
+                }
+                self.pop();
+                if self.eat("^") {
+                    self.eat("-");
+                    self.integer()?;
+                }
+                if !self.eat("/") && !self.eat("*") { break; }
+            }
+            return Ok(ty("f32", span));
+        }
         let n = self.ident()?;
+        if matches!(n.name.as_str(),"Pt"|"Vec"|"Dir"|"Norm"|"Xform"|"Field"){
+            return Err(Diag::new(Code::E001,n.span,"Syntax A type in E+ source","write p3@Space, v3@Space, d3@Space, n3@Space or xf@A>B"))
+        }
         if self.eat("@") {
             let a = self.space()?;
             return Ok(match n.name.as_str() {
@@ -219,20 +237,6 @@ impl Parser<'_, '_> {
             "v2" => "vec2f",
             "rgb" | "v3" => "vec3f",
             "v4" => "vec4f",
-            "m" | "mm" | "deg" | "rad" | "s" | "kg" | "N" | "Hz" | "J" => {
-                while self.is("/") || self.is("*") {
-                    self.pop();
-                    let u = self.ident()?;
-                    if !unit(&u.name) {
-                        return self.err("a unit");
-                    }
-                    if self.eat("^") {
-                        self.eat("-");
-                        self.integer()?;
-                    }
-                }
-                "f32"
-            }
             _ => &n.name,
         };
         Ok(ty(name, n.span))
@@ -442,7 +446,7 @@ impl Parser<'_, '_> {
         Err(Diag::new(
             if matches!(
                 self.cur().text,
-                "body" | "state" | "solver" | "plan" | "target" | "world" | "retarget"
+                "body" | "state" | "solver" | "plan" | "target" | "world" | "retarget" | "input"
             ) {
                 Code::E405
             } else {
@@ -602,16 +606,25 @@ impl Parser<'_, '_> {
         let mut fns = vec![];
         let mut queries = vec![];
         let mut maps = vec![];
+        let start=self.at;
+        let mut nested=0usize;
+        while !self.is("") {
+            if self.is("}") && nested==0{break}
+            if nested==0 && self.eat("map"){
+                let name=self.ident()?;self.expect("(")?;let param=self.ident()?;self.expect(")")?;self.expect("=")?;
+                let pos=self.at;maps.push((name,param,pos));continue;
+            }
+            match self.pop().text{"{"=>nested+=1,"}"=>nested-=1,_=>{}}
+        }
+        self.at=start;
         while !self.eat("}") {
             if self.eat("map") {
                 let n = self.ident()?;
                 self.expect("(")?;
-                let p = self.ident()?;
+                self.ident()?;
                 self.expect(")")?;
                 self.expect("=")?;
-                let pos = self.at;
-                self.map(n.clone())?;
-                maps.push((n, p, pos));
+                self.map(n)?;
             } else if self.eat("fn") {
                 fns.push(self.function(false, false, false)?);
             } else {
@@ -962,6 +975,7 @@ impl Parser<'_, '_> {
                 {
                     match m.name.as_str() {
                         "p" => continue,
+                        "stretch"=>{a=self.num(1.,true,s);continue;}
                         "pt" => {
                             let ty = TyExpr::Geo(
                                 Geo::Pt,
@@ -1147,6 +1161,7 @@ impl Parser<'_, '_> {
             }
             return Ok(self.node(span, ExprKind::Call { callee: n, args }));
         }
+        if self.maps.contains(&n.name) && !self.is(".") {return Err(Diag::new(Code::E106,n.span,"a map is not a point","use its .p, .pt(...), .in(...) or .out(...) member"))}
         if self.fields.contains(&n.name) && !self.locals.contains(&n.name) {
             let base = self.node(span, ExprKind::Name("self".into()));
             return Ok(self.node(span, ExprKind::Member(Box::new(base), n)));

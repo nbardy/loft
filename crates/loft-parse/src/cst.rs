@@ -150,20 +150,36 @@ impl Cst {
                 }
                 continue;
             }
-            if k==Kind::Number && lexer.slice().bytes().any(|b|b.is_ascii_alphabetic()) {
+            if k == Kind::Number
+                && !lexer.slice().starts_with("0x")
+                && lexer
+                    .slice()
+                    .bytes()
+                    .any(|b| b.is_ascii_alphabetic() && !matches!(b, b'e' | b'E'))
+            {
                 // Consume a whole unit atom: the s of sin after a product is an identifier.
-                while let Some(rest)=lexer.remainder().strip_prefix(['*','/']) {
-                    let len=rest.bytes().take_while(|c|c.is_ascii_alphanumeric()||*c==b'_').count();
-                    if !matches!(&rest[..len],"m"|"mm"|"s"|"kg"|"rad"|"deg"|"N"|"Hz"|"J"){break;}
-                    let mut n=1+len;
-                    if let Some(pow)=rest[len..].strip_prefix('^'){
-                        let digits=pow.strip_prefix('-').unwrap_or(pow);
-                        let count=digits.bytes().take_while(u8::is_ascii_digit).count();
-                        if count>0{n+=1+pow.len()-digits.len()+count;}
+                while let Some(rest) = lexer.remainder().strip_prefix(['*', '/']) {
+                    let len = rest
+                        .bytes()
+                        .take_while(|c| c.is_ascii_alphanumeric() || *c == b'_')
+                        .count();
+                    if !matches!(
+                        &rest[..len],
+                        "m" | "mm" | "s" | "kg" | "rad" | "deg" | "N" | "Hz" | "J"
+                    ) {
+                        break;
+                    }
+                    let mut n = 1 + len;
+                    if let Some(pow) = rest[len..].strip_prefix('^') {
+                        let digits = pow.strip_prefix('-').unwrap_or(pow);
+                        let count = digits.bytes().take_while(u8::is_ascii_digit).count();
+                        if count > 0 {
+                            n += 1 + pow.len() - digits.len() + count;
+                        }
                     }
                     lexer.bump(n);
                 }
-                s.hi=lexer.span().end as u32;
+                s.hi = lexer.span().end as u32;
             }
             if island && lexer.slice() == "{" {
                 let end = raw_end(&text[r.start..]).ok_or_else(|| {
@@ -298,5 +314,36 @@ mod tests {
             .find(|t| t.kind == Kind::Raw)
             .unwrap();
         assert!(raw.trailing.iter().any(|(k, _)| *k == Trivia::Comment));
+    }
+}
+
+#[cfg(test)]
+mod corpus {
+    use super::Cst;
+    use std::{fs, path::Path};
+
+    #[test]
+    fn all_authored_files_replay_verbatim() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        for dir in ["lib", "engines", "agent_notes/2026-11-20_meta/v1_syntax"] {
+            for entry in fs::read_dir(root.join(dir)).unwrap() {
+                let path = entry.unwrap().path();
+                if path.extension().is_some_and(|ext| ext == "loft") {
+                    let source = fs::read_to_string(&path).unwrap();
+                    assert_eq!(
+                        Cst::parse(0, &source).unwrap().write(&source),
+                        source,
+                        "{}",
+                        path.display()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn unit_powers_and_reciprocals_are_accepted_in_type_position() {
+        crate::parse(0, "fn convert(x: 1/kg, y: m^2/s^2) -> J = x * y", &mut 0).unwrap();
+        crate::parse(0, "fn divide(s: f) -> f = 1e2/s", &mut 0).unwrap();
     }
 }

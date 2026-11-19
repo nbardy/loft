@@ -17,6 +17,19 @@ type Env = HashMap<String, Term>;
 fn term(i: Iv, row: bool) -> Term {
     Term { interval: i, row }
 }
+fn union(a: Term, b: Term) -> Term {
+    term(a.interval.join(&b.interval), a.row || b.row)
+}
+fn unknown(row: bool) -> Term {
+    term(
+        Iv {
+            lo: f64::NEG_INFINITY,
+            hi: f64::INFINITY,
+            l: 0.,
+        },
+        row,
+    )
+}
 fn num(x: f64) -> Term {
     term(Iv::c(x), false)
 }
@@ -131,6 +144,8 @@ impl Proof<'_, '_> {
                         ("abs", [Some(a)]) => {
                             Some(term(a.interval.un(crate::eval::Un::Abs), a.row))
                         }
+                        ("select", [Some(a), Some(b), _]) => Some(union(*a, *b)),
+                        _ if args.iter().flatten().any(|t| t.row) => Some(unknown(true)),
                         _ => None,
                     }
                 }
@@ -138,6 +153,7 @@ impl Proof<'_, '_> {
         })
     }
     fn block(&mut self, b: &Block, env: &mut Env) -> Res<Option<Term>> {
+        let mut returns: Option<Term> = None;
         for s in &b.stmts {
             match s {
                 Stmt::Let { name, value, .. } => {
@@ -157,11 +173,15 @@ impl Proof<'_, '_> {
                     }
                 }
                 Stmt::Return(e, _) => {
-                    return e
+                    let result = e
                         .as_ref()
                         .map(|v| self.expr(v, env))
                         .transpose()
-                        .map(Option::flatten);
+                        .map(Option::flatten)?;
+                    return Ok(match (returns, result) {
+                        (Some(a), Some(b)) => Some(union(a, b)),
+                        (a, b) => a.or(b),
+                    });
                 }
                 Stmt::Map { head, stages, .. } => {
                     self.expr(head, env)?;
@@ -175,13 +195,35 @@ impl Proof<'_, '_> {
                     otherwise,
                 } => {
                     self.expr(cond, env)?;
-                    self.block(then, &mut env.clone())?;
-                    if let Some(b) = otherwise {
-                        self.block(b, &mut env.clone())?;
+                    let mut yes = env.clone();
+                    let mut no = env.clone();
+                    let first = self.block(then, &mut yes)?;
+                    let second = if let Some(b) = otherwise {
+                        self.block(b, &mut no)?
+                    } else {
+                        None
+                    };
+                    for ret in [first, second].into_iter().flatten() {
+                        returns = Some(returns.map_or(ret, |v| union(v, ret)));
+                    }
+                    // A build-time row sample cannot choose the arm of a field proof.
+                    for (name, value) in env.iter_mut() {
+                        let a = yes.get(name).copied().unwrap_or(unknown(false));
+                        let b = no.get(name).copied().unwrap_or(unknown(false));
+                        *value = union(a, b);
                     }
                 }
                 Stmt::For { body, .. } | Stmt::Each { body, .. } => {
-                    self.block(body, &mut env.clone())?;
+                    let mut iter = env.clone();
+                    if let Some(ret) = self.block(body, &mut iter)? {
+                        returns = Some(returns.map_or(ret, |v| union(v, ret)));
+                    }
+                    for (name, value) in env.iter_mut() {
+                        let next = iter.get(name).copied().unwrap_or(unknown(false));
+                        if next.interval != value.interval || next.row != value.row {
+                            *value = unknown(value.row || next.row);
+                        }
+                    }
                 }
                 Stmt::Expr(e) => {
                     self.expr(e, env)?;
@@ -189,7 +231,7 @@ impl Proof<'_, '_> {
                 Stmt::Emit { .. } => {}
             }
         }
-        Ok(None)
+        Ok(returns)
     }
 }
 pub fn check(p: &Prog, types: &[Ty], overrides: &[(String, f64)]) -> Res<()> {
