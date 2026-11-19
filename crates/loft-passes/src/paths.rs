@@ -17,6 +17,8 @@ pub enum Integrator {
 pub struct PathTrace {
     pub integrator: Integrator,
     pub bounces: u32,
+    #[serde(default)]
+    pub lens: [f32; 2],
     pub lamps: Vec<[[f32; 4]; 2]>,
 }
 
@@ -46,6 +48,8 @@ pub(crate) fn module(p: &Prog, types: &[Ty], kinds: &[KindTable], queries: &[(St
     em.header(abi::NONCE_PLACEHOLDER);
     let prefix_len = em.out.len();
     em.out.push_str(WORLD);
+    let [radius, focus] = path.lens;
+    let _ = writeln!(em.out, "const LENS_RADIUS: f32 = {}; const FOCUS: f32 = {};", super::f32_lit(f64::from(radius)), super::f32_lit(f64::from(focus)));
     let spectral = matches!(path.integrator, Integrator::Spectral);
     let mut field_cases = Vec::new();
     let mut eval_cases = Vec::new();
@@ -82,7 +86,7 @@ pub(crate) fn module(p: &Prog, types: &[Ty], kinds: &[KindTable], queries: &[(St
     }}"));
         if spectral {
             let layout = super::material_layout(p, decl)?;
-            if let Some(slot) = layout.iter().position(|(name, _)| *name == "spectral_dielectric") {
+            if let Some(slot) = layout.lobes.iter().position(|(name, _)| *name == "spectral_dielectric") {
                 optics_cases.push(format!(r"
     case {i}u: {{
       let row = kind{i}_load_row(h.at);

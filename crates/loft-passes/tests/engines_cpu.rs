@@ -78,3 +78,22 @@ fn bake_declarations_lower_to_dispatch_then_mips() {
         assert!(plan[0].wave < plan[1].wave);
     }
 }
+
+#[test]
+fn spectral_study_lowers_the_blend_and_nested_boundaries() {
+    use loft_passes::emit::paths::Integrator;
+    let (p, twin) = compile(&sources("spectral_caustic_study.loft", None), Aov::Beauty);
+    let path = p.path.as_ref().unwrap();
+    assert!(matches!(path.integrator, Integrator::Spectral));
+    assert_eq!(path.lens, [0.014, 3.49]);
+    let glass = p.kinds.iter().position(|k| k.name == "StudyOptic").unwrap();
+    let bead = p.kinds.iter().position(|k| k.name == "StudyBead").unwrap();
+    let trace = |kind, row, point| twin.cpu_query(kind, row, point, [0.0, 1.0, 0.0]).unwrap().trace;
+    let bubble = [0.18, 0.56, 0.09];
+    assert!(trace(glass, 0, bubble) < -0.18);
+    assert!(trace(glass, 1, bubble) < -0.13);
+    assert!((trace(bead, 0, bubble) + 0.052).abs() < 1e-6);
+    assert_eq!(p.bakes[0].name, "StudyInk");
+    assert!(p.modules[p.present].wgsl.contains("mix(m0.c,m1.c,clamp(b.mix0,0.0,1.0))"));
+    assert!(p.modules[p.present].wgsl.contains("atomicAdd(&loft_local_bins"));
+}

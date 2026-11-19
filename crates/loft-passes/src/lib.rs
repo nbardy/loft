@@ -722,7 +722,18 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
                 if bounces.fract() != 0.0 || !(0.0..=64.0).contains(&bounces) {
                     return Err(Diag::new(Code::E602, e.span, "invalid path bounce count", "use an integer from 0 to 64"));
                 }
-                if path.replace(emit::paths::PathTrace { integrator, bounces: bounces as u32, lamps: vec![] }).is_some() {
+                let lens_value = |name: &str, fallback, types: &mut Vec<Ty>| -> Res<f32> {
+                    let Some(a) = pd.args.iter().find(|a| a.name.as_ref().is_some_and(|key| key.name == name)) else { return Ok(fallback); };
+                    let e = &a.value;
+                    as_f32(stage0(&p, types, e, overrides)?, e.span)
+                };
+                let radius = lens_value("lens_radius", 0.0, &mut types)?;
+                let focus = lens_value("focus", 1.0, &mut types)?;
+                if !radius.is_finite() || radius < 0.0 || !focus.is_finite() || focus <= 0.0 {
+                    return Err(Diag::new(Code::E602, pd.verb.span, "invalid thin lens", "use a nonnegative lens radius and positive focus distance"));
+                }
+                let lens = [radius, focus];
+                if path.replace(emit::paths::PathTrace { integrator, bounces: bounces as u32, lens, lamps: vec![] }).is_some() {
                     return Err(Diag::new(Code::E505, pd.verb.span, "duplicate path pass", "schedule one path integrator"));
                 }
             }

@@ -60,7 +60,7 @@ fn photon_bin(p: vec3<f32>, lane: u32) -> u32 {
     if optical.base<=0.0 {
       let bin = photon_bin(h.p,lane);
       // The map is a horizontal receiver. Other diffuse geometry still shades naturally.
-      if transmitted && h.n.y>0.99 && bin!=0xffffffffu {
+      if transmitted && h.n.y>0.99 && abs(h.p.y)<0.015 && bin!=0xffffffffu {
         deposit_caustic(bin,u32(round(clamp(power,0.0,1.0)*PHOTON_FIXED)));
       }
       break;
@@ -75,7 +75,7 @@ fn photon_bin(p: vec3<f32>, lane: u32) -> u32 {
 
 fn caustic_gather(h: PathHit, wo: vec3<f32>, nm: f32, lane: u32) -> f32 {
   let bin = photon_bin(h.p,lane);
-  if bin == 0xffffffffu || h.n.y<0.99 { return 0.0; }
+  if bin == 0xffffffffu || h.n.y<0.99 || abs(h.p.y)>=0.015 { return 0.0; }
   let events = f32(atomicLoad(&loft_local_bins[bin].flux)) / PHOTON_FIXED;
   // Launch and receiver have equal area. Normalize by photons per wavelength
   // and by texel area. The stored measure is irradiance.

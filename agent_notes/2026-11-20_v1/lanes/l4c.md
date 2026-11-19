@@ -24,3 +24,10 @@
   - `loft render scenes/lipschitz_bound_mutant.loft --aov lipschitz_ratio --live mutant_scale=2 --size 256x256 --out out/meta/i4/lipschitz.png`. The sphere should be red. Repeat at the default live value for the control.
   - `loft render scenes/bake_load_fixture.loft --size 64x64 --out out/meta/i4/bake.png`. Check the printed load-bake GPU timing and 20 dispatches. Use `Loaded::frame` command counts to isolate the first dirty dispatch and its four mips, unchanged frames and an update of `density`. A write to `unrelated` should add zero dispatches. The 2 ms target is still unmeasured.
   - Preserve both AOV selection and L2's GPU capability argument in the merged compiler compile entry points. Keep L2's emission and quantization hooks in `emit.rs`. On merging the Phase 2/3 platform lane, preserve both CLI dispatch routes and its live-parameter plumbing.
+
+## Stretch study
+
+- `scenes/spectral_caustic_study.loft` supplies the reference schedule's explicit pass list with the spectral sample, nested glass/liquid/air boundaries, droplets, dark wood, a cubic Bézier ink bake and a thin lens. Wetness darkens the paper and broadens the ink. The material uses `mix_bsdf` to blend both evaluated lobes. The bake and paper evaluate the same stroke SDF. The paper currently evaluates it procedurally, and the baked texture is available to the native host.
+- `material_shape.rs` records static lobe and mix structure for WGSL specialization. `check.rs` no longer refuses this lowering. Preserve L2's CPU blend and emission treatment on integration. The study reuses the shelf's integer photon pass and AgX conversion.
+- The study passed Naga validation for every emitted module. Its CPU scan confirmed that the bubble center lies inside both transmissive layers, and its compiled shader contains the BSDF mix and integer deposition. The focused Passes run is now **38 passed** and both grammar implementations accepted the study.
+- Render under the GPU lock with `loft render scenes/spectral_caustic_study.loft --size 512x512 --samples 2048 --out out/meta/i4/spectral.webp`. GPU convergence, the bake-speed target and diagnostic pixels are integration measurements.

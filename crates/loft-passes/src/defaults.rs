@@ -16,9 +16,8 @@ pub fn schedule(modules: &mut Vec<Module>, next: &mut u32) -> Res<()> {
         _ => None,
     }).next_back();
     let authored = items().find_map(|i| if let Item::Schedule(s) = i { Some(s) } else { None });
-    if authored.is_some_and(|s| s.passes.iter().any(|p| p.verb.name == "render_bundle")) {
-        return Ok(());
-    }
+    let complete = authored.is_some_and(|s| s.passes.iter().any(|p| p.verb.name == "render_bundle"));
+    if complete && selection.is_none() { return Ok(()); }
     let text = match selection.map(|n| n.name.as_str()) {
         Some("reference") => include_str!("../../../engines/reference.loft"),
         Some("woodblock") => include_str!("../../../engines/woodblock.loft"),
@@ -28,6 +27,10 @@ pub fn schedule(modules: &mut Vec<Module>, next: &mut u32) -> Res<()> {
     let mut recipe = crate::parse::parse(Span::NONE.file, text, next)?;
     let index = recipe.items.iter().position(|i| matches!(i, Item::Schedule(_))).expect("one default schedule");
     let Item::Schedule(mut schedule) = recipe.items.remove(index) else { unreachable!("found schedule") };
+    if complete {
+        modules.push(recipe);
+        return Ok(());
+    }
     schedule.implicit = true;
     let mut before = vec![];
     if let Some(camera) = camera {

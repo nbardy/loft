@@ -11,6 +11,9 @@ mod aov;
 pub use aov::Aov;
 #[path="paths.rs"]
 pub mod paths;
+#[path="material_shape.rs"]
+mod material_shape;
+use material_shape::Layout;
 use loft_parse::ast::*;
 use crate::program::{abi, Draw};
 use loft_ir::{Code, Diag, Res, Span};
@@ -143,18 +146,6 @@ pub struct Emitter<'p, 'a> {
     motion:bool,
     locals: Vec<String>,
     temp: u32,
-}
-
-/// The lobe calls of a `Bsdf` sum, bottom first.
-fn lobes<'e>(e: &'e Expr, out: &mut Vec<(&'e str, &'e [Arg])>) -> bool {
-    match &e.kind {
-        ExprKind::Binary(BinOp::Add, a, b) => lobes(a, out) && lobes(b, out),
-        ExprKind::Call { callee, args } => {
-            out.push((&callee.name, args));
-            true
-        }
-        ExprKind::Unproved { .. } | ExprKind::FiniteDiff { .. } | ExprKind::If { .. } | ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => false,
-    }
 }
 
 #[derive(Default)]
@@ -478,11 +469,12 @@ impl<'p, 'a> Emitter<'p, 'a> {
         // A Bsdf value is the struct of its lobes' bound arguments, in the module's one layout (checked per kind).
         let is_lobe = |callee: &Ident| self.p.fns.get(callee.name.as_str()).is_some_and(|f| f.attrs.iter().any(|a| a.name.name == "lobe"));
         if *self.ty_of(e) == Ty::Bsdf && (matches!(&e.kind, ExprKind::Binary(BinOp::Add, ..))
-            || matches!(&e.kind, ExprKind::Call { callee, .. } if is_lobe(callee))) {
-            let mut ls = vec![];
-            let all = lobes(e, &mut ls) && ls.iter().all(|(n, _)| self.p.fns.get(n).is_some_and(|f| f.attrs.iter().any(|a| a.name.name == "lobe")));
-            assert!(all, "checked: a Bsdf expression is a sum of lobe calls or a name");
-            let a: Vec<String> = ls.iter().flat_map(|(_, args)| args.iter()).map(|x| self.expr(&x.value)).collect();
+            || matches!(&e.kind, ExprKind::Call { callee, .. } if callee.name == "mix_bsdf" || is_lobe(callee))) {
+            let mut shape = Layout::default();
+            let all = shape.add(e) && shape.lobes.iter().all(|(n, _)| self.p.fns.get(*n).is_some_and(|f| f.attrs.iter().any(|a| a.name.name == "lobe")));
+            assert!(all, "checked: a Bsdf expression is a static lobe expression or a name");
+            let a = shape.lobes.iter().flat_map(|(_, args)| args.iter().map(|x| &x.value)).chain(shape.weights)
+                .map(|x| self.expr(x)).collect::<Vec<_>>();
             return format!("Bsdf({})", a.join(", "));
         }
         match &e.kind {
@@ -705,7 +697,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
 }
 
 /// The lobe sequence of a kind's material: every `return` must build the same one (it fixes the `Bsdf` struct).
-fn material_layout<'k>(p: &Prog<'k>, k: &'k KindDecl) -> Res<Vec<(&'k str, &'k [Arg])>> {
+fn material_layout<'k>(p: &Prog<'k>, k: &'k KindDecl) -> Res<Layout<'k>> {
     fn returns<'b>(b: &'b Block, out: &mut Vec<&'b Expr>) {
         for s in &b.stmts {
             match s {
@@ -719,24 +711,24 @@ fn material_layout<'k>(p: &Prog<'k>, k: &'k KindDecl) -> Res<Vec<(&'k str, &'k [
             }
         }
     }
-    fn resolve<'a>(p: &Prog<'a>, f: &'a FnDecl, stack: &mut BTreeSet<String>) -> Res<Vec<(&'a str, &'a [Arg])>> {
+    fn resolve<'a>(p: &Prog<'a>, f: &'a FnDecl, stack: &mut BTreeSet<String>) -> Res<Layout<'a>> {
         if !stack.insert(f.name.name.clone()) {
             return Err(Diag::new(Code::E405, f.name.span, "recursive material helper", "return a finite lobe stack"));
         }
         let mut rs = vec![];
         returns(&f.body, &mut rs);
-        let mut layout: Option<Vec<(&str, &[Arg])>> = None;
+        let mut layout: Option<Layout<'_>> = None;
         for e in rs {
-            let mut ls = vec![];
+            let mut ls = Layout::default();
             let is_lobe = |n: &str| p.fns.get(n).is_some_and(|f| f.attrs.iter().any(|a| a.name.name == "lobe"));
             if let ExprKind::Call { callee, .. } = &e.kind
                 && let Some(helper) = p.fns.get(callee.name.as_str()).filter(|_| !is_lobe(&callee.name))
             {
                 ls = resolve(p, helper, stack)?;
-            } else if !lobes(e, &mut ls) || !ls.iter().all(|(n, _)| is_lobe(n)) {
+            } else if !ls.add(e) || !ls.lobes.iter().all(|(n, _)| is_lobe(n)) {
                 return Err(Diag::new(Code::E405, e.span, "material has no static lobe layout", "return a lobe sum or call a helper that returns one"));
             }
-            if !layout.as_ref().is_none_or(|l| l.iter().map(|x| x.0).eq(ls.iter().map(|x| x.0))) {
+            if !layout.as_ref().is_none_or(|l| l.same_as(&ls)) {
                 return Err(Diag::new(Code::E405, e.span, "material paths use different lobes", "keep the same lobes on every path and vary their weights"));
             }
             layout = Some(ls);
@@ -769,19 +761,28 @@ pub fn kind_module(p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[Lu
     let layout = material_layout(p, k)?;
     let mut bfields = vec![];
     let mut evals = String::new();
-    for (i, (name, args)) in layout.iter().enumerate() {
+    for (i, (name, args)) in layout.lobes.iter().enumerate() {
         let f = p.fns[name];
         let mut names = vec![];
         for (j, prm) in f.params.iter().take(args.len()).enumerate() {
             bfields.push(format!("  l{i}_{j}: {},", wty(&em.resolve(prm.ty.as_ref().expect("typed")))));
             names.push(format!("b.l{i}_{j}"));
         }
-        let name=fn_symbol(name);let _ = write!(evals, "  let r{i} = {name}({}, n, v, l);\n  c = c * r{i}.w + r{i}.xyz;\n", names.join(", "));
+        let name = fn_symbol(name);
+        let _ = writeln!(evals, "  let r{i} = {name}({}, n, v, l);", names.join(", "));
+        if layout.weights.is_empty() {
+            let _ = writeln!(evals, "  c = c * r{i}.w + r{i}.xyz;");
+        }
     }
+    let result = if layout.weights.is_empty() { "c".into() } else {
+        em.out.push_str("struct LoftMaterial { c: vec3<f32>, t: f32, e: vec3<f32> }\n");
+        bfields.extend((0..layout.weights.len()).map(|i| format!("  mix{i}: f32,")));
+        layout.eval(&mut evals)
+    };
     let _ = write!(
         em.out,
         "// The material's lobes, bottom first; `l = 0` asks for emitted radiance.\nstruct Bsdf {{\n{}\n}}\n\
-         fn eval_bsdf(b: Bsdf, n: vec3<f32>, v: vec3<f32>, l: vec3<f32>) -> vec3<f32> {{\n  var c = vec3<f32>(0.0);\n{evals}  return c;\n}}\n\n",
+         fn eval_bsdf(b: Bsdf, n: vec3<f32>, v: vec3<f32>, l: vec3<f32>) -> vec3<f32> {{\n  var c = vec3<f32>(0.0);\n{evals}  return {result};\n}}\n\n",
         bfields.join("\n")
     );
     em.library(&lib, &consts);
@@ -950,7 +951,7 @@ fn loft_box(ro: vec3<f32>, rd: vec3<f32>, lo: vec3<f32>, hi: vec3<f32>) -> vec2<
     let mut diagnostics = "";
     let shade = match aov {
         Aov::Beauty => format!("{}(b, n, -rd, sun, loft_shadow(p, n), ao)", fn_symbol(light)),
-        Aov::Albedo => layout.iter().enumerate().find_map(|(i, (name, _))| {
+        Aov::Albedo => layout.lobes.iter().enumerate().find_map(|(i, (name, _))| {
             let f = p.fns[*name];
             f.params.iter().take(f.params.len().saturating_sub(3))
                 .position(|p| p.name.name == "albedo").map(|j| format!("b.l{i}_{j}"))

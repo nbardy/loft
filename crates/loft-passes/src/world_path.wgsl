@@ -23,7 +23,16 @@ fn path_cosine(n: vec3<f32>, xi: vec2<f32>) -> vec3<f32> {
   return normalize(r * (x*cos(phi) + cross(n,x)*sin(phi)) + sqrt(1.0-xi.x)*n);
 }
 fn path_camera(px: vec2<f32>, seed: u32) -> PathRay {
-  return PathRay(frame.eye.xyz, loft_ray(px));
+  let d = loft_ray(px);
+  if LENS_RADIUS == 0.0 { return PathRay(frame.eye.xyz, d); }
+  let axis = loft_ray(vec2<f32>(frame.size.xy) * 0.5);
+  let x = normalize(cross(axis, vec3<f32>(0.0,1.0,0.0)));
+  let y = cross(x, axis);
+  let r = LENS_RADIUS * sqrt(path_random(seed, 0xffffffd0u));
+  let phi = 6.2831853 * path_random(seed, 0xffffffd1u);
+  let offset = r * (cos(phi)*x + sin(phi)*y);
+  let focal_point = d * (FOCUS / max(1e-4,dot(axis,d)));
+  return PathRay(frame.eye.xyz + offset, normalize(focal_point-offset));
 }
 fn path_span(o: vec3<f32>, d: vec3<f32>, row: PathRow) -> vec2<f32> {
   let safe = select(d, vec3<f32>(1e-30), abs(d) < vec3<f32>(1e-30));

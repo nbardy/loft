@@ -1170,7 +1170,6 @@ impl<'p,'a> Ck<'p,'a> {
                 return Err(e003(span, "subgroup_add takes one numeric scalar", "pass an f, i or u value"));
             }
             "mix_bsdf" => {
-                self.pending_lowering.get_or_insert(span);
                 if let [Ty::Bsdf, Ty::Bsdf, Ty::F32 | Ty::AbstractInt] = ts.as_slice() {
                     self.set(&args[2].value, Ty::F32);
                     return Ok(Ty::Bsdf);
