@@ -64,7 +64,7 @@ differently in two ways:
 1. **Pose tables are batched by dependency level.** `src/host/lower.ts` merges every table at one dependency level
    into one compute pipeline ("pose level 0: loft_frame_0, crab0__titan_routine_aimL, ..."). The lineup's 1,188 map and
    232 scan tables become **24 compute pipelines and 24 dispatches** in one pass, which costs 0.83 ms.
-   loft-gpu's `dispatch_all` (rust/crates/loft-gpu/src/lib.rs:952) runs one pipeline and one dispatch per kernel,
+   loft-gpu's `dispatch_all` (rust/crates/loft-gpu/src/lib.rs:953) runs one pipeline and one dispatch per kernel,
    **4,884 kernels**, which costs 13.7 ms. This 16x gap in the kernel pass comes from per-dispatch overhead and
    barriers, not arithmetic.
 2. **Draw shaders are shared and level of detail is live.** `src/host/share.ts` merges draw shaders that differ only in
