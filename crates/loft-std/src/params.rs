@@ -98,4 +98,3 @@ impl Params {
         std::mem::take(&mut self.dirty).then_some(&self.bytes)
     }
 }
-
