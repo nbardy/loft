@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import type { Precision } from "../host/manifest.ts";
 
 /** The addon this checkout expects (rust/crates/loft-node STAMP): bump both with any change to run's arguments or answer. */
-const STAMP = "loft-node abi 5 wire 2";
+const STAMP = "loft-node abi 5 wire 3";
 const BUILD = "tools/dev.sh build loft-node --fast";
 
 export type Program = "Scene" | "Solve" | "Evaluate" | "Check";

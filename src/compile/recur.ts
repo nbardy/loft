@@ -4,6 +4,7 @@
 // module: so a replay repeats the bake's own arithmetic, which is what makes it bitwise the bake on the GPU that baked.
 
 import { POSE_WORKGROUP } from "../artefact.ts";
+import { rec } from "../record/recorder.ts";
 import { compileJs, emitWgsl, rawComputeOf, type Bind, type Env, type LibFn, type TableSource } from "../expr.ts";
 import { SceneError } from "../errors.ts";
 import type { RecurState } from "../map/recur.ts";
@@ -35,8 +36,9 @@ export function stepCode(s: RecurState, bind: (vars: Readonly<Record<string, str
     // The previous state: entry j's lane, j already wrapped into range by `prev`.
     table: (t, i, lane) => (t === s.prev ? `${fn(s, "prev")}(u32(${i}), ${lane}u)` : base.table(t, i, lane)),
   };
-  const start = emitWgsl(s.startLanes, own, "a");
-  const step = emitWgsl(s.stepLanes, own, "e");
+  // Not program roots: the job carries these lanes in the recurrence's Kernel decl, over its own binders.
+  const start = rec.unwatched(() => emitWgsl(s.startLanes, own, "a"));
+  const step = rec.unwatched(() => emitWgsl(s.stepLanes, own, "e"));
   const puts = (out: readonly string[], a: string) => out.map((v, l) => `  ${fn(s, "put")}(e, ${a}, ${l}u, ${v});`);
   const fns = [
     `fn ${fn(s, "start")}(e: u32) {`, `  ${indexWgsl(s)}`, ...start.lines.map((x) => `  ${x}`), ...puts(start.out, "0u"), "}",

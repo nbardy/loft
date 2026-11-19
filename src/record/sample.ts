@@ -7,7 +7,11 @@
 
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { add, dot, fetch, ge, length, mapOf, mul, param, sub, time, variable, vec2, vec3, vec4, type Expr, type TableSource } from "../expr.ts";
+import { add, dot, fetch, ge, length, lib, mapOf, mul, param, sub, time, variable, vec2, vec3, vec4, type Expr, type LibFn, type TableSource } from "../expr.ts";
+import { compute } from "../compute.ts";
+import { pass } from "../frame/pass.ts";
+import { recur } from "../map/recur.ts";
+import { wgsl } from "../text/index.ts";
 import { role, type Camera, type Draw, type Scene } from "./decls.ts";
 import { printJob } from "./print.ts";
 import { rec } from "./recorder.ts";
@@ -61,7 +65,20 @@ export function sampleJob(): Job {
       ],
     }],
   };
-  return rec.job(Program.Scene, [mul(glow, time)], scene);
+  // Wire 3: a recurrence (its kept states and previous state), two compute passes (one reading the other through its
+  // handle), an offscreen scene pass and a raw function reading a table by its accessor, all reached from the roots.
+  const flock = recur({ name: "sample_flock", size: 4, rate: 10, until: 1, start: (i) => [vec4(i, 0, 0, 1)], step: (prev, i) => [add(prev(add(i, 1))[0]!, vec4(time, 0, 0, 0))] });
+  const tones = compute("sample_tones", { when: { kind: "load" }, writes: { tones: { kind: "buffer", entries: 2, lanes: 1 } }, dispatch: [1], wgsl: wgsl`
+@compute @workgroup_size(1) fn fill() { tones[0] = vec4<f32>(0.1, 0.2, 0.3, 1.0); tones[1] = vec4<f32>(1.0); }` });
+  const field = compute("sample_field", { when: { kind: "steps", start: "seed", count: 8, rate: 30, keep: 2 }, writes: { cells: { kind: "texture", size: [8, 8], format: "rgba8unorm" } }, dispatch: [1, 1], wgsl: wgsl`
+@compute @workgroup_size(8, 8) fn seed(@builtin(global_invocation_id) id: vec3<u32>) { textureStore(cells, vec2<i32>(id.xy), ${tones.tones}(0.0, 0.0)); }
+@compute @workgroup_size(8, 8) fn step(@builtin(global_invocation_id) id: vec3<u32>) { textureStore(cells, vec2<i32>(id.xy), textureLoad(prev_cells, vec2<i32>(id.xy), 0) * 0.5); }` });
+  const lit = compute("sample_lit", { when: { kind: "frame" }, writes: { glow: { kind: "buffer", entries: 1, lanes: 1 } }, dispatch: [1], wgsl: wgsl`
+@compute @workgroup_size(1) fn fill() { glow[0] = ${tones.tones}(1.0, 0.0) * ${glow} + vec4<f32>(time); }` });
+  const mirror = pass({ name: "sample_mirror", size: { scale: 0.5 }, camera: { kind: "mirror", normal: [0, 1, 0], offset: 0 } });
+  const accessor: LibFn = { name: "sample_row", ret: "vec4", js: "gpu-only", wgsl: "fn sample_row(i: f32) -> vec4<f32> { return t_sample_pose(u32(i)); }", reads: [{ kind: "table", table }] };
+  const wire3 = add(flock.at(1)[0]!, field.cells(vec2(0.5, 0.5)), lit.glow(0, 0), mirror.at(vec2(0.25, 0.75)), lib<"vec4">(accessor, glow));
+  return rec.job(Program.Scene, [mul(glow, time), wire3], scene);
 }
 
 if (import.meta.main) {

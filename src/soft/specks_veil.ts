@@ -125,7 +125,7 @@ function veilTable(ctx: CompileContext, cloud: DensityDrawable, integral: Shader
     const sample = samplerOf(name, `${name} ${reads.length}\n${integral.code}`, integral.code + RAY_TO_GRAIN, params, integral.libs, (n) => `
   let ray = ${n}_soft_ray(p);
   let box = ${n}_soft_box(ray[0], ray[1]);
-  return ${n}_grain_front(ray[0], ray[1], max(0.0, box.x), min(box.y, dot(p - ray[0], ray[1])), zenith, vec3<f32>(0.0));`);
+  return ${n}_grain_front(ray[0], ray[1], max(0.0, box.x), min(box.y, dot(p - ray[0], ray[1])), zenith, vec3<f32>(0.0));`, sources);
     return { name, entries: CELLS, lanes: 1, role: "data", program: mapOf(CELLS, (i) => [lib<"vec4">(sample, i, zenith, ...reads)]) };
   });
 }
@@ -147,14 +147,14 @@ function tableOnce(ctx: CompileContext, cloud: Drawable, make: () => TableSource
  * reuses identical code across builds and keeps differing options or bindings distinct, even when variants call their
  * clouds by the same name.
  */
-function samplerOf(label: string, key: string, code: string, params: string, deps: readonly LibFn[], body: (prefix: string) => string): LibFn {
+function samplerOf(label: string, key: string, code: string, params: string, deps: readonly LibFn[], body: (prefix: string) => string, reads: readonly TableSource[] = []): LibFn {
   const seen = samplers.get(key);
   if (seen !== undefined) return seen;
   let hash = 0xcbf29ce484222325n;
   for (let i = 0; i < key.length; i++) hash = BigInt.asUintN(64, (hash ^ BigInt(key.charCodeAt(i))) * 0x100000001b3n);
   const name = `${label}_${hash.toString(16)}`;
   const sample: LibFn = {
-    name, ret: "vec4", js: "gpu-only", deps,
+    name, ret: "vec4", js: "gpu-only", deps, reads: reads.map((table) => ({ kind: "table", table }) as const),
     wgsl: /* wgsl */ `${namespace(code, name)}
 fn ${name}(entry: f32${params}) -> vec4<f32> {
   let i = u32(entry);

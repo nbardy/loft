@@ -116,7 +116,8 @@ export class Hull {
     });
     // Graph functions: the skin is read by its drawable, its normal, the deck and both bulwarks, each as a call of one
     // recorded loft through every station, and the two edges (v = 0, 1) once each, not once per reader.
-    const skinPoint = graphFn("hull_skin", ["f32", "f32"], (u, v) => through(u, this.stations.map((s) => s.curve(v))));
+    // One station's section in a loop over the stations, not every station's written out (src/curve.ts `through`).
+    const skinPoint = graphFn("hull_skin", ["f32", "f32"], (u, v) => through(u, n, (j) => this.section(div(j, n - 1), v)));
     const edge = [0, 1].map((v) => graphFn(`hull_edge${v}`, ["f32"], (u) => skinPoint(u, lift<"f32">(v))));
     this.skin = { point: skinPoint, normal: mapNormal(skinPoint), anchor: skinPoint, topology: { u: ["free", "free"], v: "free" }, skeleton: NO_SKELETON };
     const L = this.lines;

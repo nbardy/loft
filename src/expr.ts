@@ -21,6 +21,8 @@ const TY_OF_SIZE: readonly NumTy[] = ["f32", "f32", "vec2", "vec3", "vec4"];
 import { CURVE_N } from "./artefact.ts";
 import { RawComputeError, SceneError } from "./errors.ts";
 import { rec } from "./record/recorder.ts";
+import type { ComputePass } from "./compute.ts";
+import type { PassDef } from "./frame/pass.ts";
 export { CURVE_N };
 
 /** A table-backed curve: CURVE_N vec4 samples over x in [0, 1], linearly interpolated, clamped at the ends. */
@@ -59,7 +61,18 @@ export type LibFn = {
   readonly wgsl: string;
   readonly js: ((...args: any[]) => number | number[] | boolean) | "gpu-only";
   readonly deps?: readonly LibFn[];
+  /** Resources the WGSL text reads by name rather than through its arguments: what the wire declares for it. */
+  readonly reads?: readonly LibRead[];
 };
+
+/**
+ * A resource raw WGSL text reads by name (docs/proposals/2026-11-19_lean_rust_loft.md section 3.2, raw Fn reads): a
+ * table through its accessor `t_<name>(i)`, a compute pass's output through its symbol, an offscreen pass's texture.
+ */
+export type LibRead =
+  | { readonly kind: "table"; readonly table: TableSource }
+  | { readonly kind: "compute"; readonly pass: ComputePass; readonly key: string }
+  | { readonly kind: "pass"; readonly pass: PassDef };
 
 // ---- per-frame tables -----------------------------------------------------------------------------------------------
 
@@ -197,9 +210,15 @@ export type Num = Expr<NumTy> | number | readonly number[];
 // `interned.size` did when every node lived in `interned`: the same program gets the same ids.
 const interned = new Map<string, Expr>();
 let nextId = 0;
-/** Child ids to node: one trie per call function, per lib function name and per vector type. */
+/**
+ * Child ids to node: one table per call function, per lib function name and per vector type. One or two children (all
+ * but a few constructions) are one number in `flat` (one: -1 - id; two: id0 * 2^26 + id1), so a construction makes no
+ * trie object and does one lookup; three or more go through `deep`, a trie of child ids.
+ */
 type IdTrie = { e: Expr | undefined; next: Map<number, IdTrie> | undefined };
-const calls = new Map<string, IdTrie>(), libCalls = new Map<string, IdTrie>(), vecs = new Map<string, IdTrie>();
+type Table = { readonly flat: Map<number, Expr>; readonly deep: IdTrie };
+const calls = new Map<string, Table>(), libCalls = new Map<string, Table>(), vecs = new Map<string, Table>();
+const PAIR = 2 ** 26;
 /** Swizzle, child id to node, per selection ("x", "xyz"). */
 const gets = new Map<string, Map<number, Expr>>();
 /**
@@ -208,12 +227,25 @@ const gets = new Map<string, Map<number, Expr>>();
  */
 const scalars = new Map<Ty, Map<number, Expr>>();
 
-function trieOf(tries: Map<string, IdTrie>, name: string): IdTrie {
-  let t = tries.get(name);
-  if (t === undefined) { t = { e: undefined, next: undefined }; tries.set(name, t); }
+function trieOf(tables: Map<string, Table>, name: string): Table {
+  let t = tables.get(name);
+  if (t === undefined) { t = { flat: new Map(), deep: { e: undefined, next: undefined } }; tables.set(name, t); }
   return t;
 }
-/** The trie leaf for these children, in order (a vec3 of one scalar and of three are different paths). */
+/** The node for these children, in order (a vec3 of one scalar and of three are different keys), `make` when new. */
+function internedAt(t: Table, args: readonly Expr[], make: () => Expr): Expr {
+  const n = args.length;
+  if (n === 1 || (n === 2 && args[1]!.id < PAIR && args[0]!.id < PAIR)) {
+    rec.construct();
+    const key = n === 1 ? -1 - args[0]!.id : args[0]!.id * PAIR + args[1]!.id;
+    let e = t.flat.get(key);
+    if (e === undefined) { e = make(); t.flat.set(key, e); }
+    return e;
+  }
+  const leaf = leafOf(t.deep, args);
+  return (leaf.e ??= make());
+}
+/** The trie leaf for these children, in order. */
 function leafOf(root: IdTrie, args: readonly Expr[]): IdTrie {
   rec.construct();
   let t = root;
@@ -494,8 +526,7 @@ export function lib<T extends Ty>(fn: LibFn, ...args: In[]): Expr<T> {
     libs.set(fn.name, fn);
   }
   const xs = args.map((a) => lift(a));
-  const leaf = leafOf(trieOf(libCalls, raw === undefined ? fn.name : `rawCompute:${raw.id}`), xs);
-  return (leaf.e ??= Expr.fresh({ op: "lib", ty: fn.ret, fn, args: xs })) as Expr<T>;
+  return internedAt(trieOf(libCalls, raw === undefined ? fn.name : `rawCompute:${raw.id}`), xs, () => Expr.fresh({ op: "lib", ty: fn.ret, fn, args: xs })) as Expr<T>;
 }
 
 // ---- constructors and access --------------------------------------------------------------------------------------
@@ -506,8 +537,7 @@ function vecOf(ty: VecTy, parts: readonly Num[]): Expr {
   if (total !== SIZE[ty] && !(args.length === 1 && args[0].ty === "f32")) {
     throw new SceneError(ty, `${total} components`, `${SIZE[ty]} (or one number for all of them)`, `${ty}(${[...Array(SIZE[ty]).keys()].map((k) => (k < total ? "xyzw"[k] : "0")).join(", ")}): give exactly ${SIZE[ty]}`);
   }
-  const leaf = leafOf(trieOf(vecs, ty), args);
-  return (leaf.e ??= Expr.fresh({ op: "vec", ty, args }));
+  return internedAt(trieOf(vecs, ty), args, () => Expr.fresh({ op: "vec", ty, args }));
 }
 /** `vec2(...parts)`: a vec2 from numbers or expressions (`vec2(x, y)`), or one scalar repeated into both components. */
 export const vec2 = (...p: Num[]): Expr<"vec2"> => vecOf("vec2", p) as Expr<"vec2">;
@@ -540,9 +570,9 @@ function wider(op: string, ...tys: Ty[]): NumTy {
 }
 
 function call(fn: Fn, ty: Ty, xs: readonly In[]): Expr {
-  const args = xs.map((x) => lift(x));
-  const leaf = leafOf(trieOf(calls, fn), args);
-  return (leaf.e ??= Expr.fresh({ op: "call", ty, fn, args }));
+  const args = new Array<Expr>(xs.length);
+  for (let i = 0; i < xs.length; i++) args[i] = lift(xs[i]!);
+  return internedAt(trieOf(calls, fn), args, () => Expr.fresh({ op: "call", ty, fn, args }));
 }
 
 // Overloads, not one generic signature: a type parameter cannot be inferred from a plain `number` argument, and with
@@ -619,25 +649,28 @@ function operands(fn: Fn, xs: readonly unknown[], exactly?: number): In<NumTy>[]
     throw new SceneError(fn, `${xs.length} operand${xs.length === 1 ? "" : "s"}`, exactly !== undefined ? `exactly ${exactly}` : "two or more",
       exactly !== undefined ? `nest the calls, e.g. ${fn}(${fn}(a, b), c), saying which pair goes first` : `${fn}(a, b)`);
   }
-  xs.forEach((x, i) => {
+  for (let i = 0; i < xs.length; i++) {
+    const x = xs[i];
     const ok = x instanceof Expr || typeof x === "number" || (Array.isArray(x) && x.length >= 2 && x.length <= 4 && x.every((c) => typeof c === "number"));
     if (!ok) {
       throw new SceneError(`${fn}, operand ${i + 1}`, Array.isArray(x) ? `an array of ${x.length} ${x.every((c) => typeof c === "number") ? "numbers" : "non-numbers"}` : typeof x,
         "an expression, a number, or an array of 2 to 4 numbers", `write each operand out; for a list, xs.reduce((a, b) => ${fn}(a, b)) (reduce passes the index and the array as well)`);
     }
-  });
+  }
   return xs as In<NumTy>[];
 }
 const binary = (fn: Fn): Binary => ((...xs: unknown[]) => {
-  const [a, b] = operands(fn, xs, 2) as [In<NumTy>, In<NumTy>];
-  return call(fn, wider(fn, lift(a).ty, lift(b).ty), [a, b]);
+  operands(fn, xs, 2);
+  // Each operand lifted once, in order (a plain number interns its constant here, as before).
+  const a = lift(xs[0] as In<NumTy>), b = lift(xs[1] as In<NumTy>);
+  return call(fn, wider(fn, a.ty, b.ty), [a, b]);
 }) as Binary;
 /** `two` folded left over two or more operands (see `operands`). */
 const assoc = (fn: Fn, two: (a: In<NumTy>, b: In<NumTy>) => Expr): Assoc => ((...xs: unknown[]) => {
   const [first, ...rest] = operands(fn, xs);
   return rest.reduce<In<NumTy>>((acc, x) => two(acc, x) as Expr<NumTy>, first!) as Expr;
 }) as Assoc;
-const unary = (fn: Fn): Unary => ((a: In<NumTy>) => call(fn, lift(a).ty, [a])) as Unary;
+const unary = (fn: Fn): Unary => ((x: In<NumTy>) => { const a = lift(x); return call(fn, a.ty, [a]); }) as Unary;
 
 /**
  * `add(a, b, ...more)`: a + b (+ more, left to right), componentwise; a scalar operand is applied to every component of a vector one. Adding a constant
@@ -1190,9 +1223,9 @@ function rebuild0(e: Expr, kids: readonly Expr[]): Expr {
   switch (n.op) {
     case "const": case "var": case "input": case "param": return e;
     case "row": return Expr.make({ ...n, x: kids[0] as Expr<"f32"> }, `r:${n.row.id}:${kids[0].id}`);
-    case "lib": { const leaf = leafOf(trieOf(libCalls, n.fn.name), kids); return (leaf.e ??= Expr.fresh({ ...n, args: kids })); }
-    case "call": { const leaf = leafOf(trieOf(calls, n.fn), kids); return (leaf.e ??= Expr.fresh({ ...n, args: kids })); }
-    case "vec": { const leaf = leafOf(trieOf(vecs, n.ty), kids); return (leaf.e ??= Expr.fresh({ ...n, args: kids })); }
+    case "lib": return internedAt(trieOf(libCalls, n.fn.name), kids, () => Expr.fresh({ ...n, args: kids }));
+    case "call": return internedAt(trieOf(calls, n.fn), kids, () => Expr.fresh({ ...n, args: kids }));
+    case "vec": return internedAt(trieOf(vecs, n.ty), kids, () => Expr.fresh({ ...n, args: kids }));
     case "get": return internGet(kids[0]!, n.sel, () => ({ ...n, a: kids[0]! }));
     case "fetch": return Expr.make({ ...n, index: kids[0] as Expr<"f32"> }, `F:${tableId(n.table)}:${n.lane}:${kids[0].id}`);
     case "iterate": throw new Error("internal: loops are rebuilt by `substitute`, not `rebuild`");
