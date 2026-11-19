@@ -23,7 +23,7 @@ impl From<crate::params::Error> for Error {
 }
 
 pub enum Tick {
-    Dispatch(Range<u32>, AdvanceArgs),
+    Dispatch(Range<u32>, AdvanceArgs, bool),
     Checkpoint(usize),
 }
 
@@ -177,7 +177,9 @@ impl History {
                 if from < span.to_tick || earliest == to {
                     // The outer window bounds every row's advance, including a seek to its current tick.
                     let args = advance(from, span.to_tick, keep).expect("validated tick window");
-                    record(Tick::Dispatch(first..last, args));
+                    let final_dispatch = span.to_tick == to
+                        && cursors[last as usize..].iter().all(|&tick| tick == to);
+                    record(Tick::Dispatch(first..last, args, final_dispatch));
                     cursors[first as usize..last as usize].fill(args.to_tick);
                 }
                 first = last;

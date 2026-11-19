@@ -29,6 +29,21 @@ impl Runner {
         to: u32,
         keep: u32,
     ) -> Result<()> {
+        self.advance(id, encoder, to, keep, None)
+    }
+
+    /// Record an advance and stamp the first compute start and the final compute end at queries 0 and 1.
+    pub fn advance_timed_into(
+        &mut self, id: InstanceId, encoder: &mut wgpu::CommandEncoder,
+        to: u32, keep: u32, timer: &wgpu::QuerySet,
+    ) -> Result<()> {
+        self.advance(id, encoder, to, keep, Some(timer))
+    }
+
+    fn advance(
+        &mut self, id: InstanceId, encoder: &mut wgpu::CommandEncoder,
+        to: u32, keep: u32, timer: Option<&wgpu::QuerySet>,
+    ) -> Result<()> {
         let device = self.device.clone();
         let inst = self.instance(id)?;
         inst.edits.update(&device, &mut inst.compute)?;
@@ -47,6 +62,7 @@ impl Runner {
             keep,
             &mut inst.outbox,
             None,
+            timer,
         )
     }
 

@@ -512,7 +512,26 @@ impl ComputeCache {
         keep: u32,
         outbox: &mut Option<super::events::Outbox>,
         target: Option<&embed::Target<'_>>,
+        timer: Option<&wgpu::QuerySet>,
     ) -> Result<()> {
+        if let Some(timer) = timer {
+            let [id] = self.roots.as_slice() else {
+                return Err(RunnerError::Unsupported(
+                    "timed advance requires one fixed-step pass",
+                ));
+            };
+            if self
+                .fused(*id)
+                .is_none_or(|pass| tables[&pass.rows].active == 0)
+            {
+                return Err(RunnerError::Unsupported(
+                    "timed advance requires active fixed-step rows",
+                ));
+            }
+            if !matches!(timer.ty(), wgpu::QueryType::Timestamp) || timer.count() < 2 {
+                return Err(RunnerError::AbiMismatch);
+            }
+        }
         // Resolve every resource-dependent command before recording into the caller's encoder.
         let limit = d.limits().max_compute_workgroups_per_dimension;
         for (&id, command) in &mut self.passes {
@@ -638,6 +657,8 @@ impl ComputeCache {
             to,
             keep,
             before_pass: &mut before_pass,
+            timer,
+            started: false,
         };
         self.record(&self.roots, &mut frame);
         if let (Some(buffer), Some(events)) = (event_buffer, outbox) {
@@ -672,7 +693,7 @@ impl ComputeCache {
     }
 
     fn dispatch(&self, frame: &mut Recording<'_, '_>, pass: &ComputePass, extent: &DispatchExtent) {
-        let mut dispatch = self.dispatch_pass(frame.enc, pass);
+        let mut dispatch = self.dispatch_pass(frame.enc, pass, None);
         match *extent {
             DispatchExtent::Fixed([x, y, z]) => dispatch.dispatch_workgroups(x, y, z),
             DispatchExtent::FromRowCount { table, workgroup_x } => dispatch.dispatch_workgroups(
@@ -716,7 +737,7 @@ impl ComputeCache {
             keep,
             frame.checkpoints.len(),
             |tick| match tick {
-                Tick::Dispatch(rows, ticks) => {
+                Tick::Dispatch(rows, ticks, final_dispatch) => {
                     upload(
                         frame.device,
                         frame.enc,
@@ -724,11 +745,22 @@ impl ComputeCache {
                         args,
                         0,
                     );
-                    self.dispatch_pass(frame.enc, pass).dispatch_workgroups(
-                        (rows.end - rows.start).div_ceil(fused.workgroup),
-                        1,
-                        1,
-                    );
+                    // Metal can omit empty marker passes. Timestamp the dispatched work itself.
+                    let stamps = frame
+                        .timer
+                        .filter(|_| !frame.started || final_dispatch)
+                        .map(|query_set| wgpu::ComputePassTimestampWrites {
+                            query_set,
+                            beginning_of_pass_write_index: (!frame.started).then_some(0),
+                            end_of_pass_write_index: final_dispatch.then_some(1),
+                        });
+                    frame.started = true;
+                    self.dispatch_pass(frame.enc, pass, stamps)
+                        .dispatch_workgroups(
+                            (rows.end - rows.start).div_ceil(fused.workgroup),
+                            1,
+                            1,
+                        );
                 }
                 Tick::Checkpoint(slot) => frame.enc.copy_buffer_to_buffer(
                     live,
@@ -745,8 +777,12 @@ impl ComputeCache {
         &self,
         enc: &'a mut wgpu::CommandEncoder,
         command: &ComputePass,
+        timestamp_writes: Option<wgpu::ComputePassTimestampWrites<'_>>,
     ) -> wgpu::ComputePass<'a> {
-        let mut pass = enc.begin_compute_pass(&Default::default());
+        let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: None,
+            timestamp_writes,
+        });
         pass.set_pipeline(&command.pipeline);
         pass.set_bind_group(0, &self.fixed, &[]);
         for group in &command.groups {
@@ -769,6 +805,8 @@ struct Recording<'a, 'target> {
     to: u32,
     keep: u32,
     before_pass: &'a mut dyn FnMut(PassId, &mut wgpu::CommandEncoder),
+    timer: Option<&'a wgpu::QuerySet>,
+    started: bool,
 }
 
 fn validate_dispatch(
