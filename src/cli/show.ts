@@ -66,6 +66,12 @@ export async function shownModules(path: string, variant: VariantArg): Promise<S
   // Before the scene is imported: drawables may emit their WGSL as they are constructed. A node the compiler rewrote
   // (a frame-uniform part hoisted into a table) has the site of the node it was made from.
   noteStatements((e) => siteOfNode(e) ?? siteOfNode(rewrittenFrom(e)));
+  const {subjectAt}=await import("./variant.ts");
+  const subject=await subjectAt(path);
+  if(subject.kind==="ordered") {
+    if(variant.kind!=="default") throw new UsageError("ordered scene: choose its variant in the authored scene");
+    return (await import("./ordered.ts")).showOrdered(subject.scene);
+  }
   const artefact = await loadArtefact({ kind: "file", path, style: { kind: "scene" }, light: { kind: "scene" }, variant });
   return modulesOf(lower(artefact, "f32"));
 }

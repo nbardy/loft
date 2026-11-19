@@ -221,11 +221,11 @@ async function build(cmd: Extract<Command, { kind: "build" }>) {
   if (cmd.source.kind === "file") {
     const { subjectAt } = await import("./variant.ts");
     const subject = await subjectAt(cmd.source.path);
-    if (subject.kind === "scene" && "kind" in subject.scene && subject.scene.kind === "ordered") {
+    if (subject.kind === "ordered") {
       if (cmd.source.variant.kind === "ask" || cmd.source.style.kind !== "scene" || cmd.source.light.kind !== "scene") {
         throw new UsageError("ordered scene: set the look and world in its engine and omit --variant, --style and --light");
       }
-      return buildOrdered(cmd, subject.scene as unknown as import("../render/record.ts").OrderedScene);
+      return buildOrderedFile(cmd, subject.scene);
     }
   }
   switch (cmd.engine) {
@@ -234,15 +234,12 @@ async function build(cmd: Extract<Command, { kind: "build" }>) {
   }
 }
 
-async function buildOrdered(cmd: Extract<Command, {kind:"build"}>, scene: import("../render/record.ts").OrderedScene) {
-  const [{rec},{pack,Program},{native,UNLIMITED},{cameraOf},{mkdirSync}] = await Promise.all([
-    import("../record/recorder.ts"),import("../record/wire.ts"),import("../core/native.ts"),import("../draw/record.ts"),import("node:fs")]);
-  const cameras=Object.entries(scene.cameras).map(([name,c])=>cameraOf(name,c));
-  const job=pack(rec.job(Program.Scene,[],{cameras,passes:[],checks:[],solves:[]}),scene.record());
+async function buildOrderedFile(cmd: Extract<Command, {kind:"build"}>, scene: import("../render/record.ts").OrderedScene) {
+  const [{buildOrdered},{mkdirSync}]=await Promise.all([import("../core/ordered.ts"),import("node:fs")]);
   mkdirSync(cmd.out,{recursive:true});
   const file=`${cmd.out}/scene.loft`;
-  const r=native().run(job,{nodes:UNLIMITED,tapeOps:UNLIMITED,boxes:UNLIMITED,gpuNanos:UNLIMITED},file,{naga:cmd.naga,precision:cmd.precision});
-  console.log(`wrote ${file}  ${r.scene!.resources} resources  build ${r.scene!.build}`);
+  const r=buildOrdered(scene,file,{naga:cmd.naga,precision:cmd.precision});
+  console.log(`wrote ${file}  ${r.resources} resources  build ${r.build}`);
 }
 
 /**
@@ -307,6 +304,9 @@ async function buildTs(cmd: Extract<Command, { kind: "build" }>) {
 
 async function main(argv: readonly string[]) {
   const cmd = parseArgs(argv);
+  if(cmd.kind==="render" || cmd.kind==="clip" || cmd.kind==="frames") {
+    if(await (await import("./ordered.ts")).drawNative(cmd)) return;
+  }
   switch (cmd.kind) {
     case "render": return render(cmd);
     case "frames": return frames(cmd);

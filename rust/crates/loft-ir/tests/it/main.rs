@@ -559,6 +559,7 @@ fn every_identity_field_moves_the_hash() {
     let base = Identity {
         build: identity::build(&bundle().write().unwrap()),
         frame: FrameKey {
+            previous: None,
             camera: 0,
             time: 0.5f32.to_bits(),
             size: [512, 512],
@@ -568,9 +569,10 @@ fn every_identity_field_moves_the_hash() {
         },
         device: Device { backend: Backend::Metal, adapter: "Apple M4".into(), driver: "".into() },
     };
-    let edits: [fn(&mut Identity); 10] = [
+    let edits: [fn(&mut Identity); 11] = [
         |i| i.build[31] ^= 1,
         |i| i.frame.camera = 1,
+        |i| i.frame.previous = Some([1; 32]),
         |i| i.frame.time = 1.37f32.to_bits(),
         |i| i.frame.size = [512, 513],
         |i| i.frame.params = [1, 3].into(),

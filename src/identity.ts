@@ -44,6 +44,7 @@ export type Identity = {
     readonly params: Readonly<Record<string, number>>; readonly inputs: Readonly<Record<string, readonly number[]>>;
     readonly precision: FramePrecision;
     /** `frame` (one draw) or a still (`--samples`: accumulated samples, shutter, aperture). */
+    readonly previous?: readonly number[];
     readonly drawn: StillSpec;
     readonly construction: boolean;
   };

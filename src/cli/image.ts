@@ -70,13 +70,13 @@ export function encodePng(f: Frame): Uint8Array {
 }
 
 /** PNG through `cwebp -q 90`, PNG deleted. Throws with cwebp's stderr if it fails. */
-export function writeWebp(path: string, f: Frame): void {
+export function writeWebp(path: string, f: Frame, quality = 90): void {
   mkdirSync(dirname(path), { recursive: true });
   const png = `${path}.tmp.png`;
   writeFileSync(png, encodePng(f));
   try {
     if (Bun.which("cwebp") === null) throw new EnvironmentError("cwebp is not on PATH; it writes the .webp (install libwebp: brew install webp, apt install webp)", false);
-    const r = Bun.spawnSync(["cwebp", "-quiet", "-q", "90", png, "-o", path]);
+    const r = Bun.spawnSync(["cwebp", "-quiet", "-q", String(quality), png, "-o", path]);
     if (r.exitCode !== 0) throw new EnvironmentError(`cwebp failed (${r.exitCode}): ${r.stderr.toString()}`, false);
   } finally {
     rmSync(png, { force: true });

@@ -286,7 +286,8 @@ function startDrawWorker(check: string | undefined, stopped: (v: Verdict) => voi
 }
 
 /** `loft-draw serve` (rust/crates/loft-draw), its protocol version, and where `tools/dev.sh build loft-draw --fast` puts it. */
-export const LOFT_DRAW = fileURLToPath(new URL("../../rust/target/lab/loft-draw", import.meta.url));
+import { LOFT_DRAW } from "./ordered.ts";
+export { LOFT_DRAW };
 const DRAW_WIRE = 2;
 
 /**
@@ -307,11 +308,11 @@ const f32 = (bits: number) => new Float32Array(new Uint32Array([bits]).buffer)[0
 /** `dir/scene.loft`, refused past the limits' bytes or when it is not a V1 bundle. */
 function readLoft(dir: string, limits: ArtefactLimits): Loft {
   const file = join(dir, "scene.loft");
-  if (!existsSync(file)) throw new LoadError(`${file} is missing: loft-draw draws Bundle V1. Fix: build with LOFT_ENGINE=rust loft build <scene> --out ${dir}`);
+  if (!existsSync(file)) throw new LoadError(`${file} is missing: loft-draw needs a native bundle. Fix: build with LOFT_ENGINE=rust loft build <scene> --out ${dir}`);
   const bytes = readFileSync(file);
   if (bytes.length > limits.bytes) throw new LoadError(`${file}: ${bytes.length} bytes, over the limit of ${limits.bytes}`);
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.length);
-  if (bytes.length < 16 || bytes.subarray(0, 4).toString() !== "LOFT" || view.getUint32(4, true) !== 1) throw new LoadError(`${file} is not a Bundle V1 file. Fix: rebuild it with LOFT_ENGINE=rust loft build`);
+  if (bytes.length < 16 || bytes.subarray(0, 4).toString() !== "LOFT" || ![1,2].includes(view.getUint32(4, true))) throw new LoadError(`${file} has an unsupported bundle format. Fix: rebuild it with LOFT_ENGINE=rust loft build`);
   const n = Number(view.getBigUint64(8, true));
   if (n > limits.manifestBytes || 16 + n > bytes.length) throw new LoadError(`${file}: its JSON head is ${n} bytes, over the limit or past the file`);
   const header = JSON.parse(bytes.subarray(16, 16 + n).toString()) as LoftHeader;
@@ -357,7 +358,7 @@ function rustValues(req: Request, h: LoftHeader): Pick<Identity["frame"], "param
 /** The child's lines (rust/crates/loft-draw/src/serve.rs): `ready` once, then one reply per request, in order. */
 type DrawReady = { readonly wire: number; readonly adapter: Extract<DrawMessage, { kind: "ready" }>["adapter"]; readonly device: Identity["device"] };
 type DrawReply =
-  | { readonly ok: true; readonly precision: FramePrecision; readonly frames: readonly { readonly file: string; readonly sha256: string }[]; readonly ms: { readonly load: number; readonly frames: number } }
+  | { readonly ok: true; readonly precision: FramePrecision; readonly frames: readonly { readonly file: string; readonly sha256: string; readonly previous?: readonly number[] }[]; readonly ms: { readonly load: number; readonly frames: number } }
   | { readonly ok: false; readonly verdict: Verdict };
 
 /**
@@ -428,7 +429,10 @@ function startRustDraw(checkPath: string | undefined, stopped: (v: Verdict) => v
     // A Bundle V1 file is the whole program (plan §1.9: one identity, the file's hash), and one text serves both precisions.
     const build: Identity["build"] = { program: { kind: "files", sha256: loft.sha256 }, library: loft.header.compiler, tier: "compiled", precision: "mixed" };
     const frameAt = (time: number): Identity["frame"] => ({ camera, time, size: [req.size.width, req.size.height], ...values, precision: r.precision, drawn: { kind: "frame" }, construction: false });
-    const identities = req.times.map((time): Identity => ({ build, frame: frameAt(time), device }));
+    const identities = req.times.map((time,k): Identity => {
+      const previous=r.frames[k].previous;
+      return {build,frame:{...frameAt(time),...(previous ? {previous}: {})},device};
+    });
     const { time: _, ...frame } = identities[0]!.frame;
     const frames = r.frames.map((f, k) => ({ time: req.times[k]!, ...f, id: identityId(identities[k]!) }));
     return { id: req.id, ok: true, identity: { build, frame, device }, frames, ms: r.ms };

@@ -122,6 +122,7 @@ export async function check(cmd: Extract<Command, { kind: "check" }>): Promise<v
     }
   };
   switch (subject.kind) {
+    case "ordered": throw new UsageError("ordered programs use pass readbacks for checks. Run the scene’s oracle or build with --naga");
     case "scene":
       if (cmd.combinations) throw new UsageError(`--combinations: ${cmd.path} exports a scene, not a design: it has no slot options to combine (drop --combinations)`);
       outcomes.push(await run("scene", "", () => choose(subject, cmd.path, cmd.variant)));

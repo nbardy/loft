@@ -137,7 +137,7 @@ fn spans(buf: &[u8]) -> Result<(Program, [&[u8]; 11], Option<crate::pass::Declar
         .copied()
         .ok_or_else(|| bad(Span::Header, 2, Fault::Program { found: code }))?;
     let n = h(3)?;
-    (n == if wire == 4 { 11 } else { 12 })
+    (n == 11 || (wire == WIRE && n == 12))
         .then_some(())
         .ok_or_else(|| bad(Span::Header, 3, Fault::SpanCount { found: n }))?;
     let mut out: [&[u8]; 11] = [&[]; 11];
@@ -157,7 +157,7 @@ fn spans(buf: &[u8]) -> Result<(Program, [&[u8]; 11], Option<crate::pass::Declar
         out[i] = &buf[start..end];
         at = padded;
     }
-    let declarations = if wire == WIRE {
+    let declarations = if n == 12 {
         let fault = || bad(Span::Decls, at, Fault::Length);
         let len = word(at).ok_or_else(fault)? as usize;
         let start = at + 8;

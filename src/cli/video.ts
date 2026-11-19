@@ -6,13 +6,13 @@ import { dirname } from "node:path";
 export type VideoWriter = { write(rgba: Uint8Array): Promise<void>; finish(): Promise<void> };
 
 /** libx264 needs even dimensions for yuv420p; the caller must pass even width and height. */
-export function openVideo(path: string, width: number, height: number, fps: number): VideoWriter {
+export function openVideo(path: string, width: number, height: number, fps: number, codec: "h264"|"av1"="h264"): VideoWriter {
   if (width % 2 !== 0 || height % 2 !== 0) throw new Error(`video size ${width}x${height}: yuv420p needs even width and height`);
   mkdirSync(dirname(path), { recursive: true });
   if (Bun.which("ffmpeg") === null) throw new EnvironmentError("ffmpeg is not on PATH; it encodes the clip (brew install ffmpeg, apt install ffmpeg)", false);
   const proc = Bun.spawn(
     ["ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgba", "-s", `${width}x${height}`, "-r", String(fps), "-i", "-",
-      "-c:v", "libx264", "-preset", "veryfast", "-crf", "26", "-pix_fmt", "yuv420p", "-movflags", "+faststart", path],
+      ...(codec==="av1"?["-c:v","libsvtav1","-preset","10","-crf","42"]:["-c:v","libx264","-preset","veryfast","-crf","26"]), "-pix_fmt", "yuv420p", "-movflags", "+faststart", path],
     { stdin: "pipe", stdout: "ignore", stderr: "pipe" },
   );
   return {

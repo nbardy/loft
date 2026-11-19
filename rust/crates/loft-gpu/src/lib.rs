@@ -1161,6 +1161,7 @@ impl Loft {
             .flat_map(|(k, d)| self.inputs[k * 4..k * 4 + d.def.len()].to_vec())
             .collect();
         FrameKey {
+            previous: self.ordered.as_ref().and_then(|o| o.previous.map(|prefix| if o.extent()==size {prefix} else {[0;32]})),
             camera,
             time: self.time.to_bits(),
             size,
@@ -1230,8 +1231,16 @@ impl Loft {
                 self.steppers[s].done = to;
             }
         }
-        if let (Some(ordered), loft_ir::bundle::Format::V2(s)) = (&mut self.ordered, &self.b.format) {
-            return ordered.encode(device, enc, view, s, [&self.g0[0], &self.g1.render], self.timestamps.as_ref());
+        if self.ordered.is_some() {
+            let next = self.ordered.as_ref().and_then(|o| o.previous).map(|_| {
+                let camera = match self.aim { Aim::Named(i) => i as u32, Aim::Look(_) | Aim::Matrices(_) => u32::MAX };
+                self.frame_key(camera,view.size).prefix()
+            });
+            let ordered=self.ordered.as_mut().expect("checked above");
+            let loft_ir::bundle::Format::V2(s)=&self.b.format else {unreachable!("ordered bundles carry a schedule")};
+            ordered.encode(device,enc,view,s,[&self.g0[0],&self.g1.render],self.timestamps.as_ref())?;
+            ordered.previous=next;
+            return Ok(());
         }
         for (p, pass) in self.b.passes.iter().enumerate() {
             let clear = |owned: bool| match (owned, &pass.clear) {
