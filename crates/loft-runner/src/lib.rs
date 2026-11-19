@@ -4,10 +4,11 @@
 //!   cull (1 dispatch) -> vis (RenderBundle: per kind, set pipeline + 1 drawIndirect) -> classify (1 dispatch)
 //!   -> shade (per kind, 1 dispatchWorkgroupsIndirect) -> present (1 draw)
 //!
-//! The bundle is recorded once at load; per frame only the frame uniform and the two indirect-argument resets are
-//! written. Pipelines are O(kinds): 2 per kind plus 3 shared.
+//! With a shadow pass, a second bundle replays the casters' own vis pipelines, every row, from the sun's orthographic
+//! view into a depth map the shade pass compares against. The bundles are recorded once at load; per frame only the
+//! two frame uniforms and the indirect-argument resets are written. Pipelines are O(kinds): 2 per kind plus 3 shared.
 
-use loft_ir::program::{abi, Pass, Program};
+use loft_ir::program::{abi, Draw, Pass, Program};
 use std::borrow::Cow;
 use std::time::Instant;
 
@@ -16,6 +17,8 @@ pub struct Gpu {
     pub queue: wgpu::Queue,
     pub adapter: String,
     pub timestamps: bool,
+    /// The disk pipeline cache's file name, when the backend has one (Vulkan); `None` on Metal.
+    pub cache_key: Option<String>,
 }
 
 /// A high-performance device; timestamps when the adapter grants them.
@@ -26,7 +29,9 @@ pub fn gpu() -> Result<Gpu, String> {
         ..Default::default()
     }))
     .map_err(|e| format!("no adapter: {e}"))?;
-    let features = adapter.features() & wgpu::Features::TIMESTAMP_QUERY;
+    // PIPELINE_CACHE exists on Vulkan only: wgpu 30's Metal backend stubs `create_pipeline_cache` (it never uses
+    // MTLBinaryArchive), so on Metal the only cache across processes is the OS's own Metal shader cache.
+    let features = adapter.features() & (wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::PIPELINE_CACHE);
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("loft-runner"),
         required_features: features,
@@ -34,7 +39,13 @@ pub fn gpu() -> Result<Gpu, String> {
     }))
     .map_err(|e| format!("no device: {e}"))?;
     let info = adapter.get_info();
-    Ok(Gpu { device, queue, adapter: format!("{} ({:?})", info.name, info.backend), timestamps: !features.is_empty() })
+    Ok(Gpu {
+        device,
+        queue,
+        adapter: format!("{} ({:?})", info.name, info.backend),
+        timestamps: features.contains(wgpu::Features::TIMESTAMP_QUERY),
+        cache_key: features.contains(wgpu::Features::PIPELINE_CACHE).then(|| wgpu::util::pipeline_cache_key(&info)).flatten(),
+    })
 }
 
 pub const COLOR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
@@ -51,6 +62,8 @@ pub struct LoadStats {
     pub modules_ms: f64,
     pub pipelines_ms: f64,
     pub resources_ms: f64,
+    /// Bytes read from the disk pipeline cache (0: none on this backend, or a cold cache).
+    pub cache_bytes: usize,
 }
 
 struct KindGpu {
@@ -84,12 +97,24 @@ pub struct Loaded {
     classify: (wgpu::ComputePipeline, wgpu::BindGroup),
     present: (wgpu::RenderPipeline, wgpu::BindGroup),
     bundle: wgpu::RenderBundle,
+    /// The sun's view: its uniform, bundle, targets, and the texel size in metres; `None` without a shadow pass.
+    shadow: Option<Shadow>,
     vis: wgpu::TextureView,
     depth: wgpu::TextureView,
     color: wgpu::Texture,
     color_view: wgpu::TextureView,
     clock: Option<Clock>,
     pub stats: LoadStats,
+}
+
+struct Shadow {
+    frame_buf: wgpu::Buffer,
+    bundle: wgpu::RenderBundle,
+    vis: wgpu::TextureView,
+    depth: wgpu::TextureView,
+    view_proj: [[f32; 4]; 4],
+    texel: f32,
+    dir: [f32; 3],
 }
 
 /// Timestamps at the start and end of every pass, resolved after the frame.
@@ -164,7 +189,7 @@ fn shader(device: &wgpu::Device, m: &loft_ir::program::ShaderModule, nonce: u32)
     device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some(&m.name), source: wgpu::ShaderSource::Naga(Cow::Owned(module)) })
 }
 
-fn compute(device: &wgpu::Device, label: &str, layouts: &[&wgpu::BindGroupLayout], module: &wgpu::ShaderModule, entry: &str) -> wgpu::ComputePipeline {
+fn compute(device: &wgpu::Device, label: &str, layouts: &[&wgpu::BindGroupLayout], module: &wgpu::ShaderModule, entry: &str, cache: Option<&wgpu::PipelineCache>) -> wgpu::ComputePipeline {
     let layouts: Vec<Option<&wgpu::BindGroupLayout>> = layouts.iter().map(|l| Some(*l)).collect();
     let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &layouts, immediate_size: 0 });
     device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
@@ -173,7 +198,7 @@ fn compute(device: &wgpu::Device, label: &str, layouts: &[&wgpu::BindGroupLayout
         module,
         entry_point: Some(entry),
         compilation_options: Default::default(),
-        cache: None,
+        cache,
     })
 }
 
@@ -187,6 +212,7 @@ fn render(
     target: wgpu::TextureFormat,
     depth: bool,
     cull: Option<wgpu::Face>,
+    cache: Option<&wgpu::PipelineCache>,
 ) -> wgpu::RenderPipeline {
     let layouts: Vec<Option<&wgpu::BindGroupLayout>> = layouts.iter().map(|l| Some(*l)).collect();
     let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &layouts, immediate_size: 0 });
@@ -210,7 +236,7 @@ fn render(
         }),
         multisample: Default::default(),
         multiview_mask: None,
-        cache: None,
+        cache,
     })
 }
 
@@ -229,7 +255,7 @@ impl Loaded {
 
         let t = Instant::now();
         let bgl0 = layout(d, "frame", &[(ALL, UNIFORM)]);
-        let bgl_kind = layout(d, "kind", &[(ALL, storage(true)), (ALL, storage(true)), (ALL, UNIFORM)]);
+        let bgl_kind = layout(d, "kind", &[(ALL, storage(true)), (ALL, storage(true)), (ALL, UNIFORM), (ALL, storage(true))]);
         let bgl_shade = layout(
             d,
             "shade",
@@ -237,12 +263,26 @@ impl Loaded {
                 (CS, texture(wgpu::TextureSampleType::Uint)),
                 (CS, wgpu::BindingType::StorageTexture { access: wgpu::StorageTextureAccess::WriteOnly, format: HDR, view_dimension: wgpu::TextureViewDimension::D2 }),
                 (CS, storage(true)),
+                (CS, texture(wgpu::TextureSampleType::Depth)),
+                (CS, wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison)),
             ],
         );
         let bgl_cull = layout(d, "cull", &[(CS, storage(true)), (CS, storage(false)), (CS, storage(false)), (CS, storage(true))]);
         let bgl_classify = layout(d, "classify", &[(CS, texture(wgpu::TextureSampleType::Uint)), (CS, storage(false)), (CS, storage(false))]);
         let bgl_present =
             layout(d, "present", &[(FS, texture(wgpu::TextureSampleType::Float { filterable: false })), (FS, texture(wgpu::TextureSampleType::Uint))]);
+        // The disk pipeline cache, where the backend has one (see `gpu`).
+        let cache_path = g.cache_key.as_ref().map(|k| std::path::Path::new("out/meta/pipeline_cache").join(k));
+        let cache_data = cache_path.as_ref().and_then(|p| std::fs::read(p).ok());
+        stats.cache_bytes = cache_data.as_ref().map_or(0, Vec::len);
+        // SAFETY-free: the data came from `get_data` of this adapter's key; wgpu validates the header and falls back.
+        let cache = cache_path.as_ref().map(|_| {
+            #[allow(unsafe_code)]
+            unsafe {
+                d.create_pipeline_cache(&wgpu::PipelineCacheDescriptor { label: Some("loft"), data: cache_data.as_deref(), fallback: true })
+            }
+        });
+        let cache = cache.as_ref();
         // Every pipeline at once: the driver compiles each on the calling thread, and wgpu's device is Sync, so one
         // thread per pipeline turns the cold compile from the sum of the pipelines into roughly the slowest one.
         let (kinds_pl, cull_pl, classify_pl, present_pl) = std::thread::scope(|sc| {
@@ -251,14 +291,19 @@ impl Loaded {
                 .iter()
                 .map(|kt| {
                     let (m, bgl0, bgl_kind, bgl_shade) = (&modules[kt.module], &bgl0, &bgl_kind, &bgl_shade);
-                    let r = sc.spawn(move || render(d, &kt.name, &[bgl0, bgl_kind], m, ("vs", "fs"), VIS, true, Some(wgpu::Face::Front)));
-                    let s = sc.spawn(move || compute(d, &kt.name, &[bgl0, bgl_kind, bgl_shade], m, "shade"));
+                    // A proxy draws its box's back faces (the camera may be inside); a surface draws both sides.
+                    let face = match kt.draw {
+                        Draw::Analytic | Draw::Traced => Some(wgpu::Face::Front),
+                        Draw::Surface { .. } => None,
+                    };
+                    let r = sc.spawn(move || render(d, &kt.name, &[bgl0, bgl_kind], m, ("vs", "fs"), VIS, true, face, cache));
+                    let s = sc.spawn(move || compute(d, &kt.name, &[bgl0, bgl_kind, bgl_shade], m, "shade", cache));
                     (r, s)
                 })
                 .collect();
-            let cull = sc.spawn(|| compute(d, "cull", &[&bgl0, &bgl_cull], &modules[p.cull], "cull"));
-            let classify = sc.spawn(|| compute(d, "classify", &[&bgl0, &bgl_classify], &modules[p.classify], "classify"));
-            let present = sc.spawn(|| render(d, "present", &[&bgl0, &bgl_present], &modules[p.present], ("vs_present", "fs_present"), COLOR, false, None));
+            let cull = sc.spawn(|| compute(d, "cull", &[&bgl0, &bgl_cull], &modules[p.cull], "cull", cache));
+            let classify = sc.spawn(|| compute(d, "classify", &[&bgl0, &bgl_classify], &modules[p.classify], "classify", cache));
+            let present = sc.spawn(|| render(d, "present", &[&bgl0, &bgl_present], &modules[p.present], ("vs_present", "fs_present"), COLOR, false, None, cache));
             fn join<T>(h: std::thread::ScopedJoinHandle<'_, T>) -> T {
                 h.join().expect("pipeline thread")
             }
@@ -268,6 +313,12 @@ impl Loaded {
         // Metal compiles at creation; wait so the time is the compile, not a deferred one inside the first frame.
         d.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| e.to_string())?;
         stats.pipelines_ms = t.elapsed().as_secs_f64() * 1e3;
+        if let (Some(c), Some(path)) = (cache, &cache_path)
+            && let Some(data) = c.get_data()
+        {
+            let _ = std::fs::create_dir_all("out/meta/pipeline_cache");
+            std::fs::write(path, data).map_err(|e| format!("{}: {e}", path.display()))?;
+        }
         stats.render_pipelines = k_n + 1;
         stats.compute_pipelines = k_n + 2;
 
@@ -297,7 +348,8 @@ impl Loaded {
         let insts = init("instances", &inst, U::STORAGE);
         let bases_buf = init("bases", &bytes_of(&bases), U::STORAGE);
         let visible = buffer(d, "visible", u64::from(n_inst.max(1)) * 4, U::STORAGE);
-        let draw_reset = bytes_of(&(0..k_n).flat_map(|_| [36u32, 0, 0, 0]).collect::<Vec<_>>());
+        let draw_reset = bytes_of(&p.kinds.iter().flat_map(|k| [k.draw.vertices(), 0, 0, 0]).collect::<Vec<_>>());
+        let luts = init("luts", &f32_bytes(if p.luts.is_empty() { &[0.0] } else { &p.luts }), U::STORAGE);
         let shade_reset = bytes_of(&(0..k_n).flat_map(|_| [0u32, 1, 1]).collect::<Vec<_>>());
         let draw_args = init("draw args", &draw_reset, U::STORAGE | U::INDIRECT);
         let shade_args = init("shade args", &shade_reset, U::STORAGE | U::INDIRECT);
@@ -310,13 +362,41 @@ impl Loaded {
         let color = tex(d, "color", size, COLOR, T::RENDER_ATTACHMENT | T::COPY_SRC);
         let view = |t: &wgpu::Texture| t.create_view(&Default::default());
         let (vis, depth, hdr, color_view) = (view(&vis_tex), view(&depth_tex), view(&hdr_tex), view(&color));
-        let g2 = bind(d, &bgl_shade, &[wgpu::BindingResource::TextureView(&vis), wgpu::BindingResource::TextureView(&hdr), tile_lists.as_entire_binding()]);
+        // The sun's view: an orthographic box around every caster row, deep enough to reach the receivers below.
+        let casters: Vec<u32> = p.passes.iter().find_map(|x| if let Pass::Shadow(k) = x { Some(k.clone()) } else { None }).unwrap_or_default();
+        let side = p.shadow_size.max(1);
+        let shadow_depth = tex(d, "shadow depth", (side, side), DEPTH, T::RENDER_ATTACHMENT | T::TEXTURE_BINDING);
+        let shadow_view = view(&shadow_depth);
+        let smp = d.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("shadow"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            compare: Some(wgpu::CompareFunction::LessEqual),
+            ..Default::default()
+        });
+        let g2 = bind(
+            d,
+            &bgl_shade,
+            &[
+                wgpu::BindingResource::TextureView(&vis),
+                wgpu::BindingResource::TextureView(&hdr),
+                tile_lists.as_entire_binding(),
+                wgpu::BindingResource::TextureView(&shadow_view),
+                wgpu::BindingResource::Sampler(&smp),
+            ],
+        );
+        // Every row of every kind, for the sun's bundle (identity row lists; the camera's cull does not apply).
+        let all: Vec<u32> = p.kinds.iter().flat_map(|k| 0..k.n_rows).collect();
+        let all_rows = init("all rows", &bytes_of(&all), U::STORAGE);
+        let shadow_args = init("shadow args", &bytes_of(&p.kinds.iter().flat_map(|k| [k.draw.vertices(), k.n_rows, 0, 0]).collect::<Vec<_>>()), U::INDIRECT);
         let mut kinds = vec![];
+        let mut g1_sun = vec![];
         for (k, render, shade) in kinds_pl {
             let kt = &p.kinds[k];
             let rows = init(&kt.name, &f32_bytes(&kt.rows), U::STORAGE);
             let params = init("kind params", &bytes_of(&[k as u32, bases[k], kt.n_rows, 0]), U::UNIFORM);
-            let g1 = bind(d, &bgl_kind, &[rows.as_entire_binding(), visible.as_entire_binding(), params.as_entire_binding()]);
+            let g1 = bind(d, &bgl_kind, &[rows.as_entire_binding(), visible.as_entire_binding(), params.as_entire_binding(), luts.as_entire_binding()]);
+            g1_sun.push(bind(d, &bgl_kind, &[rows.as_entire_binding(), all_rows.as_entire_binding(), params.as_entire_binding(), luts.as_entire_binding()]));
             kinds.push(KindGpu { render, shade, module: modules[kt.module].clone(), _rows: rows, _params: params, g1, g2: g2.clone() });
         }
         let cull_bg = bind(d, &bgl_cull, &[insts.as_entire_binding(), draw_args.as_entire_binding(), visible.as_entire_binding(), bases_buf.as_entire_binding()]);
@@ -341,6 +421,33 @@ impl Loaded {
             be.draw_indirect(&draw_args, u64::from(k) * 16);
         }
         let bundle = be.finish(&wgpu::RenderBundleDescriptor { label: Some("vis64") });
+        let shadow = (p.shadow_size > 0).then(|| {
+            let frame_buf = buffer(d, "sun frame", abi::FRAME_BYTES, U::UNIFORM | U::COPY_DST);
+            let g0s = bind(d, &bgl0, &[frame_buf.as_entire_binding()]);
+            let mut be = d.create_render_bundle_encoder(&wgpu::RenderBundleEncoderDescriptor {
+                label: Some("sun"),
+                color_formats: &[Some(VIS)],
+                depth_stencil: Some(wgpu::RenderBundleDepthStencil { format: DEPTH, depth_read_only: false, stencil_read_only: true }),
+                sample_count: 1,
+                multiview: None,
+            });
+            be.set_bind_group(0, &g0s, &[]);
+            let (mut lo, mut hi) = ([f32::INFINITY; 3], [f32::NEG_INFINITY; 3]);
+            for &k in &casters {
+                be.set_pipeline(&kinds[k as usize].render);
+                be.set_bind_group(1, &g1_sun[k as usize], &[]);
+                be.draw_indirect(&shadow_args, u64::from(k) * 16);
+                for i in p.instances.iter().filter(|i| i.kind == k) {
+                    for a in 0..3 {
+                        lo[a] = lo[a].min(i.lo[a]);
+                        hi[a] = hi[a].max(i.hi[a]);
+                    }
+                }
+            }
+            let (view_proj, texel, dir) = sun_camera(p.sun, lo, hi, side);
+            let vis_t = tex(d, "sun vis", (side, side), VIS, T::RENDER_ATTACHMENT);
+            Shadow { frame_buf, bundle: be.finish(&wgpu::RenderBundleDescriptor { label: Some("sun") }), vis: view(&vis_t), depth: shadow_view.clone(), view_proj, texel, dir }
+        });
 
         let n = 2 * p.passes.len() as u32;
         let clock = g.timestamps.then(|| Clock {
@@ -372,6 +479,7 @@ impl Loaded {
             classify: (classify_pl, classify_bg),
             present: (present_pl, present_bg),
             bundle,
+            shadow,
             vis,
             depth,
             color,
@@ -381,25 +489,33 @@ impl Loaded {
         })
     }
 
-    fn frame_uniform(&self, t: f32) -> Vec<u8> {
+    /// The camera's frame uniform at time t, or the sun's (`sun`: orthographic, `eye` holds the ray direction).
+    fn frame_uniform(&self, t: f32, sun: bool) -> Vec<u8> {
         let eye = self.camera.eye(t);
         let aspect = self.size.0 as f32 / self.size.1 as f32;
         let vp = mul(perspective(self.camera.fov, aspect, 0.05, 400.0), look_at(eye, self.camera.at));
-        let inv = invert(vp);
         let s = self.sun;
         let l = (s[0] * s[0] + s[1] * s[1] + s[2] * s[2]).sqrt();
+        let (light_vp, texel, dir) = self.shadow.as_ref().map_or(([[0.0; 4]; 4], 0.0, [0.0; 3]), |x| (x.view_proj, x.texel, x.dir));
+        let (vp, eye) = if sun { (light_vp, dir) } else { (vp, eye) };
+        let inv = invert(vp);
         let mut w: Vec<f32> = vp.iter().flatten().copied().collect();
         w.extend(inv.iter().flatten());
-        w.extend([eye[0], eye[1], eye[2], t, s[0] / l, s[1] / l, s[2] / l, 0.0]);
+        w.extend([eye[0], eye[1], eye[2], t, s[0] / l, s[1] / l, s[2] / l, texel]);
         let mut b = f32_bytes(&w);
-        b.extend(bytes_of(&[self.size.0, self.size.1, self.tiles.0, self.tiles.0 * self.tiles.1, 0, 0, 0, 0]));
+        let tiles = [self.size.0, self.size.1, self.tiles.0, self.tiles.0 * self.tiles.1];
+        b.extend(bytes_of(&[tiles[0], tiles[1], tiles[2], tiles[3], 0, u32::from(sun), u32::from(self.shadow.is_some()), 0]));
+        b.extend(f32_bytes(&light_vp.iter().flatten().copied().collect::<Vec<_>>()));
         debug_assert_eq!(b.len() as u64, abi::FRAME_BYTES);
         b
     }
 
     /// Encodes and submits one frame at time `t`. Returns the GPU commands recorded (dispatches + draws).
     pub fn frame(&self, g: &Gpu, t: f32) -> u32 {
-        g.queue.write_buffer(&self.frame_buf, 0, &self.frame_uniform(t));
+        g.queue.write_buffer(&self.frame_buf, 0, &self.frame_uniform(t, false));
+        if let Some(sh) = &self.shadow {
+            g.queue.write_buffer(&sh.frame_buf, 0, &self.frame_uniform(t, true));
+        }
         g.queue.write_buffer(&self.draw_args, 0, &self.draw_reset);
         g.queue.write_buffer(&self.shade_args, 0, &self.shade_reset);
         let mut enc = g.device.create_command_encoder(&Default::default());
@@ -447,6 +563,28 @@ impl Loaded {
                         multiview_mask: None,
                     });
                     rp.execute_bundles([&self.bundle]);
+                    commands += ks.len() as u32;
+                }
+                Pass::Shadow(ks) => {
+                    let sh = self.shadow.as_ref().expect("a shadow pass has its targets");
+                    let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("sun"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &sh.vis,
+                            depth_slice: None,
+                            resolve_target: None,
+                            ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color { r: f64::from(abi::EMPTY), g: 0.0, b: 0.0, a: 0.0 }), store: wgpu::StoreOp::Discard },
+                        })],
+                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                            view: &sh.depth,
+                            depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Store }),
+                            stencil_ops: None,
+                        }),
+                        timestamp_writes: rts,
+                        occlusion_query_set: None,
+                        multiview_mask: None,
+                    });
+                    rp.execute_bundles([&sh.bundle]);
                     commands += ks.len() as u32;
                 }
                 Pass::Classify => {
@@ -538,20 +676,21 @@ impl Loaded {
         Ok(view.chunks_exact(row as usize).flat_map(|r| r[..(w * 4) as usize].to_vec()).collect())
     }
 
-    /// The twin: runs kind `k`'s queries on the GPU at samples of 8 floats each (p.xyz, row as bits, dir.xyz, 0);
-    /// returns 8 floats each (trace, visible, 0, 0, material rgb, 0). Built on demand; not part of a frame.
+    /// The twin: runs kind `k`'s queries on the GPU at samples of 8 floats each (p.xyz or (u, v, 0), row as bits,
+    /// dir.xyz, 0); returns 16 floats each (trace, visible, 0, 0 | material rgb, 0 | surface point, 0 | surface
+    /// normal, 0). Built on demand; not part of a frame.
     pub fn twin(&self, g: &Gpu, k: usize, samples: &[f32]) -> Result<Vec<f32>, String> {
         let d = &g.device;
         let kg = &self.kinds[k];
         use wgpu::BufferUsages as U;
         let empty = layout(d, "empty", &[]);
         let bgl_twin = layout(d, "twin", &[(CS, storage(true)), (CS, storage(false))]);
-        let pl = compute(d, "twin", &[&self.bgl0, &self.bgl_kind, &empty, &bgl_twin], &kg.module, "twin");
+        let pl = compute(d, "twin", &[&self.bgl0, &self.bgl_kind, &empty, &bgl_twin], &kg.module, "twin", None);
         let size = (samples.len() * 4) as u64;
         let input = buffer(d, "twin in", size, U::STORAGE | U::COPY_DST);
         g.queue.write_buffer(&input, 0, &f32_bytes(samples));
-        let output = buffer(d, "twin out", size, U::STORAGE | U::COPY_SRC);
-        let read = buffer(d, "twin read", size, U::MAP_READ | U::COPY_DST);
+        let output = buffer(d, "twin out", 2 * size, U::STORAGE | U::COPY_SRC);
+        let read = buffer(d, "twin read", 2 * size, U::MAP_READ | U::COPY_DST);
         let g3 = bind(d, &bgl_twin, &[input.as_entire_binding(), output.as_entire_binding()]);
         let g2 = bind(d, &empty, &[]);
         let mut enc = d.create_command_encoder(&Default::default());
@@ -575,6 +714,18 @@ impl Loaded {
 }
 
 type M4 = [[f32; 4]; 4];
+
+/// The sun's orthographic camera around a box: (view-projection, texel size in metres, ray direction). Depth runs from
+/// the box's sunward face to 100 m past it, so receivers below the casters fall inside it.
+fn sun_camera(sun: [f32; 3], lo: [f32; 3], hi: [f32; 3], side: u32) -> (M4, f32, [f32; 3]) {
+    let l = (sun[0] * sun[0] + sun[1] * sun[1] + sun[2] * sun[2]).sqrt();
+    let s = sun.map(|x| x / l);
+    let c = [0, 1, 2].map(|i| 0.5 * (lo[i] + hi[i]));
+    let r = 0.5 * (0..3).map(|i| (hi[i] - lo[i]).powi(2)).sum::<f32>().sqrt() + 0.05;
+    let view = look_at([0, 1, 2].map(|i| c[i] + s[i] * r), c);
+    let proj = [[1.0 / r, 0.0, 0.0, 0.0], [0.0, 1.0 / r, 0.0, 0.0], [0.0, 0.0, -1.0 / (100.0 + r), 0.0], [0.0, 0.0, 0.0, 1.0]];
+    (mul(proj, view), 2.0 * r / side as f32, s.map(|x| -x))
+}
 
 /// Column-major 4x4 product `a * b`.
 fn mul(a: M4, b: M4) -> M4 {

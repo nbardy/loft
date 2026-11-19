@@ -24,7 +24,7 @@ schedule Main {
   pass cull: build_indirect(K);
   pass vis: render_bundle(Vis64) { draw_indirect(K); };
   pass classify: tile_bin_kinds(Vis64, tile: 8u);
-  pass shade: dispatch_material_tiles(Vis64, light: shade_sun_sky, sun: vec3(0.0, 1.0, 0.0));
+  pass shade: dispatch_material_tiles(Vis64, light: sun_sky, sun: vec3(0.0, 1.0, 0.0));
   pass present: tonemap_aces(ColorHdr, sky: sky_color);
 }
 comptime fn spawn() { emit K { pose: Xform[Body -> World](Pt[World](0.0, 0.0, 0.0), 0.0) }; }
@@ -40,7 +40,7 @@ kind K{params} {{
     let q = inv(self.pose) * p;
     {trace}
   }}
-  query material(self, p: Pt[World], n: Norm[World]) -> vec3<f32> {{
+  query material(self, p: Pt[World], n: Norm[World]) -> Bsdf {{
     let q = inv(self.pose) * p;
     {material}
   }}
@@ -50,7 +50,7 @@ kind K{params} {{
 }
 
 const OK_TRACE: &str = "return sd_sphere(q - Pt[Body](0.0, 0.0, 0.0), 0.5);";
-const OK_MATERIAL: &str = "return vec3(0.5);";
+const OK_MATERIAL: &str = "return ggx(vec3(0.5), 0.5, 0.0);";
 
 fn expect(code: Code, src: &str) {
     match compile(src) {
@@ -72,7 +72,7 @@ fn e104_point_from_a_map_space_without_to_parent() {
     let material = "map sym = mirror_x(q) |> translate(Vec[Body](-0.4, 0.5, 1.2));
     let eye_c = Pt['sym](0.0, 0.2, 0.1);
     let eye_world = self.pose * eye_c;
-    return vec3(eye_world.x);";
+    return ggx(vec3(eye_world.x), 0.5, 0.0);";
     expect(Code::E104, &kind("", OK_TRACE, material));
     // The fix the error names compiles.
     let fixed = material.replace("self.pose * eye_c", "self.pose * (sym.to_parent * eye_c)");
@@ -128,4 +128,15 @@ fn e403_emit_outside_stage_0() {
 fn e404_kind_code_reads_stage_0() {
     let src = kind("", "return sd_sphere(q - Pt[Body](0.0, 0.0, 0.0), 0.1 * f32(COUNT));", OK_MATERIAL);
     expect(Code::E404, &format!("{src}\ncomptime const COUNT: u32 = 20u;"));
+}
+
+/// The draft's curvature bug: differentiating through a kink (here `abs`) has no derivative to give; `diff` refuses.
+#[test]
+fn e307_diff_of_a_c0_expression() {
+    let src = format!("{}\nfn bump(t: f32) -> f32 {{ return abs(t - 0.5); }}\nfn slope(t: f32) -> f32 {{ return diff(bump, t)(t); }}", kind("", OK_TRACE, OK_MATERIAL));
+    expect(Code::E307, &src);
+    // A smooth bump differentiates.
+    if let Err((_, text)) = compile(&src.replace("abs(t - 0.5)", "smootherstep(0.0, 1.0, t)")) {
+        panic!("{text}");
+    }
 }

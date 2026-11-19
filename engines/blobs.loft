@@ -16,7 +16,7 @@ kind Blob {
     return smin_poly(smin_poly(body, horn, 0.14 * s), foot, 0.1 * s) + ripple;
   }
 
-  query material(self, p: Pt[World], n: Norm[World]) -> vec3<f32> {
+  query material(self, p: Pt[World], n: Norm[World]) -> Bsdf {
     let q = inv(self.pose) * p;
     let s = self.size;
     map side = mirror_x(q) |> translate(Vec[Blob](-0.2 * s, -0.78 * s, -0.45 * s));
@@ -26,7 +26,7 @@ kind Blob {
     let white = 1.0 - smoothstep(0.075 * s, 0.09 * s, d);
     let pupil = 1.0 - smoothstep(0.035 * s, 0.045 * s, d);
     let cheek = select(vec3(1.0), vec3(1.0, 0.9, 0.94), side.cell < 0.0);
-    return mix(mix(self.tint * cheek, vec3(0.95), white), vec3(0.03), pupil);
+    return ggx(mix(mix(self.tint * cheek, vec3(0.95), white), vec3(0.03), pupil), 0.5, 0.0);
   }
 }
 
@@ -49,6 +49,6 @@ schedule Main {
   pass cull: build_indirect(Blob);
   pass vis: render_bundle(Vis64) { draw_indirect(Blob); };
   pass classify: tile_bin_kinds(Vis64, tile: 8u);
-  pass shade: dispatch_material_tiles(Vis64, light: shade_sun_sky, sun: vec3(0.45, 0.8, 0.35));
+  pass shade: dispatch_material_tiles(Vis64, light: sun_sky, sun: vec3(0.45, 0.8, 0.35));
   pass present: tonemap_aces(ColorHdr, sky: sky_color);
 }

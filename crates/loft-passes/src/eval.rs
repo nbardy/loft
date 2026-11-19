@@ -28,6 +28,8 @@ pub trait Scalar: Clone + std::fmt::Debug {
     fn with_lip(self, l: f64) -> Self;
     /// The single value when known exactly (comptime and the twin).
     fn exact(&self) -> Option<f64>;
+    /// Lowest and highest value.
+    fn range(&self) -> (f64, f64);
     /// Union of two branches (`select` on an undecided bool).
     fn join(&self, o: &Self) -> Self;
 }
@@ -55,6 +57,13 @@ impl Rigid {
     pub fn yaw(origin: [f32; 3], yaw: f32) -> Rigid {
         let (s, c) = yaw.sin_cos();
         Rigid { r: [[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]], t: origin }
+    }
+    /// `self * o`: apply `o`, then `self`.
+    pub fn then(&self, o: &Rigid) -> Rigid {
+        let (a, b) = (self.r, o.r);
+        let r = [0, 1, 2].map(|i| [0, 1, 2].map(|j| (0..3).map(|k| a[i][k] * b[k][j]).sum()));
+        let t = [0, 1, 2].map(|i| (0..3).map(|k| a[i][k] * o.t[k]).sum::<f32>() + self.t[i]);
+        Rigid { r, t }
     }
     pub fn inv(&self) -> Rigid {
         let r = self.r;
@@ -88,13 +97,65 @@ pub enum Val<S> {
     Row(usize, usize),
     /// `m.to_parent` (true) or `m.from_parent` (false), applied by `*`.
     MapRef(String, bool),
+    /// Lobes bottom first: the `@lobe` fn's name and the arguments bound at material time.
+    Bsdf(Vec<(String, Vec<Val<S>>)>),
+}
+
+/// One baked scan: its parameter range and 12 words per frame (origin, tangent, normal, binormal).
+#[derive(Clone, Debug)]
+pub struct Lut {
+    pub name: String,
+    pub lo: f32,
+    pub hi: f32,
+    pub frames: Vec<[f32; 12]>,
+}
+
+/// Uniform cubic B-spline basis at `f` in [0, 1) (C2), and its derivative in `f`.
+pub fn bspline(f: f64) -> ([f64; 4], [f64; 4]) {
+    let g = 1.0 - f;
+    (
+        [g * g * g / 6.0, (3.0 * f * f * f - 6.0 * f * f + 4.0) / 6.0, (-3.0 * f * f * f + 3.0 * f * f + 3.0 * f + 1.0) / 6.0, f * f * f / 6.0],
+        [-g * g / 2.0, (3.0 * f * f - 4.0 * f) / 2.0, (-3.0 * f * f + 2.0 * f + 1.0) / 2.0, f * f / 2.0],
+    )
+}
+
+impl Lut {
+    /// The frame at `t` (or its t-derivative), as 12 components. A known `t` is exact; a range of `t` gives the
+    /// hull of the control points it touches (a B-spline lies in its control polygon's hull; its derivative in the
+    /// hull of the scaled differences).
+    pub fn sample<S: Scalar>(&self, t: &S, deriv: bool) -> Vec<S> {
+        let n = self.frames.len();
+        let scale = (n - 1) as f64 / f64::from(self.hi - self.lo);
+        let at = |k: i64| &self.frames[k.clamp(0, n as i64 - 1) as usize];
+        let (lo, hi) = t.range();
+        let (s0, s1) = ((lo - f64::from(self.lo)) * scale, (hi - f64::from(self.lo)) * scale);
+        if s0 == s1 {
+            let i = s0.floor().clamp(0.0, (n - 1) as f64);
+            let (w, dw) = bspline(s0 - i);
+            let w = if deriv { dw.map(|x| x * scale) } else { w };
+            return (0..12).map(|c| S::c((0..4).map(|k| w[k] * f64::from(at(i as i64 - 1 + k as i64)[c])).sum())).collect();
+        }
+        let (a, b) = (s0.floor() as i64 - 1, s1.floor() as i64 + 2);
+        (0..12)
+            .map(|c| {
+                let vals: Vec<f64> = if deriv {
+                    (a..b).map(|k| (f64::from(at(k + 1)[c]) - f64::from(at(k)[c])) * scale).collect()
+                } else {
+                    (a..=b).map(|k| f64::from(at(k)[c])).collect()
+                };
+                let (mn, mx) = vals.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(m, x), v| (m.min(*v), x.max(*v)));
+                S::c(mn).join(&S::c(mx))
+            })
+            .collect()
+    }
 }
 
 #[derive(Clone, Debug)]
 enum Stage<S> {
     Mirror,
     Translate(Vec<S>, f64),
-    RotY(S),
+    /// Rotation about axis 0 (x), 1 (y) or 2 (z).
+    Rot(usize, S),
 }
 
 #[derive(Clone, Debug)]
@@ -121,6 +182,8 @@ pub struct Eval<'p, 'a, S> {
     /// The first expression that made a Lipschitz bound unbounded: where, and why.
     pub cause: Option<(Span, String)>,
     pub steps: u64,
+    /// Baked scans, for `sample_c2`.
+    pub luts: &'p [Lut],
 }
 
 fn err(span: Span, msg: impl Into<String>, fix: impl Into<String>) -> Diag {
@@ -134,7 +197,15 @@ fn norm<S: Scalar>(v: &[S]) -> f64 {
 
 impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
     pub fn new(p: &'p Prog<'a>, types: &'p [Ty], tables: Tables, overrides: &'p [(String, f64)]) -> Self {
-        Eval { p, types, tables, overrides, env: vec![], cause: None, steps: 0 }
+        Eval { p, types, tables, overrides, env: vec![], cause: None, steps: 0, luts: &[] }
+    }
+
+    /// Binds a name for the expressions evaluated next (a scan's parameter); `unbind` drops the latest.
+    pub fn bind(&mut self, name: &'a str, v: Val<S>) {
+        self.env.push((name, Slot::Val(v)));
+    }
+    pub fn unbind(&mut self) {
+        self.env.pop();
     }
 
     pub fn lift(r: &RowVal) -> Val<S> {
@@ -181,7 +252,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
         let lip_of = |x: &Val<S>| match x {
             Val::S(s) => s.lip(),
             Val::V(_, l) => *l,
-            Val::Void | Val::B(_) | Val::U(_) | Val::I(_) | Val::X(_) | Val::Row(..) | Val::MapRef(..) => 0.0,
+            Val::Void | Val::B(_) | Val::U(_) | Val::I(_) | Val::X(_) | Val::Row(..) | Val::MapRef(..) | Val::Bsdf(_) => 0.0,
         };
         let mut l = 0.0f64;
         for (prm, x) in f.params.iter().zip(args) {
@@ -199,7 +270,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
         }
         match v {
             Val::S(s) => Val::S(s.with_lip(l)),
-            other @ Val::Void | other @ Val::V(..) | other @ Val::B(_) | other @ Val::U(_) | other @ Val::I(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) => other,
+            other @ Val::Void | other @ Val::V(..) | other @ Val::B(_) | other @ Val::U(_) | other @ Val::I(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) | other @ Val::Bsdf(_) => other,
         }
     }
 
@@ -252,7 +323,9 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                     let stage = match (op, vals.as_slice()) {
                         ("mirror_x", []) => Stage::Mirror,
                         ("translate", [Val::V(t, l)]) => Stage::Translate(t.clone(), *l),
-                        ("rot_y", [Val::S(a)]) => Stage::RotY(a.clone()),
+                        ("rot_x", [Val::S(a)]) => Stage::Rot(0, a.clone()),
+                        ("rot_y", [Val::S(a)]) => Stage::Rot(1, a.clone()),
+                        ("rot_z", [Val::S(a)]) => Stage::Rot(2, a.clone()),
                         _ => unreachable!("checked map stage {op}"),
                     };
                     if let (Stage::Mirror, Val::V(c, _)) = (&stage, &p) {
@@ -337,15 +410,22 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 Val::V(out, l + lt)
             }
             Stage::Translate(..) => Val::V(c, l),
-            Stage::RotY(a) => {
+            Stage::Rot(axis, a) => {
                 let a = if fwd { a.clone() } else { a.neg() };
                 if a.lip() > 0.0 && self.cause.is_none() {
                     self.cause = Some((span, "a rotation angle that varies with the point".into()));
                 }
+                // The plane (i, j) turns by a: i' = cos i + sin j, j' = cos j - sin i (matches loft_rot_* in emit).
+                let (i, j) = match axis {
+                    0 => (1, 2),
+                    1 => (2, 0),
+                    _ => (0, 1),
+                };
                 let (s, co) = (a.un(Un::Sin), a.un(Un::Cos));
-                let x = co.mul(&c[0]).add(&s.mul(&c[2]));
-                let z = co.mul(&c[2]).sub(&s.mul(&c[0]));
-                Val::V(vec![x, c[1].clone(), z], if a.lip() > 0.0 { f64::INFINITY } else { l })
+                let mut out = c.clone();
+                out[i] = co.mul(&c[i]).add(&s.mul(&c[j]));
+                out[j] = co.mul(&c[j]).sub(&s.mul(&c[i]));
+                Val::V(out, if a.lip() > 0.0 { f64::INFINITY } else { l })
             }
         }
     }
@@ -355,7 +435,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
         let inf = match &v {
             Val::S(s) => s.lip().is_infinite(),
             Val::V(_, l) => l.is_infinite(),
-            Val::Void | Val::B(_) | Val::U(_) | Val::I(_) | Val::X(_) | Val::Row(..) | Val::MapRef(..) => false,
+            Val::Void | Val::B(_) | Val::U(_) | Val::I(_) | Val::X(_) | Val::Row(..) | Val::MapRef(..) | Val::Bsdf(_) => false,
         };
         if inf && self.cause.is_none() {
             self.cause = Some((e.span, "this expression has no finite Lipschitz bound over the region".into()));
@@ -374,7 +454,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 Ok(match self.ty(e) {
                     Ty::U32 => Val::U(v as u32),
                     Ty::I32 | Ty::AbstractInt => Val::I(v as i32),
-                    Ty::Void | Ty::Bool | Ty::F32 | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) => Val::S(S::c(f64::from(v as f32))),
+                    Ty::Void | Ty::Bool | Ty::F32 | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) | Ty::Frame(_) | Ty::Bsdf => Val::S(S::c(f64::from(v as f32))),
                 })
             }
             ExprKind::Bool(b) => Ok(Val::B(Some(*b))),
@@ -389,7 +469,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                     return Ok(match self.types[c.value.id as usize] {
                         Ty::U32 => Val::U(*x as u32),
                         Ty::I32 | Ty::AbstractInt => Val::I(*x as i32),
-                        Ty::Void | Ty::Bool | Ty::F32 | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) => Val::S(S::c(*x)),
+                        Ty::Void | Ty::Bool | Ty::F32 | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) | Ty::Frame(_) | Ty::Bsdf => Val::S(S::c(*x)),
                     });
                 }
                 let saved = std::mem::take(&mut self.env);
@@ -415,6 +495,15 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                         let i = decl.row.iter().position(|f| f.name.name == m.name).expect("checked field");
                         Ok(Self::lift(&self.tables[k][r][i]))
                     }
+                    Val::V(c, l) if c.len() == 12 => {
+                        let o = match m.name.as_str() {
+                            "origin" => 0,
+                            "tangent" => 3,
+                            "normal" => 6,
+                            _ => 9,
+                        };
+                        Ok(Val::V(c[o..o + 3].to_vec(), l))
+                    }
                     Val::V(c, l) => {
                         let idx: Vec<usize> =
                             m.name.chars().map(|ch| "xyzw".find(ch).or_else(|| "rgba".find(ch)).expect("checked")).collect();
@@ -424,7 +513,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                             Ok(Val::V(idx.iter().map(|&i| c[i].clone().with_lip(l)).collect(), l))
                         }
                     }
-                    other @ Val::Void | other @ Val::S(_) | other @ Val::B(_) | other @ Val::U(_) | other @ Val::I(_) | other @ Val::X(_) | other @ Val::MapRef(..) => unreachable!("checked member of {other:?}"),
+                    other @ Val::Void | other @ Val::S(_) | other @ Val::B(_) | other @ Val::U(_) | other @ Val::I(_) | other @ Val::X(_) | other @ Val::MapRef(..) | other @ Val::Bsdf(_) => unreachable!("checked member of {other:?}"),
                 }
             }
             ExprKind::Index(base, i) => {
@@ -432,11 +521,11 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 let i = match i {
                     Val::U(x) => x as usize,
                     Val::I(x) => x as usize,
-                    Val::Void | Val::S(_) | Val::V(..) | Val::B(_) | Val::X(_) | Val::Row(..) | Val::MapRef(..) => return Err(err(e.span, "index not a known integer", "index with an integer")),
+                    Val::Void | Val::S(_) | Val::V(..) | Val::B(_) | Val::X(_) | Val::Row(..) | Val::MapRef(..) | Val::Bsdf(_) => return Err(err(e.span, "index not a known integer", "index with an integer")),
                 };
                 match b {
                     Val::V(c, l) => c.get(i).map(|x| Val::S(x.clone().with_lip(l))).ok_or_else(|| err(e.span, "index out of range", "index 0..n")),
-                    other @ Val::Void | other @ Val::S(_) | other @ Val::B(_) | other @ Val::U(_) | other @ Val::I(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) => unreachable!("checked index of {other:?}"),
+                    other @ Val::Void | other @ Val::S(_) | other @ Val::B(_) | other @ Val::U(_) | other @ Val::I(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) | other @ Val::Bsdf(_) => unreachable!("checked index of {other:?}"),
                 }
             }
             ExprKind::Unary(op, x) => {
@@ -461,16 +550,34 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                         let ex = |s: &S| s.exact().ok_or_else(|| err(e.span, "an Xform built from values that vary", "build Xforms at stage 0"));
                         Ok(Val::X(Rigid::yaw([ex(&o[0])? as f32, ex(&o[1])? as f32, ex(&o[2])? as f32], ex(yaw)? as f32)))
                     }
+                    Ty::Frame(_) => Ok(build(vals, 12)),
                     Ty::Geo(Geo::Dir | Geo::Norm, _) => Ok(normalize(build(vals, 3))),
                     Ty::Geo(..) => Ok(build(vals, 3)),
                     Ty::VecN(n) => Ok(build(vals, n as usize)),
-                    other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::F32 | other @ Ty::AbstractInt | other @ Ty::Map(..) | other @ Ty::Row(_) => unreachable!("checked ctor of {other}"),
+                    other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::F32 | other @ Ty::AbstractInt | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Bsdf => unreachable!("checked ctor of {other}"),
                 }
             }
             ExprKind::Call { callee, args } => {
+                if matches!(callee.name.as_str(), "sample_c2" | "loft_dsample") {
+                    let ExprKind::Name(n) = &args[0].value.kind else { unreachable!("checked scan name") };
+                    let lut = self.luts.iter().find(|l| &l.name == n).ok_or_else(|| err(e.span, format!("scan `{n}` is not baked yet"), "a scan reads only scans declared before it"))?;
+                    let Val::S(t) = self.expr(&args[1].value)? else { unreachable!("checked f32") };
+                    let mut c = lut.sample(&t, callee.name == "loft_dsample");
+                    if callee.name == "loft_dsample" {
+                        let Val::S(dt) = self.expr(&args[2].value)? else { unreachable!("checked f32") };
+                        c = c.iter().map(|x| x.mul(&dt)).collect();
+                    }
+                    return Ok(Val::V(c, 0.0));
+                }
                 let vals = args.iter().map(|a| self.expr(&a.value)).collect::<Res<Vec<_>>>()?;
                 if let Some(f) = self.p.fns.get(callee.name.as_str()) {
+                    if f.attrs.iter().any(|a| a.name.name == "lobe") {
+                        return Ok(Val::Bsdf(vec![(callee.name.clone(), vals)]));
+                    }
                     return self.call_fn(f, vals, e.span);
+                }
+                if callee.name == "eval_bsdf" {
+                    return self.eval_bsdf(&vals[0], &vals[1], &vals[2], &vals[3], e.span);
                 }
                 Ok(self.builtin(&callee.name, vals, e))
             }
@@ -482,7 +589,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
         let sv = |i: &Val<S>| match i {
             Val::I(i) => Val::S(S::c(f64::from(*i))),
             Val::U(u) => Val::S(S::c(f64::from(*u))),
-            other @ Val::Void | other @ Val::S(_) | other @ Val::V(..) | other @ Val::B(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) => other.clone(),
+            other @ Val::Void | other @ Val::S(_) | other @ Val::V(..) | other @ Val::B(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) | other @ Val::Bsdf(_) => other.clone(),
         };
         Ok(match (op, &x, &y) {
             (_, Val::MapRef(name, inverse), Val::V(..)) => {
@@ -495,6 +602,8 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 }
                 v
             }
+            (Add, Val::Bsdf(p), Val::Bsdf(q)) => Val::Bsdf(p.iter().chain(q).cloned().collect()),
+            (Mul, Val::X(p), Val::X(q)) => Val::X(p.then(q)),
             (Mul, Val::X(r), Val::V(c, l)) => {
                 let point = matches!(self.ty(b), Ty::Geo(Geo::Pt, _));
                 let out = (0..3)
@@ -632,7 +741,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 };
                 Val::V(c, l)
             }
-            other @ Val::Void | other @ Val::B(_) | other @ Val::U(_) | other @ Val::I(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) => unreachable!("checked unary builtin on {other:?}"),
+            other @ Val::Void | other @ Val::B(_) | other @ Val::U(_) | other @ Val::I(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) | other @ Val::Bsdf(_) => unreachable!("checked unary builtin on {other:?}"),
         };
         let zip2 = |x: &Val<S>, y: &Val<S>, f: &dyn Fn(&S, &S) -> S| -> Val<S> {
             match (x, y) {
@@ -644,6 +753,67 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
             }
         };
         match name {
+            "loft_zero" => match &v[0] {
+                Val::S(_) => Val::S(S::c(0.0)),
+                Val::V(c, _) => Val::V(vec![S::c(0.0); c.len()], 0.0),
+                Val::U(_) => Val::U(0),
+                Val::I(_) => Val::I(0),
+                other @ Val::Void | other @ Val::B(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) | other @ Val::Bsdf(_) => unreachable!("checked zero of {other:?}"),
+            },
+            "loft_vec" => v[0].clone(),
+            "smootherstep" | "loft_dsmoothstep" | "loft_dsmootherstep" => {
+                // t = clamp((x - a) / (b - a)); value t^3 (6t^2 - 15t + 10); slopes 6t(1-t)/(b-a), 30t^2(1-t)^2/(b-a).
+                let (e0, e1, x) = (v[0].clone(), v[1].clone(), v[2].clone());
+                let span = self.arith(BinOp::Sub, e1, e0.clone());
+                let num = self.arith(BinOp::Sub, x, e0);
+                let t = self.arith(BinOp::Div, num, span.clone());
+                let t = zip2(&t, &Val::S(S::c(0.0)), &|a, z| a.max(z).min(&S::c(1.0)));
+                let c = |k: f64| Val::S(S::c(k));
+                let one_t = self.arith(BinOp::Sub, c(1.0), t.clone());
+                let tt = self.arith(BinOp::Mul, t.clone(), t.clone());
+                match name {
+                    "smootherstep" => {
+                        let a = self.arith(BinOp::Mul, c(6.0), t.clone());
+                        let a = self.arith(BinOp::Sub, a, c(15.0));
+                        let a = self.arith(BinOp::Mul, a, t.clone());
+                        let a = self.arith(BinOp::Add, a, c(10.0));
+                        let t3 = self.arith(BinOp::Mul, tt, t);
+                        let out = self.arith(BinOp::Mul, t3, a);
+                        // Constant edges: h is monotone, so its range is [h(lo), h(hi)], and L(h(x)) = sup|h'| L(x)
+                        // with sup|h'| = 15 / (8 |b - a|) (draft §2D). Interval arithmetic on the polynomial would
+                        // claim a range of [-5, 10] and ~40x the slope.
+                        match (&v[0], &v[1], &v[2]) {
+                            (Val::S(a), Val::S(b), Val::S(x)) if a.exact().is_some() && b.exact().is_some() && a.exact() != b.exact() => {
+                                let (a, b) = (a.exact().expect("exact"), b.exact().expect("exact"));
+                                let h = |x: f64| {
+                                    let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
+                                    t * t * t * ((6.0 * t - 15.0) * t + 10.0)
+                                };
+                                match x.exact() {
+                                    Some(_) => out,
+                                    None => {
+                                        let (lo, hi) = x.range();
+                                        let (p, q) = (h(lo), h(hi));
+                                        Val::S(S::c(p.min(q)).join(&S::c(p.max(q))).with_lip(1.875 / (b - a).abs() * x.lip()))
+                                    }
+                                }
+                            }
+                            _ => out,
+                        }
+                    }
+                    "loft_dsmoothstep" => {
+                        let a = self.arith(BinOp::Mul, c(6.0), t);
+                        let a = self.arith(BinOp::Mul, a, one_t);
+                        self.arith(BinOp::Div, a, span)
+                    }
+                    _ => {
+                        let oo = self.arith(BinOp::Mul, one_t.clone(), one_t);
+                        let a = self.arith(BinOp::Mul, c(30.0), tt);
+                        let a = self.arith(BinOp::Mul, a, oo);
+                        self.arith(BinOp::Div, a, span)
+                    }
+                }
+            }
             "abs" => un(&v[0], Un::Abs),
             "sqrt" => un(&v[0], Un::Sqrt),
             "sin" => un(&v[0], Un::Sin),
@@ -687,7 +857,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
             "select" => match &v[2] {
                 Val::B(Some(true)) => v[1].clone(),
                 Val::B(Some(false)) => v[0].clone(),
-                Val::Void | Val::S(_) | Val::V(..) | Val::B(_) | Val::U(_) | Val::I(_) | Val::X(_) | Val::Row(..) | Val::MapRef(..) => match (&v[0], &v[1]) {
+                Val::Void | Val::S(_) | Val::V(..) | Val::B(_) | Val::U(_) | Val::I(_) | Val::X(_) | Val::Row(..) | Val::MapRef(..) | Val::Bsdf(_) => match (&v[0], &v[1]) {
                     (Val::S(a), Val::S(b)) => Val::S(a.join(b).with_lip(f64::INFINITY)),
                     (Val::V(a, _), Val::V(b, _)) => Val::V(a.iter().zip(b).map(|(p, q)| p.join(q)).collect(), f64::INFINITY),
                     other => unreachable!("checked select on {other:?}"),
@@ -696,14 +866,14 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
             "length" => match &v[0] {
                 Val::S(s) => Val::S(s.un(Un::Abs)),
                 Val::V(c, l) => Val::S(sum_sq(c).un(Un::Sqrt).with_lip(*l)),
-                other @ Val::Void | other @ Val::B(_) | other @ Val::U(_) | other @ Val::I(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) => unreachable!("checked length of {other:?}"),
+                other @ Val::Void | other @ Val::B(_) | other @ Val::U(_) | other @ Val::I(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) | other @ Val::Bsdf(_) => unreachable!("checked length of {other:?}"),
             },
             "distance" => {
                 let d = self.arith(BinOp::Sub, v[0].clone(), v[1].clone());
                 match d {
                     Val::V(c, l) => Val::S(sum_sq(&c).un(Un::Sqrt).with_lip(l)),
                     Val::S(s) => Val::S(s.un(Un::Abs)),
-                    other @ Val::Void | other @ Val::B(_) | other @ Val::U(_) | other @ Val::I(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) => unreachable!("checked distance of {other:?}"),
+                    other @ Val::Void | other @ Val::B(_) | other @ Val::U(_) | other @ Val::I(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) | other @ Val::Bsdf(_) => unreachable!("checked distance of {other:?}"),
                 }
             }
             "dot" => {
@@ -726,25 +896,43 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
             "normalize" => normalize(v[0].clone()),
             "inv" => match &v[0] {
                 Val::X(x) => Val::X(x.inv()),
-                other @ Val::Void | other @ Val::S(_) | other @ Val::V(..) | other @ Val::B(_) | other @ Val::U(_) | other @ Val::I(_) | other @ Val::Row(..) | other @ Val::MapRef(..) => unreachable!("checked inv of {other:?}"),
+                other @ Val::Void | other @ Val::S(_) | other @ Val::V(..) | other @ Val::B(_) | other @ Val::U(_) | other @ Val::I(_) | other @ Val::Row(..) | other @ Val::MapRef(..) | other @ Val::Bsdf(_) => unreachable!("checked inv of {other:?}"),
             },
             "f32" => match &v[0] {
                 Val::U(u) => Val::S(S::c(f64::from(*u))),
                 Val::I(i) => Val::S(S::c(f64::from(*i))),
-                other @ Val::Void | other @ Val::S(_) | other @ Val::V(..) | other @ Val::B(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) => other.clone(),
+                other @ Val::Void | other @ Val::S(_) | other @ Val::V(..) | other @ Val::B(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) | other @ Val::Bsdf(_) => other.clone(),
             },
             "u32" | "i32" => {
                 let x = match &v[0] {
                     Val::U(u) => f64::from(*u),
                     Val::I(i) => f64::from(*i),
                     Val::S(s) => s.exact().unwrap_or(f64::NAN),
-                    other @ Val::Void | other @ Val::V(..) | other @ Val::B(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) => unreachable!("checked conversion of {other:?}"),
+                    other @ Val::Void | other @ Val::V(..) | other @ Val::B(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) | other @ Val::Bsdf(_) => unreachable!("checked conversion of {other:?}"),
                 };
                 if name == "u32" { Val::U(x as u32) } else { Val::I(x as i32) }
             }
             "vec2" | "vec3" | "vec4" | "vec2f" | "vec3f" | "vec4f" => build(v, (name.as_bytes()[3] - b'0') as usize),
             other => unreachable!("checked builtin {other}"),
         }
+    }
+
+    /// `eval_bsdf(b, n, v, l)`: each lobe bottom first, `c = c * below + own` (the lobe's vec4 is own rgb and the
+    /// transmittance it leaves the layers under it).
+    pub fn eval_bsdf(&mut self, b: &Val<S>, n: &Val<S>, v: &Val<S>, l: &Val<S>, span: Span) -> Res<Val<S>> {
+        let Val::Bsdf(lobes) = b else { unreachable!("checked Bsdf") };
+        let mut c = Val::V(vec![S::c(0.0); 3], 0.0);
+        for (name, args) in lobes {
+            let f = self.p.fns[name.as_str()];
+            let mut a = args.clone();
+            a.extend([n.clone(), v.clone(), l.clone()]);
+            let Val::V(r, _) = self.call_fn(f, a, span)? else { unreachable!("checked vec4") };
+            let below = Val::S(r[3].clone());
+            let own = Val::V(r[..3].to_vec(), 0.0);
+            let kept = self.arith(BinOp::Mul, c, below);
+            c = self.arith(BinOp::Add, kept, own);
+        }
+        Ok(c)
     }
 
     /// Arithmetic on values without source expressions (used by builtins composed of ops).
@@ -791,7 +979,7 @@ fn build<S: Scalar>(vals: Vec<Val<S>>, n: usize) -> Val<S> {
             }
             Val::I(i) => c.push(S::c(f64::from(i))),
             Val::U(u) => c.push(S::c(f64::from(u))),
-            other @ Val::Void | other @ Val::B(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) => unreachable!("checked component {other:?}"),
+            other @ Val::Void | other @ Val::B(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) | other @ Val::Bsdf(_) => unreachable!("checked component {other:?}"),
         }
     }
     if c.len() == 1 {
@@ -820,7 +1008,7 @@ pub fn concrete<S: Scalar>(v: &Val<S>, span: Span) -> Res<RowVal> {
         Val::I(i) => RowVal::I(*i),
         Val::B(Some(b)) => RowVal::B(*b),
         Val::X(x) => RowVal::X(*x),
-        other @ Val::Void | other @ Val::B(_) | other @ Val::Row(..) | other @ Val::MapRef(..) => return Err(err(span, format!("cannot store {other:?} in a row"), "store numbers, vectors, points or Xforms")),
+        other @ Val::Void | other @ Val::B(_) | other @ Val::Row(..) | other @ Val::MapRef(..) | other @ Val::Bsdf(_) => return Err(err(span, format!("cannot store {other:?} in a row"), "store numbers, vectors, points or Xforms")),
     })
 }
 
@@ -898,6 +1086,9 @@ impl Scalar for f32 {
     }
     fn exact(&self) -> Option<f64> {
         Some(f64::from(*self))
+    }
+    fn range(&self) -> (f64, f64) {
+        (f64::from(*self), f64::from(*self))
     }
     fn join(&self, _: &f32) -> f32 {
         *self

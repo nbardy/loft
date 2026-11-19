@@ -10,7 +10,7 @@
 //! Every check is a `Verdict`; a gate passes only when all of its verdicts are `Held`.
 
 use loft_ir::Verdict;
-use loft_ir::program::Program;
+use loft_ir::program::{Draw, Program};
 use loft_passes::Compiled;
 use loft_runner::{Gpu, Loaded};
 use serde_json::{Value, json};
@@ -143,7 +143,8 @@ struct Ctx<'a> {
 }
 
 /// One gate on one scene: its verdicts, plus numbers for the report.
-fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, out: &mut Vec<Check>, report: &mut Value) -> Result<(), String> {
+#[allow(clippy::too_many_arguments)]
+fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes: &[usize], out: &mut Vec<Check>, report: &mut Value) -> Result<(), String> {
     let mut push = |what: String, verdict: Verdict| out.push(Check { gate, scene: s.name.clone(), what, verdict });
     let b = |k: &str| s.budget.get(k).and_then(Value::as_f64).ok_or_else(|| format!("{}: budget has no `{k}`", s.name));
     match gate {
@@ -158,7 +159,8 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, out: &
                     write_png(&path, c.size, &px)?;
                     c.refs.insert(key.clone(), json!(format!("{:x}", Sha256::digest(&px))));
                     if t == c.frames[0] {
-                        let still = c.root.join(format!("agent_notes/2026-11-20_meta/phase0/{}.webp", s.name));
+                        let still = c.root.join(format!("agent_notes/2026-11-20_meta/phase1/{}.webp", s.name));
+                        std::fs::create_dir_all(still.parent().expect("dir")).map_err(|e| e.to_string())?;
                         let st = std::process::Command::new("cwebp").args(["-quiet", "-q", "95"]).arg(&path).arg("-o").arg(&still).status();
                         if !st.is_ok_and(|x| x.success()) {
                             return Err(format!("cwebp failed for {}", still.display()));
@@ -192,22 +194,29 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, out: &
         Gate::Twin => {
             let l = Loaded::new(c.g, p, c.size, None)?;
             for (k, kt) in p.kinds.iter().enumerate() {
+                let surface = matches!(kt.draw, Draw::Surface { .. });
                 let mut rng = Rng(0x5eed + k as u64);
                 let mut samples = vec![];
                 let mut at = vec![];
                 for inst in p.instances.iter().filter(|i| i.kind == k as u32).take(20) {
                     for _ in 0..32 {
-                        let (x, d) = (rng.in_box(inst.lo, inst.hi), rng.dir());
+                        let x = if surface { [rng.next(), rng.next(), 0.0] } else { rng.in_box(inst.lo, inst.hi) };
+                        let d = rng.dir();
                         samples.extend([x[0], x[1], x[2], f32::from_bits(inst.row), d[0], d[1], d[2], 0.0]);
                         at.push((inst.row as usize, x, d));
                     }
                 }
                 let gpu = l.twin(c.g, k, &samples)?;
-                let (mut slack, mut worst) = ([f64::INFINITY; 3], [0.0f64; 3]);
+                // trace, visible, material, surface point, surface normal
+                let (mut slack, mut worst) = ([f64::INFINITY; 5], [0.0f64; 5]);
                 for (i, (row, x, d)) in at.iter().enumerate() {
                     let cpu = comp.cpu_query(k, *row, *x, *d).map_err(|e| format!("{e:?}"))?;
-                    let o = &gpu[8 * i..8 * i + 8];
-                    let pairs = [(0, cpu.trace, o[0]), (1, cpu.visible, o[1])].into_iter().chain((0..3).map(|j| (2, cpu.material[j], o[4 + j])));
+                    let o = &gpu[16 * i..16 * i + 16];
+                    let pairs = [(0, cpu.trace, o[0]), (1, cpu.visible, o[1])]
+                        .into_iter()
+                        .chain((0..3).map(|j| (2, cpu.material[j], o[4 + j])))
+                        .chain((0..3).map(|j| (3, cpu.surf_p[j], o[8 + j])))
+                        .chain((0..3).map(|j| (4, cpu.surf_n[j], o[12 + j])));
                     for (q, a, gv) in pairs {
                         let err = f64::from((a - gv).abs());
                         // `visible` misses are any negative value: compare hit/miss, then t on hits.
@@ -216,12 +225,16 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, out: &
                         slack[q] = slack[q].min(twin_tol(a) - err);
                     }
                 }
-                report[&s.name]["twin"][&kt.name] = json!({"samples": at.len(), "max_err": {"trace": worst[0], "visible": worst[1], "material": worst[2]}});
-                for (q, name) in ["trace", "visible", "material"].iter().enumerate() {
-                    if q == 1 && kt.draw == loft_ir::program::Draw::Traced {
-                        continue;
+                report[&s.name]["twin"][&kt.name] = json!({"samples": at.len(), "max_err": {"trace": worst[0], "visible": worst[1], "material": worst[2], "surface_p": worst[3], "surface_n": worst[4]}});
+                for (q, name) in ["trace", "visible", "material", "surface point", "surface normal"].iter().enumerate() {
+                    let used = match kt.draw {
+                        Draw::Analytic => q <= 2,
+                        Draw::Traced => q == 0 || q == 2,
+                        Draw::Surface { .. } => q >= 2,
+                    };
+                    if used {
+                        push(format!("{}.{name} (max err {:.2e}, {} samples)", kt.name, worst[q], at.len()), held_if(slack[q], None));
                     }
-                    push(format!("{}.{name} (max err {:.2e}, {} samples)", kt.name, worst[q], at.len()), held_if(slack[q], None));
                 }
             }
         }
@@ -268,11 +281,15 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, out: &
             push(format!("{pipelines} pipelines == {}", b("pipelines")?), held_if(-(pipelines as f64 - b("pipelines")?).abs(), None));
             push(format!("cold {cold:.3} s <= {} s", b("cold_s")?), held_if(b("cold_s")? - cold, None));
             push(format!("warm {warm:.3} s <= {} s", b("warm_s")?), held_if(b("warm_s")? - warm, None));
-            let texts: Vec<String> = p.modules.iter().map(|m| m.wgsl.clone()).collect();
+            let mut texts: Vec<String> = p.modules.iter().map(|m| m.wgsl.clone()).collect();
+            // The derivation count (distinct shapes) rides along: it must not grow with instances either.
+            texts.push(format!("shapes {:?}", shapes));
+            report[&s.name]["load"]["shapes"] = json!(shapes);
+            report[&s.name]["load"]["cache_bytes"] = json!(times[0].2.cache_bytes);
             match c.modules.iter().find(|(f, _, _)| *f == s.file) {
                 Some((_, other, t)) => {
                     let same = *t == texts;
-                    push(format!("modules byte-identical to {other}"), if same { Verdict::Held { margin: 0.0 } } else { Verdict::Missed { by: 1.0 } });
+                    push(format!("modules and shape count identical to {other}"), if same { Verdict::Held { margin: 0.0 } } else { Verdict::Missed { by: 1.0 } });
                 }
                 None => c.modules.push((s.file.clone(), s.name.clone(), texts)),
             }
@@ -284,6 +301,41 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, out: &
                 let (mut lip_slack, mut lip_worst) = (f64::INFINITY, 0.0f64);
                 let (mut out_slack, mut agree_slack, mut hits) = (f64::INFINITY, f64::INFINITY, 0);
                 let cq = |row: usize, x: [f32; 3], d: [f32; 3]| comp.cpu_query(k, row, x, d).map_err(|e| format!("{e:?}"));
+                if let Draw::Surface { .. } = kt.draw {
+                    // The derived bound holds sampled surface points; the AD normal agrees with independent central
+                    // differences of the CPU surface (h = 1e-3 in u and v) wherever the chart is regular.
+                    let (mut in_slack, mut worst_angle, mut regular) = (f64::INFINITY, 0.0f64, 0);
+                    let h = 1e-3f32;
+                    for inst in p.instances.iter().filter(|i| i.kind == k as u32).take(4) {
+                        let row = inst.row as usize;
+                        for _ in 0..256 {
+                            let (u, v) = (h + (1.0 - 2.0 * h) * rng.next(), h + (1.0 - 2.0 * h) * rng.next());
+                            let q = cq(row, [u, v, 0.0], [0.0, 0.0, 1.0])?;
+                            for i in 0..3 {
+                                in_slack = in_slack.min(f64::from((q.surf_p[i] - inst.lo[i]).min(inst.hi[i] - q.surf_p[i])));
+                            }
+                            let at = |u: f32, v: f32| cq(row, [u, v, 0.0], [0.0, 0.0, 1.0]).map(|x| x.surf_p);
+                            let (pu0, pu1, pv0, pv1) = (at(u - h, v)?, at(u + h, v)?, at(u, v - h)?, at(u, v + h)?);
+                            let du = [0, 1, 2].map(|i| f64::from(pu1[i] - pu0[i]));
+                            let dv = [0, 1, 2].map(|i| f64::from(pv1[i] - pv0[i]));
+                            let n = [du[1] * dv[2] - du[2] * dv[1], du[2] * dv[0] - du[0] * dv[2], du[0] * dv[1] - du[1] * dv[0]];
+                            let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+                            let scale = (du.iter().map(|x| x * x).sum::<f64>() * dv.iter().map(|x| x * x).sum::<f64>()).sqrt();
+                            // A near-degenerate chart (the apex, a pole) has no stable difference normal: skip it.
+                            if len < 0.05 * scale || scale < 1e-12 {
+                                continue;
+                            }
+                            regular += 1;
+                            let cosang = (0..3).map(|i| n[i] / len * f64::from(q.surf_n[i])).sum::<f64>();
+                            worst_angle = worst_angle.max(cosang.clamp(-1.0, 1.0).acos());
+                        }
+                    }
+                    report[&s.name]["truth"][&kt.name] = json!({"inside_min": in_slack, "normal_angle_max": worst_angle, "regular_samples": regular});
+                    push(format!("{}: sampled surface points inside every derived bound", kt.name), held_if(in_slack, None));
+                    let unknown = (regular == 0).then(|| "no regular sample".to_string());
+                    push(format!("{}: AD normal vs differences, worst {worst_angle:.2e} rad <= 1e-2 ({regular} samples)", kt.name), held_if(1e-2 - worst_angle, unknown));
+                    continue;
+                }
                 for inst in p.instances.iter().filter(|i| i.kind == k as u32).take(20) {
                     let (row, l) = (inst.row as usize, f64::from(kt.lipschitz[inst.row as usize]));
                     // Derived L: |f(a) - f(b)| <= L |a - b| for pairs inside the row's bound.
@@ -377,9 +429,10 @@ pub fn run(approve: bool) -> Result<(), String> {
     for s in &scenes {
         let (p, r, comp, _) = compile(&s.file, &s.set)?;
         report[&s.name]["compile_ms"] = json!(r.ms.iter().map(|(n, t)| json!([n, t])).collect::<Vec<_>>());
-        report[&s.name]["rows"] = json!(r.kinds.iter().map(|k| json!([k.name, k.rows, k.l_max])).collect::<Vec<_>>());
+        report[&s.name]["rows"] = json!(r.kinds.iter().map(|k| json!([k.name, k.rows, k.shapes, k.l_max])).collect::<Vec<_>>());
+        let shapes: Vec<usize> = r.kinds.iter().map(|k| k.shapes).collect();
         for gt in GATES {
-            gate(&mut c, gt, s, &p, &comp, &mut checks, &mut report)?;
+            gate(&mut c, gt, s, &p, &comp, &shapes, &mut checks, &mut report)?;
         }
     }
     if approve {

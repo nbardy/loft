@@ -79,8 +79,8 @@ fn run() -> Result<(), String> {
             }
             for k in &report.kinds {
                 println!(
-                    "kind {:<10} {:?}  rows {:>4}  derived L {:.4}..{:.4}  bound evals {}",
-                    k.name, k.draw, k.rows, k.l_min, k.l_max, k.evals
+                    "kind {:<12} {:?}  rows {:>4}  shapes {:>3}  derived L {:.4}..{:.4}  bound evals {}",
+                    k.name, k.draw, k.rows, k.shapes, k.l_min, k.l_max, k.evals
                 );
             }
             let modules = program.modules.len();

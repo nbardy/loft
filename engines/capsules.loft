@@ -11,8 +11,8 @@ kind Capsule {
   query trace(self, p: Pt[World]) -> Field[World] {
     return sd_capsule(p, self.a, self.b, self.r);
   }
-  query material(self, p: Pt[World], n: Norm[World]) -> vec3<f32> {
-    return self.albedo;
+  query material(self, p: Pt[World], n: Norm[World]) -> Bsdf {
+    return ggx(self.albedo, 0.55, 0.0);
   }
 }
 
@@ -45,6 +45,6 @@ schedule Main {
   pass cull: build_indirect(Capsule);
   pass vis: render_bundle(Vis64) { draw_indirect(Capsule); };
   pass classify: tile_bin_kinds(Vis64, tile: 8u);
-  pass shade: dispatch_material_tiles(Vis64, light: shade_sun_sky, sun: vec3(0.45, 0.8, 0.35));
+  pass shade: dispatch_material_tiles(Vis64, light: sun_sky, sun: vec3(0.45, 0.8, 0.35));
   pass present: tonemap_aces(ColorHdr, sky: sky_color);
 }

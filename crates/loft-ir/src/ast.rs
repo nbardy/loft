@@ -12,6 +12,8 @@ pub struct Ident {
 #[derive(Debug, Default)]
 pub struct Module {
     pub items: Vec<Item>,
+    /// `diff(f, x)` sites, as written: the AD pass generates `f__d_x` (the parser already called it).
+    pub diffs: Vec<(Ident, Ident)>,
 }
 
 #[derive(Debug)]
@@ -21,7 +23,25 @@ pub enum Item {
     Const(ConstDecl),
     Fn(FnDecl),
     Kind(KindDecl),
+    Scan(ScanDecl),
     Schedule(ScheduleDecl),
+}
+
+/// `scan name(t: f32 in lo..hi, steps: N) @schedule(bake_lut) -> Table[T] { init: e; step(prev, t_i): e; }`:
+/// a sequential integration baked at load into an N-entry table, read with `sample_c2(name, t)`.
+#[derive(Debug)]
+pub struct ScanDecl {
+    pub name: Ident,
+    pub var: Ident,
+    pub var_ty: TyExpr,
+    pub lo: Expr,
+    pub hi: Expr,
+    pub steps: Expr,
+    pub elem: TyExpr,
+    pub init: Expr,
+    pub prev: Ident,
+    pub at: Ident,
+    pub step: Expr,
 }
 
 /// `const X: T = e;` (stage 1, plain WGSL) or `comptime const X: T = e;` (stage 0, overridable by the CLI).
@@ -64,8 +84,10 @@ pub enum QueryKind {
     Visible,
     /// Distance field: `(self, p: Pt[S]) -> Field[T]`, sphere traced with the derived L.
     Trace,
-    /// Surface colour: `(self, p: Pt[S], n: Norm[S]) -> vec3<f32>`.
+    /// Surface response: `(self, p: Pt[S], n: Norm[S]) -> Bsdf`, plus `uv: vec2<f32>` on a surface kind.
     Material,
+    /// Parametric surface over the unit square, rasterised from `@grid(nu, nv)`: `(self, u: f32, v: f32) -> Pt[S]`.
+    Surface,
 }
 
 #[derive(Debug)]
@@ -75,6 +97,12 @@ pub struct KindDecl {
     pub row: Vec<RowField>,
     pub queries: Vec<(QueryKind, FnDecl)>,
     pub fns: Vec<FnDecl>,
+}
+
+impl KindDecl {
+    pub fn query(&self, q: QueryKind) -> Option<&FnDecl> {
+        self.queries.iter().find(|(w, _)| *w == q).map(|(_, f)| f)
+    }
 }
 
 /// `comptime name: T` or `comptime name: u32 in lo..hi`.
@@ -230,13 +258,15 @@ pub enum TyExpr {
     Geo(Geo, SpaceRef),
     Xform(SpaceRef, SpaceRef),
     Field(SpaceRef),
+    /// `Frame[S]`: origin and an orthonormal tangent, normal, binormal (a scan's element).
+    Frame(SpaceRef),
 }
 
 impl TyExpr {
     pub fn span(&self) -> Span {
         match self {
             TyExpr::Name(i) | TyExpr::Generic(i, _) => i.span,
-            TyExpr::Geo(_, s) | TyExpr::Field(s) => s.span,
+            TyExpr::Geo(_, s) | TyExpr::Field(s) | TyExpr::Frame(s) => s.span,
             TyExpr::Xform(a, b) => a.span.to(b.span),
         }
     }
@@ -293,6 +323,10 @@ pub enum Ty {
     Map(Space, Space),
     /// A kind's row (`self`).
     Row(String),
+    /// Origin, tangent, normal, binormal.
+    Frame(Space),
+    /// An ordered sum of library lobes (`@lobe` fns), bottom layer first.
+    Bsdf,
 }
 
 impl std::fmt::Display for Ty {
@@ -309,6 +343,8 @@ impl std::fmt::Display for Ty {
             Ty::Xform(a, b) => write!(f, "Xform[{a} -> {b}]"),
             Ty::Map(a, b) => write!(f, "Map[{a} -> {b}]"),
             Ty::Row(k) => write!(f, "row of {k}"),
+            Ty::Frame(s) => write!(f, "Frame[{s}]"),
+            Ty::Bsdf => write!(f, "Bsdf"),
         }
     }
 }
@@ -320,8 +356,8 @@ impl Ty {
             Ty::Bool | Ty::U32 | Ty::I32 | Ty::F32 => Some(1),
             Ty::VecN(n) => Some(u32::from(*n)),
             Ty::Geo(..) => Some(3),
-            Ty::Xform(..) => Some(12),
-            Ty::Void | Ty::AbstractInt | Ty::Map(..) | Ty::Row(_) => None,
+            Ty::Xform(..) | Ty::Frame(_) => Some(12),
+            Ty::Void | Ty::AbstractInt | Ty::Map(..) | Ty::Row(_) | Ty::Bsdf => None,
         }
     }
 }

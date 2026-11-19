@@ -4,20 +4,7 @@
     4.0,
     9.0
   ],
-  "refs": {
-    "blobs-1@0": "3014418b7637eeca8d5988b916ce04e392b91ec4ada70b0636e7bd91f972e4b0",
-    "blobs-1@4": "34e1b49856bccc5bff3dfb09113e8432100571822ee9703aa27274d17a68ef4d",
-    "blobs-1@9": "b7b12f969716b2d2be627565dc117f00538bc476cd5cea661791adfa1aab218b",
-    "blobs-20@0": "0fd5163ad45ab07c01aca1dc1fe70d7a781e859e93e5d76dfe246efaa1bb1f5a",
-    "blobs-20@4": "e6453bab202729d6b9437093118b35c7b8a07b064133aeecb5496a4fd234369e",
-    "blobs-20@9": "5ce90aa4e6406358011377d07baeea70240d52a8b691da4c5747d07ba3a8e503",
-    "capsules-1@0": "435756ea694d2368d89cda5bb8b7e5df96095eb9cb78383f8beef7d866cc6fc5",
-    "capsules-1@4": "70d0499855f75d18bbfac2c5996fa5e9c93ce9bc7ae80cdbc25ee788fd01358a",
-    "capsules-1@9": "91fc5bfd1c9fd16884990250d2c316774719d67223b25c3a51665fe34ff249dd",
-    "capsules-20@0": "535926ba2387d6c3b224e28c98d85d5cbe554ce4982c46c993052f559c9305c5",
-    "capsules-20@4": "9b3b9c17e602690fbf5e630b38031042b38333893201bd95c835819b6ae2b581",
-    "capsules-20@9": "9c57ee138aed8f11005e2936878e3705b35c81a55c159bcb3beeab44afcbd381"
-  },
+  "refs": {},
   "scenes": [
     {
       "budget": {
@@ -75,6 +62,36 @@
       },
       "file": "engines/blobs.loft",
       "name": "blobs-20",
+      "set": {
+        "COUNT": 20
+      }
+    },
+    {
+      "budget": {
+        "cold_s": 1.5,
+        "commands": 17,
+        "modules": 8,
+        "p95_ms": 5.0,
+        "pipelines": 13,
+        "warm_s": 0.25
+      },
+      "file": "engines/hermit.loft",
+      "name": "hermit-1",
+      "set": {
+        "COUNT": 1
+      }
+    },
+    {
+      "budget": {
+        "cold_s": 1.5,
+        "commands": 17,
+        "modules": 8,
+        "p95_ms": 5.6,
+        "pipelines": 13,
+        "warm_s": 0.3
+      },
+      "file": "engines/hermit.loft",
+      "name": "hermit-20",
       "set": {
         "COUNT": 20
       }

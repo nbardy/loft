@@ -161,6 +161,9 @@ impl Scalar for Iv {
     fn exact(&self) -> Option<f64> {
         (self.lo == self.hi).then_some(self.lo)
     }
+    fn range(&self) -> (f64, f64) {
+        (self.lo, self.hi)
+    }
     fn join(&self, o: &Iv) -> Iv {
         Iv::new(self.lo.min(o.lo), self.hi.max(o.hi), self.l.max(o.l))
     }
@@ -212,7 +215,7 @@ pub fn derive<'a>(ev: &mut Eval<'_, 'a, Iv>, trace: &'a FnDecl, kind: usize, row
         let p = Val::V((0..3).map(|i| Iv { lo: lo[i], hi: hi[i], l: 1.0 }).collect(), 1.0);
         match ev.call_fn(trace, vec![Val::Row(kind, row), p], span)? {
             Val::S(s) => Ok(s),
-            other @ Val::Void | other @ Val::V(..) | other @ Val::B(_) | other @ Val::U(_) | other @ Val::I(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) => unreachable!("checked: trace returns f32, got {other:?}"),
+            other @ Val::Void | other @ Val::V(..) | other @ Val::B(_) | other @ Val::U(_) | other @ Val::I(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) | other @ Val::Bsdf(_) => unreachable!("checked: trace returns f32, got {other:?}"),
         }
     };
     // The natural interval, tightened by the centred (mean value) form f(c) ± L·r with the cell's own derived L.
@@ -273,6 +276,12 @@ pub fn derive<'a>(ev: &mut Eval<'_, 'a, Iv>, trace: &'a FnDecl, kind: usize, row
     if alive.is_empty() {
         return Err(none());
     }
+    // Leaves need not be finer than 1/64 of the surface's extent: a leaf is kept whole (sound), so a coarser leaf
+    // only pads the bound, and a 77 m sand slab no longer costs millions of evaluations.
+    let leaf = {
+        let ext = (0..3).map(|i| alive.iter().map(|c| c.1[i]).fold(f64::NEG_INFINITY, f64::max) - alive.iter().map(|c| c.0[i]).fold(f64::INFINITY, f64::min)).fold(0.0, f64::max);
+        CELL.max(ext / 64.0)
+    };
     let mut lo = [0.0; 3];
     let mut hi = [0.0; 3];
     for axis in 0..3 {
@@ -292,7 +301,7 @@ pub fn derive<'a>(ev: &mut Eval<'_, 'a, Iv>, trace: &'a FnDecl, kind: usize, row
                 if iv.lo > 0.0 {
                     continue;
                 }
-                if iv.hi <= 0.0 || size(&c) <= CELL {
+                if iv.hi <= 0.0 || size(&c) <= leaf {
                     best = key;
                     continue;
                 }
@@ -339,4 +348,35 @@ pub fn derive<'a>(ev: &mut Eval<'_, 'a, Iv>, trace: &'a FnDecl, kind: usize, row
         .note(at, why));
     }
     Ok(Derived { lo, hi, l: l.max(1e-6), evals: evals.get() })
+}
+
+/// Cells per side of the (u, v) square when bounding a parametric surface.
+pub const SURFACE_CELLS: usize = 16;
+
+/// A surface's bound: the union of the interval images of a `SURFACE_CELLS`² split of the unit square (each image
+/// encloses its patch, so the union encloses the surface). No L: a surface is rasterised, never traced.
+pub fn derive_surface<'a>(ev: &mut Eval<'_, 'a, Iv>, surface: &'a FnDecl, kind: usize, row: usize, span: Span) -> Res<Derived> {
+    let n = SURFACE_CELLS;
+    let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
+    for i in 0..n {
+        for j in 0..n {
+            let iv = |k: usize| Iv { lo: k as f64 / n as f64, hi: (k + 1) as f64 / n as f64, l: 0.0 };
+            let Val::V(c, _) = ev.call_fn(surface, vec![Val::Row(kind, row), Val::S(iv(i)), Val::S(iv(j))], span)? else {
+                unreachable!("checked: surface returns a point")
+            };
+            for a in 0..3 {
+                lo[a] = lo[a].min(c[a].lo);
+                hi[a] = hi[a].max(c[a].hi);
+            }
+        }
+    }
+    if (0..3).any(|a| !(hi[a] - lo[a]).is_finite()) {
+        return Err(Diag::new(Code::E212, span, format!("row {row}: the surface has no finite bound over the unit square"), "keep the surface's terms bounded (no division by a value that may be 0)"));
+    }
+    for i in 0..3 {
+        let pad = PAD + PAD_REL * (hi[i] - lo[i]);
+        lo[i] -= pad;
+        hi[i] += pad;
+    }
+    Ok(Derived { lo, hi, l: 0.0, evals: (n * n) as u32 })
 }

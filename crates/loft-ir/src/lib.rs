@@ -63,6 +63,8 @@ pub enum Code {
     E211,
     /// A traced field whose surface has no finite derived bound.
     E212,
+    /// `diff` of an expression that is not differentiable (a `C0` kink).
+    E307,
     /// A continuous type parameterises kind identity.
     E401,
     /// A kind's discrete variant budget is exceeded.

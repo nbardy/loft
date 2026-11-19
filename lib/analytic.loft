@@ -38,3 +38,14 @@ fn ray_capsule(ro: Pt['s], rd: Dir['s], a: Pt['s], b: Pt['s], r: f32) -> f32 {
   }
   return ray_sphere(ro, rd, cap, r);
 }
+
+// The nearer of two hits (a negative value is a miss).
+fn hit_min(a: f32, b: f32) -> f32 {
+  if a < 0.0 {
+    return b;
+  }
+  if b < 0.0 {
+    return a;
+  }
+  return min(a, b);
+}
