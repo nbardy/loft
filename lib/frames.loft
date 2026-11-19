@@ -1,12 +1,12 @@
 # Frames along a curve, for scans: a first frame from a tangent and an up hint, then rotation-minimising transport by
 # double reflection (Wang, Juttler, Zheng, Liu 2008): no twist accumulates, unlike a Frenet frame.
 
-fn frame_from_tangent[S](o: p3@S, t: d3@S, up: d3@S) -> frame@S {
+fn frame[S](o: p3@S, t: d3@S, up: d3@S) -> frame@S {
   let n = normalize(up - t * dot(up, t))
   frame_axes(o, t, n, cross(t, n))
 }
 
-fn transport_frame[S](prev: frame@S, o: p3@S, t1: d3@S) -> frame@S {
+fn transport[S](prev: frame@S, o: p3@S, t1: d3@S) -> frame@S {
   let v1 = o - prev.origin
   let c1 = max(dot(v1, v1), 1e-20)
   let rl = prev.normal - v1 * (2.0 * dot(v1, prev.normal) / c1)

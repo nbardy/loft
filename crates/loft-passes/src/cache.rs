@@ -58,9 +58,9 @@ pub(crate) fn kind_key(p: &Prog, k: &KindDecl, luts: &[Lut]) -> Res<blake3::Hash
         .filter(|(q, _)| *q != QueryKind::Material)
         .map(|(_, f)| f)
         .collect();
-    let (funcs, _) = emit::reachable(p, &roots, &[]);
+    let (funcs, reachable_consts) = emit::reachable(p, &roots, &[]);
     // Include transitive constant values, even when a constant uses a helper.
-    let constants: Vec<_> = p.consts.values().filter(|c| !c.comptime).collect();
+    let constants: Vec<_> = p.consts.values().filter(|c| !c.comptime || reachable_consts.contains(&c.name.name)).collect();
     let helpers: Vec<_> = if constants.is_empty() {
         funcs
     } else {

@@ -263,7 +263,7 @@ impl Loaded {
         stats.modules_ms = t.elapsed().as_secs_f64() * 1e3;
 
         let t = Instant::now();
-        let bgl0 = layout(d, "frame", &[(ALL, UNIFORM)]);
+        let bgl0 = layout(d, "frame", &[(ALL, UNIFORM),(ALL,UNIFORM)]);
         let bgl_kind = layout(d, "kind", &[(ALL, storage(true)), (ALL, storage(true)), (ALL, UNIFORM), (ALL, storage(true))]);
         let bgl_shade = layout(
             d,
@@ -342,7 +342,11 @@ impl Loaded {
         let t = Instant::now();
         use wgpu::BufferUsages as U;
         let frame_buf = buffer(d, "frame", abi::FRAME_BYTES, U::UNIFORM | U::COPY_DST);
-        let g0 = bind(d, &bgl0, &[frame_buf.as_entire_binding()]);
+        let [zenith,horizon]=p.sky.unwrap_or([[0.16,0.29,0.55],[0.48,0.55,0.64]]);
+        let environment=buffer(d,"sun and sky",48,U::UNIFORM|U::COPY_DST);
+        let mut colors=vec![];for color in [p.sun_color,zenith,horizon]{colors.extend(color);colors.push(0.)}
+        g.queue.write_buffer(&environment,0,&f32_bytes(&colors));
+        let g0 = bind(d, &bgl0, &[frame_buf.as_entire_binding(),environment.as_entire_binding()]);
         let n_inst = p.instances.len() as u32;
         let mut inst = vec![];
         let mut bases = vec![];
@@ -440,7 +444,7 @@ impl Loaded {
         let bundle = be.finish(&wgpu::RenderBundleDescriptor { label: Some("vis64") });
         let shadow = (p.shadow_size > 0).then(|| {
             let frame_buf = buffer(d, "sun frame", abi::FRAME_BYTES, U::UNIFORM | U::COPY_DST);
-            let g0s = bind(d, &bgl0, &[frame_buf.as_entire_binding()]);
+            let g0s = bind(d, &bgl0, &[frame_buf.as_entire_binding(),environment.as_entire_binding()]);
             let mut be = d.create_render_bundle_encoder(&wgpu::RenderBundleEncoderDescriptor {
                 label: Some("sun"),
                 color_formats: &[Some(VIS)],

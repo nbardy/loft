@@ -83,6 +83,8 @@ pub struct Instance {
     pub row: u32,
 }
 
+pub fn default_sun_color()->[f32;3]{[2.2,2.0,1.7]}
+
 /// Camera from the schedule's `orbit` pass, evaluated per frame at time t.
 #[derive(Clone, Copy, Debug)]
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -126,6 +128,10 @@ pub struct Program {
     pub instances: Vec<Instance>,
     pub camera: Orbit,
     pub sun: [f32; 3],
+    #[serde(default="default_sun_color")]
+    pub sun_color: [f32;3],
+    #[serde(default)]
+    pub sky: Option<[[f32;3];2]>,
     /// Shadow-map side in texels (0 without a shadow pass).
     pub shadow_size: u32,
     /// Every scan's baked table, concatenated (12 words per frame).

@@ -103,7 +103,7 @@ impl Ad<'_> {
                     Some(db) => {
                         let mem = self.e(sp, ExprKind::Member(Box::new(db), m.clone()));
                         // A tangent frame's `origin` holds a displacement; say so to the checker.
-                        Some(if m.name == "origin" { self.call("loft_vec", vec![mem], sp) } else { mem })
+                        Some(if frame_field(&m.name) == "origin" { self.call("loft_vec", vec![mem], sp) } else { mem })
                     }
                 }
             }

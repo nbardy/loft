@@ -4,7 +4,7 @@
 # Sky radiance by direction, without the sun's disc (the sun arrives separately, shadowed).
 fn sky_dome(d: rgb) -> rgb {
   let up = clamp(d.y, -1.0, 1.0)
-  let sky = mix([0.48, 0.55, 0.64], [0.16, 0.29, 0.55], sqrt(max(up, 0.0)))
+  let sky = mix(sky_horizon(), sky_zenith(), sqrt(max(up, 0.0)))
   let ground = mix([0.24, 0.21, 0.16], [0.12, 0.10, 0.08], sqrt(max(-up, 0.0)))
   select(ground, sky, up >= 0.0)
 }
@@ -20,7 +20,7 @@ fn sun_sky(b: Bsdf, n: rgb, v: rgb, sun: rgb, shadow: f, ao: f) -> rgb {
     var e = rgb(1.0)
     if i == 1 {
       l = sun
-      e = [2.2, 2.0, 1.7] * shadow
+      e = sun_color() * shadow
     }
     if i >= 2 {
       let z = 1.0 - (2.0 * f32(i - 2) + 1.0) / 12.0

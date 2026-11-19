@@ -2,9 +2,9 @@ use std::geom::*
 space World Bird
 
 param side: f = 1 in -1..1
-fn fish(t: s) = [side * 2m * sin(t / 1s), 0.16m, 1.5m * cos(t / 1s)]@World
-fn bearing(p, q) = atan2(q.x - p.x, q.z - p.z)
-fn angle(a) = atan2(sin(a), cos(a))
+fn fish(t: s) -> p3@World = [side * 2m * sin(t / 1s), 0.16m, 1.5m * cos(t / 1s)]@World
+fn bearing(p: p3@World, q: p3@World) -> rad = atan2(q.x - p.x, q.z - p.z)
+fn angle(a: rad) -> rad = atan2(sin(a), cos(a))
 
 kind Heron @Bird (pose: xf@Bird>World, yaw: rad = 0rad, lift: m = 0m, phase: f = 0, neck: rad = 0rad, pitch: rad = 0rad, left: rad = 0rad) {
   trace(p) = {
@@ -24,7 +24,7 @@ kind Heron @Bird (pose: xf@Bird>World, yaw: rad = 0rad, lift: m = 0m, phase: f =
   material(p, n) = ggx([0.65, 0.73, 0.78], 0.65, 0)
 }
 
-fn eye(h) = h.pose * [0.24m * sin(h.yaw), 1.1m + h.lift, 0.24m * cos(h.yaw)]@Bird
+fn eye(h: Heron) -> p3@World = h.pose * [0.24m * sin(h.yaw), 1.1m + h.lift, 0.24m * cos(h.yaw)]@Bird
 law hop(h: Heron, dt) writes h.{yaw, lift, phase} {
   let err = angle(bearing(eye(h), fish(time)) - h.yaw)
   let start = h.phase == 0 && abs(err) > 0.8rad

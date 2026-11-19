@@ -19,6 +19,8 @@ const PRELUDE: &str = r"struct Frame {
   light_vp: mat4x4<f32>,
 }
 @group(0) @binding(0) var<uniform> frame: Frame;
+struct LoftEnvironment { sun_color: vec4<f32>, zenith: vec4<f32>, horizon: vec4<f32> }
+@group(0) @binding(1) var<uniform> environment: LoftEnvironment;
 const LOFT_NONCE: u32 = {{NONCE}};
 const LOFT_EMPTY: u32 = 0xffffffffu;
 
@@ -74,6 +76,14 @@ fn wty(t: &Ty) -> String {
         Ty::Table(_) | Ty::Verdict => unreachable!("motion values are lowered in a law"),
         Ty::Map(..) => unreachable!("maps are not values"),
     }
+}
+
+// Escape the escape prefix as well, so a user declaration cannot collide
+// with the encoded spelling of a WGSL keyword. Row fields have their own prefix.
+fn wgsl_name(n:&str)->String{
+    if naga::keywords::wgsl::RESERVED.contains(&n) || n.starts_with("loft_user_") || matches!(n,"frame"|"rows"|"visible"|"kp"|"luts"|"self_"|"load_row"){
+        format!("loft_user_{n}")
+    }else{n.into()}
 }
 
 fn f32_lit(v: f64) -> String {
@@ -186,7 +196,7 @@ pub(crate) fn reachable<'a>(p: &Prog<'a>, roots: &[&'a FnDecl], extra: &[&str]) 
             }
         }
         for n in names {
-            if p.consts.get(n.as_str()).is_some_and(|c| !c.comptime) {
+            if p.consts.contains_key(n.as_str()) {
                 consts.insert(n);
             }
         }
@@ -232,7 +242,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
             .params
             .iter()
             .map(|prm| match &prm.ty {
-                Some(t) => format!("{}: {}", prm.name.name, wty(&self.resolve(t))),
+                Some(t) => format!("{}: {}", wgsl_name(&prm.name.name), wty(&self.resolve(t))),
                 None => "self_: Row".into(),
             })
             .collect();
@@ -261,7 +271,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 let v = self.expr(value);
                 let t = wty(self.ty_of(value));
                 let kw = if *mutable { "var" } else { "let" };
-                self.line(d, &format!("{kw} {}: {t} = {v};", name.name));
+                self.line(d, &format!("{kw} {}: {t} = {v};", wgsl_name(&name.name)));
             }
             Stmt::Assign { target, op, value } => {
                 let (t, v) = (self.expr(target), self.expr(value));
@@ -269,7 +279,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 self.line(d, &format!("{t} {op} {v};"));
             }
             Stmt::Map { name, head, stages } => {
-                let n = &name.name;
+                let n = &wgsl_name(&name.name);
                 let (point, mut all): (String, Vec<(&str, Vec<String>)>) = match &head.kind {
                     ExprKind::Call { callee, args } if crate::check::MAP_OPS.contains(&callee.name.as_str()) => {
                         (self.expr(&args[0].value), vec![(callee.name.as_str(), vec![])])
@@ -327,7 +337,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                     Ty::Void | Ty::Bool | Ty::I32 | Ty::F32 | Ty::AbstractInt | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) | Ty::Frame(_) | Ty::Table(_) | Ty::Verdict | Ty::Id(_) | Ty::Bsdf => "i32",
                 });
                 let (a, b) = (self.expr(lo), self.expr(hi));
-                let v = &var.name;
+                let v = wgsl_name(&var.name);
                 self.line(d, &format!("for (var {v}: {t} = {a}; {v} < {b}; {v}++) {{"));
                 self.block_body(body, d + 1);
                 self.line(d, "}");
@@ -378,15 +388,15 @@ impl<'p, 'a> Emitter<'p, 'a> {
             ExprKind::Bool(b) => b.to_string(),
             ExprKind::Name(n) if n == "self" => "self_".into(),
             ExprKind::Name(n) if n=="time"=>"frame.eye.w".into(),
-            ExprKind::Name(n) => n.clone(),
+            ExprKind::Name(n) => wgsl_name(n),
             ExprKind::Member(base, m) => {
                 if let ExprKind::Name(n) = &base.kind
                     && m.name == "cell"
-                    && self.maps.iter().any(|(k, _)| k == n)
+                    && self.maps.iter().any(|(k, _)| k == &wgsl_name(n))
                 {
-                    return format!("{n}_cell");
+                    return format!("{}_cell",wgsl_name(n));
                 }
-                if matches!(self.ty_of(base),Ty::Row(_)){format!("{}.r_{}", self.expr(base),m.name)}else{format!("{}.{}", self.expr(base), m.name)}
+                if matches!(self.ty_of(base),Ty::Frame(_)){format!("{}.{}",self.expr(base),frame_field(&m.name))}else if matches!(self.ty_of(base),Ty::Row(_)){format!("{}.r_{}", self.expr(base),m.name)}else{format!("{}.{}", self.expr(base), m.name)}
             }
             ExprKind::Index(a, i) => format!("{}[{}]", self.expr(a), self.expr(i)),
             ExprKind::Unary(op, x) => {
@@ -402,7 +412,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                     (Ty::Map(..), ExprKind::Member(base, m)) => {
                         let ExprKind::Name(n) = &base.kind else { unreachable!("checked map ref") };
                         let x = self.expr(b);
-                        self.map_apply(n, m.name == "to_parent", x, point)
+                        self.map_apply(&wgsl_name(n), m.name == "to_parent", x, point)
                     }
                     (Ty::Xform(..), _) if matches!(self.ty_of(b), Ty::Xform(..)) => format!("loft_xf_mul({}, {})", self.expr(a), self.expr(b)),
                     (Ty::Xform(..), _) => {
@@ -442,10 +452,13 @@ impl<'p, 'a> Emitter<'p, 'a> {
             ExprKind::Call { callee, args } => {
                 let a: Vec<String> = args.iter().map(|x| self.expr(&x.value)).collect();
                 if callee.name=="place"{return format!("loft_xform_yaw({}, {})",a[0],a.get(1).map(String::as_str).unwrap_or("0.0"))}
+                match callee.name.as_str(){"sky_zenith"=>return "environment.zenith.xyz".into(),"sky_horizon"=>return "environment.horizon.xyz".into(),"sun_color"=>return "environment.sun_color.xyz".into(),_=>{}}
                 if callee.name=="coords"{return a[0].clone()}
+                if self.p.fns.contains_key(callee.name.as_str()) {return format!("{}({})",wgsl_name(&callee.name),a.join(", "));}
                 let name = match callee.name.as_str() {
                     "frame_axes" => "LoftFrame".into(),
                     "dir" => "normalize".into(),
+                    "dist"=>"distance".into(),
                     "smootherstep" => "loft_smootherstep".to_string(),
                     "inv" => "loft_xf_inv".to_string(),
                     "vec2" | "vec2f" => "vec2<f32>".into(),
@@ -469,10 +482,10 @@ impl<'p, 'a> Emitter<'p, 'a> {
             let decl = self.p.consts[c.as_str()];
             let v = self.expr(&decl.value);
             let t = wty(&self.types[decl.value.id as usize]);
-            let _ = writeln!(self.out, "const {c}: {t} = {v};");
+            let c=wgsl_name(c);let _ = writeln!(self.out, "const {c}: {t} = {v};");
         }
         for f in fns {
-            self.func(f, &f.name.name);
+            self.func(f, &wgsl_name(&f.name.name));
         }
     }
 }
@@ -580,7 +593,7 @@ pub fn kind_module(p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[Lu
             bfields.push(format!("  l{i}_{j}: {},", wty(&em.resolve(prm.ty.as_ref().expect("typed")))));
             names.push(format!("b.l{i}_{j}"));
         }
-        let _ = write!(evals, "  let r{i} = {name}({}, n, v, l);\n  c = c * r{i}.w + r{i}.xyz;\n", names.join(", "));
+        let name=wgsl_name(name);let _ = write!(evals, "  let r{i} = {name}({}, n, v, l);\n  c = c * r{i}.w + r{i}.xyz;\n", names.join(", "));
     }
     let _ = write!(
         em.out,
@@ -590,7 +603,7 @@ pub fn kind_module(p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[Lu
     );
     em.library(&lib, &consts);
     for f in &k.fns {
-        em.func(f, &f.name.name);
+        em.func(f, &wgsl_name(&f.name.name));
     }
     for (which, f) in &k.queries {
         let n = match which {
@@ -815,6 +828,7 @@ fn loft_shadow(p: vec3<f32>, n: vec3<f32>) -> f32 {{
   twin_out[4u * i + 3u] = o3;
 }}
 ",
+        light = wgsl_name(light),
         l0 = f32_lit(f64::from(tl[0])),
         l1 = f32_lit(f64::from(tl[1])),
         l2 = f32_lit(f64::from(tl[2])),
@@ -934,6 +948,7 @@ pub fn present_module(p: &Prog, types: &[Ty], sky: &str) -> String {
     em.header(abi::NONCE_PLACEHOLDER);
     let (lib, consts) = reachable(p, &[], &[sky]);
     em.library(&lib, &consts);
+    let sky=wgsl_name(sky);
     em.out += &format!(
         r"@group(1) @binding(0) var hdr_tex: texture_2d<f32>;
 @group(1) @binding(1) var vis_tex: texture_2d<u32>;

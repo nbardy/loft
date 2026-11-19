@@ -78,7 +78,7 @@ mod tests {
                 period: 1.,
                 fov: 1.,
             },
-            sun: [0.; 3],
+            sun: [0.; 3],sun_color:[1.;3],sky:None,
             shadow_size: 0,
             luts: vec![],
             passes: vec![Pass::Cull],

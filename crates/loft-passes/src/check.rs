@@ -212,6 +212,12 @@ impl<'p,'a> Ck<'p,'a> {
         Ok(())
     }
 
+    fn contextual(&mut self,e:&Expr,from:&Ty,to:&Ty)->bool{
+        if matches!(from,Ty::VecN(3)) && matches!(to,Ty::Geo(_,s) if !matches!(s,Space::Var(_))) && matches!(&e.kind,ExprKind::Ctor{ty:TyExpr::Name(n),..} if n.name=="vec3f"){
+            self.set(e,to.clone());return true;
+        }
+        false
+    }
     fn assignable(&self, from: &Ty, to: &Ty, span: Span) -> Res<()> {
         let ok = from == to
             || matches!((from, to), (Ty::AbstractInt, Ty::F32 | Ty::U32 | Ty::I32))
@@ -449,6 +455,7 @@ impl<'p,'a> Ck<'p,'a> {
         if surface && (has(QueryKind::Trace) || has(QueryKind::Visible)) {
             return Err(Diag::new(Code::E405, k.name.span, "a surface kind is drawn from its grid; `trace`/`visible` beside it are not lowered", "split it into two kinds"));
         }
+        if k.queries.is_empty(){return Ok(())}
         if !(has(QueryKind::Trace) || surface) || !has(QueryKind::Material) {
             return Err(e003(
                 k.name.span,
@@ -596,7 +603,7 @@ impl<'p,'a> Ck<'p,'a> {
                     };
                     let want = self.resolve(&rf.ty, true)?;
                     let t = self.expr(e)?;
-                    self.assignable(&t, &want, e.span)?; if t==Ty::AbstractInt {self.set(e,want);}
+                    if !self.contextual(e,&t,&want){self.assignable(&t, &want, e.span)?;} if t==Ty::AbstractInt {self.set(e,want);}
                 }
                 if let Some(n) = bind {self.bind(&n.name,Local{ty:Ty::Id(kind.name.clone()),mutable:false,map:None,span:n.span});}
                 if let Some(missing) = k.row.iter().find(|r| r.default.is_none() && !fields.iter().any(|(f, _)| f.name == r.name.name)) {
@@ -705,15 +712,6 @@ impl<'p,'a> Ck<'p,'a> {
                 }
                 if n=="time" {return if self.comptime{Err(Diag::new(Code::E403,e.span,"time read at build stage","read time in a query or a law"))}else{Ok(Ty::F32)}}
                 if let Some(c) = self.p.consts.get(n.as_str()) {
-                    if c.comptime && !self.comptime {
-                        return Err(Diag::new(
-                            Code::E403,
-                            e.span,
-                            format!("kind code reads the stage-0 constant `{n}`"),
-                            format!("pass `{n}` through a row field, or make it a plain `const` (it then fixes the shader)"),
-                        )
-                        .note(c.name.span, "declared `comptime` here"));
-                    }
                     return Ok(match &c.ty {
                         Some(t) => self.resolve(t, true)?,
                         None => self.types.get(c.value.id as usize).cloned().unwrap_or(Ty::F32),
@@ -826,7 +824,7 @@ impl<'p,'a> Ck<'p,'a> {
             }
             Ty::VecN(n) => swizzle(&m.name, *n as usize, m.span),
             Ty::Geo(..) => swizzle(&m.name, 3, m.span),
-            Ty::Frame(sp) => match m.name.as_str() {
+            Ty::Frame(sp) => match frame_field(&m.name) {
                 "origin" => Ok(Ty::Geo(Geo::Pt, sp.clone())),
                 "tangent" | "normal" | "binormal" => Ok(Ty::Geo(Geo::Dir, sp.clone())),
                 _ => Err(Diag::new(Code::E011, m.span, format!("`Frame` has no member `{}`", m.name), "use origin, tangent, normal or binormal")),
@@ -895,6 +893,8 @@ impl<'p,'a> Ck<'p,'a> {
                 let want = self.resolve(prm.ty.as_ref().expect("free fns type every parameter"), true)?;
                 let want=if let (Ty::Id(k),Ty::Row(_))=(&want,t){Ty::Row(k.clone())}else{want};
                 let want = self.unify(&want, t, &mut vars, *s, &prm.name)?;
+                let want=subst(&want,&vars);
+                if self.contextual(&args[index].value,t,&want){continue;}
                 self.assignable(t, &want, *s)?; if *t==Ty::AbstractInt {self.set(&args[index].value,want);}
             }
             let ret = match &f.ret {
@@ -1114,6 +1114,8 @@ fn builtin(name: &str, ts: &[Ty], sp: &[Span], span: Span) -> Res<Ty> {
     match name {
         "held"|"missed" if matches!(ts,[Ty::F32|Ty::AbstractInt])=>Ok(Ty::Verdict),
         "atan2" if matches!(ts,[Ty::F32,Ty::F32])=>Ok(Ty::F32),
+        "sky_zenith"|"sky_horizon"|"sun_color"=>{arity(0)?;Ok(Ty::VecN(3))},
+        "dist" => return builtin("distance",ts,sp,span),
         "place" => match ts { [Ty::Geo(Pt,s)] | [Ty::Geo(Pt,s),Ty::F32|Ty::AbstractInt] => Ok(Ty::Xform(Space::Open,s.clone())),_=>Err(e003(span,"placement requires a point and optional yaw","write place([x,y,z]@World, yaw)")) },
         "dir" => match ts { [Ty::Geo(_,s)]=>Ok(Ty::Geo(Dir,s.clone())), _=>Err(e003(span,"direction requires a space","supply a vector in the requested space")) },
         "coords" => match ts { [Ty::Geo(..)]=>Ok(Ty::VecN(3)),_=>Err(e003(span,"expected a spatial value","pass a point or vector")) },

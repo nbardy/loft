@@ -514,7 +514,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                         Ok(Self::lift(&self.tables[k][r][i]))
                     }
                     Val::V(c, l) if c.len() == 12 => {
-                        let o = match m.name.as_str() {
+                        let o = match frame_field(&m.name) {
                             "origin" => 0,
                             "tangent" => 3,
                             "normal" => 6,
@@ -781,6 +781,10 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
         };
         match name {
             "frame_axes" => build(v,12),
+            "sky_zenith"|"sky_horizon"|"sun_color"=>{
+                let (k,i,default)=match name{"sky_zenith"=>("Sky",0,[0.16,0.29,0.55]),"sky_horizon"=>("Sky",1,[0.48,0.55,0.64]),_=>("Sun",1,loft_ir::program::default_sun_color())};
+                self.p.kind_order.iter().position(|n|*n==k).and_then(|k|self.tables.get(k)).and_then(|rows|rows.first()).and_then(|row|row.get(i)).map(Self::lift).unwrap_or_else(||Val::V(default.map(|x|S::c(f64::from(x))).to_vec(),0.))
+            }
             "coords" => v.remove(0),
             "dir" => normalize(v.remove(0)),
             "loft_zero" => match &v[0] {
@@ -898,7 +902,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 Val::V(c, l) => Val::S(sum_sq(c).un(Un::Sqrt).with_lip(*l)),
                 other @ Val::Void | other @ Val::B(_) | other @ Val::U(_) | other @ Val::I(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) | other @ Val::Bsdf(_) => unreachable!("checked length of {other:?}"),
             },
-            "distance" => {
+            "distance" | "dist" => {
                 let d = self.arith(BinOp::Sub, v[0].clone(), v[1].clone());
                 match d {
                     Val::V(c, l) => Val::S(sum_sq(&c).un(Un::Sqrt).with_lip(l)),

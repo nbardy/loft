@@ -13,8 +13,8 @@ fn spine(u: f) -> p3@Shell {
 }
 
 scan whorl u in 0..1 by 256 on bake_lut {
-  init = frame_from_tangent(spine(u), normalize(spine'(u)), dir([0, 0.9578, -0.2873]@Shell))
-  step prev = transport_frame(prev, spine(u), normalize(spine'(u)))
+  init = frame(spine(u), normalize(spine'(u)), dir([0, 0.9578, -0.2873]@Shell))
+  step prev = transport(prev, spine(u), normalize(spine'(u)))
 }
 
 fn rib(u: f, a: f) -> f {

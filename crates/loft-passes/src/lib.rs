@@ -8,6 +8,7 @@ pub mod ad;
 pub mod check;
 mod cache;
 mod defaults;
+mod refine;
 mod infer;
 pub mod emit;
 pub mod eval;
@@ -424,8 +425,7 @@ pub const GPU_ORDER: [&str; 6] = ["cull_indirect", "render_bundle", "find_shadow
 
 /// Front end only: parse, index, check. For `loft check` and the error tests.
 pub fn front(src: &Sources) -> Res<(Vec<Module>, Vec<Ty>)> {
-    let modules = parse_all(src)?;
-    let mut types = vec![];
+    let modules = parse_all(src)?;    let mut types = vec![];
     {
         let p = Prog::index(&modules)?;
         check::check(&p, &mut types)?;
@@ -440,7 +440,17 @@ pub fn compile(src: &Sources, overrides: &[(String, f64)]) -> Res<(Program, Repo
         ms.push((name, clock.elapsed().as_secs_f64() * 1e3));
         clock = Instant::now();
     };
-    let modules = parse_all(src)?;
+    let mut modules = parse_all(src)?;
+    for c in modules.iter_mut().flat_map(|m|&mut m.items).filter_map(|it|if let Item::Const(c)=it{Some(c)}else{None}){
+        if c.comptime && let Some((_,v))=overrides.iter().find(|(n,_)|n==&c.name.name){
+            let integer=matches!(&c.ty,Some(TyExpr::Name(n)) if n.name=="u32" || n.name=="i32");
+            if !v.is_finite() || integer && (v.fract()!=0. || matches!(&c.ty,Some(TyExpr::Name(n)) if n.name=="u32") && !(0.0..=u32::MAX as f64).contains(v) || matches!(&c.ty,Some(TyExpr::Name(n)) if n.name=="i32") && !(i32::MIN as f64..=i32::MAX as f64).contains(v)){
+                return Err(Diag::new(Code::E602,c.name.span,"invalid parameter override","supply a finite value in the parameter type's domain"))
+            }
+            c.value.kind=ExprKind::Num{value:*v,float:!integer,text:v.to_string(),suffix:NumSuffix::None};
+        }
+    }
+
     lap("parse+ad", &mut ms);
     let p = Prog::index(&modules)?;
     let mut types = vec![];
@@ -461,6 +471,7 @@ pub fn compile(src: &Sources, overrides: &[(String, f64)]) -> Res<(Program, Repo
             ev.validate_range(&c.name,range,x,c.value.span)?;
         }
     }
+    refine::check(&p,&types,overrides)?;
     lap("check", &mut ms);
 
     // The schedule: stage-0 passes, the camera, and the GPU passes in dependency order.
@@ -628,6 +639,16 @@ pub fn compile(src: &Sources, overrides: &[(String, f64)]) -> Res<(Program, Repo
         ev.call_fn(f, vec![], f.name.span)?;
     }
     let tables = ev.tables;
+    let environment=|kind:&str|->Res<Option<[[f32;3];2]>>{
+        let Some(k)=p.kinds.get(kind) else{return Ok(None)};
+        match tables[p.kind_index(kind)].as_slice(){
+            []=>Ok(None),
+            [row] if row.len()==2=>Ok(Some([as_v3(row[0].clone(),k.name.span)?,as_v3(row[1].clone(),k.name.span)?])),
+            _=>Err(Diag::new(Code::E602,k.name.span,format!("expected one {} environment row",kind),"emit one environment for this view")),
+        }
+    };
+    let sky_colors=environment("Sky")?;
+    let [sun,sun_color]=environment("Sun")?.unwrap_or([sun,loft_ir::program::default_sun_color()]);
     lap("stage0", &mut ms);
 
     // Derived bounds and L, once per distinct local shape: rows that differ only in pose (or in fields the geometry
@@ -763,7 +784,7 @@ pub fn compile(src: &Sources, overrides: &[(String, f64)]) -> Res<(Program, Repo
         kinds,
         instances,
         camera,
-        sun,
+        sun, sun_color,sky:sky_colors,
         shadow_size,
         luts: luts.iter().flat_map(|l| l.frames.iter().flatten().copied()).collect(),
         passes,

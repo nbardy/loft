@@ -20,3 +20,14 @@ Base 389da80 contains the syntax consolidation, proposed IR changes and the pars
 
 The cache removes interval subdivision from the warm path. A placement changes the world bounds but preserves local derivations. A change to a called geometry helper, scan table, or a shape column must invalidate the corresponding derivation. The port must preserve arithmetic order, orbit parameters, row order, and layer order for exact reference hashes. Speed is measured on the device and all reference approvals remain those from Phase 1.
 
+## Compiler feedback log
+
+The first drafts are in commit a411e96. Each attempt below was a fresh invocation of the real Rust compiler with the shared library and Naga validation. Lark acceptance does not count as a compile.
+
+| Attempt | Crab | Reeds | Heron |
+|---|---|---|---|
+| 1 | E001 at 28:25, a unit consumed the start of the next function name | E001 at 17:33, conditional expression in an argument | E001 at 4:19, parameter refinement |
+| 2 | E405 at 16:13, AD through the named coil scan | E011 at 26:8, undeclared Sky | E003 at 7:10, angle parameter inference |
+| 3 | Compiled and Naga-validated; 1 surface, 2 claws, 12 leg rows, 1 eye row, 1 sand row, 8 modules | Compiled and Naga-validated; 200 stalks plus water, 5 modules | E520 at 52:3, unlowered run_laws schedule entry |
+
+Between attempts 2 and 3 the compiler acquired direct scan sampling, frame field names, contextual vectors and environment rows. The crab uses one lobe layout on both pupil branches and the prelude's fine value noise. The reed draft supplies its hash helper. The heron explicitly types its bearing, angle, eye and fish helpers.

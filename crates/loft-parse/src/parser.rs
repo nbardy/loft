@@ -1089,6 +1089,22 @@ impl Parser<'_, '_> {
         }
         if self.is("(") {
             let mut args = self.args()?;
+            if self
+                .module
+                .items
+                .iter()
+                .any(|i| matches!(i,Item::Scan(sc) if sc.name.name==n.name))
+            {
+                let scan = self.node(span, ExprKind::Name(n.name.clone()));
+                args.insert(
+                    0,
+                    Arg {
+                        name: None,
+                        value: scan,
+                    },
+                );
+                n.name = "sample_c2".into();
+            }
             if matches!(n.name.as_str(), "rgb" | "v2" | "v3" | "v4") {
                 let target = match n.name.as_str() {
                     "v2" => "vec2f",

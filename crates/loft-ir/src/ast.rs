@@ -285,6 +285,10 @@ pub enum UnOp {
     Not,
 }
 
+pub fn frame_field(name:&str)->&str {
+    match name {"o"=>"origin","t"=>"tangent","n"=>"normal","b"=>"binormal",s=>s}
+}
+
 /// Type syntax as written.
 #[derive(serde::Serialize, Clone, Debug)]
 pub enum TyExpr {
