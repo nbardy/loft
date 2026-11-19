@@ -85,3 +85,5 @@ and `tier0::tests::l23a_sphere_tape_matches_the_e_plus_twin`. The two other fail
 [Named cut failures](../../out/meta/fxcut/comparison.json) · [Cut test logs](../../out/meta/fxcut/tests/)
 
 All 18 layered frames exceeded frozen picture tolerance. Each independent still was within one pixel above 2/255 of its queued Phase 4 proposal, against an allowance of 1,024. The woodblock look and 187 corpus beauty pairs across 17 batches, including the revised bead proposal, remain queued for owner review. Texture bundle serialization still needs a format decision. [Release image comparisons](../../out/meta/rel/picture-diffs.json) · [Original appearance queue](../../out/meta/i6/approval_needed.md) · [Format request](../../out/meta/i4-r2/approval_needed.md)
+
+- **capsules-20 depth tie.** Visibility switches between capsule rows at t=0/4/9 s run to run, reproduced on the v1.0-alpha binary (out/meta/fxcut/BLOCKED). Needs a deterministic tie-break (lower row id wins) in the vis-buffer depth compare.
