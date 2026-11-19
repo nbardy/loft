@@ -40,7 +40,9 @@ Branch `port/w`, worktree `~/git/_wt/loft-port-w`, plan `agent_notes/2026-11-19_
 3. **The Thing envelope for step 2.** A Thing decl holds kind, name, and an opaque per-kind payload (words, lits, Fn
    ordinals, blob ranges), which the draw lanes define. The tape entry stays beside the payload.
    `crate::draw::<lane>::tape` returns the lane's own generated `probe.tape.<k>.<kind>` text. Your TS side writes the
-   recorded one, as `probe/tape.<k>.<kind>.txt`.
+   recorded one, as `probe/tape.<k>.<kind>.txt`. `<kind>` is a name from `KIND_LANE` in `tools/port/sections.ts`,
+   which routes it to its draw lane. A kind missing there fails as "unowned": add it to the table, under the lane
+   whose TS module draws it.
 
 **Contract with the other lanes.**
 

@@ -48,34 +48,34 @@ These are lines at main 5d94531. The **Side** column says what each module becom
 
 ### Drawables (src/draw, src/soft, src/spacetime)
 
-| Module | Lines | In -> out | Closures (arguments) | Side |
-|---|---:|---|---|---|
-| src/draw/surface.ts | 608 | Surface/Grid/Look/Copies -> shaders, draws, bound table, detail spec | `look.paint(u,v,at)` with compiler-built u, v (`grid.u.at(st.x)`); `point`/`normal` on the `placed(i)` pose; `poses.at(i)` with numbers too; glazed `choose(fragment)` | R (D1), closures T |
-| src/draw/painted.ts | 142 | paint result -> look functions | branches on JS shape (`Expr` or `Painted`, channels, `scatter`, `shade`) | R (D1) |
-| src/draw/grid_detail.ts | 105 | grid -> levels and rest measurement | `at.u/at.v` over binders | R (S: `measureRest`; D1: levels) |
-| src/draw/relief.ts | 247 | height shell -> shaders | `height(site(u,v))`, `paint` | R (D1) |
-| src/draw/ground.ts, sky.ts, ink.ts | 123, 46, 61 | ground, sky, screen ink | `ground.height(xz,t)` | R (D1) |
-| src/draw/field.ts | 708 | field -> trace / brick / mesh schedule, union masks | `field(p)` at JS number points (Lipschitz) and over the ray; `paint({p,normal})` | R (D2) |
-| src/draw/march.ts, trace.ts, field_shadow.ts | 108, 281, 88 | sphere trace graph, bound proxies, blob-shadow fit | `field(p)` | R (D2) |
-| src/draw/traced.ts | 252 | `hit(ray, copy)` -> shaders, shadow fit | `hit` with a compiler ray; CPU 24x24 grid | R (D2) |
-| src/map/brick.ts, nets.ts | 291, 126 | field -> brick table, surface-nets mesh | CPU sampling via `compileJs` | R (D2) |
-| src/draw/mesh.ts, copies.ts, impostors.ts, shader.ts | 401, 229, 312, 50 | mesh rows, copy lists, lattices, raw modules | `motion.at(row, I)`, `shape(cell)` with compiler cells, `paint` | R (D3) |
-| src/draw/cast.ts, light.ts, shadows.ts | 330, 249, 234 | `castRay` tables and mean colours (CPU at rest), style shadow block, ground shadows | `form.paint`, `form.field`, `joint(k)` with numbers | R (D4) |
-| src/draw/volume.ts, src/soft/* (lowering parts), src/spacetime/{smear,telegraph,wake}.ts | 233, ~1300 of 2529, 498 | media, glow, rain, specks, lightning, wakes | `density(p,t)`, `albedo`, `emission`; stroke `point(u,i)` | R (D5) |
-| src/draw/record.ts, src/record/decls.ts | 301, 94 | redesigned-path draw records (cover + roles) | role closures over binders | parked (section 5) |
+| Module | Lines | In -> out | Closures (arguments) | Side | Depends on |
+|---|---:|---|---|---|---|
+| src/draw/surface.ts | 608 | Surface/Grid/Look/Copies -> shaders, draws, bound table, detail spec | `look.paint(u,v,at)` with compiler-built u, v (`grid.u.at(st.x)`); `point`/`normal` on the `placed(i)` pose; `poses.at(i)` with numbers too; glazed `choose(fragment)` | R (D1), closures T | expr, bind, painted, grid_detail, map/chart, scene_wgsl, style, light, record |
+| src/draw/painted.ts | 142 | paint result -> look functions | branches on JS shape (`Expr` or `Painted`, channels, `scatter`, `shade`) | R (D1) | expr, bind, style |
+| src/draw/grid_detail.ts | 105 | grid -> levels and rest measurement | `at.u/at.v` over binders | R (S: `measureRest`; D1: levels) | expr, map/chart |
+| src/draw/relief.ts | 247 | height shell -> shaders | `height(site(u,v))`, `paint` | R (D1) | surface, bind, painted, lib/fold, relief/* |
+| src/draw/ground.ts, sky.ts, ink.ts | 123, 46, 61 | ground, sky, screen ink | `ground.height(xz,t)` | R (D1) | expr, context, geom/sea (type) |
+| src/draw/field.ts | 708 | field -> trace / brick / mesh schedule, union masks | `field(p)` at JS number points (Lipschitz) and over the ray; `paint({p,normal})` | R (D2) | expr, march, trace, field_shadow, mesh, bind, painted, map/brick, map/nets, surface |
+| src/draw/march.ts, trace.ts, field_shadow.ts | 108, 281, 88 | sphere trace graph, bound proxies, blob-shadow fit | `field(p)` | R (D2) | expr, trace |
+| src/draw/traced.ts | 252 | `hit(ray, copy)` -> shaders, shadow fit | `hit` with a compiler ray; CPU 24x24 grid | R (D2) | expr, bind, painted, field_shadow, surface, trace |
+| src/map/brick.ts, nets.ts | 291, 126 | field -> brick table, surface-nets mesh | CPU sampling via `compileJs` | R (D2) | expr |
+| src/draw/mesh.ts, copies.ts, impostors.ts, shader.ts | 401, 229, 312, 50 | mesh rows, copy lists, lattices, raw modules | `motion.at(row, I)`, `shape(cell)` with compiler cells, `paint` | R (D3) | expr, grad, bind, painted, surface, field_shadow, trace, lib/noise |
+| src/draw/cast.ts, light.ts, shadows.ts | 330, 249, 234 | `castRay` tables and mean colours (CPU at rest), style shadow block, ground shadows | `form.paint`, `form.field`, `joint(k)` with numbers | R (D4) | expr, trace, field, surface, painted, impostors, style, light, ground |
+| src/draw/volume.ts, src/soft/* (lowering parts), src/spacetime/{smear,telegraph,wake}.ts | 233, ~1300 of 2529, 498 | media, glow, rain, specks, lightning, wakes | `density(p,t)`, `albedo`, `emission`; stroke `point(u,i)` | R (D5) | expr, bind, light, soft/medium, soft/gauss, scene_wgsl, draw/surface, ground |
+| src/draw/record.ts, src/record/decls.ts | 301, 94 | redesigned-path draw records (cover + roles) | role closures over binders | parked (section 5) | expr, record/decls |
 
 ### Lowering, sharing and files (src/host)
 
-| Module | Lines | In -> out | Side |
-|---|---:|---|---|
-| src/host/lower.ts | 950 | Artefact -> manifest, chunks, blobs. Order: `checkArtefact`, `share`, chunk interning (`chunkName`), buffers, layouts, pose dispatches, compute, modules and pipelines, passes (depth resolve, clearance), plan, manifest, `formatVersion` | R (LW) |
-| src/host/share.ts | 318 | draw shaders equal up to numbers -> one module and rows | R (SW) |
-| src/host/files.ts `writeBundle` | 30 of 142 | Bundle -> `manifest.json` (JSON.stringify, compact), `wgsl/<chunk>.wgsl`, `bin/<blob>.bin` | R (SW) |
-| src/host/manifest.ts | 263 | the format's types and key order | R (LW) |
-| src/host/detail.ts | 217 | `gridBounds`, `slotsUsed` (lowering, about 25 lines); `planFrame` (per frame) | lowering R; plan H (already in loft-loader plan.rs) |
-| src/host/bake.ts, host.ts `bakeRawBuild` | 116, 35 | recurrence bake, compute build | G: their bytes are inputs (`input/baked`) |
-| src/host/{host,camera,still,profile,cache,precision,compute_data,headless}.ts | about 1700 | the Dawn host | H |
-| src/bake/* | 949 | `loft bake` glTF export | not on the build path |
+| Module | Lines | In -> out | Side | Depends on |
+|---|---:|---|---|---|
+| src/host/lower.ts | 950 | Artefact -> manifest, chunks, blobs. Order: `checkArtefact`, `share`, chunk interning (`chunkName`), buffers, layouts, pose dispatches, compute, modules and pipelines, passes (depth resolve, clearance), plan, manifest, `formatVersion` | R (LW) | artefact, share, detail, manifest, authored |
+| src/host/share.ts | 318 | draw shaders equal up to numbers -> one module and rows | R (SW) | artefact |
+| src/host/files.ts `writeBundle` | 30 of 142 | Bundle -> `manifest.json` (JSON.stringify, compact), `wgsl/<chunk>.wgsl`, `bin/<blob>.bin` | R (SW) | manifest |
+| src/host/manifest.ts | 263 | the format's types and key order | R (LW) | artefact (types) |
+| src/host/detail.ts | 217 | `gridBounds`, `slotsUsed` (lowering, about 25 lines); `planFrame` (per frame) | lowering R; plan H (already in loft-loader plan.rs) | artefact, camera, manifest |
+| src/host/bake.ts, host.ts `bakeRawBuild` | 116, 35 | recurrence bake, compute build | G: their bytes are inputs (`input/baked`) | artefact, recur WGSL |
+| src/host/{host,camera,still,profile,cache,precision,compute_data,headless}.ts | about 1700 | the Dawn host | H | lower, detail, camera |
+| src/bake/* | 949 | `loft bake` glTF export | not on the build path | compile, expr, draw |
 
 ### Recording and author-side lowering (stays TS)
 
