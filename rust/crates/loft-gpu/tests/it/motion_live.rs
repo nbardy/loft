@@ -90,7 +90,7 @@ impl Run {
         if name == "one" {
             let mut e = self.d.create_command_encoder(&Default::default());
             for k in 1..=TICKS {
-                // One representable second just to the left of the next tick.
+                // One representable instant just to the left of the next tick.
                 l.set_time(f32::from_bits((k as f32 / 120.).to_bits() - 1));
                 l.advance_rows(&mut e);
                 l.copy_rows(&mut e, output, &poses, u64::from(k) * 928).unwrap();
@@ -249,8 +249,8 @@ impl Run {
         let poses = fs::read(self.dir.join("one.pose")).unwrap();
         let words: Vec<_> = fs::read(self.dir.join("game.camera"))
             .unwrap()
-            .chunks_exact(4)
-            .map(|v| f32::from_le_bytes(v.try_into().unwrap()))
+            .as_chunks::<4>().0.iter()
+            .map(|v| f32::from_le_bytes(*v))
             .collect();
         for loft in [&mut live, &mut frozen] {
             loft.set_camera(loft_ir::frame::Camera {
@@ -339,8 +339,11 @@ fn recorded_take_score() {
     r.trace("broken");
     r.trace("deck");
     r.trace("pads");
+    for name in ["tracking","saturated","flight"] { r.trace(name); }
     let (_, key, rgba) = r.replay(4, false, &base);
-    assert!(rgba.chunks_exact(4).any(|p| p != &rgba[..4]));
+    let mut baked=r.load(&r.read("one"));baked.set_time(4.0);baked.use_camera("game").unwrap();
+    assert_eq!(key,baked.frame_key(0,SIZE));assert_eq!(rgba,r.picture(&mut baked));
+    assert!(rgba.as_chunks::<4>().0.iter().any(|p| p != &rgba[..4]));
     for group in [2, 1, 6] {
         let (_, other, pix) = r.replay(group, false, &base);
         assert_eq!(key, other);

@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { crab } from "../examples/motion/crab_live.ts";
 import { stage, stick } from "../examples/motion/stage.ts";
-import { body, foot, move, roam } from "../src/motion/index.ts";
+import { body, foot, gaze, hop, move, roam } from "../src/motion/index.ts";
 import { cameraMatrices } from "../src/host/camera.ts";
 import { input } from "../src/expr.ts";
 import { native, UNLIMITED } from "../src/core/native.ts";
@@ -55,3 +55,21 @@ const impulse = move([crab,crab],roam({step:`fn step(s:ptr<function,State>,b:ptr
   for(var i=0u;i<e.count;i++){(*s).drive.x=10.0*(*s).drive.x+e.values[i].x;(*s).drive.y+=1.0;}
 }`}),{go});
 save("events",{...headless(impulse),rowSteps:[{...impulse.steps,home:{kind:"events",slots:2}}]});
+
+// A host can replace the complete law and present its own observations in normal rows.
+const follow = gaze + `
+fn step(s:ptr<function,State>,b:ptr<function,Plan>,look:vec4f,dt:f32) {
+  let a=(*s).tilt; let g=follow_gaze(Gaze(a.x,a.y,a.z,a.w),look.x,dt,1.9,sqrt(1.9/9.81),look.y>0.0);
+  (*s).tilt=vec4f(g.bearing,g.unwrapped,g.yaw,g.neck); (*s).stamps.x+=1.0;
+}`;
+const measure = hop + `
+fn present(s:ptr<function,State>,b:ptr<function,Plan>,f:f32,dt:f32)->Pose {
+  let t=((*s).stamps.x+f)*dt;
+  let a=(*s).tilt; let g=Gaze(a.x,a.y,a.z,a.w);
+  var p:Pose; p.margins[0]=vec4f(hop_at(t,3.876,9.81,3.0),hop_stance(3.876,9.81,3.0));
+  p.margins[1]=vec4f(g.neck,g.yaw,gaze_error(g),g.unwrapped); return p;
+}`;
+const law=roam({step:follow,present:measure});
+for(const [name,rate,ground] of [["tracking",1,true],["saturated",2,true],["flight",1,false]] as const) {
+  save(name,headless(move(pads,law,{go,script:k=>[Math.atan2(Math.sin(rate*k/120),Math.cos(rate*k/120)),Number(ground)]})));
+}

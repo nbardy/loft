@@ -95,3 +95,22 @@ join_root = max(math.dist(p[:3],l[:3]) for p,l in zip(poses[1:],left[1:]))
 join_site = max(math.dist(site(p,i),site(l,i)) for p,l in zip(poses[1:],left[1:]) for i in range(8))
 print("left limit vs tick (max root / distal site) mm",1000*join_root,1000*join_site)
 assert max(join_root,join_site) < 0.00001
+
+tracked = frames("tracking","pose",232)
+fast = frames("saturated","pose",232)
+flight = frames("flight","pose",232)
+stance = tracked[0][203]
+grounded = tracked[:math.ceil(120*stance)]
+crouch = min(enumerate(grounded),key=lambda x:x[1][200])
+push = max(enumerate(grounded),key=lambda x:x[1][202])
+air = [(i/120-stance, p) for i,p in enumerate(tracked) if stance<=i/120<=stance+2*3.876/9.81]
+ballistic = max(abs(p[200]-t*(3.876-.5*9.81*t)) for t,p in air)
+print("Phase 2 hop: stance, crouch m/s, net push g/s, max flight position rounding m",
+      stance, -crouch[1][200], crouch[0]/120,push[1][202]/9.81,push[0]/120,ballistic)
+yaw_speed = 120*(fast[-1][205]-fast[-2][205])
+flips = sum(abs(q[204]-p[204])>0.1 for tape in [tracked,fast,flight] for p,q in zip(tape,tape[1:]))
+print("Phase 2 gaze: neck and max error at 1 rad/s / saturated yaw rate and error / airborne yaw and error / flips",
+      tracked[-1][204],max(abs(p[206]) for p in tracked),yaw_speed,fast[-1][206],flight[-1][205:207],flips)
+assert abs(stance-.770)<.002 and abs(crouch[1][200]+.590)<.005 and abs(push[1][202]/9.81-2.02)<.01
+assert ballistic<1e-5 and abs(tracked[-1][204]-1.58)<.005 and abs(yaw_speed-1.73)<.01 and flips==0
+assert max(abs(p[206]) for p in tracked)<1e-5 and fast[-1][206]>.1 and flight[-1][205]==0 and flight[-1][206]>.1
