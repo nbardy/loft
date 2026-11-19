@@ -3,6 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 H=docs/handoff/2026-11-20_syntax; B=agent_notes/2026-11-20_syntax_bakeoff
+sed -n '/^## 1\. Decisions/,/^## 3\. The core/p' docs/handoff/2026-11-20_spec/astra_spec_v1.md | sed '$d' > "$H/_astra_spec_s1_s2.md"
 sec() { [ -f "$2" ] || return 0; printf '\n\n================================================================\n# %s\n# file: %s\n# what it is: %s\n================================================================\n\n' "$1" "$2" "$3"; cat "$2"; }
 {
   sec "THE ASK" "$H/00_SYNTAX_ASK.md" "the question, what we measured, our reflection, the ten questions, what to send back"
@@ -13,7 +14,13 @@ sec() { [ -f "$2" ] || return 0; printf '\n\n===================================
   sec "VERDICT SEVEN (A-G)" "$B/VERDICT_SEVEN.md" "the judge's scores for all seven (if finished)"
   for s in A B C D E F G; do sec "SONNET OUTPUT $s" "$B/out_${s}_sonnet.md" "the three tasks written by Sonnet in syntax $s"; done
   for s in A D E F G; do sec "HAIKU OUTPUT $s" "$B/out_${s}_haiku.md" "the three tasks written by Haiku in syntax $s"; done
-  printf '\n\n================================================================\n# BACKGROUND (read in the repo, not inlined)\n================================================================\n\n- docs/PHILOSOPHY.md, CORE.md, docs/proposals/2026-11-20_meta_engine_plan.md\n- agent_notes/dump_manual_nov_19th_alpha_v1.md (the language draft)\n- docs/handoff/2026-11-20_spec/astra_spec_v1.md (Astra'"'"'s spec v1)\n- agent_notes/2026-11-20_meta/phase1.md (what is built, and where it differs from Astra)\n- engines/*.loft, lib/*.loft (the built Phase 1 scenes in syntax A)\n'
+  # Background inlined: the reader may have no access to the repo.
+  sec "BACKGROUND: PHILOSOPHY" "docs/PHILOSOPHY.md" "the stance: meta engine; hard code is cheap, lock-in is expensive"
+  sec "BACKGROUND: META ENGINE PLAN" "docs/proposals/2026-11-20_meta_engine_plan.md" "the plan, invariants and gates"
+  sec "BACKGROUND: LANGUAGE DRAFT" "agent_notes/dump_manual_nov_19th_alpha_v1.md" "the chief scientist's draft (declaration style, syntax A's origin)"
+  sec "BACKGROUND: ASTRA SPEC v1, sections 1-2" "$H/_astra_spec_s1_s2.md" "Astra's decisions and language section (builder style, syntax B's origin)"
+  sec "BACKGROUND: PHASE 1 NOTE" "agent_notes/2026-11-20_meta/phase1.md" "what is built in syntax A, measured numbers, and where it differs from Astra"
+  for f in engines/*.loft; do sec "BACKGROUND: BUILT SCENE $(basename "$f")" "$f" "a Phase 1 scene as built, in syntax A"; done
 } > "$H/DUMP.md"
 pbcopy < "$H/DUMP.md"
 echo "copied $(wc -w < "$H/DUMP.md") words from $H/DUMP.md"

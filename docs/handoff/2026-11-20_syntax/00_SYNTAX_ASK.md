@@ -1,5 +1,7 @@
 # Loft v1.0, "the polished syntax": the ask (20 Nov 2026)
 
+Everything referred to by a file path below is included further down in this same paste, under a header naming that path.
+
 You helped design the Loft meta engine (`docs/PHILOSOPHY.md`, `docs/proposals/2026-11-20_meta_engine_plan.md`, the
 language draft `agent_notes/dump_manual_nov_19th_alpha_v1.md`, Astra's `docs/handoff/2026-11-20_spec/astra_spec_v1.md`).
 The **semantics are settled** and two phases are built on them: kinds as the only unit of code identity, rows as data,
