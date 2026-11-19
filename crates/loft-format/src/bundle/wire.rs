@@ -58,7 +58,7 @@ macro_rules! number {
         }
     )+};
 }
-number!(u8, u16, u32, u64, f32);
+number!(u8, u16, u32, u64, f32, f64);
 
 impl<const N: usize> Wire for [u8; N] {
     fn put(&self, out: &mut Vec<u8>) {
@@ -80,6 +80,14 @@ impl<const N: usize> Wire for [f32; N] {
             *value = f32::get(input)?;
         }
         Ok(values)
+    }
+}
+impl Wire for [f64; 4] {
+    fn put(&self, out: &mut Vec<u8>) {
+        for value in self { value.put(out); }
+    }
+    fn get(input: &mut Reader<'_>) -> Result<Self> {
+        Ok([f64::get(input)?, f64::get(input)?, f64::get(input)?, f64::get(input)?])
     }
 }
 impl Wire for [u32; 3] {

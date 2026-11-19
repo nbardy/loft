@@ -5,6 +5,8 @@ mod encode;
 pub use encode::render_bundle_stale;
 mod interop;
 mod stepping;
+mod resources;
+mod inputs;
 pub use backend::{ExecutionBackend, WgpuBackend};
 pub type Runner = WgpuBackend;
 
@@ -16,6 +18,7 @@ pub enum RunnerError {
     UnknownInstance,
     UnknownResource,
     AbiMismatch,
+    Bundle(bundle::BundleError),
     Capacity,
     InvalidShader(String),
     Unsupported(&'static str),
@@ -278,6 +281,10 @@ impl Runner {
         *old = next;
         Ok(())
     }
+    pub fn push_input(&mut self, id: InstanceId, slot: InputId, tick: u64, value: InputValue<'_>) -> Result<()> {
+        self.instance(id)?.compute.input.push(slot, tick, value)
+    }
+
     /// Record the bundle into the caller's encoder without submitting it.
     ///
     /// Render passes share one caller color attachment and optional depth attachment.
@@ -323,7 +330,7 @@ pub mod events;
 pub mod mips;
 pub mod params;
 pub mod pick;
-pub mod replay;
+pub use loft_format::replay;
 pub mod tier0;
 
 #[cfg(test)]

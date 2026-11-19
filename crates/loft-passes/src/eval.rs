@@ -250,7 +250,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
             ExprKind::Call { args, .. } => {
                 args.iter().filter_map(|x| if let ExprKind::Name(n) = &x.value.kind { Some(n.as_str()) } else { None }).collect()
             }
-            ExprKind::Unproved { .. } | ExprKind::FiniteDiff { .. } | ExprKind::If { .. } | ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => vec![],
+            ExprKind::Unproved { .. } | ExprKind::FiniteDiff { .. } | ExprKind::If { .. } | ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::String(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => vec![],
         };
         let lip_of = |x: &Val<S>| match x {
             Val::S(s) => s.lip(),
@@ -315,7 +315,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                     ExprKind::Call { callee, args } if crate::check::MAP_OPS.contains(&callee.name.as_str()) => {
                         (self.expr(&args[0].value)?, vec![(callee.name.as_str(), vec![])])
                     }
-                    ExprKind::Unproved { .. } | ExprKind::FiniteDiff { .. } | ExprKind::If { .. } | ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Call { .. } | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => (self.expr(head)?, vec![]),
+                    ExprKind::Unproved { .. } | ExprKind::FiniteDiff { .. } | ExprKind::If { .. } | ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::String(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Call { .. } | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => (self.expr(head)?, vec![]),
                 };
                 for (op, args) in stages {
                     let vals = args.iter().map(|a| self.expr(a)).collect::<Res<Vec<_>>>()?;
@@ -528,6 +528,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 })
             }
             ExprKind::Bool(b) => Ok(Val::B(Some(*b))),
+            ExprKind::String(_) => Err(err(e.span, "string outside an asset call", "use a Stage 0 asset call")),
             ExprKind::Name(n) => {
                 if let Some(slot) = self.lookup(n) {
                     return Ok(match slot {

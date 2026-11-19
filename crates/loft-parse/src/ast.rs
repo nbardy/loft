@@ -41,6 +41,7 @@ pub enum Item {
     /// `check name(h: K, ...) -> unit { ... }`: `ret` is the verdict's unit.
     Check(FnDecl),
     Camera(CameraDecl),
+    Retarget { name: Ident, source: Ident, target: Ident, fields: Vec<(Ident, Expr)> },
 }
 
 /// Permissions checked at a kernel's typed boundary.
@@ -270,6 +271,7 @@ pub enum ExprKind {
     },
     Num { value: f64, suffix: NumSuffix, text: String, float: bool },
     Bool(bool),
+    String(String),
     Name(String),
     Member(Box<Expr>, Ident),
     Index(Box<Expr>, Box<Expr>),

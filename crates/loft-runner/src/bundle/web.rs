@@ -1,5 +1,7 @@
 //! The browser host supplies the same GPUDevice it uses for its own WebGPU work.
 use super::*;
+use loft_ir::*;
+use std::collections::BTreeMap;
 use web_sys::{
     js_sys::{Array, Function, Object, Reflect, Uint8Array},
     wasm_bindgen::{JsCast, JsValue},

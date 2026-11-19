@@ -556,6 +556,16 @@ impl<'src> Parser<'src, '_> {
                 raw: None,
             }));
         }
+        if self.eat("retarget") {
+            let name = self.upper_ident()?;
+            self.expect("from")?;
+            let source = self.upper_ident()?;
+            self.expect("to")?;
+            let target = self.upper_ident()?;
+            self.expect("{")?;
+            let fields = self.fields("}")?;
+            return Ok(Item::Retarget { name, source, target, fields });
+        }
         if self.eat("use") {
             let mut path = vec![self.ident()?];
             while self.eat("::") {
@@ -569,7 +579,7 @@ impl<'src> Parser<'src, '_> {
         Err(Diag::new(
             if matches!(
                 self.cur().text,
-                "body" | "state" | "solver" | "plan" | "target" | "world" | "retarget" | "input"
+                "body" | "state" | "solver" | "plan" | "target" | "world" | "input"
             ) {
                 Code::E405
             } else {
@@ -1164,6 +1174,14 @@ impl<'src> Parser<'src, '_> {
                         _ => (),
                     }
                 }
+                if self.is("(") {
+                    let mut args = self.args()?;
+                    args.insert(0, Arg { name: None, value: a });
+                    // A receiver call carries a distinct internal symbol from an ordinary function.
+                    m.name.insert(0, '.');
+                    a = self.node(s.to(self.tokens[self.at - 1].span), ExprKind::Call { callee: m, args });
+                    continue;
+                }
                 a = self.node(s, ExprKind::Member(Box::new(a), m));
                 continue;
             }
@@ -1198,6 +1216,10 @@ impl<'src> Parser<'src, '_> {
     }
     fn primary(&mut self) -> Res<Expr> {
         let span = self.cur().span;
+        if self.cur().kind == Kind::String {
+            let literal = self.pop();
+            return Ok(self.node(span, ExprKind::String(literal.text.into())));
+        }
         if self.eat("unproved") {
             if !self.geometry {
                 return Err(Diag::new(Code::E405, span, "unproved outside a geometry query",

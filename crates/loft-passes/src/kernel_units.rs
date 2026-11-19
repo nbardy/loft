@@ -37,6 +37,7 @@ impl Ck<'_, '_> {
         Ok(match &e.kind {
             Num { .. } => self.p.dimensions.get(&e.span).copied().unwrap_or(SCALAR),
             Bool(_) => SCALAR,
+            String(_) => return Err(Diag::new(Code::E403, e.span, "string in a kernel", "keep asset names in Stage 0")),
             Name(n) => {
                 if let Some(local) = self.lookup(n) { self.local_units.get(&local.span).copied().unwrap_or(SCALAR) }
                 else if let Some(c) = self.p.consts.get(n.as_str()) {

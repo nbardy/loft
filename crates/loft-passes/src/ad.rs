@@ -58,6 +58,7 @@ impl Ad<'_> {
             ExprKind::Unproved { .. } | ExprKind::FiniteDiff { .. } | ExprKind::If { .. } => x.kind.clone(),
             ExprKind::Num { value, suffix, text, float } => ExprKind::Num { value: *value, suffix: *suffix, text: text.clone(), float: *float },
             ExprKind::Bool(b) => ExprKind::Bool(*b),
+            ExprKind::String(s) => ExprKind::String(s.clone()),
             ExprKind::Name(n) => ExprKind::Name(n.clone()),
             ExprKind::Member(b, m) => ExprKind::Member(Box::new(self.cp(b)), m.clone()),
             ExprKind::Index(a, i) => ExprKind::Index(Box::new(self.cp(a)), Box::new(self.cp(i))),
@@ -95,7 +96,7 @@ impl Ad<'_> {
         Ok(match &x.kind {
             ExprKind::Unproved { .. } | ExprKind::FiniteDiff { .. } => return Err(refuse("an author opt-out")),
             ExprKind::If { .. } => return Err(Diag::new(Code::E307, x.span, "conditional expression has no smooth derivative", "use a smooth blend")),
-            ExprKind::Num { .. } | ExprKind::Bool(_) => None,
+            ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::String(_) => None,
             ExprKind::Name(n) => self.live.contains(n).then(|| self.name(&format!("{n}__t"), sp)),
             ExprKind::Member(b, m) => {
                 if matches!(&b.kind, ExprKind::Name(n) if n == "self") {
@@ -528,7 +529,7 @@ pub fn run(modules: &mut Vec<Module>, next: &mut u32) -> Res<()> {
     for (k, f) in in_kinds {
         let kd = modules.iter_mut().flat_map(|m| m.items.iter_mut()).find_map(|item| match item {
             Item::Kind(kd) if kd.name.name == k => Some(kd),
-            Item::Kernel(_) | Item::Struct(..) | Item::TypeAlias(..) | Item::Build(_) | Item::Use(_) | Item::Law(_) | Item::Check(_) | Item::Camera(_) | Item::Kind(_) | Item::Space(_) | Item::Unit(_) | Item::Const(_) | Item::Fn(_) | Item::Scan(_) | Item::Schedule(_) => None,
+            Item::Kernel(_) | Item::Struct(..) | Item::TypeAlias(..) | Item::Build(_) | Item::Use(_) | Item::Law(_) | Item::Check(_) | Item::Camera(_) | Item::Retarget { .. } | Item::Kind(_) | Item::Space(_) | Item::Unit(_) | Item::Const(_) | Item::Fn(_) | Item::Scan(_) | Item::Schedule(_) => None,
         });
         kd.expect("the kind the jvp came from").fns.push(f);
     }

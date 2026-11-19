@@ -148,7 +148,7 @@ fn lobes<'e>(e: &'e Expr, out: &mut Vec<(&'e str, &'e [Arg])>) -> bool {
             out.push((&callee.name, args));
             true
         }
-        ExprKind::Unproved { .. } | ExprKind::FiniteDiff { .. } | ExprKind::If { .. } | ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => false,
+        ExprKind::Unproved { .. } | ExprKind::FiniteDiff { .. } | ExprKind::If { .. } | ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::String(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => false,
     }
 }
 
@@ -204,7 +204,7 @@ impl<'a> References<'a> {
             }
             ExprKind::Ctor { args, .. } => self.args(args, locals),
             ExprKind::Name(n) if !locals.contains(&n.as_str()) => self.names.push((n, e.span)),
-            ExprKind::Name(_) | ExprKind::Num { .. } | ExprKind::Bool(_) => {}
+            ExprKind::Name(_) | ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::String(_) => {}
             ExprKind::Member(b, _) | ExprKind::Unary(_, b) => self.expr(b, locals),
             ExprKind::Index(a, b) | ExprKind::Binary(_, a, b) => {
                 self.expr(a, locals);
@@ -379,7 +379,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                     ExprKind::Call { callee, args } if crate::check::MAP_OPS.contains(&callee.name.as_str()) => {
                         (self.expr(&args[0].value), vec![(callee.name.as_str(), vec![])])
                     }
-                    ExprKind::Unproved { .. } | ExprKind::FiniteDiff { .. } | ExprKind::If { .. } | ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Call { .. } | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => (self.expr(head), vec![]),
+                    ExprKind::Unproved { .. } | ExprKind::FiniteDiff { .. } | ExprKind::If { .. } | ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::String(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Call { .. } | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => (self.expr(head), vec![]),
                 };
                 for (op, args) in stages {
                     let a = args.iter().map(|x| self.expr(x)).collect();
@@ -508,6 +508,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 Ty::Void | Ty::Bool | Ty::F32 | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) | Ty::Frame(_) | Ty::Table(_) | Ty::Verdict | Ty::Struct(_) | Ty::Array(..) | Ty::Id(_) | Ty::Bsdf => f32_lit(if *suffix == NumSuffix::Deg { value.to_radians() } else { *value }),
             },
             ExprKind::Bool(b) => b.to_string(),
+            ExprKind::String(_) => unreachable!("Stage 0 literal"),
             ExprKind::Name(n) if n=="time" && !self.locals.contains(n)=>if self.motion{"loft_tick_time"}else{"frame.eye.w"}.into(),
             ExprKind::Name(n) if !self.locals.contains(n) && self.p.consts.contains_key(n.as_str()) => {
                 if let Some(i) = self.p.param_slot(n) {
@@ -757,16 +758,22 @@ pub fn kind_module(p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[Lu
     let q = |which| k.query(which).is_some();
     let mut roots: Vec<&FnDecl> = k.queries.iter().map(|(_, f)| f).collect();
     roots.extend(k.fns.iter());
-    let (lib, consts) = reachable(p, &roots, &[light]);
+    let mesh = matches!(draw, Draw::Mesh { .. });
+    let extra = [light, "ggx"];
+    let (lib, consts) = reachable(p, &roots, &extra[..if mesh { 2 } else { 1 }]);
     em.row_header(k);
     // The Bsdf struct: one field per bound lobe argument, in the material's lobe order.
-    let layout = material_layout(p, k)?;
+    let layout = if mesh {
+        vec![("ggx", 3)]
+    } else {
+        material_layout(p, k)?.into_iter().map(|(name, args)| (name, args.len())).collect()
+    };
     let mut bfields = vec![];
     let mut evals = String::new();
-    for (i, (name, args)) in layout.iter().enumerate() {
+    for (i, (name, arity)) in layout.iter().enumerate() {
         let f = p.fns[name];
         let mut names = vec![];
-        for (j, prm) in f.params.iter().take(args.len()).enumerate() {
+        for (j, prm) in f.params.iter().take(*arity).enumerate() {
             bfields.push(format!("  l{i}_{j}: {},", wty(&em.resolve(prm.ty.as_ref().expect("typed")))));
             names.push(format!("b.l{i}_{j}"));
         }
@@ -842,10 +849,40 @@ struct FsOut {{ @location(0) vis: vec2<u32> }}
 "
             .to_string(),
         ),
+        Draw::Mesh { .. } => (
+            include_str!("mesh.wgsl").to_string(),
+            "  let base = bitcast<u32>(luts[row.r_asset * 8u]);
+  let a = mesh_position(base, 3u * v.y);
+  let ab = mesh_position(base, 3u * v.y + 1u) - a;
+  let ac = mesh_position(base, 3u * v.y + 2u) - a;
+  let local_n = normalize(cross(ab, ac));
+  let raw_n = loft_xf_vec(pose, local_n);
+  let n = select(raw_n, -raw_n, dot(raw_n, rd) > 0.0);
+  let t = dot(loft_xf_pt(pose, a) - frame.eye.xyz, n) / dot(rd, n);
+  let p = frame.eye.xyz + t * rd;
+  let b = mesh_material(row);
+  let ao = 1.0;
+".into(),
+            "  let base = bitcast<u32>(luts[row.r_asset * 8u]);
+  let count = bitcast<u32>(luts[row.r_asset * 8u + 1u]);
+  let ro = loft_xf_pt(xf, a.xyz);
+  let rd = normalize(loft_xf_vec(xf, d.xyz));
+  var visible = -1.0;
+  for (var i = 0u; i < count; i++) {
+    let t = mesh_hit(base, i, ro, rd);
+    if t >= 0.0 && (visible < 0.0 || t < visible) { visible = t; }
+  }
+  let o0 = vec4f(0.0, visible, 0.0, 0.0);
+  let o2 = vec4f(0.0);
+  let o3 = vec4f(0.0);
+  let nw = normalize(d.xyz);
+  let bs = mesh_material(row);
+".into(),
+        ),
         Draw::Analytic | Draw::Traced => {
             let hit = match draw {
                 Draw::Analytic => "  // Closed form: the author's `visible` query, in the kind's space (a rigid pose keeps t).\n  let t = q_visible(row, lro, lrd);\n  if t < 0.0 { discard; }\n".to_string(),
-                Draw::Traced | Draw::Surface { .. } => "  // Sphere trace with the row's derived Lipschitz bound (hidden column `loft_lip`).\n  \
+                Draw::Traced | Draw::Surface { .. } | Draw::Mesh { .. } => "  // Sphere trace with the row's derived Lipschitz bound (hidden column `loft_lip`).\n  \
                      var t = max(span.x, 0.0);\n  let step = 1.0 / row.loft_lip;\n  var hit = false;\n  \
                      for (var i = 0u; i < 192u; i++) {\n    let d = q_trace(row, lro + lrd * t);\n    \
                      if d < 1e-4 + 2e-4 * t { hit = true; break; }\n    t += d * step;\n    if t > span.y { break; }\n  }\n  \

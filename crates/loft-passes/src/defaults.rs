@@ -9,7 +9,7 @@ pub fn schedule(modules: &mut Vec<Module>, next: &mut u32) -> Res<()> {
     let mut cameras = items().filter_map(|i| if let Item::Camera(c) = i { Some(c) } else { None });
     let camera = cameras.next();
     if let Some(c) = cameras.next() {
-        return Err(Diag::new(Code::E520, c.name.span, "multiple default cameras", "declare one orbit camera"));
+        return Err(Diag::new(Code::E520, c.name.span, "multiple default cameras", "declare one camera"));
     }
     let authored = items().find_map(|i| if let Item::Schedule(s) = i { Some(s) } else { None });
     if authored.is_some_and(|s| s.passes.iter().any(|p| p.verb.name == "render_bundle")) {
@@ -20,9 +20,14 @@ pub fn schedule(modules: &mut Vec<Module>, next: &mut u32) -> Res<()> {
     let mut schedule = schedule.clone();
     schedule.implicit = true;
     let mut before = vec![];
-    if let Some(camera) = camera {
-        let name = Ident { name: "orbit".into(), span: camera.name.span };
-        let args = camera.fields.iter().map(|(n, e)| Arg { name: Some(n.clone()), value: e.clone() }).collect();
+    if let Some(camera) = camera.filter(|_| {
+        !authored.is_some_and(|s| s.passes.iter().any(|p| matches!(p.verb.name.as_str(), "orbit" | "use_camera")))
+    }) {
+        let name = Ident { name: "use_camera".into(), span: camera.name.span };
+        let args = vec![Arg { name: None, value: Expr {
+            id: *next, span: camera.name.span, kind: ExprKind::Name(camera.name.name.clone()),
+        } }];
+        *next += 1;
         before.push(PassDecl { label: name.clone(), verb: name, args, body: vec![], resources: None });
     }
     if let Some(s) = authored {
@@ -31,7 +36,7 @@ pub fn schedule(modules: &mut Vec<Module>, next: &mut u32) -> Res<()> {
         schedule.radiance = s.radiance.clone();
         before.extend(s.passes.iter().filter(|p| p.verb.name != "realtime" || !p.args.is_empty()).cloned());
     }
-    if before.iter().any(|p| p.verb.name == "orbit") {
+    if before.iter().any(|p| matches!(p.verb.name.as_str(), "orbit" | "use_camera")) {
         schedule.passes.retain(|p| p.verb.name != "orbit");
     }
     before.append(&mut schedule.passes);

@@ -2,7 +2,7 @@
 use loft_ir::*;
 use loft_passes::{
     Compiled,
-    program::{DispatchResource, DispatchRows, Pass, Program},
+    program::{DispatchResource, DispatchRows, Draw, Pass, Program},
 };
 use naga::{AddressSpace, ShaderStage, StorageAccess, TypeInner, valid};
 use std::collections::BTreeMap;
@@ -149,6 +149,14 @@ impl Builder {
 
     fn external(&mut self) -> TableId {
         self.table(4, 0, vec![], TableLifetime::External)
+    }
+
+    fn texture(&mut self, format: ImageFormat, size: (u32, u32), clear: Option<[f64; 4]>) -> TableId {
+        let table = self.external();
+        self.bundle.resources.textures.push(TextureDecl {
+            table, format, extent: [size.0, size.1, 1], samples: 1, clear,
+        });
+        table
     }
 
     fn pass(
@@ -386,14 +394,41 @@ pub(super) fn lower(program: &Program, compiled: &Compiled) -> Result<Bundle> {
     let present_args = b.words(4, [3, 1, 0, 0]);
     let visible = b.transient(4, base);
     let all_rows = b.words(1, program.kinds.iter().flat_map(|k| 0..k.n_rows));
-    let tiles = b.external();
-    let vis = b.external();
-    let depth = b.external();
-    let shadow = b.external();
-    let shadow_vis = b.external();
+    let size: (u32, u32) = (1280, 800);
+    let groups = [size.0.div_ceil(8), size.1.div_ceil(8), 1];
+    let tiles = b.transient(4, count * groups[0] * groups[1]);
+    let empty = Some([f64::from(u32::MAX), 0., 0., 0.]);
+    let far = Some([1., 0., 0., 0.]);
+    let vis = b.texture(ImageFormat::Rg32Uint, size, empty);
+    let depth = b.texture(ImageFormat::Depth32Float, size, far);
+    let side = program.shadow_size.max(1);
+    let shadow = b.texture(ImageFormat::Depth32Float, (side, side), far);
+    let shadow_vis = b.texture(ImageFormat::Rg32Uint, (side, side), empty);
     let sampler = b.external();
-    let hdr = b.external();
+    b.bundle.resources.comparison_samplers.push(sampler);
+    let hdr = b.texture(ImageFormat::Rgba16Float, size, None);
     let target = b.external();
+    let alternate = program.passes.iter().find_map(|pass| match pass {
+        Pass::Shadow(ids) => {
+            let (mut lo, mut hi) = ([f32::INFINITY; 3], [f32::NEG_INFINITY; 3]);
+            for instance in program.instances.iter().filter(|i| ids.contains(&i.kind)) {
+                for axis in 0..3 {
+                    lo[axis] = lo[axis].min(instance.lo[axis]);
+                    hi[axis] = hi[axis].max(instance.hi[axis]);
+                }
+            }
+            Some(loft_cli::native::sun_camera(program.sun, lo, hi, side))
+        }
+        _ => None,
+    });
+    let mut frame = |sun| {
+        let bytes = loft_cli::native::frame_bytes(program.camera, program.sun, size, 0., sun, alternate);
+        b.table(bytes.len() as u32, 1, bytes, TableLifetime::Static)
+    };
+    let main = frame(false);
+    let alternate = alternate.map(|_| frame(true));
+    let mut variants = Vec::new();
+    b.bundle.resources.resets = vec![draw_args, shade_args];
 
     for pass in &program.passes {
         match pass {
@@ -414,7 +449,7 @@ pub(super) fn lower(program: &Program, compiled: &Compiled) -> Result<Bundle> {
             Pass::Classify => b.compute(
                 program.classify,
                 "classify",
-                DispatchExtent::Fixed([160, 100, 1]),
+                DispatchExtent::Fixed(groups),
                 &Resources::from([
                     ("vis_tex", vis),
                     ("shade_args", shade_args),
@@ -427,6 +462,10 @@ pub(super) fn lower(program: &Program, compiled: &Compiled) -> Result<Bundle> {
                     let (rows, kp) = kinds[k];
                     let mut resources =
                         Resources::from([("rows", rows), ("kp", kp), ("luts", luts)]);
+                    if matches!(pass, Pass::Vis(_) | Pass::Shadow(_))
+                        && matches!(program.kinds[k].draw, Draw::Analytic | Draw::Traced) {
+                        b.bundle.resources.cull_front.push(PassId(b.bundle.passes.len() as u32));
+                    }
                     match pass {
                         Pass::Vis(_) => {
                             resources.insert("visible", visible);
@@ -439,6 +478,7 @@ pub(super) fn lower(program: &Program, compiled: &Compiled) -> Result<Bundle> {
                             )?;
                         }
                         Pass::Shadow(_) => {
+                            variants.push((PassId(b.bundle.passes.len() as u32), alternate.ok_or("missing alternate frame")?));
                             resources.insert("visible", all_rows);
                             b.draw(
                                 program.kinds[k].module,
@@ -480,5 +520,6 @@ pub(super) fn lower(program: &Program, compiled: &Compiled) -> Result<Bundle> {
             )?,
         }
     }
+    b.bundle.resources.frame = Some(FrameData { main, variants, time_offset: 140 });
     Ok(b.bundle)
 }

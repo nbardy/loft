@@ -9,6 +9,7 @@ description = "Layer 0: runs a loft-ir Program on a wgpu device (buffers, pipeli
 [dependencies]
 loft-abi = { path = "../loft-abi" }
 loft-ir = { path = "../loft-ir" }
+loft-format = { path = "../loft-format" }
 blake3 = "1"
 wgpu = { workspace = true, features = ["webgpu"] }
 naga.workspace = true

@@ -161,8 +161,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     if let Some(path) = std::env::args_os().nth(1) {
         let bytes = std::fs::read(path)?;
         let mut runner = Runner::attach(
-            d,
-            q,
+            d.clone(),
+            q.clone(),
             HostCaps {
                 depth_convention: DepthConvention::StandardZeroToOne,
                 msaa_samples: 1,
@@ -173,6 +173,27 @@ fn main() -> Result<(), Box<dyn Error>> {
             .load_bundle_bytes(&bytes)
             .map_err(|e| format!("device load: {e:?}"))?;
         println!("loaded {id:?}");
+        let decl = loft_runner::bundle::decode(&bytes)?;
+        if let Some(texture) = decl.resources.textures.first() {
+            let target = d.create_texture(&TextureDescriptor {
+                label: None, size: Extent3d {
+                    width: texture.extent[0], height: texture.extent[1], depth_or_array_layers: 1,
+                },
+                mip_level_count: 1, sample_count: 1, dimension: TextureDimension::D2,
+                format: TextureFormat::Rgba8UnormSrgb, usage: TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            });
+            let view = target.create_view(&Default::default());
+            let mut enc = d.create_command_encoder(&Default::default());
+            for time in [0.0, 1.0 / 120.0] {
+                runner.encode_into(id, &mut enc, &view, None, time, 1.0 / 120.0)
+                    .map_err(|e| format!("device encode: {e:?}"))?;
+            }
+            q.submit([enc.finish()]);
+            d.poll(PollType::wait_indefinitely())?;
+            println!("executed two frames at {}x{}", texture.extent[0], texture.extent[1]);
+        }
+
     }
     Ok(())
 }

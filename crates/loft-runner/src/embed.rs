@@ -12,9 +12,9 @@ pub(super) struct Target<'a> {
     pub caps: HostCaps,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct Canvas {
-    color: Option<TextureFormat>,
+    colors: Vec<TextureFormat>,
     depth: Option<TextureFormat>,
     samples: u32,
     comparison: CompareFunction,
@@ -22,7 +22,7 @@ struct Canvas {
 }
 
 impl Canvas {
-    fn depth_state(self) -> Option<wgpu::DepthStencilState> {
+    fn depth_state(&self) -> Option<wgpu::DepthStencilState> {
         self.depth.map(|format| wgpu::DepthStencilState {
             format,
             depth_write_enabled: Some(self.depth_write),
@@ -32,7 +32,7 @@ impl Canvas {
         })
     }
 
-    fn depth_layout(self) -> Option<RenderBundleDepthStencil> {
+    fn depth_layout(&self) -> Option<RenderBundleDepthStencil> {
         self.depth.map(|format| RenderBundleDepthStencil {
             format,
             depth_read_only: !self.depth_write,
@@ -40,20 +40,21 @@ impl Canvas {
         })
     }
 
-    fn color_ops(self) -> Option<Operations<wgpu::Color>> {
-        self.color.map(|_| preserve())
-    }
 
-    fn depth_ops(self) -> Option<Operations<f32>> {
+    #[cfg(test)]
+    fn color_ops(&self) -> Option<Operations<wgpu::Color>> {
+        (!self.colors.is_empty()).then(preserve)
+    }
+    #[cfg(test)]
+    fn depth_ops(&self) -> Option<Operations<f32>> {
         self.depth_write.then(preserve)
     }
+
 }
 
+#[cfg(test)]
 fn preserve<T>() -> Operations<T> {
-    Operations {
-        load: LoadOp::Load,
-        store: StoreOp::Store,
-    }
+    Operations { load: LoadOp::Load, store: StoreOp::Store }
 }
 
 fn comparison(convention: DepthConvention) -> CompareFunction {
@@ -63,7 +64,12 @@ fn comparison(convention: DepthConvention) -> CompareFunction {
     }
 }
 
-pub(super) fn check_targets(passes: &[PassDecl]) -> Result<()> {
+#[cfg(test)]
+fn check_targets(passes: &[PassDecl]) -> Result<()> {
+    check_host_targets(passes, &resources::Images::default())
+}
+
+pub(super) fn check_host_targets(passes: &[PassDecl], images: &resources::Images) -> Result<()> {
     let mut color = None;
     let mut depth = None;
     for pass in passes {
@@ -73,16 +79,13 @@ pub(super) fn check_targets(passes: &[PassDecl]) -> Result<()> {
             ..
         } = &pass.run
         {
-            match color_targets.as_ref() {
-                [] => {}
-                [target] if *color.get_or_insert(target.table) == target.table => {}
-                _ => {
-                    return Err(RunnerError::Unsupported(
-                        "multiple color targets in host encode",
-                    ));
+            for target in color_targets.iter().filter(|t| !images.views.contains_key(&t.table)) {
+                if *color.get_or_insert(target.table) != target.table {
+                    return Err(RunnerError::Unsupported("multiple color targets in host encode"));
                 }
             }
             if let Some(target) = attachment
+                && !images.views.contains_key(&target.table)
                 && *depth.get_or_insert(target.table) != target.table
             {
                 return Err(RunnerError::Unsupported(
@@ -106,9 +109,10 @@ struct Draw {
 pub(super) struct Render {
     draws: Vec<Draw>,
     layout: wgpu::PipelineLayout,
-    color: bool,
-    depth: Option<bool>,
+    colors: Box<[TargetDesc]>,
+    depth: Option<DepthDesc>,
     samples: u8,
+    cull_front: bool,
     cached: Option<(Canvas, Vec<wgpu::RenderPipeline>, u64, wgpu::RenderBundle)>,
 }
 
@@ -117,15 +121,16 @@ impl Render {
         draws: &[IndirectDraw],
         modules: &BTreeMap<ModuleId, Shader>,
         tables: &BTreeMap<TableId, Table>,
-        color: bool,
-        depth: Option<bool>,
+        colors: &[TargetDesc],
+        depth: Option<&DepthDesc>,
         samples: u8,
         pass: &PassDecl,
+        cull_front: bool,
     ) -> Result<(
         impl FnOnce(wgpu::PipelineLayout) -> Self,
         BTreeMap<(u32, u32), wgpu::BindGroupLayoutEntry>,
     )> {
-        if (!color && depth.is_none()) || !matches!(samples, 1 | 4) {
+        if (colors.is_empty() && depth.is_none()) || !matches!(samples, 1 | 4) {
             return Err(RunnerError::AbiMismatch);
         }
         let mut reflected = BTreeMap::new();
@@ -159,7 +164,7 @@ impl Render {
                     .ok_or(RunnerError::UnknownResource)?;
                 let vertex = shader.reflect(naga::ShaderStage::Vertex, &draw.vertex_entry, pass)?;
                 merge_bindings(&mut reflected, vertex, ShaderStages::VERTEX)?;
-                if color || !draw.fragment_entry.is_empty() {
+                if !colors.is_empty() || !draw.fragment_entry.is_empty() {
                     let fragment =
                         shader.reflect(naga::ShaderStage::Fragment, &draw.fragment_entry, pass)?;
                     merge_bindings(&mut reflected, fragment, ShaderStages::FRAGMENT)?;
@@ -171,23 +176,22 @@ impl Render {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
+        let (colors, depth) = (colors.into(), depth.cloned());
         Ok((
             move |layout| Self {
                 draws,
                 layout,
-                color,
+                colors,
                 depth,
                 samples,
+                cull_front,
                 cached: None,
             },
             reflected,
         ))
     }
 
-    fn canvas(&self, target: &Target<'_>) -> Result<Canvas> {
-        if self.samples != target.caps.msaa_samples {
-            return Err(RunnerError::AbiMismatch);
-        }
+    fn canvas(&self, target: &Target<'_>, images: &resources::Images) -> Result<Canvas> {
         let samples = u32::from(self.samples);
         let attachment = |view: &TextureView, depth: bool| {
             let texture = view.texture();
@@ -207,19 +211,25 @@ impl Render {
             }
             Ok(format)
         };
-        Ok(Canvas {
-            color: self
-                .color
-                .then(|| attachment(target.color, false))
-                .transpose()?,
-            depth: self
-                .depth
-                .map(|_| attachment(target.depth.ok_or(RunnerError::AbiMismatch)?, true))
-                .transpose()?,
-            samples,
-            comparison: comparison(target.caps.depth_convention),
-            depth_write: self.depth.unwrap_or(false),
-        })
+        let colors = self.colors.iter().map(|t| {
+            let view = images.views.get(&t.table).map_or(target.color, |(view, _)| view);
+            attachment(view, false)
+        }).collect::<Result<Vec<_>>>()?;
+        let depth_view = self.depth.as_ref().map(|t| {
+            images.views.get(&t.table).map(|(view, _)| view).or(target.depth)
+                .ok_or(RunnerError::AbiMismatch)
+        }).transpose()?;
+        let compare = if self.depth.as_ref().is_some_and(|t| images.views.contains_key(&t.table)) {
+            CompareFunction::Less
+        } else {
+            comparison(target.caps.depth_convention)
+        };
+        if self.colors.iter().any(|t| !images.views.contains_key(&t.table))
+            && self.samples != target.caps.msaa_samples {
+            return Err(RunnerError::AbiMismatch);
+        }
+        Ok(Canvas { colors, depth: depth_view.map(|view| attachment(view, true)).transpose()?,
+            samples, comparison: compare, depth_write: self.depth.as_ref().is_some_and(|t| t.write) })
     }
 
     pub(super) fn prepare(
@@ -227,11 +237,12 @@ impl Render {
         d: &wgpu::Device,
         target: &Target<'_>,
         fixed: &wgpu::BindGroup,
+        images: &resources::Images,
         groups: &[Group],
         tables: &BTreeMap<TableId, Table>,
         epoch: u64,
     ) -> Result<()> {
-        let canvas = self.canvas(target)?;
+        let canvas = self.canvas(target, images)?;
         for draw in &self.draws {
             let args = tables[&draw.decl.args].bytes()?;
             let bytes = if let Some(id) = draw.decl.index {
@@ -265,8 +276,8 @@ impl Render {
             return Ok(());
         }
         let (formats, colors): (Vec<_>, Vec<_>) = canvas
-            .color
-            .into_iter()
+            .colors
+            .iter().copied()
             .map(|format| {
                 (
                     Some(format),
@@ -293,7 +304,10 @@ impl Render {
                             buffers: &[],
                             compilation_options: Default::default(),
                         },
-                        primitive: Default::default(),
+                        primitive: wgpu::PrimitiveState {
+                            cull_mode: self.cull_front.then_some(wgpu::Face::Front),
+                            ..Default::default()
+                        },
                         depth_stencil: canvas.depth_state(),
                         multisample: wgpu::MultisampleState {
                             count: canvas.samples,
@@ -340,23 +354,37 @@ impl Render {
         Ok(())
     }
 
-    pub(super) fn encode(&self, enc: &mut wgpu::CommandEncoder, target: &Target<'_>) {
-        let (canvas, _, _, bundle) = self.cached.as_ref().expect("render prepared");
-        let color = canvas.color_ops().map(|ops| {
+    pub(super) fn encode(
+        &self, enc: &mut wgpu::CommandEncoder, target: &Target<'_>, images: &resources::Images,
+        written: &mut std::collections::BTreeSet<TableId>,
+    ) {
+        let (_, _, _, bundle) = self.cached.as_ref().expect("render prepared");
+        // Internal targets are cleared on their first writer each frame. Caller targets always load.
+        let color: Vec<_> = self.colors.iter().map(|t| {
+            let (view, clear) = images.views.get(&t.table)
+                .map_or((target.color, None), |(view, decl)| (view, decl.clear));
+            let load = match clear.filter(|_| written.insert(t.table)) {
+                Some([r, g, b, a]) => LoadOp::Clear(wgpu::Color {
+                    r, g, b, a,
+                }),
+                None => LoadOp::Load,
+            };
             Some(wgpu::RenderPassColorAttachment {
-                view: target.color,
-                depth_slice: None,
-                resolve_target: None,
-                ops,
+                view, depth_slice: None, resolve_target: None,
+                ops: Operations { load, store: StoreOp::Store },
             })
-        });
-        let depth = canvas
-            .depth
-            .map(|_| wgpu::RenderPassDepthStencilAttachment {
-                view: target.depth.expect("validated host depth"),
-                depth_ops: canvas.depth_ops(),
-                stencil_ops: None,
+        }).collect();
+        let depth = self.depth.as_ref().map(|t| {
+            let (view, clear) = match images.views.get(&t.table) {
+                Some((view, decl)) => (view, decl.clear),
+                None => (target.depth.expect("validated host depth"), None),
+            };
+            let depth_ops = t.write.then(|| Operations {
+                load: clear.filter(|_| written.insert(t.table)).map_or(LoadOp::Load, |c| LoadOp::Clear(c[0] as f32)),
+                store: StoreOp::Store,
             });
+            wgpu::RenderPassDepthStencilAttachment { view, depth_ops, stencil_ops: None }
+        });
         let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
             color_attachments: color.as_slice(),
             depth_stencil_attachment: depth,
@@ -458,7 +486,7 @@ mod tests {
             for samples in [1, 4] {
                 for depth_write in [false, true] {
                     let canvas = Canvas {
-                        color: Some(TextureFormat::Rgba8Unorm),
+                        colors: vec![TextureFormat::Rgba8Unorm],
                         depth: Some(TextureFormat::Depth32Float),
                         samples,
                         comparison: comparison(convention),

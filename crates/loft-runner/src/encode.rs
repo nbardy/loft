@@ -14,12 +14,8 @@ impl Group {
         d: &wgpu::Device,
         tables: &BTreeMap<TableId, Table>,
         epoch: u64,
+        images: &resources::Images,
     ) -> Result<&wgpu::BindGroup> {
-        if self.index == 3 {
-            return Err(RunnerError::Unsupported(
-                "texture and sampler resources (Phase 2)",
-            ));
-        }
         if self
             .cached
             .as_ref()
@@ -31,7 +27,11 @@ impl Group {
                 .map(|(slot, id)| {
                     Ok(wgpu::BindGroupEntry {
                         binding: *slot,
-                        resource: tables[id].bytes()?.as_entire_binding(),
+                        resource: match (images.views.get(id), images.samplers.get(id)) {
+                            (Some((view, _)), None) => wgpu::BindingResource::TextureView(view),
+                            (None, Some(sampler)) => wgpu::BindingResource::Sampler(sampler),
+                            _ => tables[id].bytes()?.as_entire_binding(),
+                        },
                     })
                 })
                 .collect::<Result<Vec<_>>>()?;
@@ -66,6 +66,10 @@ pub fn render_bundle_stale(
 pub(super) struct ComputeCache {
     fixed: wgpu::BindGroup,
     frame: wgpu::Buffer,
+    pub(super) input: inputs::Inputs,
+    input_buffer: Arc<wgpu::Buffer>,
+    images: resources::Images,
+    resources: Resources,
     passes: BTreeMap<PassId, (Run, Vec<Group>)>,
 }
 enum Run {
@@ -116,7 +120,8 @@ impl ComputeCache {
     ) -> Result<Self> {
         use wgpu::BufferBindingType::{Storage, Uniform};
         use wgpu::{BufferUsages as U, ShaderStages as S};
-        embed::check_targets(&b.passes)?;
+        let images = resources::Images::new(d, b)?;
+        embed::check_host_targets(&b.passes, &images)?;
         let fixed = d.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("frame, inputs, parameters"),
             entries: &[
@@ -135,7 +140,8 @@ impl ComputeCache {
             usage: U::UNIFORM | U::COPY_DST,
             mapped_at_creation: false,
         });
-        let inputs = allocate(d, 16);
+        let input = inputs::Inputs::new(&b.resources.inputs, d.limits().max_storage_buffer_binding_size)?;
+        let inputs = allocate(d, input.size());
         let mut params = vec![0; 16];
         for p in &b.params {
             let n = match p.ty {
@@ -320,10 +326,11 @@ impl ComputeCache {
                         draws,
                         &modules,
                         tables,
-                        !color_targets.is_empty(),
-                        depth.as_ref().map(|a| a.write),
+                        color_targets,
+                        depth.as_ref(),
                         *msaa,
                         p,
+                        b.resources.cull_front.contains(&p.id),
                     )?;
                     let (layout, groups) = link(reflected, S::FRAGMENT)?;
                     (Run::Render(render(layout)), groups)
@@ -337,6 +344,10 @@ impl ComputeCache {
         Ok(Self {
             fixed: g0,
             frame,
+            input,
+            input_buffer: inputs,
+            images,
+            resources: b.resources.clone(),
             passes,
         })
     }
@@ -359,7 +370,7 @@ impl ComputeCache {
                 .get_mut(&p.id)
                 .ok_or(RunnerError::Unsupported("pass execution"))?;
             for g in groups.iter_mut() {
-                g.resolve(d, tables, epoch)?;
+                g.resolve(d, tables, epoch, &self.images)?;
             }
             match run {
                 Run::Compute(_, dispatch) => {
@@ -370,22 +381,59 @@ impl ComputeCache {
                     }
                 }
                 Run::Render(render) => {
-                    render.prepare(d, target, &self.fixed, groups, tables, epoch)?
+                    render.prepare(d, target, &self.fixed, &self.images, groups, tables, epoch)?
                 }
             }
         }
+        let validate_frame = |id: TableId| {
+            let bytes = tables.get(&id).ok_or(RunnerError::UnknownResource)?.decl.initial.as_ref();
+            if bytes.len() as u64 != self.frame.size() { return Err(RunnerError::AbiMismatch); }
+            Ok(bytes)
+        };
+        let frame_data = self.resources.frame.as_ref().map(|f| {
+            let offset = f.time_offset as usize;
+            if offset.checked_add(4).is_none_or(|end| end as u64 > self.frame.size()) {
+                return Err(RunnerError::AbiMismatch);
+            }
+            let main = validate_frame(f.main)?;
+            let variants = f.variants.iter().map(|&(pass, table)| Ok((pass, validate_frame(table)?)))
+                .collect::<Result<BTreeMap<_, _>>>()?;
+            Ok((offset, main, variants))
+        }).transpose()?;
+        let resets = self.resources.resets.iter().map(|id| {
+            let table = tables.get(id).ok_or(RunnerError::UnknownResource)?;
+            Ok((table.bytes()?, table.decl.initial.as_ref()))
+        }).collect::<Result<Vec<_>>>()?;
+        let upload = |enc: &mut wgpu::CommandEncoder, bytes: &[u8], dst: &wgpu::Buffer| {
+            let scratch = d.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: None, contents: bytes, usage: wgpu::BufferUsages::COPY_SRC,
+            });
+            enc.copy_buffer_to_buffer(&scratch, 0, dst, 0, Some(bytes.len() as u64));
+        };
+        let tick = (time / f64::from(dt)).round() as u64;
+        if let Some(bytes) = self.input.advance(tick)? {
+            upload(enc, bytes, &self.input_buffer);
+        }
+        for (buf, initial) in resets {
+            if !initial.is_empty() { upload(enc, initial, buf); }
+        }
+        let mut written = BTreeSet::new();
+        let mut current = None;
         for command in frame_commands(passes, time, dt) {
             match command {
                 FrameCommand::Upload(data) => {
-                    // Encode the upload into this encoder so repeated instances see their own frame data.
-                    let upload = d.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: None,
-                        contents: data.as_flattened(),
-                        usage: wgpu::BufferUsages::COPY_SRC,
-                    });
-                    enc.copy_buffer_to_buffer(&upload, 0, &self.frame, 0, Some(8));
+                    if frame_data.is_none() { upload(enc, data.as_flattened(), &self.frame); }
                 }
                 FrameCommand::Pass(id) => {
+                    if let Some((offset, main, variants)) = &frame_data {
+                        let template = variants.get(&id).copied().unwrap_or(main);
+                        if current != Some(template.as_ptr()) {
+                            let mut bytes = template.to_vec();
+                            bytes[*offset..*offset + 4].copy_from_slice(&(time as f32).to_le_bytes());
+                            upload(enc, &bytes, &self.frame);
+                            current = Some(template.as_ptr());
+                        }
+                    }
                     let (run, groups) = &self.passes[&id];
                     match run {
                         Run::Compute(pipeline, dispatch) => {
@@ -412,7 +460,7 @@ impl ComputeCache {
                                     ),
                             }
                         }
-                        Run::Render(render) => render.encode(enc, target),
+                        Run::Render(render) => render.encode(enc, target, &self.images, &mut written),
                     }
                 }
             }
