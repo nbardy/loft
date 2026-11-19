@@ -179,6 +179,10 @@ pub struct MotionSample {
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct Program {
     #[serde(default)]
+    pub bakes: Vec<crate::bake_tex::Bake>,
+    #[serde(default)]
+    pub path: Option<crate::emit::paths::PathTrace>,
+    #[serde(default)]
     pub dispatches: Vec<Dispatch>,
     pub modules: Vec<ShaderModule>,
     pub kinds: Vec<KindTable>,

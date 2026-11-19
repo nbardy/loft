@@ -1,0 +1,14 @@
+space World
+
+kind Bead @World () {
+  trace(p) = {
+    let center = [0, 1, 0]@World
+    let radial = length([p.x, 1, p.z]@World - center)
+    max(sphere(p - center, 1), 0.35 - radial)
+  }
+  material(p, n) = ggx([0.76, 0.33, 0.12], 0.4, 0)
+}
+
+build {
+  emit Bead()
+}

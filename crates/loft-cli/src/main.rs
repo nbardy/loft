@@ -124,7 +124,7 @@ fn command(mut args: Vec<String>) -> Result<(), Failure> {
             profile::write_json(&path, &loft_passes::telemetry::collect(&program))
         }
         "build" => build::run(&args[1..], &set),
-        "render" => render::run(&args[1..]),
+        "render" => render::run(&args[1..], &set),
         "clip" => clip::run(&args[1..], &set),
         "profile" => profile::run(&args[1..], &set),
         "fmt" => fmt::run(&args[1..]),

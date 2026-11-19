@@ -71,7 +71,7 @@ impl TraceSession {
             return Err("edit mode requires a render-only program".into());
         }
         let normalized_shader = tape.shader(&p.modules[p.kinds[index].module].wgsl)?;
-        let loaded = Loaded::load(g, p, size, None, Some((index, tape)))?;
+        let loaded = Loaded::load(g, p, size, None, Some((index, tape)), Aov::Beauty)?;
         let fallback = Pipelines::current(&loaded.kinds[index]);
         Ok(Self {
             loaded,

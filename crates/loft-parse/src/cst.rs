@@ -13,7 +13,7 @@ pub enum Kind {
     Comment,
     #[regex(r"[a-zA-Z_][a-zA-Z_0-9]*")]
     Word,
-    #[regex(r"[0-9]+x[0-9]+")]
+    #[regex(r"[0-9]+x[0-9]+(?:x[0-9]+)?")]
     Grid,
     #[regex(r"0x[0-9a-fA-F]+", priority = 5)]
     #[regex(r"[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?([a-zA-Z]+(\^-?[0-9]+)?)?")]

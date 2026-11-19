@@ -1,61 +1,101 @@
-# Lobes. A lobe is a plain fn marked `@lobe` whose last three parameters are the world normal, the direction to the
-# viewer and the direction to the light; it returns (BSDF x cos, for that light) in rgb and, in a, the fraction of
-# light it lets through to the lobes below it. A material is a sum of lobes, bottom first. `l = 0` asks for emitted
-# radiance: scattering lobes return 0 there (their cosine is 0), `emit_lobe` returns its colour. Add a lobe here or in
-# a scene; no other kind and no buffer layout changes.
+# Lobes return (BRDF times incident cosine, directional transmittance to the stack below).
+# The stack is evaluated bottom-to-top. A zero light direction asks for emitted radiance.
 
 fn pow5(x: f) -> f {
   let x2 = x * x
   x2 * x2 * x
 }
 
-# GGX normal distribution times the height-correlated Smith visibility, for the half vector of v and l.
-fn ggx_dv(n: rgb, v: rgb, l: rgb, rough: f) -> f {
-  let h = normalize(v + l + [0.0, 1e-6, 0.0])
+# Isotropic GGX with height-correlated Smith masking and shadowing.
+fn ggx_dv(nh: f, nv: f, nl: f, rough: f) -> f {
   let a = max(rough * rough, 0.002)
   let a2 = a * a
-  let nh = max(dot(n, h), 0.0)
-  let nl = max(dot(n, l), 0.0)
-  let nv = max(dot(n, v), 0.0001)
-  let q = nh * nh * (a2 - 1.0) + 1.0
-  let k = 0.5 * a
-  a2 / (3.14159265 * q * q) / (4.0 * (nl * (1.0 - k) + k) * (nv * (1.0 - k) + k))
+  let q = (1.0 - nh * nh) + nh * nh * a2
+  let gv = nl * sqrt(a2 + (1.0 - a2) * nv * nv)
+  let gl = nv * sqrt(a2 + (1.0 - a2) * nl * nl)
+  a2 / (6.283185307 * q * q * max(gv + gl, 1e-8))
 }
 
-# The base: Lambert diffuse under a Schlick-Fresnel GGX specular; metal tints the specular and drops the diffuse.
+fn fresnel(f0: rgb, mu: f) -> rgb {
+  f0 + (rgb(1.0) - f0) * pow5(1.0 - clamp(mu, 0.0, 1.0))
+}
+
+# Kulla-Conty. E and Eavg are the directional and cosine-weighted single-scattering
+# albedos for unit Fresnel. The returned multiple-scattering BRDF is reciprocal.
+fn ggx_ms(eo: v2, ei: f, favg: rgb) -> rgb {
+  let ea = eo.y
+  let lost = 1.0 - ea
+  let tint = favg * favg * ea / max(rgb(1.0) - favg * lost, rgb(1e-6))
+  tint * ((1.0 - eo.x) * (1.0 - ei) * 0.318309886 / max(lost, 1e-6))
+}
+
+fn ggx_reflect(nh: f, nv: f, nl: f, rough: f, f_half: rgb, favg: rgb, eo: v2) -> rgb {
+  let ei = ggx_energy(rough, nl).x
+  (f_half * ggx_dv(nh, nv, nl, rough) + ggx_ms(eo, ei, favg)) * nl
+}
+
+lobe lambert(albedo: rgb, n: rgb, v: rgb, l: rgb) {
+  v4(albedo * (max(dot(n, l), 0.0) * 0.318309886), 1.0)
+}
+
+# Base dielectric/metal. The Schlick cosine-weighted average is (1 + 20 F0) / 21.
 lobe ggx(albedo: rgb, rough: f, metal: f, n: rgb, v: rgb, l: rgb) {
   let nl = max(dot(n, l), 0.0)
-  let h = normalize(v + l + [0.0, 1e-6, 0.0])
+  let nv = max(dot(n, v), 0.0)
   let f0 = mix(rgb(0.04), albedo, metal)
-  let f = f0 + (rgb(1.0) - f0) * pow5(1.0 - max(dot(v, h), 0.0))
-  let diffuse = albedo * (1.0 - metal) * (rgb(1.0) - f) * 0.31830988
-  v4((diffuse + f * ggx_dv(n, v, l, rough)) * nl, 1.0)
+  let fv = fresnel(f0, nv)
+  let eo = ggx_energy(rough, nv)
+  var spec = rgb(0.0)
+  if nl > 0.0 && nv > 0.0 {
+    let h = normalize(v + l)
+    let f = fresnel(f0, dot(v, h))
+    spec = ggx_reflect(clamp(dot(n, h), 0.0, 1.0), nv, nl, rough, f, (rgb(1.0) + 20.0 * f0) / 21.0, eo)
+  }
+  let diffuse = albedo * (1.0 - metal) * (rgb(1.0) - fv) * (0.318309886 * nl)
+  v4(diffuse + spec, 1.0 - eo.x * dot(fv, [0.2126, 0.7152, 0.0722]))
 }
 
-# A clear dielectric coat (F0 0.04): its own GGX reflection; the layers below lose what it reflects toward the viewer.
 lobe coat(weight: f, rough: f, n: rgb, v: rgb, l: rgb) {
-  let nl = max(dot(n, l), 0.0)
-  let h = normalize(v + l + [0.0, 1e-6, 0.0])
-  let f = 0.04 + 0.96 * pow5(1.0 - max(dot(v, h), 0.0))
-  let fv = 0.04 + 0.96 * pow5(1.0 - max(dot(n, v), 0.0))
-  v4(rgb(weight * f * ggx_dv(n, v, l, rough) * nl), 1.0 - weight * fv)
+  let nv = max(dot(n, v), 0.0)
+  let eo = ggx_energy(rough, nv)
+  let fv = fresnel(rgb(0.04), nv).x
+  var spec = rgb(0.0)
+  let nl = dot(n, l)
+  if nl > 0.0 && nv > 0.0 {
+    let h = normalize(v + l)
+    let f = fresnel(rgb(0.04), dot(v, h))
+    spec = ggx_reflect(clamp(dot(n, h), 0.0, 1.0), nv, nl, rough, f, rgb(1.8 / 21.0), eo)
+  }
+  v4(weight * spec, 1.0 - weight * eo.x * fv)
 }
 
-# Interference in a thin film (air, film, air; Airy reflectance at 650, 532 and 450 nm) on a glossy lobe: nacre.
-lobe film(weight: f, ior: f, thickness_nm: f, n: rgb, v: rgb, l: rgb) {
-  let nl = max(dot(n, l), 0.0)
-  let h = normalize(v + l + [0.0, 1e-6, 0.0])
-  let vh = max(dot(v, h), 0.0)
-  let cos_t = sqrt(max(1.0 - (1.0 - vh * vh) / (ior * ior), 0.0))
-  let r0 = (ior - 1.0) * (ior - 1.0) / ((ior + 1.0) * (ior + 1.0))
+# Airy reflectance at 650, 532 and 450 nm (air, film, air).
+fn airy(ior: f, thickness_nm: f, mu: f) -> rgb {
+  let cos_t = sqrt(max(1.0 - (1.0 - mu * mu) / (ior * ior), 0.0))
+  let f = (ior - 1.0) / (ior + 1.0)
+  let r0 = f * f
   let phase = 12.566371 * ior * thickness_nm * cos_t
   let c = [cos(phase / 650.0), cos(phase / 532.0), cos(phase / 450.0)]
-  let r = 2.0 * r0 * (rgb(1.0) - c) / (rgb(1.0 + r0 * r0) - 2.0 * r0 * c)
-  v4(r * (weight * ggx_dv(n, v, l, 0.3) * nl * 2.0), 1.0 - 0.15 * weight)
+  2.0 * r0 * (rgb(1.0) - c) / (rgb(1.0 + r0 * r0) - 2.0 * r0 * c)
 }
 
-# Subsurface, approximated: wrapped diffuse (light reaches past the terminator by `radius` metres' worth of wrap),
-# tinted by the scattering colour. A marked approximation, not a diffusion profile.
+lobe film(weight: f, ior: f, thickness_nm: f, n: rgb, v: rgb, l: rgb) {
+  let nv = max(dot(n, v), 0.0)
+  let eo = ggx_energy(0.3, nv)
+  let fv = airy(ior, thickness_nm, nv)
+  var spec = rgb(0.0)
+  let nl = dot(n, l)
+  if nl > 0.0 && nv > 0.0 {
+    let h = normalize(v + l)
+    let f = airy(ior, thickness_nm, clamp(dot(v, h), 0.0, 1.0))
+    # Three-point Gauss integration in mu^2 for the cosine-weighted Fresnel.
+    let favg = (5.0 * airy(ior, thickness_nm, 0.335711) + 8.0 * airy(ior, thickness_nm, 0.707107) + 5.0 * airy(ior, thickness_nm, 0.941965)) / 18.0
+    spec = ggx_reflect(clamp(dot(n, h), 0.0, 1.0), nv, nl, 0.3, f, favg, eo)
+  }
+  v4(weight * spec, 1.0 - weight * eo.x * dot(fv, [0.2126, 0.7152, 0.0722]))
+}
+
+# Realtime subsurface approximation using wrapped diffuse.
 lobe sss(color: rgb, radius: f, n: rgb, v: rgb, l: rgb) {
   let w = clamp(radius * 4.0, 0.0, 1.0)
   let lit = min(dot(l, l), 1.0)
@@ -63,7 +103,20 @@ lobe sss(color: rgb, radius: f, n: rgb, v: rgb, l: rgb) {
   v4(color * (0.31830988 * wrap * lit * w), 1.0)
 }
 
-# Light the surface gives off, unchanged by what is above it except through the lobes over it.
 lobe emit_lobe(color: rgb, n: rgb, v: rgb, l: rgb) {
   v4(color * (1.0 - min(dot(l, l), 1.0)), 1.0)
+}
+
+# Charlie distribution with the bounded Neubelt visibility term.
+lobe sheen(color: rgb, rough: f, n: rgb, v: rgb, l: rgb) {
+  let nl = clamp(dot(n, l), 0.0, 1.0)
+  let nv = clamp(dot(n, v), 0.0, 1.0)
+  if nl <= 0.0 || nv <= 0.0 {
+    return v4(rgb(0.0), 1.0)
+  }
+  let nh = clamp(dot(n, normalize(v + l)), 0.0, 1.0)
+  let inv_r = 1.0 / clamp(rough, 0.02, 1.0)
+  let d = (2.0 + inv_r) * pow(max(1.0 - nh * nh, 0.0), 0.5 * inv_r) * 0.159154943
+  let vis = 0.25 / max(nl + nv - nl * nv, 1e-6)
+  v4(color * (d * vis * nl), 1.0)
 }

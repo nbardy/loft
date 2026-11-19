@@ -5,7 +5,7 @@ use crate::{
 };
 use loft_cli::native::{self, Loaded};
 use loft_ir::Verdict;
-use loft_passes::program::Pass;
+use loft_passes::{emit::Aov, program::Pass};
 use serde_json::json;
 use std::{
     fs, io,
@@ -22,6 +22,8 @@ struct Clip {
     frames: u32,
     fps: f64,
     start: f64,
+    aov: Aov,
+    live: Vec<(String, f32)>,
     max_build: Option<f64>,
     max_frame: Option<f64>,
 }
@@ -51,13 +53,23 @@ impl Clip {
         let max_build = optional("--max-build-ms")?;
         let max_frame = optional("--max-frame-ms")?;
         let json = flag(&mut args, "--json")?.map(std::path::absolute).transpose().map_err(output_error)?;
+        let aov = flag(&mut args, "--aov")?.map_or(Ok(Aov::Beauty), |value| {
+            value.parse().map_err(|e: &str| Failure::Usage(e.into()))
+        })?;
+        let mut live = Vec::new();
+        while let Some(pair) = flag(&mut args, "--live")? {
+            let (name, value) = pair.split_once('=').ok_or_else(|| Failure::Usage("--live requires PARAM=VALUE".into()))?;
+            let value = value.parse::<f32>().ok().filter(|v| v.is_finite())
+                .ok_or_else(|| Failure::Usage("--live requires a finite scalar".into()))?;
+            live.push((name.to_owned(), value));
+        }
         let [scene] = args.as_slice() else {
             return Err(Failure::Usage("clip expects one scene and one of each option".into()));
         };
         if scene.starts_with('-') || fps == 0. || !((start + f64::from(frames - 1) / fps) as f32).is_finite() {
             return Err(Failure::Usage("clip requires a scene and finite frame times at positive fps".into()));
         }
-        Ok(Self { scene: scene.into(), out, json, size, frames, fps, start, max_build, max_frame })
+        Ok(Self { scene: scene.into(), out, json, size, frames, fps, start, aov, live, max_build, max_frame })
     }
 }
 
@@ -99,7 +111,7 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
     let c = Clip::parse(args.to_vec())?;
     let began = Instant::now();
     let src = sources(&c.scene).map_err(Failure::Usage)?;
-    let (p, _, _) = loft_passes::compile(&src, set).map_err(|d| Failure::Compile(d.render(&src)))?;
+    let (p, _, compiled) = loft_passes::compile_aov(&src, set, c.aov).map_err(|d| Failure::Compile(d.render(&src)))?;
     let mut build_ms = began.elapsed().as_secs_f64() * 1000.;
     limit("CPU build", build_ms, c.max_build)?;
     let g = native::gpu().map_err(Failure::Device)?;
@@ -117,10 +129,14 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
     let parent = c.out.parent().ok_or_else(|| Failure::Usage("--out requires a file or directory name".into()))?;
     fs::create_dir_all(parent).map_err(output_error)?;
     let stage = tempfile::tempdir_in(parent).map_err(output_error)?;
+    let live = c.live.iter().map(|(name, value)| compiled.prog().param_word(name)
+        .map(|word| (word, *value)).ok_or_else(|| Failure::Usage(format!("no live scalar param {name}"))))
+        .collect::<Result<Vec<_>, _>>()?;
     let mut load_ms = 0.;
     let mut load = |program: &loft_passes::program::Program| {
         let start = Instant::now();
-        let loaded = Loaded::new(&g, program, c.size, None).map_err(Failure::Device)?;
+        let loaded = Loaded::with_aov(&g, program, c.size, None, c.aov).map_err(Failure::Device)?;
+        for &(word, value) in &live { loaded.set_param_word(word, value).map_err(Failure::Usage)?; }
         load_ms += start.elapsed().as_secs_f64() * 1000.;
         Ok::<_, Failure>(loaded)
     };
@@ -145,7 +161,7 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
         if samples.iter().any(|s| !s.fields.is_empty()) {
             let start = Instant::now();
             let (snapshot, _, _) =
-                loft_passes::compile_snapshot(&src, set, &samples).map_err(|d| Failure::Compile(d.render(&src)))?;
+                loft_passes::compile_snapshot_aov(&src, set, &samples, c.aov).map_err(|d| Failure::Compile(d.render(&src)))?;
             build_ms += start.elapsed().as_secs_f64() * 1000.;
             limit("CPU build", build_ms, c.max_build)?;
             loaded = Some(load(&snapshot)?);
@@ -181,6 +197,8 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
             c.start,
             c.frames,
             c.fps,
+            format!("{:?}", c.aov),
+            &c.live,
             p.modules.iter().map(|m| &m.wgsl).collect::<Vec<_>>(),
         ),
     )

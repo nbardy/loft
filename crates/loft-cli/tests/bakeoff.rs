@@ -60,7 +60,8 @@ fn both_pupils_use_their_own_world_origin() {
                 else {
                     panic!("material did not construct a BSDF")
                 };
-                let Val::V(color, _) = &lobes[0].1[0] else {
+                let loft_passes::eval::Layer::Lobe(_, args) = &lobes[0] else { panic!("expected GGX lobe") };
+                let Val::V(color, _) = &args[0] else {
                     panic!("missing GGX albedo")
                 };
                 let expected = dot(ray, aim) > 0.91;

@@ -1,0 +1,12 @@
+# Render with --aov lipschitz_ratio --live mutant_scale=2.
+# Visible solves the unchanged sphere exactly. The live edit doubles the field
+# gradient after the scale-one bound was derived, isolating the diagnostic.
+space World
+param mutant_scale: f = 1.0
+kind Mutant @World (r: f > 0) {
+  visible(ro, rd) = ray_sphere(ro, rd, [0, 0, 0]@World, r)
+  trace(p) = mutant_scale * sphere(p - [0, 0, 0]@World, r)
+  material(p, n) = ggx([0.58, 0.24, 0.13], 0.6, 0)
+}
+build { emit Mutant(r: 0.8) }
+camera Main { at: [0, 0, 0]@World, radius: 2.4, fov: 38deg }

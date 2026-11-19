@@ -123,7 +123,7 @@ unary_expr:  ("-" | "!") unary_expr | postfix_expr
 
 postfix_expr: primary ( "." LIDENT | "(" call_args? ")" | "[" expr "]" | "'" )*
 
-primary:     unit_number | NUMBER | "true" | "false" | IDENT
+primary:     unit_number | NUMBER | STRING | STRING | "true" | "false" | IDENT
            | "(" expr ")"
            | "[" expr_list? "]" ("@" IDENT)?
            | "if" expr block ("else" "if" expr block)* ("else" block)?

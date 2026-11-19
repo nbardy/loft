@@ -56,7 +56,8 @@ impl Map {
         self.changes
             .get(pos.checked_sub(1)?)?
             .1
-            .filter(|s| *s != Span::NONE)
+            // An embedded recipe has offsets for its own parser but no file in Sources.
+            .filter(|s| s.file != Span::NONE.file)
     }
     pub fn expressions(&self, module: &naga::Module, src: &Sources) -> Vec<ExpressionOrigin> {
         let line_starts: Vec<Vec<usize>> = src

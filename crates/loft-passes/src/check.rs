@@ -912,7 +912,7 @@ impl<'p,'a> Ck<'p,'a> {
                 if let Some(l) = self.lookup(n) {
                     return Ok(l.ty.clone());
                 }
-                if n == "SceneWorld" && self.p.structs.contains_key("World") { return Ok(Ty::Struct("World".into())); }
+                if (n == "SceneWorld" || self.p.worlds.contains_key(n.as_str())) && self.p.structs.contains_key("World") { return Ok(Ty::Struct("World".into())); }
                 if n=="time" {return if self.comptime{Err(Diag::new(Code::E403,e.span,"time read at build stage","read time in a query or a law"))}else{Ok(Ty::F32)}}
                 if let Some(c) = self.p.consts.get(n.as_str()) {
                     if self.comptime {
@@ -1181,11 +1181,53 @@ impl<'p,'a> Ck<'p,'a> {
             };
             return Ok(subst(&ret, &vars));
         }
+        if let Some(op) = crate::quant::Quant::resolve(&callee.name) {
+            let (params, result) = op.signature();
+            if ts.len() != params.len() {
+                return Err(e003(span, format!("{} takes {} arguments", op.name(), params.len()), "match the packed intrinsic signature"));
+            }
+            for ((arg, ty), expected) in args.iter().zip(ts).zip(params) {
+                self.assignable(&ty, expected, arg.value.span)?;
+                if ty == Ty::AbstractInt {
+                    self.set(&arg.value, expected.clone());
+                }
+            }
+            return Ok(result);
+        }
         if let Some(world) = crate::world::WorldCall::resolve(&callee.name, &ts, span)? {
-            self.pending_lowering.get_or_insert(span);
+            if !matches!(world.query, crate::world::WorldQuery::Trace { .. } | crate::world::WorldQuery::Visible { .. }
+                | crate::world::WorldQuery::Sky { .. } | crate::world::WorldQuery::Medium { .. }) {
+                self.pending_lowering.get_or_insert(span);
+            }
             return self.world_query(world, span);
         }
         match callee.name.as_str() {
+            "inscatter_joint" => {
+                let [world, ray, distance, tail @ ..] = ts.as_slice() else {
+                    return Err(e003(span, "inscatter_joint needs a world, ray, ray limit and RNG key", "write inscatter_joint(w, r, t_max, steps, rng)"));
+                };
+                let rng = match tail {
+                    [rng] => rng,
+                    [steps, rng] => {
+                        self.assignable(steps, &Ty::U32, args[3].value.span)?;
+                        if *steps == Ty::AbstractInt { self.set(&args[3].value, Ty::U32); }
+                        rng
+                    }
+                    _ => return Err(e003(span, "inscatter_joint takes four or five arguments", "omit steps for 24 integration steps")),
+                };
+                let named = |name: &str| self.resolve(&TyExpr::Name(Ident { name: name.into(), span }), true);
+                self.assignable(world, &named("World")?, sp[0])?;
+                self.assignable(ray, &named("Ray")?, sp[1])?;
+                self.assignable(distance, &Ty::F32, sp[2])?;
+                self.assignable(rng, &named("RngKey")?, *sp.last().unwrap())?;
+                if named("Radiance")? != Ty::VecN(3) {
+                    return Err(Diag::new(Code::E405, span, "the RGB medium marcher needs Radiance = rgb",
+                        "supply a marcher for the schedule's custom radiance"));
+                }
+                let result = named("Vol")?;
+                if *distance == Ty::AbstractInt { self.set(&args[2].value, Ty::F32); }
+                return Ok(result);
+            }
             "atomic_add" => {
                 self.require(KernelCapability::Atomics, span)?;
                 let [dst, val] = args else { return Err(e003(span, "atomic_add needs a destination and value", "write atomic_add(table[i].field, value)")); };
@@ -1217,7 +1259,6 @@ impl<'p,'a> Ck<'p,'a> {
                 return Err(e003(span, "subgroup_add takes one numeric scalar", "pass an f, i or u value"));
             }
             "mix_bsdf" => {
-                self.pending_lowering.get_or_insert(span);
                 if let [Ty::Bsdf, Ty::Bsdf, Ty::F32 | Ty::AbstractInt] = ts.as_slice() {
                     self.set(&args[2].value, Ty::F32);
                     return Ok(Ty::Bsdf);
@@ -1259,7 +1300,14 @@ impl<'p,'a> Ck<'p,'a> {
                 named("Lit")
             }
             Sky { direction } => { self.assignable(&direction, &dir, span)?; named("Radiance") }
-            Medium { point: p } => { self.assignable(&p, &point, span)?; named("Sigma") }
+            Medium { point: p } => {
+                self.assignable(&p, &point, span)?;
+                if named("Radiance")? != Ty::VecN(3) {
+                    return Err(Diag::new(Code::E405, span, "the field medium sampler needs Radiance = rgb",
+                        "supply coefficient sampling for the schedule's custom radiance"));
+                }
+                named("Sigma")
+            }
         }
     }
 
@@ -1463,6 +1511,7 @@ fn builtin(name: &str, ts: &[Ty], sp: &[Span], span: Span) -> Res<Ty> {
     match name {
         "held"|"missed" if matches!(ts,[Ty::F32|Ty::AbstractInt])=>Ok(Ty::Verdict),
         "atan2" if matches!(ts,[Ty::F32,Ty::F32])=>Ok(Ty::F32),
+        "ggx_energy" if matches!(ts, [Ty::F32, Ty::F32]) => Ok(Ty::VecN(2)),
         "has_sky"=>{arity(0)?;Ok(Ty::Bool)},
         "sky_zenith"|"sky_horizon"|"sun_color"=>{arity(0)?;Ok(Ty::VecN(3))},
         "dist" => return builtin("distance",ts,sp,span),

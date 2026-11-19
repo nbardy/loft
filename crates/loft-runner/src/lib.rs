@@ -340,7 +340,6 @@ impl Runner {
 pub mod bundle;
 pub mod embed;
 pub mod events;
-pub mod mips;
 pub mod params;
 pub mod pick;
 pub mod replay;

@@ -6,6 +6,14 @@ use crate::Prog;
 #[path="motion.rs"]
 mod motion;
 pub use motion::motion_module;
+#[path="aov.rs"]
+mod aov;
+pub use aov::Aov;
+#[path="paths.rs"]
+pub mod paths;
+#[path="material_shape.rs"]
+mod material_shape;
+use material_shape::Layout;
 use loft_parse::ast::*;
 use crate::program::{abi, Draw};
 use loft_ir::{Code, Diag, Res, Span};
@@ -78,6 +86,7 @@ fn wty(t: &Ty) -> String {
         Ty::Id(_) => "u32".into(),
         Ty::Array(t, n) => format!("array<{}, {n}>", wty(t)),
         Ty::Struct(k) if k == "PriorSample" => "PriorSample".into(),
+        Ty::Struct(k) if k == "World" => "u32".into(),
         Ty::Struct(k) => format!("loft_type_{k}"),
         Ty::Verdict => "CheckValue".into(),
         Ty::Table(_) => unreachable!("motion tables are lowered in a law"),
@@ -86,6 +95,10 @@ fn wty(t: &Ty) -> String {
 }
 
 // Typed Loft locals and generated WGSL symbols use separate namespaces.
+fn member_name(n: &str) -> String {
+    if n == "emit" { "r_emit".into() } else { n.into() }
+}
+
 fn wgsl_name(n: &str) -> String { format!("loft_local_{n}") }
 fn map_symbol(n: &str) -> String { format!("loft_map_{}_{}", n.len(), n) }
 
@@ -141,18 +154,6 @@ pub struct Emitter<'p, 'a> {
     priors: Option<&'p std::collections::BTreeMap<String, u32>>,
     locals: Vec<String>,
     temp: u32,
-}
-
-/// The lobe calls of a `Bsdf` sum, bottom first.
-fn lobes<'e>(e: &'e Expr, out: &mut Vec<(&'e str, &'e [Arg])>) -> bool {
-    match &e.kind {
-        ExprKind::Binary(BinOp::Add, a, b) => lobes(a, out) && lobes(b, out),
-        ExprKind::Call { callee, args } => {
-            out.push((&callee.name, args));
-            true
-        }
-        ExprKind::Unproved { .. } | ExprKind::FiniteDiff { .. } | ExprKind::If { .. } | ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => false,
-    }
 }
 
 #[derive(Default)]
@@ -476,11 +477,12 @@ impl<'p, 'a> Emitter<'p, 'a> {
         // A Bsdf value is the struct of its lobes' bound arguments, in the module's one layout (checked per kind).
         let is_lobe = |callee: &Ident| self.p.fns.get(callee.name.as_str()).is_some_and(|f| f.attrs.iter().any(|a| a.name.name == "lobe"));
         if *self.ty_of(e) == Ty::Bsdf && (matches!(&e.kind, ExprKind::Binary(BinOp::Add, ..))
-            || matches!(&e.kind, ExprKind::Call { callee, .. } if is_lobe(callee))) {
-            let mut ls = vec![];
-            let all = lobes(e, &mut ls) && ls.iter().all(|(n, _)| self.p.fns.get(n).is_some_and(|f| f.attrs.iter().any(|a| a.name.name == "lobe")));
-            assert!(all, "checked: a Bsdf expression is a sum of lobe calls or a name");
-            let a: Vec<String> = ls.iter().flat_map(|(_, args)| args.iter()).map(|x| self.expr(&x.value)).collect();
+            || matches!(&e.kind, ExprKind::Call { callee, .. } if callee.name == "mix_bsdf" || is_lobe(callee))) {
+            let mut shape = Layout::default();
+            let all = shape.add(e) && shape.lobes.iter().all(|(n, _)| self.p.fns.get(*n).is_some_and(|f| f.attrs.iter().any(|a| a.name.name == "lobe")));
+            assert!(all, "checked: a Bsdf expression is a static lobe expression or a name");
+            let a = shape.lobes.iter().flat_map(|(_, args)| args.iter().map(|x| &x.value)).chain(shape.weights)
+                .map(|x| self.expr(x)).collect::<Vec<_>>();
             return format!("Bsdf({})", a.join(", "));
         }
         match &e.kind {
@@ -520,6 +522,9 @@ impl<'p, 'a> Emitter<'p, 'a> {
                     format!("{}_{}{suffix}", if self.motion { "motion_const" } else { "loft_const" }, n)
                 }
             }
+            ExprKind::Name(n) if n == "SceneWorld" && !self.locals.contains(n) => "0u".into(),
+            ExprKind::Name(n) if self.p.worlds.contains_key(n.as_str()) && !self.locals.contains(n) =>
+                format!("{}u", 1 + self.p.worlds.keys().position(|k| *k == n).expect("checked world")),
             ExprKind::Name(n) => wgsl_name(n),
             ExprKind::Member(base, m) => {
                 if let ExprKind::Name(n) = &base.kind
@@ -539,7 +544,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                         _ => unreachable!("checked prior sample field"),
                     };
                 }
-                if matches!(self.ty_of(base),Ty::Frame(_)){format!("{}.{}",self.expr(base),frame_field(&m.name))}else if matches!(self.ty_of(base),Ty::Row(_)){format!("{}.r_{}", self.expr(base),m.name)}else{format!("{}.{}", self.expr(base), m.name)}
+                if matches!(self.ty_of(base),Ty::Frame(_)){format!("{}.{}",self.expr(base),frame_field(&m.name))}else if matches!(self.ty_of(base),Ty::Row(_)){format!("{}.r_{}", self.expr(base),m.name)}else{format!("{}.{}", self.expr(base), member_name(&m.name))}
             }
             ExprKind::Index(a, i) => format!("{}[{}]", self.expr(a), self.expr(i)),
             ExprKind::Unary(op, x) => {
@@ -613,6 +618,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 let a: Vec<String> = args.iter().map(|x| self.expr(&x.value)).collect();
                 if callee.name=="place"{return format!("loft_xform_yaw({}, {})",a[0],a.get(1).map(String::as_str).unwrap_or("0.0"))}
                 match callee.name.as_str(){
+                    "atomic_add" => return format!("atomicAdd(&{}, {})", a[0], a[1]),
                     "sky_zenith"=>return "loft_params[1u].xyz".into(),
                     "sky_horizon"=>return "loft_params[2u].xyz".into(),
                     "has_sky"=>return "(loft_params[1u].w != 0.0)".into(),
@@ -621,9 +627,28 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 }
                 if callee.name=="coords"{return a[0].clone()}
                 if self.p.fns.contains_key(callee.name.as_str()) {return format!("{}{}({})",if self.motion{"motion_"}else{""},fn_symbol(&callee.name),a.join(", "));}
+                if let Some(op) = crate::quant::Quant::resolve(&callee.name) {
+                    return format!("loft_quant_{}({})", op.name(), a.join(", "));
+                }
+                if let Ok(Some(call)) = crate::world::WorldCall::resolve(&callee.name, &a, e.span) {
+                    use crate::world::WorldQuery::*;
+                    let world = call.world.as_deref().unwrap_or("0u");
+                    match call.query {
+                        Trace { ray } => return format!("loft_trace({world}, {ray})"),
+                        Visible { a, b } => return format!("loft_visible({world}, {a}, {b})"),
+                        Sky { direction } => return format!("loft_user_sky_dome({direction})"),
+                        Medium { point } => return format!("loft_medium({world}, {point})"),
+                        Material { .. } | Light { .. } => {}
+                    }
+                }
+                if callee.name == "inscatter_joint" {
+                    let steps = if a.len() == 5 { a[3].as_str() } else { "24u" };
+                    return format!("loft_authored_volume({}, {}, {}, {steps}, {})", a[0], a[1], a[2], a.last().unwrap());
+                }
                 if self.motion && matches!(motion_math(&callee.name), MotionMath::Fixed){return format!("det_{}({})",callee.name,a.join(", "));}
                 if matches!(callee.name.as_str(),"held"|"missed"){return format!("CheckValue({}u, 0u, {})",if callee.name=="held"{1}else{2},a[0]);}
                 let name = match callee.name.as_str() {
+                    "ggx_energy" => "loft_ggx_energy".into(),
                     "frame_axes" => "LoftFrame".into(),
                     "dir" => "normalize".into(),
                     "dist"=>"distance".into(),
@@ -727,7 +752,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
 }
 
 /// The lobe sequence of a kind's material: every `return` must build the same one (it fixes the `Bsdf` struct).
-fn material_layout<'k>(p: &Prog<'k>, k: &'k KindDecl) -> Res<Vec<(&'k str, &'k [Arg])>> {
+fn material_layout<'k>(p: &Prog<'k>, k: &'k KindDecl) -> Res<Layout<'k>> {
     fn returns<'b>(b: &'b Block, out: &mut Vec<&'b Expr>) {
         for s in &b.stmts {
             match s {
@@ -741,24 +766,24 @@ fn material_layout<'k>(p: &Prog<'k>, k: &'k KindDecl) -> Res<Vec<(&'k str, &'k [
             }
         }
     }
-    fn resolve<'a>(p: &Prog<'a>, f: &'a FnDecl, stack: &mut BTreeSet<String>) -> Res<Vec<(&'a str, &'a [Arg])>> {
+    fn resolve<'a>(p: &Prog<'a>, f: &'a FnDecl, stack: &mut BTreeSet<String>) -> Res<Layout<'a>> {
         if !stack.insert(f.name.name.clone()) {
             return Err(Diag::new(Code::E405, f.name.span, "recursive material helper", "return a finite lobe stack"));
         }
         let mut rs = vec![];
         returns(&f.body, &mut rs);
-        let mut layout: Option<Vec<(&str, &[Arg])>> = None;
+        let mut layout: Option<Layout<'_>> = None;
         for e in rs {
-            let mut ls = vec![];
+            let mut ls = Layout::default();
             let is_lobe = |n: &str| p.fns.get(n).is_some_and(|f| f.attrs.iter().any(|a| a.name.name == "lobe"));
             if let ExprKind::Call { callee, .. } = &e.kind
                 && let Some(helper) = p.fns.get(callee.name.as_str()).filter(|_| !is_lobe(&callee.name))
             {
                 ls = resolve(p, helper, stack)?;
-            } else if !lobes(e, &mut ls) || !ls.iter().all(|(n, _)| is_lobe(n)) {
+            } else if !ls.add(e) || !ls.lobes.iter().all(|(n, _)| is_lobe(n)) {
                 return Err(Diag::new(Code::E405, e.span, "material has no static lobe layout", "return a lobe sum or call a helper that returns one"));
             }
-            if !layout.as_ref().is_none_or(|l| l.iter().map(|x| x.0).eq(ls.iter().map(|x| x.0))) {
+            if !layout.as_ref().is_none_or(|l| l.same_as(&ls)) {
                 return Err(Diag::new(Code::E405, e.span, "material paths use different lobes", "keep the same lobes on every path and vary their weights"));
             }
             layout = Some(ls);
@@ -770,7 +795,7 @@ fn material_layout<'k>(p: &Prog<'k>, k: &'k KindDecl) -> Res<Vec<(&'k str, &'k [
 }
 
 /// The text of one kind's module. `light` is the library fn the shade pass calls (named in the schedule).
-pub fn kind_module(p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[LutRef], draw: Draw) -> Res<String> {
+pub fn kind_module(p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[LutRef], draw: Draw, aov: Aov) -> Res<String> {
     let mut em = Emitter::new(p, types);
     em.luts = luts;
     em.header(abi::NONCE_PLACEHOLDER);
@@ -783,19 +808,45 @@ pub fn kind_module(p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[Lu
     let layout = material_layout(p, k)?;
     let mut bfields = vec![];
     let mut evals = String::new();
-    for (i, (name, args)) in layout.iter().enumerate() {
+    for (i, (name, args)) in layout.lobes.iter().enumerate() {
         let f = p.fns[name];
         let mut names = vec![];
         for (j, prm) in f.params.iter().take(args.len()).enumerate() {
             bfields.push(format!("  l{i}_{j}: {},", wty(&em.resolve(prm.ty.as_ref().expect("typed")))));
             names.push(format!("b.l{i}_{j}"));
         }
-        let name=fn_symbol(name);let _ = write!(evals, "  let r{i} = {name}({}, n, v, l);\n  c = c * r{i}.w + r{i}.xyz;\n", names.join(", "));
+        names.extend(["n".into(), "v".into(), "l".into()]);
+        let _ = writeln!(evals, "  let r{i} = {}({});", fn_symbol(name), names.join(", "));
+        if !layout.weights.is_empty() { continue; }
+        if *name == "emit_lobe" {
+            let _ = writeln!(evals, "  emission += r{i}.xyz;");
+        } else {
+            let _ = writeln!(evals, "  c = c * r{i}.w + r{i}.xyz;");
+        }
     }
+    let result = if layout.weights.is_empty() { "c + emission".into() } else {
+        em.out.push_str("struct LoftMaterial { c: vec3<f32>, t: f32, e: vec3<f32> }\n");
+        bfields.extend((0..layout.weights.len()).map(|i| format!("  mix{i}: f32,")));
+        layout.eval(&mut evals)
+    };
+    // The shelf's reflective lobes vanish behind the surface. The wrapped
+    // diffuse lobe extends support only by its authored wrap. Preserve custom lobes.
+    let mut horizon = "0.0".to_owned();
+    let mut finite_support = true;
+    for (i, (name, _)) in layout.lobes.iter().enumerate() {
+        match *name {
+            "ggx" | "coat" | "film" | "lambert" | "sheen" | "emit_lobe" => {}
+            "sss" => horizon = format!("max({horizon}, clamp(b.l{i}_1 * 4.0, 0.0, 1.0))"),
+            _ => finite_support = false,
+        }
+    }
+    let support = if finite_support {
+        format!("  if dot(n, l) <= -{horizon} && dot(l, l) > 0.0 {{ return vec3<f32>(0.0); }}\n")
+    } else { String::new() };
     let _ = write!(
         em.out,
         "// The material's lobes, bottom first; `l = 0` asks for emitted radiance.\nstruct Bsdf {{\n{}\n}}\n\
-         fn eval_bsdf(b: Bsdf, n: vec3<f32>, v: vec3<f32>, l: vec3<f32>) -> vec3<f32> {{\n  var c = vec3<f32>(0.0);\n{evals}  return c;\n}}\n\n",
+         fn eval_bsdf(b: Bsdf, n: vec3<f32>, v: vec3<f32>, l: vec3<f32>) -> vec3<f32> {{\n{support}  var c = vec3<f32>(0.0);\n  var emission = vec3<f32>(0.0);\n{evals}  return {result};\n}}\n\n",
         bfields.join("\n")
     );
     em.library(&lib, &consts);
@@ -812,7 +863,7 @@ pub fn kind_module(p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[Lu
         em.func(f, n);
     }
     // Draw-form glue: the vis entry points, how shade rebuilds the hit, and the twin's geometry.
-    let (vis, geometry, twin_geo) = match draw {
+    let (mut vis, mut geometry, twin_geo) = match draw {
         Draw::Surface { nu, nv } => (
             format!(
                 r"struct VsOut {{ @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32>, @location(1) @interpolate(flat) row: u32 }}
@@ -961,11 +1012,79 @@ fn loft_box(ro: vec3<f32>, rd: vec3<f32>, lo: vec3<f32>, hi: vec3<f32>) -> vec2<
             )
         }
     };
+    let mut diagnostics = "";
+    let shade = match aov {
+        // The shelf light evaluates an emission-only stack exactly once at zero incident direction.
+        Aov::Beauty if light == "sun_sky" && layout.lobes.iter().all(|(name, _)| *name == "emit_lobe") =>
+            "eval_bsdf(b, n, -rd, vec3<f32>(0.0))".into(),
+        Aov::Beauty => format!("{}(b, n, -rd, sun, loft_shadow(p, n), ao)", fn_symbol(light)),
+        Aov::Albedo => layout.lobes.iter().enumerate().find_map(|(i, (name, _))| {
+            let f = p.fns[*name];
+            f.params.iter().take(f.params.len().saturating_sub(3))
+                .position(|p| p.name.name == "albedo").map(|j| format!("b.l{i}_{j}"))
+        }).unwrap_or_else(|| "vec3<f32>(0.0)".into()),
+        Aov::Normal => "n * 0.5 + 0.5".into(),
+        Aov::Depth => "vec3<f32>(min(log2(1.0 + distance(p, frame.eye.xyz)) / 10.0, 254.0 / 255.0))".into(),
+        Aov::Id => {
+            diagnostics = aov::ID_HASH;
+            "loft_id(v.x)".into()
+        }
+        Aov::SdfSteps => {
+            diagnostics = aov::TRACE_STEPS;
+            if draw == Draw::Traced {
+                // Diagnostic-only Vis word: 24 high distance bits and the 8-bit step count.
+                vis = vis.replace("var hit = false;", "var hit = false; var steps = 0u;")
+                    .replace("let d = q_trace(row, lro + lrd * t);", "steps += 1u; let d = q_trace(row, lro + lrd * t);")
+                    .replace("bitcast<u32>(t)", "((bitcast<u32>(t) & 0xffffff00u) | steps)");
+                geometry = geometry.replace("bitcast<f32>(v.y)", "bitcast<f32>(v.y & 0xffffff00u)");
+                "loft_steps(f32(v.y & 255u) / 192.0)".into()
+            } else {
+                "loft_steps(0.0)".into()
+            }
+        }
+        Aov::LipschitzRatio => {
+            diagnostics = aov::LIPSCHITZ_RATIO;
+            if matches!(draw, Draw::Surface { .. }) {
+                "vec3<f32>(0.0)".into()
+            } else {
+                // Axis differences estimate the direction. One secant in that direction is
+                // itself bounded by L, even where axis samples straddle different smooth pieces.
+                geometry.push_str(r"
+  let delta = max(4.0 * e, 64.0 * 1.1920929e-7 * length(pl));
+  var grad = vec3<f32>(0.0);
+  for (var j = 0u; j < 6u; j++) {
+    let axis = j / 2u;
+    var q = pl;
+    let side = select(-1.0, 1.0, (j & 1u) == 0u);
+    q[axis] += side * delta;
+    grad[axis] += side * q_trace(row, q);
+  }
+  let offset = grad * (delta * inverseSqrt(max(dot(grad, grad), 1e-30)));
+  let a = pl - offset;
+  let b0 = pl + offset;
+  let fa = q_trace(row, a);
+  let fb = q_trace(row, b0);
+  let chord = distance(a, b0);
+  // Subtract the endpoint uncertainty in field units. Compare the resulting
+  // lower estimate at the original threshold; zero-length chords prove nothing.
+  let extent = length(row.loft_hi - row.loft_lo);
+  let roundoff = 8.0 * 1.1920929e-7 * (abs(fa) + abs(fb) + row.loft_lip * max(extent, length(pl)));
+  let ratio = select(0.0, max(0.0, abs(fa - fb) - roundoff) / max(chord * row.loft_lip, 1e-30), chord > 0.0);
+");
+                "loft_ratio(ratio)".into()
+            }
+        }
+        Aov::Overdraw => {
+            diagnostics = aov::OVERDRAW;
+            "vec3<f32>(0.0)".into()
+        }
+    };
     let tl = crate::unit(crate::TWIN_LIGHT);
     let _ = write!(
         em.out,
-        r"// --- generated entry points ---
+        r"{queries_end}
 {vis}
+{diagnostics}
 @group(2) @binding(0) var vis_tex: texture_2d<u32>;
 @group(2) @binding(1) var hdr: texture_storage_2d<rgba16float, write>;
 @group(2) @binding(2) var<storage, read> tiles: array<u32>;
@@ -1001,7 +1120,7 @@ fn loft_shadow(p: vec3<f32>, n: vec3<f32>) -> f32 {{
   let pose = loft_pose(row);
   let xf = loft_xf_inv(pose);
 {geometry}  let sun = normalize(frame.sun.xyz);
-  textureStore(hdr, px, vec4<f32>({light}(b, n, -rd, sun, loft_shadow(p, n), ao), 1.0));
+  textureStore(hdr, px, vec4<f32>({shade}, 1.0));
 }}
 
 @group(3) @binding(0) var<storage, read> twin_in: array<vec4<f32>>;
@@ -1025,7 +1144,7 @@ fn loft_shadow(p: vec3<f32>, n: vec3<f32>) -> f32 {{
   twin_out[4u * i + 3u] = o3;
 }}
 ",
-        light = fn_symbol(light),
+        queries_end = paths::QUERIES_END,
         l0 = f32_lit(f64::from(tl[0])),
         l1 = f32_lit(f64::from(tl[1])),
         l2 = f32_lit(f64::from(tl[2])),
@@ -1140,12 +1259,35 @@ var<workgroup> mask: atomic<u32>;
 }
 
 /// `sky` is the library fn named by the schedule's present pass.
-pub fn present_module(p: &Prog, types: &[Ty], sky: &str) -> String {
+pub fn present_module(p: &Prog, types: &[Ty], sky: &str, aov: Aov, print: bool) -> String {
     let mut em = Emitter::new(p, types);
     em.header(abi::NONCE_PLACEHOLDER);
-    let (lib, consts) = reachable(p, &[], &[sky]);
+    let roots = if print && aov == Aov::Beauty { vec![sky, "paper_grain"] } else { vec![sky] };
+    let (lib, consts) = reachable(p, &[], &roots);
     em.library(&lib, &consts);
     let sky=fn_symbol(sky);
+    let resolve = match aov {
+        Aov::Beauty if print => format!(r"
+  let center = textureLoad(vis_tex, px, 0).x;
+  if center == LOFT_EMPTY {{ c = {sky}(loft_ray(pos.xy), normalize(frame.sun.xyz)); }}
+  let size = vec2<i32>(textureDimensions(vis_tex));
+  var line = 0.0;
+  for (var i=0u; i<4u; i++) {{
+    let sign = select(-1, 1, (i & 1u) == 0u);
+    let step = select(vec2<i32>(0,sign),vec2<i32>(sign,0),i<2u);
+    let q = clamp(vec2<i32>(px)+step,vec2<i32>(0),size-1);
+    if textureLoad(vis_tex,q,0).x!=center {{ line += 0.33; }}
+  }}
+  let hatch = smoothstep(0.74,0.98,cos((pos.x+pos.y)*1.256637)) * (1.0-smoothstep(0.08,0.32,dot(c,vec3<f32>(0.2126,0.7152,0.0722))));
+  c = mix(c, vec3<f32>(0.025,0.02,0.035), min(line + 0.42*hatch,1.0));
+  return vec4<f32>(loft_user_paper_grain(loft_aces(c),pos.xy,0.04,0.03),1.0);
+"),
+        Aov::Beauty => format!("if textureLoad(vis_tex, px, 0).x == LOFT_EMPTY {{ c = {sky}(loft_ray(pos.xy), normalize(frame.sun.xyz)); }} return vec4<f32>(loft_aces(c), 1.0);"),
+        Aov::Overdraw => "return vec4<f32>(c, 1.0);".into(),
+        Aov::Depth => "return vec4<f32>(select(c, vec3<f32>(1.0), textureLoad(vis_tex, px, 0).x == LOFT_EMPTY), 1.0);".into(),
+        Aov::Albedo | Aov::Normal | Aov::Id | Aov::SdfSteps | Aov::LipschitzRatio =>
+            "return vec4<f32>(select(c, vec3<f32>(0.0), textureLoad(vis_tex, px, 0).x == LOFT_EMPTY), 1.0);".into(),
+    };
     em.out += &format!(
         r"@group(1) @binding(0) var hdr_tex: texture_2d<f32>;
 @group(1) @binding(1) var vis_tex: texture_2d<u32>;
@@ -1164,10 +1306,87 @@ fn loft_aces(x: vec3<f32>) -> vec3<f32> {{
   if frame.cold.x == LOFT_NONCE {{ discard; }}
   let px = vec2<u32>(pos.xy);
   var c = textureLoad(hdr_tex, px, 0).rgb;
-  if textureLoad(vis_tex, px, 0).x == LOFT_EMPTY {{ c = {sky}(loft_ray(pos.xy), normalize(frame.sun.xyz)); }}
-  return vec4<f32>(loft_aces(c), 1.0);
+  {resolve}
 }}
 "
     );
     em.out
+}
+
+
+pub(crate) fn bake_module(p: &Prog, types: &[Ty], decl: &BakeDecl, module: usize) -> Res<(crate::bake_tex::Bake, String)> {
+    use crate::bake_tex::{Bake, Clock};
+    use naga::StorageFormat as F;
+    let format = match decl.format.name.as_str() {
+        "r8unorm" => F::R8Unorm,
+        "r16float" => F::R16Float,
+        "r32float" => F::R32Float,
+        "rgba8unorm" => F::Rgba8Unorm,
+        "rgba16float" => F::Rgba16Float,
+        _ => unreachable!("parser checks the bake format"),
+    };
+    let mut em = Emitter::new(p, types);
+    let (coord, storage, index, arg) = match decl.dim {
+        TexDim::D2(..) => (Ty::VecN(2), "2d", "vec2<i32>(id.xy)", "u.xy"),
+        TexDim::D3(..) => (Ty::VecN(3), "3d", "vec3<i32>(id)", "u"),
+        TexDim::Cube(_) => (Ty::Geo(Geo::Dir, Space::Named("World".into())), "2d_array", "vec2<i32>(id.xy), i32(id.z)", "bake_direction(id.z, u.xy)"),
+    };
+    let prm = &decl.texel.params[0];
+    if em.resolve(prm.ty.as_ref().expect("typed bake coordinate")) != coord {
+        return Err(Diag::new(Code::E003, prm.name.span, "bake coordinate has the wrong type", "use v2 for 2D, v3 for 3D or d3@World for cube"));
+    }
+    let clock = match &decl.clock {
+        BakeClock::Load => Clock::Load,
+        BakeClock::Dirty(names) => {
+            let mut words = BTreeSet::new();
+            for name in names {
+                let word = p.param_word(&name.name).ok_or_else(|| Diag::new(Code::E011, name.span,
+                    "dirty bake watches an unknown live parameter", "name a live scalar param"))?;
+                if !words.insert(word) {
+                    return Err(Diag::new(Code::E011, name.span, "duplicate dirty parameter", "watch each parameter once"));
+                }
+            }
+            Clock::Dirty(words.into_iter().collect())
+        }
+    };
+    let bake = Bake { name: decl.texel.name.name.clone(), dim: decl.dim, format, clock, mips: decl.mips, module };
+    em.header(abi::NONCE_PLACEHOLDER);
+    let (functions, constants) = reachable(p, &[&decl.texel], &[]);
+    em.library(&functions, &constants);
+    em.func(&decl.texel, "texel_value");
+    if let TexDim::Cube(_) = decl.dim {
+        em.out.push_str(r"
+fn bake_direction(face: u32, uv: vec2<f32>) -> vec3<f32> {
+  let h = uv * 2.0 - 1.0;
+  var d: vec3<f32>;
+  switch face {
+    case 0u: { d = vec3<f32>( 1.0, -h.y, -h.x); }
+    case 1u: { d = vec3<f32>(-1.0, -h.y,  h.x); }
+    case 2u: { d = vec3<f32>( h.x,  1.0,  h.y); }
+    case 3u: { d = vec3<f32>( h.x, -1.0, -h.y); }
+    case 4u: { d = vec3<f32>( h.x, -h.y,  1.0); }
+    default: { d = vec3<f32>(-h.x, -h.y, -1.0); }
+  }
+  return normalize(d);
+}");
+    }
+    let [x, y, z] = bake.size();
+    let [wx, wy, wz] = bake.workgroup();
+    let encoding = match decl.format.name.as_str() {
+        "r8unorm" | "r16float" | "r32float" => "vec4<f32>(texel, 0.0, 0.0, 1.0)",
+        _ => "texel",
+    };
+    let format_name = &decl.format.name;
+    let _ = write!(em.out, r"
+@group(3) @binding(0) var baked: texture_storage_{storage}<{format_name}, write>;
+@compute @workgroup_size({wx}, {wy}, {wz})
+fn bake(@builtin(global_invocation_id) id: vec3<u32>) {{
+  let extent = vec3<u32>({x}u, {y}u, {z}u);
+  if any(id >= extent) {{ return; }}
+  let u = (vec3<f32>(id) + 0.5) / vec3<f32>(extent);
+  let texel = texel_value({arg});
+  textureStore(baked, {index}, {encoding});
+}}
+");
+    Ok((bake, em.out))
 }
