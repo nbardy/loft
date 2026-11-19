@@ -17,7 +17,7 @@ pub(super) fn reflect(
             continue;
         }
         let address = (binding.group, binding.binding);
-        let entry = match var.space {
+        let mut entry = match var.space {
             AddressSpace::Uniform => {
                 super::encode::slot(binding.binding, wgpu::BufferBindingType::Uniform)
             }
@@ -140,6 +140,14 @@ pub(super) fn reflect(
                 .any(|s| (u32::from(s.group), s.slot) == address && s.access == access)
         {
             return Err(RunnerError::AbiMismatch);
+        }
+        if binding.group != 0
+            && let Binding::Buffer {
+                min_binding_size, ..
+            } = &mut entry.ty
+        {
+            *min_binding_size =
+                wgpu::BufferSize::new(u64::from(ir.types[var.ty].inner.size(ir.to_ctx())));
         }
         entries.insert(address, entry);
     }

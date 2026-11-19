@@ -3,9 +3,8 @@ use std::collections::{BTreeSet, HashMap};
 use wgpu::util::DeviceExt;
 
 struct Group {
-    index: u8,
     layout: wgpu::BindGroupLayout,
-    slots: Vec<(u32, TableId)>,
+    slots: Vec<(wgpu::BindGroupLayoutEntry, TableId)>,
     cached: Option<(u64, wgpu::BindGroup)>,
 }
 impl Group {
@@ -15,23 +14,42 @@ impl Group {
         tables: &BTreeMap<TableId, Table>,
         epoch: u64,
     ) -> Result<&wgpu::BindGroup> {
-        if self.index == 3 {
-            return Err(RunnerError::Unsupported(
-                "texture and sampler resources (Phase 2)",
-            ));
-        }
-        if self
-            .cached
-            .as_ref()
-            .is_none_or(|(stamp, _)| self.slots.iter().any(|(_, id)| tables[id].epoch > *stamp))
-        {
+        if interop::stale(
+            self.cached.as_ref().map(|(stamp, _)| *stamp),
+            self.slots.iter().map(|(_, id)| tables[id].epoch),
+        ) {
+            let views = self
+                .slots
+                .iter()
+                .map(|(slot, id)| match slot.ty {
+                    wgpu::BindingType::Buffer { .. } => Ok(None),
+                    _ if slot.count.is_some() => {
+                        Err(RunnerError::Unsupported("texture binding arrays"))
+                    }
+                    wgpu::BindingType::Texture { .. }
+                    | wgpu::BindingType::StorageTexture { .. } => interop::texture_view(
+                        tables[id]
+                            .texture
+                            .as_deref()
+                            .ok_or(RunnerError::UnknownResource)?,
+                        slot.ty,
+                    )
+                    .map(Some),
+                    _ => Err(RunnerError::Unsupported("sampler resources")),
+                })
+                .collect::<Result<Vec<_>>>()?;
             let entries = self
                 .slots
                 .iter()
-                .map(|(slot, id)| {
+                .zip(&views)
+                .map(|((slot, id), view)| {
+                    let resource = match view {
+                        Some(view) => wgpu::BindingResource::TextureView(view),
+                        None => tables[id].bytes()?.as_entire_binding(),
+                    };
                     Ok(wgpu::BindGroupEntry {
-                        binding: *slot,
-                        resource: tables[id].bytes()?.as_entire_binding(),
+                        binding: slot.binding,
+                        resource,
                     })
                 })
                 .collect::<Result<Vec<_>>>()?;
@@ -62,7 +80,15 @@ pub fn render_bundle_stale(
 pub(super) struct ComputeCache {
     fixed: wgpu::BindGroup,
     frame: wgpu::Buffer,
-    passes: BTreeMap<PassId, (wgpu::ComputePipeline, Vec<Group>)>,
+    param_buffer: wgpu::Buffer,
+    pub(super) params: params::Params,
+    passes: BTreeMap<PassId, ComputePass>,
+}
+struct ComputePass {
+    pipeline: wgpu::ComputePipeline,
+    #[cfg(not(target_arch = "wasm32"))]
+    layout: wgpu::PipelineLayout,
+    groups: Vec<Group>,
 }
 pub(super) fn slot(binding: u32, ty: wgpu::BufferBindingType) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
@@ -99,36 +125,11 @@ impl ComputeCache {
             mapped_at_creation: false,
         });
         let inputs = allocate(d, 16);
-        let mut params = vec![0; 16];
-        for p in &b.params {
-            let n = match p.ty {
-                IrTy::F32 | IrTy::Bool | IrTy::U32 => 1,
-                IrTy::Vec2 => 2,
-                IrTy::Vec3 => 3,
-                IrTy::Vec4 => 4,
-            };
-            if p.offset_bytes % 4 != 0 {
-                return Err(RunnerError::AbiMismatch);
-            }
-            let start = p.offset_bytes as usize;
-            let end = start
-                .checked_add(n * 4)
-                .filter(|&n| n as u64 <= u64::from(d.limits().max_storage_buffer_binding_size))
-                .ok_or(RunnerError::Capacity)?;
-            params.resize(params.len().max(end), 0);
-            for (out, v) in params[start..end].chunks_exact_mut(4).zip(p.default) {
-                let word = match p.ty {
-                    IrTy::U32 => v as u32,
-                    IrTy::Bool => u32::from(v != 0.),
-                    _ => v.to_bits(),
-                };
-                out.copy_from_slice(&word.to_le_bytes());
-            }
-        }
-        let params = d.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let params = params::Params::new(&b.params, d.limits().max_storage_buffer_binding_size)?;
+        let param_buffer = d.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: None,
             usage: U::STORAGE | U::COPY_DST,
-            contents: &params,
+            contents: params.bytes(),
         });
         let g0 = d.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
@@ -144,7 +145,7 @@ impl ComputeCache {
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: params.as_entire_binding(),
+                    resource: param_buffer.as_entire_binding(),
                 },
             ],
         });
@@ -237,9 +238,11 @@ impl ComputeCache {
                     })
                 });
                 groups.push(Group {
-                    index: group,
                     layout: layout.clone(),
-                    slots: bindings.iter().map(|x| (x.slot, x.resource)).collect(),
+                    slots: entries
+                        .into_iter()
+                        .zip(bindings.iter().map(|x| x.resource))
+                        .collect(),
                     cached: None,
                 });
             }
@@ -259,18 +262,71 @@ impl ComputeCache {
                 compilation_options: Default::default(),
                 cache: None,
             });
-            passes.insert(p.id, (pipeline, groups));
+            passes.insert(
+                p.id,
+                ComputePass {
+                    pipeline,
+                    groups,
+                    #[cfg(not(target_arch = "wasm32"))]
+                    layout,
+                },
+            );
         }
         Ok(Self {
             fixed: g0,
             frame,
+            param_buffer,
+            params,
             passes,
         })
     }
+    pub(super) fn resource_bindings(
+        &self,
+        id: TableId,
+    ) -> impl Iterator<Item = &wgpu::BindGroupLayoutEntry> {
+        self.passes
+            .values()
+            .flat_map(|p| &p.groups)
+            .flat_map(|g| &g.slots)
+            .filter_map(move |(entry, table)| (*table == id).then_some(entry))
+    }
+
+    pub(super) fn pipeline(&self, pass: PassId) -> Result<&wgpu::ComputePipeline> {
+        self.passes
+            .get(&pass)
+            .map(|p| &p.pipeline)
+            .ok_or(RunnerError::UnknownResource)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn pipeline_layout(&self, pass: PassId) -> Result<&wgpu::PipelineLayout> {
+        self.passes
+            .get(&pass)
+            .map(|p| &p.layout)
+            .ok_or(RunnerError::UnknownResource)
+    }
+
+    pub(super) fn replace_pipeline(
+        &mut self,
+        pass: PassId,
+        pipeline: wgpu::ComputePipeline,
+    ) -> Result<()> {
+        self.passes
+            .get_mut(&pass)
+            .ok_or(RunnerError::UnknownResource)?
+            .pipeline = pipeline;
+        Ok(())
+    }
+
+    pub(super) fn keep_parameters(&mut self, previous: &Self) {
+        self.params.copy_from(&previous.params);
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(super) fn encode(
         &mut self,
         d: &wgpu::Device,
+        queue: &wgpu::Queue,
         enc: &mut wgpu::CommandEncoder,
         passes: &[PassDecl],
         tables: &BTreeMap<TableId, Table>,
@@ -280,11 +336,11 @@ impl ComputeCache {
     ) -> Result<()> {
         // Validate and resolve the entire sequence before touching the caller's encoder.
         for p in passes {
-            let (_, groups) = self
+            let step = self
                 .passes
                 .get_mut(&p.id)
                 .ok_or(RunnerError::Unsupported("pass execution"))?;
-            for g in groups {
+            for g in &mut step.groups {
                 g.resolve(d, tables, epoch)?;
             }
             if let PassRun::Compute {
@@ -297,6 +353,9 @@ impl ComputeCache {
                 }
             }
         }
+        if let Some(bytes) = self.params.take_upload() {
+            queue.write_buffer(&self.param_buffer, 0, bytes);
+        }
         let data = [(time as f32).to_le_bytes(), dt.to_le_bytes()];
         let upload = d.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: None,
@@ -305,7 +364,9 @@ impl ComputeCache {
         });
         enc.copy_buffer_to_buffer(&upload, 0, &self.frame, 0, Some(8));
         for p in passes {
-            let (pipeline, groups) = &self.passes[&p.id];
+            let ComputePass {
+                pipeline, groups, ..
+            } = &self.passes[&p.id];
             let mut pass = enc.begin_compute_pass(&Default::default());
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &self.fixed, &[]);
