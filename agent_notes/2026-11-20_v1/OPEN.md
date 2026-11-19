@@ -1,5 +1,46 @@
 # Open targets for v1.0-alpha
 
+## v1–v3 integration on 20 November
+
+All three lane heads stay on their branches. The single locked Apple M4 Metal run scored the retained engine at `843adfe`. Its executable matched the SHA-256 of the archived main build at `9878c6e`. Twin held 36/36, Truth 34/34 and Speed 12/12, with zero contended verdicts. All six mutants fired, the wasm32 runner checked with web-sys, and Earley and llguidance each returned 280/280 expected results. Native passed 150/150 and Bun passed 315/315. [Gate report](../../out/meta/iv/gate.json) · [Contact sheet](../../out/meta/iv/sheet.webp)
+
+All 18 fresh 1280×800 frames matched the archived main RGBA byte for byte. Pictures held 0/18 against the frozen references. All 18 misses belong to the existing owner queue, with at most eight pixels per frame more than two codes from the queued proposal. Load held 31/33. Hermit created 14 pipelines against a budget of 13 at both instance counts. Before and after hashes matched for 18 frozen gate images, nine bead geometry frames and 1,510 legacy beauty images. All nine bead geometry checks passed, and their renders matched archived main RGBA. [Pixel counts](../../out/meta/iv/pixels.json) · [Owner queue](../../out/meta/i6/approval_needed.md)
+
+| Blocked lane | Measurement and reason |
+| --- | --- |
+| v1 · Tier 0 edit speed · `f5bea03` | Staged fields removed most interpreter overhead. The general clipped sphere took **0.486 ms** to upload and **+0.110 ms** paired GPU p95 on the first run. Confirmation measured **0.448 ms / +2.478 ms** against the **2.000 / +0.500 ms** caps. The two-sided clip missed both at **2.280 / +3.622 ms**. Literal GPU overhead was +0.531 and +2.327 ms. The marker probe was repaired, and every recorded positive edit matched the independently compiled image. [v1 lane note](https://github.com/nbardy/loft/blob/f5bea03ee6d983a4aa103a464a4435d083578a56/agent_notes/2026-11-20_v1/lanes/v1.md) · [General confirmation](../../out/meta/v1/confirm/general.log) |
+| v2 · Authored solvers · `6776d49` | Packed CPU/Metal rows differed on **371/481** Crab ticks, **177/481** Heron ticks and **447/481** Boss ticks. Verdict words differed on **481/481** for each. The three final 0.5 s frames matched main. The branch adds a Heron plan and solver event support, but playback still executes the laws. Full solver execution, bit-equal twins and the E201/E308 emitters and snapshots remain open. [v2 lane note](https://github.com/nbardy/loft/blob/6776d494ee727d3440cb9f5550cbf7915e9abb2e/agent_notes/2026-11-20_v1/lanes/v2.md) · [Tick readbacks](../../out/meta/v2/twin-final.log) |
+| v3 · Shared pass preparation · `d0e6a79` | All **18/18** beauty frames changed. The owner queue allows 1,024 pixels per frame to differ from the proposal by more than two codes. Every v3 frame had at least **35,063** such pixels. Load fell from **31/33 to 28/33**. The archived Classify shader failed resource binding, and the bake and spectral hosts failed storage-texture validation. Functional L0 fell **5,447 → 5,209** against **2,500**. [v3 lane note](https://github.com/nbardy/loft/blob/d0e6a7962b21c4a572759eea06e8a559207b067e/agent_notes/2026-11-20_v1/lanes/v3.md) · [Compatibility and frame results](../../out/meta/v3/verification.json) |
+
+### Retained Speed measurements
+
+Each case has 300 timed frames. The prior main measurements came from the byte-identical executable.
+
+| Scene | Prior main p95, ms | This run p95, ms | Cap, ms | GPU commands |
+| --- | ---: | ---: | ---: | ---: |
+| capsules-1 | 0.460 | 0.443 | 0.8 | 5 |
+| capsules-20 | 0.720 | 0.749 | 1.1 | 5 |
+| blobs-1 | 0.512 | 0.520 | 1.1 | 5 |
+| blobs-20 | 1.489 | 1.498 | 2.4 | 5 |
+| hermit-1 | 3.820 | 3.814 | 5.0 | 17 |
+| hermit-20 | 5.330 | 5.271 | 5.6 | 17 |
+
+### Source lines by audited head
+
+The counts include tracked Rust and WGSL under each crate’s `src/`, with blanks and inline tests. Functional L0 counts executor code across crate boundaries.
+
+| Crate | Retained main | v1 | v2 | v3 |
+| --- | ---: | ---: | ---: | ---: |
+| loft-abi | 498 | 498 | 498 | 498 |
+| loft-cli | 5,066 | 5,182 | 5,066 | 4,307 |
+| loft-format | 815 | 815 | 815 | 815 |
+| loft-ir | 548 | 548 | 548 | 548 |
+| loft-parse | 2,723 | 2,723 | 2,723 | 2,723 |
+| loft-passes | 16,456 | 16,670 | 16,519 | 16,734 |
+| loft-plan | 949 | 949 | 949 | 949 |
+| loft-runner | 1,630 | 1,630 | 1,630 | 1,998 |
+| loft-std | 4,321 | 4,321 | 4,321 | 4,321 |
+
 ## Wave integration on 20 November
 
 The Apple M4 Metal gate on `9878c6e` passed the merge rule for w1–w4. Twin held 36/36, Truth 34/34 and Speed 12/12, with zero contention. All six mutants fired. The runner passed wasm32 with web-sys, and Earley and llguidance each returned 280/280 expected outcomes, including the negative sentinel. Frozen hashes matched before and after for 18 gate frames, nine bead frames and 1,510 legacy beauty images. All nine bead geometry checks passed and their RGBA matched the archived release. [Gate evidence](../../out/meta/iw/gate.json) · [Contact sheet](../../out/meta/iw/sheet.webp)
