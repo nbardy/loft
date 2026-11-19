@@ -48,39 +48,64 @@ impl Sources {
     }
 }
 
-/// The error codes. Each names a class of mistake; the message and `fix` name the instance.
+/// The diagnostic codes (`docs/spec/LOFT_V1_SYNTAX.md` §7). Each names a class of mistake; the message and `fix` name
+/// the instance. `W` codes are warnings: reported, never fatal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Code {
-    /// Syntax.
+    /// Syntax, or an unknown unit suffix.
     E001,
-    /// Unknown name, or a name used as the wrong thing.
-    E002,
-    /// Type mismatch outside the affine/space rules.
+    /// Type mismatch outside the affine and space rules.
     E003,
-    /// Space mismatch or an affine rule broken (`Pt + Pt`, a transform applied in the wrong space).
+    /// Unknown name, or a name used as the wrong thing.
+    E011,
+    /// `p3 + p3`, or another affine rule broken.
+    E101,
+    /// Space mismatch, or a map's space used outside it.
     E104,
-    /// A sphere-traced field without a proven Lipschitz bound.
+    /// A map misused: bare map name, `.cell` without a mirror, a map of something other than a query point.
+    E106,
+    /// A bare kind where a law or check reads a table (`fish: Fish` for `fishes: [Fish]`), or a row id of another kind.
+    E108,
+    /// A traced field or surface with no finite derived bound.
+    E201,
+    /// A numeric Lipschitz bound written in a scene.
+    E210,
+    /// A sphere-traced field whose L is unbounded (a divisor that can reach zero).
     E211,
-    /// A traced field whose surface has no finite derived bound.
+    /// A drawn kind without a required query.
     E212,
     /// `diff` of an expression that is not differentiable (a `C0` kink).
     E307,
+    /// A scan frame that degenerates (zero tangent).
+    E308,
     /// A continuous type parameterises kind identity.
     E401,
     /// A kind's discrete variant budget is exceeded.
     E402,
-    /// Stage-0 code (`emit`, `comptime for`) outside a `comptime fn`.
+    /// A value read at the wrong stage: `time` in build code, or kind code reading a build name.
     E403,
-    /// Kind code (stage 1) reads a stage-0 name.
+    /// Build code outside build: a module-level statement, `emit`, or a loop that is not `build for`.
     E404,
-    /// Valid language that Phase 0 does not lower yet: a named refusal, never a fallback.
+    /// Valid language that this phase does not lower yet: a named refusal, never a fallback.
     E405,
-    /// A schedule that cannot be lowered.
+    /// A field write outside a law's `writes`, or a write to a table.
     E501,
-    /// A row that cannot be emitted (missing or unknown field, wrong value).
-    E601,
-    /// Evaluation failed on the CPU (stage 0 or the twin).
+    /// Two laws write the same field.
+    E502,
+    /// A schedule or default-engine configuration that cannot be lowered.
+    E520,
+    /// A row that cannot be emitted: missing or unknown column, a value outside its range.
+    E602,
+    /// Evaluation failed on the CPU (build or the twin).
     E701,
+    /// A mirrored kind emitted in mirrored pairs (the mirror already makes the pair).
+    W410,
+}
+
+impl Code {
+    pub fn is_warning(self) -> bool {
+        matches!(self, Code::W410)
+    }
 }
 
 impl fmt::Display for Code {
@@ -97,11 +122,13 @@ pub struct Diag {
     pub msg: String,
     pub notes: Vec<(Span, String)>,
     pub fix: String,
+    /// Further diagnostics reported with this one (parse errors after recovery).
+    pub also: Vec<Diag>,
 }
 
 impl Diag {
     pub fn new(code: Code, span: Span, msg: impl Into<String>, fix: impl Into<String>) -> Diag {
-        Diag { code, span, msg: msg.into(), notes: vec![], fix: fix.into() }
+        Diag { code, span, msg: msg.into(), notes: vec![], fix: fix.into(), also: vec![] }
     }
     pub fn note(mut self, span: Span, text: impl Into<String>) -> Diag {
         self.notes.push((span, text.into()));
@@ -110,7 +137,8 @@ impl Diag {
 
     /// The rustc-style rendering: the author's own lines, never generated code.
     pub fn render(&self, src: &Sources) -> String {
-        let mut out = format!("error[{}]: {}\n", self.code, self.msg);
+        let kind = if self.code.is_warning() { "warning" } else { "error" };
+        let mut out = format!("{kind}[{}]: {}\n", self.code, self.msg);
         let mut show = |s: Span, label: &str, mark: char| {
             if s.file as usize >= src.files.len() {
                 return;
@@ -129,6 +157,10 @@ impl Diag {
             show(*s, n, '-');
         }
         out += &format!("   = fix: {}\n", self.fix);
+        for d in &self.also {
+            out += "\n";
+            out += &d.render(src);
+        }
         out
     }
 }

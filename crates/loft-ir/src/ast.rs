@@ -1,5 +1,7 @@
-//! The source tree of the WGSL superset (draft §1), and the checked types the passes share.
-//! Every expression has an `id`; the checker's types live in a side table indexed by it.
+//! The source tree of `.loft` v1.0 (`docs/spec/LOFT_V1_SYNTAX.md`) as the parser builds it and the elaborator
+//! completes it, and the checked types the passes share. Every expression has an `id`; the checker's types live in a
+//! side table indexed by it. The parser may leave holes the elaborator fills (an unannotated parameter, a bracket
+//! literal, a scan's element type); after elaboration the tree is fully typed and every pass reads it unchanged.
 
 use crate::Span;
 
@@ -12,6 +14,8 @@ pub struct Ident {
 #[derive(Debug, Default)]
 pub struct Module {
     pub items: Vec<Item>,
+    /// `#` comments with their spans, so a rewrite through the s-expression form keeps them.
+    pub comments: Vec<(Span, String)>,
     /// `diff(f, x)` sites, as written: the AD pass generates `f__d_x` (the parser already called it).
     pub diffs: Vec<(Ident, Ident)>,
 }
@@ -25,6 +29,26 @@ pub enum Item {
     Kind(KindDecl),
     Scan(ScanDecl),
     Schedule(ScheduleDecl),
+    /// `build { ... }`: an anonymous build fn; the default engine runs every one in source order.
+    Build(FnDecl),
+    Law(LawDecl),
+    /// `check name(h: K, ...) -> unit { ... }`: `ret` is the verdict's unit.
+    Check(FnDecl),
+    Camera(CameraDecl),
+}
+
+/// `law name(h: K, dt, tbl: [T]) writes h.{a, b} { ... }`.
+#[derive(Debug)]
+pub struct LawDecl {
+    pub f: FnDecl,
+    pub writes: Vec<Ident>,
+}
+
+/// `camera Main { at: ..., radius: ..., height: ..., period: ..., fov: ... }`: build-stage values.
+#[derive(Debug)]
+pub struct CameraDecl {
+    pub name: Ident,
+    pub fields: Vec<(Ident, Expr)>,
 }
 
 /// `scan name(t: f32 in lo..hi, steps: N) @schedule(bake_lut) -> Table[T] { init: e; step(prev, t_i): e; }`:
@@ -37,7 +61,8 @@ pub struct ScanDecl {
     pub lo: Expr,
     pub hi: Expr,
     pub steps: Expr,
-    pub elem: TyExpr,
+    /// `None` until elaboration (the type of `init`).
+    pub elem: Option<TyExpr>,
     pub init: Expr,
     pub prev: Ident,
     pub at: Ident,
@@ -69,12 +94,14 @@ pub struct FnDecl {
     pub params: Vec<Param>,
     pub ret: Option<TyExpr>,
     pub body: Block,
+    /// A `wgsl(...) -> T { ... }` island lifted into a fn: its raw body, which naga validates at emit.
+    pub raw: Option<String>,
 }
 
 #[derive(Debug)]
 pub struct Param {
     pub name: Ident,
-    /// `None` only for a query's `self`.
+    /// `None` for a query's `self`, and for an unannotated parameter until elaboration infers it.
     pub ty: Option<TyExpr>,
 }
 
@@ -118,6 +145,18 @@ pub struct KindParam {
 pub struct RowField {
     pub name: Ident,
     pub ty: TyExpr,
+    /// `in lo..hi` (inclusive) or `> lo` / `>= lo`: checked at every emit, and the interval a divisor reads.
+    pub range: Option<RowRange>,
+    /// `= value`: what an `emit` that leaves the column out stores.
+    pub default: Option<Expr>,
+}
+
+#[derive(Debug)]
+pub struct RowRange {
+    pub lo: Expr,
+    pub hi: Option<Expr>,
+    /// `> lo`: the low end is excluded.
+    pub strict: bool,
 }
 
 #[derive(Debug)]
@@ -149,7 +188,8 @@ pub enum Stmt {
     Return(Option<Expr>, Span),
     If { cond: Expr, then: Block, otherwise: Option<Block> },
     For { comptime: bool, var: Ident, lo: Expr, hi: Expr, body: Block, span: Span },
-    Emit { kind: Ident, fields: Vec<(Ident, Expr)>, span: Span },
+    /// `emit K(f: e, ...)`, or `let b = emit K(...)` binding the new row's id.
+    Emit { kind: Ident, fields: Vec<(Ident, Expr)>, span: Span, bind: Option<Ident> },
     Expr(Expr),
 }
 
@@ -163,16 +203,11 @@ pub struct Expr {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NumSuffix {
     None,
-    F,
-    U,
-    I,
-    /// Meters: `m`.
-    M,
-    Rad,
-    /// Degrees, stored as radians.
+    /// Degrees: the value converts to radians where it is used.
     Deg,
-    Sec,
-    Kg,
+    /// Any other unit (`m`, `rad`, `s`, `kg`, `N`, `rad/s`, and `mm`, already converted to metres). Units are tags in
+    /// v1.0: they make the literal a float and are kept in `text`.
+    Unit,
 }
 
 #[derive(Debug)]
@@ -187,6 +222,8 @@ pub enum ExprKind {
     Ctor { ty: TyExpr, args: Vec<Arg> },
     Binary(BinOp, Box<Expr>, Box<Expr>),
     Unary(UnOp, Box<Expr>),
+    /// `[x, y, z]` or `[x, y, z]@S` before elaboration, which replaces it by the constructor its context asks for.
+    List(Vec<Expr>, Option<SpaceRef>),
 }
 
 #[derive(Debug)]
@@ -258,14 +295,16 @@ pub enum TyExpr {
     Geo(Geo, SpaceRef),
     Xform(SpaceRef, SpaceRef),
     Field(SpaceRef),
-    /// `Frame[S]`: origin and an orthonormal tangent, normal, binormal (a scan's element).
+    /// `frame@S`: origin and an orthonormal tangent, normal, binormal (a scan's element).
     Frame(SpaceRef),
+    /// `[K]`: a read-only table of kind `K` (a law's or check's other rows).
+    Table(Ident),
 }
 
 impl TyExpr {
     pub fn span(&self) -> Span {
         match self {
-            TyExpr::Name(i) | TyExpr::Generic(i, _) => i.span,
+            TyExpr::Name(i) | TyExpr::Generic(i, _) | TyExpr::Table(i) => i.span,
             TyExpr::Geo(_, s) | TyExpr::Field(s) | TyExpr::Frame(s) => s.span,
             TyExpr::Xform(a, b) => a.span.to(b.span),
         }
@@ -288,19 +327,35 @@ pub enum Geo {
     Norm,
 }
 
-/// A checked space: declared, fresh (introduced by `map`, numbered), or a signature variable.
+impl Geo {
+    /// The surface spelling: `p3`, `v3`, `d3`, `n3`.
+    pub fn short(self) -> &'static str {
+        match self {
+            Geo::Pt => "p3",
+            Geo::Vec => "v3",
+            Geo::Dir => "d3",
+            Geo::Norm => "n3",
+        }
+    }
+}
+
+/// A checked space: declared, fresh (introduced by `map`, numbered), a signature variable, or the open source of a
+/// placement built by `place` (fixed where it is stored or composed, so it meets any space).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Space {
     Named(String),
     Fresh(String, u32),
     Var(String),
+    Open,
 }
 
 impl std::fmt::Display for Space {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Space::Named(n) => write!(f, "{n}"),
-            Space::Fresh(n, _) | Space::Var(n) => write!(f, "'{n}"),
+            Space::Fresh(n, _) => write!(f, "{n}"),
+            Space::Var(n) => write!(f, "{n}"),
+            Space::Open => write!(f, "_"),
         }
     }
 }
@@ -325,8 +380,14 @@ pub enum Ty {
     Row(String),
     /// Origin, tangent, normal, binormal.
     Frame(Space),
-    /// An ordered sum of library lobes (`@lobe` fns), bottom layer first.
+    /// An ordered sum of library lobes (`lobe` fns), bottom layer first.
     Bsdf,
+    /// A row id of a kind (a column typed `K`, the value of `emit K(...)`).
+    Id(String),
+    /// A read-only table of a kind's rows (`[K]`), indexed by an id.
+    Table(String),
+    /// A check's result: held, missed or unknown.
+    Verdict,
 }
 
 impl std::fmt::Display for Ty {
@@ -334,17 +395,21 @@ impl std::fmt::Display for Ty {
         match self {
             Ty::Void => write!(f, "()"),
             Ty::Bool => write!(f, "bool"),
-            Ty::U32 => write!(f, "u32"),
-            Ty::I32 => write!(f, "i32"),
-            Ty::F32 => write!(f, "f32"),
+            Ty::U32 => write!(f, "u"),
+            Ty::I32 => write!(f, "i"),
+            Ty::F32 => write!(f, "f"),
             Ty::AbstractInt => write!(f, "integer literal"),
-            Ty::VecN(n) => write!(f, "vec{n}<f32>"),
-            Ty::Geo(g, s) => write!(f, "{g:?}[{s}]"),
-            Ty::Xform(a, b) => write!(f, "Xform[{a} -> {b}]"),
-            Ty::Map(a, b) => write!(f, "Map[{a} -> {b}]"),
+            Ty::VecN(3) => write!(f, "rgb"),
+            Ty::VecN(n) => write!(f, "v{n}"),
+            Ty::Geo(g, s) => write!(f, "{}@{s}", g.short()),
+            Ty::Xform(a, b) => write!(f, "xf@{a}>{b}"),
+            Ty::Map(a, b) => write!(f, "map {a} -> {b}"),
             Ty::Row(k) => write!(f, "row of {k}"),
-            Ty::Frame(s) => write!(f, "Frame[{s}]"),
+            Ty::Frame(s) => write!(f, "frame@{s}"),
             Ty::Bsdf => write!(f, "Bsdf"),
+            Ty::Id(k) => write!(f, "{k}"),
+            Ty::Table(k) => write!(f, "[{k}]"),
+            Ty::Verdict => write!(f, "verdict"),
         }
     }
 }
@@ -353,11 +418,11 @@ impl Ty {
     /// f32 words in a row table.
     pub fn words(&self) -> Option<u32> {
         match self {
-            Ty::Bool | Ty::U32 | Ty::I32 | Ty::F32 => Some(1),
+            Ty::Bool | Ty::U32 | Ty::I32 | Ty::F32 | Ty::Id(_) => Some(1),
             Ty::VecN(n) => Some(u32::from(*n)),
             Ty::Geo(..) => Some(3),
             Ty::Xform(..) | Ty::Frame(_) => Some(12),
-            Ty::Void | Ty::AbstractInt | Ty::Map(..) | Ty::Row(_) | Ty::Bsdf => None,
+            Ty::Void | Ty::AbstractInt | Ty::Map(..) | Ty::Row(_) | Ty::Bsdf | Ty::Table(_) | Ty::Verdict => None,
         }
     }
 }
