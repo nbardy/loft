@@ -3,6 +3,7 @@
 Start with `CORE.md`: what Loft is for, the priorities (picture, GPU frame time, tokens, truth, lean) and how a change
 is judged.
 
+- Lanes: `tools/lane.sh new NAME BRANCH` (a Cambium worktree; it first sweeps merged lanes). After merging a lane into main and pushing, run `tools/lane.sh sweep`: it removes every clean lane already merged into origin/main and keeps the rest with the reason.
 - `bun` runs everything; `pnpm` installs. Nothing is compiled ahead of time.
 - Typecheck with `rtk proxy pnpm exec tsc --noEmit`. A shell hook rewrites a bare `tsc` and reports errors that are
   not there.
