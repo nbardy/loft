@@ -36,6 +36,27 @@ pub const VARIANT_BUDGET: u64 = 4;
 
 pub fn check(p: &Prog, types: &mut Vec<Ty>) -> Res<()> {
     let mut ck = Ck::new(p,types);
+    for (name, target) in p.aliases.values() {
+        ck.resolve_named(name, true, &mut vec![])?;
+        ck.resolve(target, true)?;
+    }
+    for (name, fields) in p.structs.values() {
+        ck.resolve_named(name, true, &mut vec![])?;
+        ck.comptime = true;
+        ck.scopes = vec![HashMap::new()];
+        let mut seen = std::collections::HashSet::new();
+        for field in *fields {
+            if !seen.insert(&field.name.name) {
+                return Err(Diag::new(Code::E011, field.name.span, "duplicate struct column", "give each column a distinct name"));
+            }
+            let t = ck.resolve(&field.ty, true)?;
+            if let Some(range) = &field.range { ck.range(range)?; }
+            if let Some(value) = &field.default {
+                let from = ck.expr(value)?;
+                ck.assignable(&from, &t, value.span)?;
+            }
+        }
+    }
     for c in p.consts.values() {
         ck.comptime = c.comptime;
         ck.scopes = vec![HashMap::new()];
@@ -63,9 +84,21 @@ pub fn check(p: &Prog, types: &mut Vec<Ty>) -> Res<()> {
             }
         }
     }
-    for law in p.laws.values(){
-        if let Some(f)=crate::emit::reachable(p,&[&law.f],&[]).0.into_iter().find(|f|f.refuses_unverified_raw()){
-            return Err(Diag::new(Code::E504,f.name.span,"motion reaches unverified raw WGSL","use wgsl det (...) after verifying the block is deterministic"))
+    for law in p.laws.values() {
+        let (reachable, constants) = crate::emit::reachable(p, &[&law.f], &[]);
+        let mut calls = crate::emit::References::default();
+        for name in constants {
+            calls.expr(&p.consts[name.as_str()].value, &[]);
+        }
+        for f in std::iter::once(&law.f).chain(reachable) {
+            if f.refuses_unverified_raw() {
+                return Err(Diag::new(Code::E504, f.name.span, "motion reaches unverified raw WGSL", "use wgsl det (...) after verifying the block is deterministic"));
+            }
+            calls.calls.extend(crate::emit::References::function(f).calls);
+        }
+        if let Some(call) = calls.calls.into_iter().find(|c| !p.fns.contains_key(c.name.as_str())
+            && matches!(c.name.as_str(), "tan" | "asin" | "atan" | "exp2" | "log2" | "pow")) {
+            return Err(Diag::new(Code::E504, call.span, "no deterministic motion implementation for this operation", "rewrite it using deterministic operations"));
         }
     }
     for k in p.kinds.values(){if let Some(trace)=k.query(QueryKind::Trace) && let Some(f)=crate::emit::reachable(p,&[trace],&[]).0.into_iter().find(|f|f.raw.is_some()){
@@ -80,6 +113,33 @@ pub fn check(p: &Prog, types: &mut Vec<Ty>) -> Res<()> {
 pub fn check_stage0_expr(p: &Prog, types: &mut Vec<Ty>, e: &Expr) -> Res<Ty> {
     let mut ck = Ck { hints:None,ownership:None,p, types, scopes: vec![HashMap::new()], comptime: true, ret: Ty::Void, fresh: 0, sig_vars: vec![] };
     ck.expr(e)
+}
+
+fn runtime_read<'a>(p: &Prog<'a>, mut refs: crate::emit::References<'a>) -> Option<Span> {
+    let mut visited = std::collections::HashSet::new();
+    let mut next = vec![];
+    loop {
+        for (name, span) in refs.names {
+            if name == "time" { return Some(span); }
+            if let Some(c) = p.consts.get(name) && visited.insert((false, name)) {
+                let mut child = crate::emit::References::default();
+                child.expr(&c.value, &[]);
+                next.push(child);
+            }
+        }
+        for call in refs.calls {
+            let name = call.name.as_str();
+            if let Some(f) = p.fns.get(name) && visited.insert((true, name)) {
+                next.push(crate::emit::References::function(f));
+            }
+        }
+        refs = next.pop()?;
+    }
+}
+
+fn stage_error(site: Span, read: Span) -> Diag {
+    Diag::new(Code::E403, site, "build depends on runtime time", "move this calculation into a query or a law")
+        .note(read, "runtime time is read here")
 }
 
 fn swizzle_len(m: &str, max: usize) -> Option<usize> {
@@ -121,6 +181,27 @@ impl<'p,'a> Ck<'p,'a> {
 
     /// Resolves written type syntax. `sig`: a `'s` is a signature variable; otherwise it names a map in scope.
     pub fn resolve(&self, t: &TyExpr, sig: bool) -> Res<Ty> {
+        self.resolve_type(t, sig, &mut vec![])
+    }
+
+    fn resolve_named(&self, name: &Ident, sig: bool, stack: &mut Vec<String>) -> Res<Ty> {
+        if stack.contains(&name.name) {
+            return Err(Diag::new(Code::E011, name.span, "cyclic type declaration", "use a finite, nonrecursive payload type"));
+        }
+        stack.push(name.name.clone());
+        let result = if let Some((_, alias)) = self.p.aliases.get(name.name.as_str()) {
+            self.resolve_type(alias, sig, stack)
+        } else {
+            for field in self.p.structs[name.name.as_str()].1 {
+                self.resolve_type(&field.ty, sig, stack)?;
+            }
+            Ok(Ty::Struct(name.name.clone()))
+        };
+        stack.pop();
+        result
+    }
+
+    fn resolve_type(&self, t: &TyExpr, sig: bool, stack: &mut Vec<String>) -> Res<Ty> {
         let space = |s: &SpaceRef| -> Res<Space> {
             if s.var {
                 if sig {
@@ -160,13 +241,14 @@ impl<'p,'a> Ck<'p,'a> {
                 "vec4f" => Ok(Ty::VecN(4)),
                 "Bsdf" => Ok(Ty::Bsdf),
                 "Verdict"=>Ok(Ty::Verdict),
+                n if self.p.aliases.contains_key(n) || self.p.structs.contains_key(n) => self.resolve_named(i, sig, stack),
                 n if self.p.kinds.contains_key(n) => Ok(Ty::Id(n.into())),
                 n if self.p.units.contains(n) => Ok(Ty::F32),
                 n => Err(Diag::new(
                     Code::E011,
                     i.span,
                     format!("unknown type `{n}`"),
-                    "use f32, u32, i32, bool, vecN<f32>, a declared `unit`, Pt/Vec/Dir/Norm[S] or Xform[A -> B]",
+                    "use f, u, i, bool, a declared type, p3@Space or xf@A>B",
                 )),
             },
             TyExpr::Generic(i, args) => match (i.name.as_str(), args.as_slice()) {
@@ -243,7 +325,7 @@ impl<'p,'a> Ck<'p,'a> {
             (Ty::VecN(3), Ty::Geo(g, s)) => e104(
                 span,
                 format!("a space-less vec3 where `{to}` is expected"),
-                format!("say which space it is in: `{g:?}[{s}](...)`"),
+                format!("say which space it is in: `[x, y, z]@{s}` for {}", g.short()),
             ),
             _ => e003(span, format!("expected `{to}`, found `{from}`"), format!("convert the value to `{to}`")),
         })
@@ -354,7 +436,7 @@ impl<'p,'a> Ck<'p,'a> {
                             Code::E402,
                             prm.span,
                             "a kind parameter's range must be literal",
-                            "write `comptime n: u32 in 0u..4u`",
+                            "write `kind K[n: u in 0..4] @S (...)`",
                         ));
                     }
                 },
@@ -363,7 +445,7 @@ impl<'p,'a> Ck<'p,'a> {
                         Code::E402,
                         prm.span,
                         format!("`{}` has an unbounded domain", prm.name.name),
-                        format!("bound it: `comptime {}: u32 in 0u..{VARIANT_BUDGET}u`", prm.name.name),
+                        format!("bound it in the kind parameter list: `{}: u in 0..{VARIANT_BUDGET}`", prm.name.name),
                     ));
                 }
                 _ => {
@@ -372,7 +454,7 @@ impl<'p,'a> Ck<'p,'a> {
                         prm.span,
                         format!("continuous value cannot parameterize kind identity: `{}` is `{t}`", prm.name.name),
                         format!(
-                            "move `{}: {t}` into the `row {{ ... }}` block so all instances share one compiled kind",
+                            "move `{}: {t}` into the kind’s column list so all instances share one compiled kind",
                             prm.name.name
                         ),
                     ));
@@ -504,6 +586,7 @@ impl<'p,'a> Ck<'p,'a> {
                 if let Some(ty) = ty {
                     let want = self.resolve(ty, false)?;
                     self.assignable(&t, &want, value.span)?;
+                    if t == Ty::AbstractInt { self.set(value, want.clone()); }
                     t = want;
                 }
                 if t == Ty::AbstractInt {
@@ -653,7 +736,7 @@ impl<'p,'a> Ck<'p,'a> {
                 }
                 self.expr(&first.value)?
             }
-            ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Call { .. } | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => self.expr(head)?,
+            ExprKind::If { .. } | ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Call { .. } | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => self.expr(head)?,
         };
         let Ty::Geo(Geo::Pt, parent) = point else {
             return Err(e104(head.span, format!("a map takes a point, found `{point}`"), "map a `Pt[S]`"));
@@ -707,8 +790,26 @@ impl<'p,'a> Ck<'p,'a> {
         Ok(self.set(e, t))
     }
 
+    fn expr_arm(&mut self, arm: &ExprBlock) -> Res<Ty> {
+        self.scopes.push(HashMap::new());
+        for s in &arm.body.stmts { self.stmt(s)?; }
+        let t = self.expr(&arm.value);
+        self.scopes.pop();
+        t
+    }
+
     fn expr_inner(&mut self, e: &Expr) -> Res<Ty> {
         match &e.kind {
+            ExprKind::If { condition, then, otherwise } => {
+                let actual = self.expr(condition)?;
+                self.assignable(&actual, &Ty::Bool, condition.span)?;
+                let a = self.expr_arm(then)?;
+                let b = self.expr_arm(otherwise)?;
+                let ty = meet(&a, &b).ok_or_else(|| e003(e.span, format!("if values have different types {a} and {b}"), "return a single type from both arms"))?;
+                if a == Ty::AbstractInt { self.set(&then.value, ty.clone()); }
+                if b == Ty::AbstractInt { self.set(&otherwise.value, ty.clone()); }
+                Ok(ty)
+            }
             ExprKind::Num { suffix, float, .. } => Ok(match suffix {
                 NumSuffix::None if !float => Ty::AbstractInt,
                 NumSuffix::None | NumSuffix::Deg | NumSuffix::Unit => Ty::F32,
@@ -720,6 +821,13 @@ impl<'p,'a> Ck<'p,'a> {
                 }
                 if n=="time" {return if self.comptime{Err(Diag::new(Code::E403,e.span,"time read at build stage","read time in a query or a law"))}else{Ok(Ty::F32)}}
                 if let Some(c) = self.p.consts.get(n.as_str()) {
+                    if self.comptime {
+                        let mut refs = crate::emit::References::default();
+                        refs.expr(&c.value, &[]);
+                        if let Some(read) = runtime_read(self.p, refs) {
+                            return Err(stage_error(e.span, read));
+                        }
+                    }
                     return Ok(match &c.ty {
                         Some(t) => self.resolve(t, true)?,
                         None => self.types.get(c.value.id as usize).cloned().unwrap_or(Ty::F32),
@@ -737,7 +845,7 @@ impl<'p,'a> Ck<'p,'a> {
                 self.assignable(&it, &Ty::U32, i.span).or_else(|_| self.assignable(&it, &Ty::I32, i.span))?;
                 match b {
                     Ty::VecN(_) | Ty::Geo(..) => Ok(Ty::F32),
-                    other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::F32 | other @ Ty::AbstractInt | other @ Ty::Xform(..) | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Frame(_) | other @ Ty::Table(_) | other @ Ty::Verdict | other @ Ty::Id(_) | other @ Ty::Bsdf => Err(e003(base.span, format!("cannot index `{other}`"), "index a vector")),
+                    other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::F32 | other @ Ty::AbstractInt | other @ Ty::Xform(..) | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Frame(_) | other @ Ty::Table(_) | other @ Ty::Verdict | other @ Ty::Struct(_) | other @ Ty::Id(_) | other @ Ty::Bsdf => Err(e003(base.span, format!("cannot index `{other}`"), "index a vector")),
                 }
             }
             ExprKind::Unary(op, x) => {
@@ -789,7 +897,7 @@ impl<'p,'a> Ck<'p,'a> {
                 let n = match &target {
                     Ty::VecN(n) => *n,
                     Ty::Geo(..) => 3,
-                    other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::F32 | other @ Ty::AbstractInt | other @ Ty::Xform(..) | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Frame(_) | other @ Ty::Table(_) | other @ Ty::Verdict | other @ Ty::Id(_) | other @ Ty::Bsdf => return Err(e003(e.span, format!("cannot construct `{other}`"), "construct a vector or point")),
+                    other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::F32 | other @ Ty::AbstractInt | other @ Ty::Xform(..) | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Frame(_) | other @ Ty::Table(_) | other @ Ty::Verdict | other @ Ty::Struct(_) | other @ Ty::Id(_) | other @ Ty::Bsdf => return Err(e003(e.span, format!("cannot construct `{other}`"), "construct a vector or point")),
                 };
                 components(&ts, n, e.span)?;
                 Ok(target)
@@ -833,6 +941,12 @@ impl<'p,'a> Ck<'p,'a> {
                     )),
                 }
             }
+            Ty::Struct(k) => {
+                let (_, fields) = self.p.structs[k.as_str()];
+                let f = fields.iter().find(|f| f.name.name == m.name).ok_or_else(||
+                    Diag::new(Code::E011, m.span, format!("`{k}` has no column `{}`", m.name), "use a declared column"))?;
+                self.resolve(&f.ty, true)
+            }
             Ty::VecN(n) => swizzle(&m.name, *n as usize, m.span),
             Ty::Geo(..) => swizzle(&m.name, 3, m.span),
             Ty::Frame(sp) => match frame_field(&m.name) {
@@ -865,6 +979,14 @@ impl<'p,'a> Ck<'p,'a> {
             }
             return self.types.get(sc.init.id as usize).filter(|t| matches!(t, Ty::Frame(_))).cloned().ok_or_else(|| e003(sc.init.span,"scan result type unavailable","initialise the scan with a frame"));
         }
+        if callee.name == "unknown" && !self.p.fns.contains_key("unknown") {
+            if let [Arg { value: Expr { kind: ExprKind::Name(reason), .. }, .. }] = args
+                && reason.as_bytes().first().is_some_and(u8::is_ascii_uppercase)
+            {
+                return Ok(Ty::Verdict);
+            }
+            return Err(e003(span, "unknown verdict requires a reason tag", "write unknown(MissingSurface)"));
+        }
         let ts: Vec<Ty> = args.iter().map(|a| self.expr(&a.value)).collect::<Res<_>>()?;
         let sp: Vec<Span> = args.iter().map(|a| a.value.span).collect();
         if let Some(f) = self.p.fns.get(callee.name.as_str())
@@ -882,14 +1004,17 @@ impl<'p,'a> Ck<'p,'a> {
             return Ok(Ty::Bsdf);
         }
         if let Some(f) = self.p.fns.get(callee.name.as_str()) {
+            if self.comptime && let Some(read) = runtime_read(self.p, crate::emit::References::function(f)) {
+                return Err(stage_error(callee.span, read));
+            }
             if f.comptime && !self.comptime {
                 return Err(Diag::new(
                     Code::E403,
                     callee.span,
                     format!("kind code calls the stage-0 fn `{}`", callee.name),
-                    "call it from the schedule's rows pass, or drop `comptime` from it",
+                    "call it from a `build` block, or declare it as a regular `fn`",
                 )
-                .note(f.name.span, "declared `comptime fn` here"));
+                .note(f.name.span, "declared `build fn` here"));
             }
             if f.params.len() != ts.len() {
                 return Err(e003(span, format!("`{}` takes {} argument(s), got {}", callee.name, f.params.len(), ts.len()), "match the signature")
@@ -962,7 +1087,7 @@ fn path(e: &Expr) -> Option<String> {
         | ExprKind::Call { .. }
         | ExprKind::Ctor { .. }
         | ExprKind::Binary(..)
-        | ExprKind::Unary(..) => None,
+        | ExprKind::If { .. } | ExprKind::Unary(..) => None,
     }
 }
 
@@ -977,7 +1102,7 @@ fn subst(t: &Ty, vars: &HashMap<String, Space>) -> Ty {
         Ty::Geo(g, x) => Ty::Geo(*g, s(x)),
         Ty::Xform(a, b) => Ty::Xform(s(a), s(b)),
         Ty::Frame(x) => Ty::Frame(s(x)),
-        other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::F32 | other @ Ty::AbstractInt | other @ Ty::VecN(_) | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Table(_) | other @ Ty::Verdict | other @ Ty::Id(_) | other @ Ty::Bsdf => other.clone(),
+        other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::F32 | other @ Ty::AbstractInt | other @ Ty::VecN(_) | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Table(_) | other @ Ty::Verdict | other @ Ty::Struct(_) | other @ Ty::Id(_) | other @ Ty::Bsdf => other.clone(),
     }
 }
 
@@ -999,7 +1124,7 @@ fn components(ts: &[Ty], n: u8, span: Span) -> Res<()> {
             Ty::Geo(..) => {
                 return Err(e104(span, "constructing from a value with a space", "drop the space explicitly with `.xyz`"));
             }
-            other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::Xform(..) | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Frame(_) | other @ Ty::Table(_) | other @ Ty::Verdict | other @ Ty::Id(_) | other @ Ty::Bsdf => return Err(e003(span, format!("cannot build a vector from `{other}`"), "pass f32 components")),
+            other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::Xform(..) | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Frame(_) | other @ Ty::Table(_) | other @ Ty::Verdict | other @ Ty::Struct(_) | other @ Ty::Id(_) | other @ Ty::Bsdf => return Err(e003(span, format!("cannot build a vector from `{other}`"), "pass f32 components")),
         };
     }
     if total == n || (ts.len() == 1 && total == 1) {
@@ -1091,7 +1216,7 @@ fn binary(op: BinOp, a: &Ty, b: &Ty, sa: Span, sb: Span, span: Span) -> Res<Ty> 
 fn geo_space(t: &Ty) -> Space {
     match t {
         Ty::Geo(_, s) => s.clone(),
-        other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::F32 | other @ Ty::AbstractInt | other @ Ty::VecN(_) | other @ Ty::Xform(..) | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Frame(_) | other @ Ty::Table(_) | other @ Ty::Verdict | other @ Ty::Id(_) | other @ Ty::Bsdf => unreachable!("geo_space of {other}"),
+        other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::F32 | other @ Ty::AbstractInt | other @ Ty::VecN(_) | other @ Ty::Xform(..) | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Frame(_) | other @ Ty::Table(_) | other @ Ty::Verdict | other @ Ty::Struct(_) | other @ Ty::Id(_) | other @ Ty::Bsdf => unreachable!("geo_space of {other}"),
     }
 }
 
@@ -1132,7 +1257,7 @@ fn builtin(name: &str, ts: &[Ty], sp: &[Span], span: Span) -> Res<Ty> {
         "dir" => match ts { [Ty::Geo(_,s)]=>Ok(Ty::Geo(Dir,s.clone())), _=>Err(e003(span,"direction requires a space","supply a vector in the requested space")) },
         "coords" => match ts { [Ty::Geo(..)]=>Ok(Ty::VecN(3)),_=>Err(e003(span,"expected a spatial value","pass a point or vector")) },
         "frame_axes" => match ts { [Ty::Geo(Pt,s),Ty::Geo(_,a),Ty::Geo(_,b),Ty::Geo(_,c)] if s==a&&s==b&&s==c=>Ok(Ty::Frame(s.clone())),_=>Err(e104(span,"frame axes occupy different spaces","use the origin and axes from one space")) },
-        "abs" | "sqrt" | "sin" | "cos" | "exp" | "floor" | "fract" | "sign" | "saturate" => componentwise(1),
+        "acos" | "log" | "abs" | "sqrt" | "sin" | "cos" | "exp" | "floor" | "fract" | "sign" | "saturate" => componentwise(1),
         "min" | "max" | "pow" | "step" => componentwise(2),
         "clamp" | "smoothstep" => componentwise(3),
         "smootherstep" | "loft_dsmoothstep" | "loft_dsmootherstep" => {
@@ -1179,7 +1304,7 @@ fn builtin(name: &str, ts: &[Ty], sp: &[Span], span: Span) -> Res<Ty> {
                 Ty::VecN(_) | Ty::F32 => Ok(Ty::F32),
                 Ty::Geo(g, _) if vec_like(*g) => Ok(Ty::F32),
                 Ty::Geo(Pt, s) => Err(e104(sp[0], format!("`length` of a point in `{s}`"), "subtract an origin: `length(p - o)`")),
-                other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::AbstractInt | other @ Ty::Geo(..) | other @ Ty::Xform(..) | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Frame(_) | other @ Ty::Table(_) | other @ Ty::Verdict | other @ Ty::Id(_) | other @ Ty::Bsdf => Err(e003(sp[0], format!("`length` of `{other}`"), "pass a vector")),
+                other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::AbstractInt | other @ Ty::Geo(..) | other @ Ty::Xform(..) | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Frame(_) | other @ Ty::Table(_) | other @ Ty::Verdict | other @ Ty::Struct(_) | other @ Ty::Id(_) | other @ Ty::Bsdf => Err(e003(sp[0], format!("`length` of `{other}`"), "pass a vector")),
             }
         }
         "distance" => {
@@ -1209,7 +1334,7 @@ fn builtin(name: &str, ts: &[Ty], sp: &[Span], span: Span) -> Res<Ty> {
                 Ty::VecN(n) => Ok(Ty::VecN(*n)),
                 Ty::Geo(Norm, s) => Ok(Ty::Geo(Norm, s.clone())),
                 Ty::Geo(g, s) if vec_like(*g) => Ok(Ty::Geo(Dir, s.clone())),
-                other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::F32 | other @ Ty::AbstractInt | other @ Ty::Geo(..) | other @ Ty::Xform(..) | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Frame(_) | other @ Ty::Table(_) | other @ Ty::Verdict | other @ Ty::Id(_) | other @ Ty::Bsdf => Err(e104(sp[0], format!("`normalize` of `{other}`"), "normalize a Vec")),
+                other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::F32 | other @ Ty::AbstractInt | other @ Ty::Geo(..) | other @ Ty::Xform(..) | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Frame(_) | other @ Ty::Table(_) | other @ Ty::Verdict | other @ Ty::Struct(_) | other @ Ty::Id(_) | other @ Ty::Bsdf => Err(e104(sp[0], format!("`normalize` of `{other}`"), "normalize a Vec")),
             }
         }
         "inv" => match ts {

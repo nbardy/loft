@@ -1,46 +1,49 @@
-//! Frame budgets use device timestamps, including when running without a window.
+//! Exit statuses shared by the CLI operations and their instruments.
 use loft_runner::{Gpu, Loaded};
-use std::path::Path;
 
-pub struct Failure(pub u8, pub String);
+#[derive(Debug)]
+pub enum Failure {
+    Compile(String),
+    Truth(String),
+    Parity(String),
+    Load(String),
+    Usage(String),
+    Device(String),
+    Budget(String),
+}
+
+impl Failure {
+    pub fn exit(self) -> (u8, String) {
+        match self {
+            Self::Compile(e) => (1, e),
+            Self::Truth(e) => (2, e),
+            Self::Parity(e) => (3, e),
+            Self::Load(e) => (4, e),
+            Self::Usage(e) => (5, e),
+            Self::Device(e) => (6, e),
+            Self::Budget(e) => (7, e),
+        }
+    }
+}
 
 pub fn timestamps(available: bool) -> Result<(), Failure> {
     if available {
         Ok(())
     } else {
-        Err(Failure(
-            6,
-            "adapter does not support timestamp queries required for a GPU frame budget".into(),
-        ))
+        Err(Failure::Device("adapter does not support GPU timestamps".into()))
     }
 }
 
-pub fn check(g: &Gpu, scene: &Path, set: &[(String, f64)], budget: f64) -> Result<(), Failure> {
-    let src = crate::sources(scene).map_err(|e| Failure(5, e))?;
-    let (program, _, _) =
-        loft_passes::compile(&src, set).map_err(|d| Failure(1, d.render(&src)))?;
-    let loaded = Loaded::new(g, &program, (1280, 800), None).map_err(|e| Failure(6, e))?;
-    let mut samples = vec![];
-    for i in 0..90 {
-        loaded.frame(g, i as f32 / 60.);
-        let (ms, _) = loaded
-            .gpu_ms(g)
-            .map_err(|e| Failure(6, e))?
-            .ok_or_else(|| Failure(6, "GPU timestamps are unavailable".into()))?;
-        if i >= 30 {
-            samples.push(ms);
-        }
-    }
-    samples.sort_by(f64::total_cmp);
-    let p95 = samples[((samples.len() - 1) as f64 * 0.95).round() as usize];
-    if p95 > budget {
-        Err(Failure(
-            7,
-            format!("GPU p95 {p95:.3} ms exceeds {budget:.3} ms"),
-        ))
-    } else {
-        println!("GPU p95 {p95:.3} ms <= {budget:.3} ms");
+/// Measure the frame the command submitted, before attempting to read its pixels.
+pub fn check(g: &Gpu, loaded: &Loaded, budget: f64) -> Result<(), Failure> {
+    timestamps(g.timestamps)?;
+    let (ms, _) = loaded.gpu_ms(g).map_err(Failure::Device)?
+        .ok_or_else(|| Failure::Device("GPU timestamps are unavailable".into()))?;
+    if ms.is_finite() && ms <= budget {
+        println!("GPU frame {ms:.3} ms <= {budget:.3} ms");
         Ok(())
+    } else {
+        Err(Failure::Budget(format!("GPU frame {ms:.3} ms exceeds {budget:.3} ms")))
     }
 }
 
@@ -48,7 +51,6 @@ pub fn check(g: &Gpu, scene: &Path, set: &[(String, f64)], budget: f64) -> Resul
 mod tests {
     #[test]
     fn missing_timestamps_are_an_environment_failure() {
-        let failure = super::timestamps(false).err().unwrap();
-        assert_eq!(failure.0, 6);
+        assert_eq!(super::timestamps(false).unwrap_err().exit().0, 6);
     }
 }

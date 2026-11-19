@@ -1,15 +1,35 @@
 # /// script
-# dependencies = ["lark==1.3.1"]
+# dependencies = ["lark==1.3.1", "llguidance==1.9.1"]
 # ///
 """Independent acceptance test of the decoding grammar, with the two lexer rules in §06.A.4."""
 from pathlib import Path
 import re
 import sys
 from lark import Lark, UnexpectedInput
+from llguidance import LLMatcher, LLParserLimits, LLTokenizer, TokenizerWrapper
 
 ROOT = Path(__file__).resolve().parents[1]
-GRAMMAR = Lark((ROOT / "grammar/loft.lark").read_text(), parser="earley")
-TOKEN = re.compile(r'"(?:[^"\\]|\\.)*"|\#[^\n]*|\r?\n|[ \t]+|[\w]+|::|\|>|==|!=|<=|>=|&&|\|\||->|\S')
+GRAMMAR_TEXT = (ROOT / "grammar/loft.lark").read_text()
+GRAMMAR = Lark(GRAMMAR_TEXT, parser="earley")
+
+
+class ByteVocabulary:
+    # Byte-complete vocabulary makes this probe independent of tokenizer downloads.
+    tokens = [bytes([i]) for i in range(256)] + [b"<eos>"]
+    eos_token_id = 256
+    bos_token_id = None
+    special_token_ids = [eos_token_id]
+
+    def __call__(self, data):
+        return list(data)
+
+
+TOKENIZER = LLTokenizer(TokenizerWrapper(ByteVocabulary()))
+DECODER_GRAMMAR = LLMatcher.grammar_from_lark(GRAMMAR_TEXT)
+DECODER_LIMITS = LLParserLimits(step_max_items=1_000_000, verbose_errors=False)
+TOKEN = re.compile(r'"(?:[^"\\]|\\.)*"|\#[^\n]*|\r?\n|[ \t]+|[\w]+|::|\|>|==|!=|<=|>=|&&|\|\||->|\.\.|\S')
+UNIT = r"(?:mm|m|rad|deg|s|kg|N|J|Hz)(?:\^-?[0-9]+)?"
+UNIT_END = re.compile(rf"([0-9](?:{UNIT})(?:[*/]{UNIT})*)([*/])(?=({UNIT})[A-Za-z_0-9])")
 CONTINUE = set("+ - * / % == != < <= > >= && || , = |>".split())
 
 
@@ -62,23 +82,43 @@ def lexical_input(source):
         else:
             depth += int(t in {"(", "["}) - int(t in {")", "]"})
             i += 1
-            result.append(t)
-    return "".join(result)
+            result.append(" .. " if t == ".." else t)
+    # The decoder regex has no lookaround. Force an operator boundary when
+    # the following whole identifier merely starts with a unit (m/sin).
+    return UNIT_END.sub(r"\1 \2 ", "".join(result))
+
+
+def accepts(source):
+    source = lexical_input(source)
+    try:
+        GRAMMAR.parse(source)
+        earley = True
+    except UnexpectedInput:
+        earley = False
+    decoder = LLMatcher(TOKENIZER, DECODER_GRAMMAR, limits=DECODER_LIMITS)
+    if decoder.is_error():
+        raise ValueError(decoder.get_error())
+    tokens = TOKENIZER.tokenize_str(source.lstrip(" \t"))
+    rejected = next((i for i, token in enumerate(tokens) if not decoder.consume_token(token)), None)
+    return earley, rejected is None and decoder.is_accepting(), rejected
 
 
 def main():
-    files = list(map(Path, sys.argv[1:])) or sorted(
-        f for folder in ("lib", "engines", "agent_notes/2026-11-20_meta/v1_syntax")
-        for f in (ROOT / folder).rglob("*.loft"))
+    files = list(map(Path, sys.argv[1:]))
+    fixtures = ROOT / "crates/loft-parse/tests/fixtures"
+    if not files:
+        files = sorted(
+            f for folder in ("lib", "engines", "agent_notes/2026-11-20_meta/v1_syntax")
+            for f in (ROOT / folder).rglob("*.loft")
+        ) + [fixtures / "review-accept.loft", fixtures / "review-reject.loft"]
     failed = 0
     for path in files:
-        source = lexical_input(path.read_text())
-        try:
-            GRAMMAR.parse(source)
-        except UnexpectedInput as err:
+        expected = path.name != "review-reject.loft"
+        earley, decoder, rejected = accepts(path.read_text())
+        if (earley, decoder) != (expected, expected):
             failed += 1
-            print(f"{path}:{err.line}:{err.column}\n{err.get_context(source)}")
-    print(f"{len(files)-failed}/{len(files)} files accepted")
+            print(f"{path}: wanted {expected}, Earley={earley}, llguidance={decoder} (byte {rejected})")
+    print(f"{len(files)-failed}/{len(files)} files gave their expected result in Earley and llguidance")
     return bool(failed)
 
 

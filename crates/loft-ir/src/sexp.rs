@@ -67,8 +67,13 @@ pub fn read(text: &str) -> Result<Program, String> {
             return Err("invalid instance; restore its kind and row indices".into());
         }
     }
-    for step in &p.motion {
-        if step.kind >= p.kinds.len() || step.fields.is_empty() && step.checks.is_empty() {
+    for step in &p.dispatches {
+        let valid_table = step.input.view(&p.kinds).is_some_and(|(_, n, stride, words)| {
+            n != 0 && stride != 0 && u64::from(n) * u64::from(stride) == words.len() as u64
+        });
+        let valid_entry = p.modules.get(step.module).is_some_and(|m| m.naga.entry_points.iter().any(|e|
+            e.name == step.entry && e.stage == naga::ShaderStage::Compute && e.workgroup_size == [step.workgroup_x, 1, 1]));
+        if !valid_table || !valid_entry || step.fields.is_empty() && step.checks.is_empty() {
             return Err(
                 "invalid motion entry; supply an existing kind and its writes or checks".into(),
             );
@@ -104,7 +109,7 @@ mod tests {
         let shader =
             "// secret author comment\n@compute @workgroup_size(1) fn main() { let x = 2u; }";
         let p = Program {
-            motion: vec![],
+            dispatches: vec![],
             modules: vec![ShaderModule {
                 origins: vec![],
                 name: "example".into(),
@@ -122,8 +127,7 @@ mod tests {
                 fov: 1.,
             },
             sun: [0.; 3],
-            sun_color: [1.; 3],
-            sky: None,
+            params: vec![],
             shadow_size: 0,
             luts: vec![],
             passes: vec![Pass::Cull],

@@ -202,3 +202,63 @@ fn branch_cannot_hide_a_row_divisor() {
         .replace("pose: xf@Body>World)", "pose: xf@Body>World, scale: f = 1)");
     expect(Code::E211, &scene);
 }
+
+#[test]
+fn row_declarations_resolve_outside_the_emit_scope() {
+    let src = "const minimum = 1.0\n".to_owned() + &kind("", OK_TRACE, OK_MATERIAL)
+        .replace("pose: xf@Body>World)", "pose: xf@Body>World, scale: f > minimum = minimum + 1)");
+    let shadow = src.replace("build { emit", "build { let minimum = -1.0; emit");
+    assert!(compile(&shadow).is_ok(), "the default uses the module minimum");
+    expect(Code::E602, &shadow.replace("emit K(pose:", "emit K(scale: minimum + 1, pose:"));
+}
+
+#[test]
+fn row_division_preserves_dependencies_across_constants() {
+    let src = "const offset = 1.0\n".to_owned() + &kind("", "sphere(q - [0,0,0]@Body, 0.5) / (scale - offset)", OK_MATERIAL)
+        .replace("pose: xf@Body>World)", "pose: xf@Body>World, scale: f = 2)");
+    expect(Code::E211, &src);
+    assert!(compile(&src.replace("scale: f =", "scale: f > offset =")).is_ok());
+}
+
+#[test]
+fn checks_top_level_payloads_and_aliases() {
+    let src = "struct Sample { value: Distance, count: u }\ntype Distance = f\nfn sample(s: Sample) -> Distance = s.value\n".to_owned()
+        + &kind("", OK_TRACE, OK_MATERIAL).replace("pose: xf@Body>World)", "pose: xf@Body>World, x: Distance = 0.5)");
+    assert!(compile(&src).is_ok());
+    expect(Code::E011, &src.replace("type Distance = f", "type Distance = Sample"));
+    expect(Code::E011, &src.replace("s.value", "s.missing"));
+    expect(Code::E011, &src.replace("count: u", "value: u"));
+}
+
+#[test]
+fn e403_stage_requirements_follow_pure_calls_and_constants() {
+    let src = "fn clock_now() -> f = time\nconst stamp: f = clock_now()\nfn wrapped() -> f = stamp\n".to_owned()
+        + &kind("", OK_TRACE, OK_MATERIAL).replace("build { emit", "build { let n = wrapped(); emit");
+    expect(Code::E403, &src);
+    assert!(compile(&src.replace("= time", "= 2.0")).is_ok());
+}
+
+#[test]
+fn space_polymorphic_material_and_kind_local_calls_lower() {
+    let first = kind("", "local(q)", "chitin(q, n)")
+        .replace("  trace(q)", "  fn local(q: p3@Body) -> f = loft_rot_y(q)\n  trace(q)");
+    let second = kind("", OK_TRACE, "chitin(q, n)").replace("space World Body", "space Other").replace("Body", "Other").replace("kind K ", "kind Second ").replace("emit K(", "emit Second(");
+    let src = format!("fn chitin(p, n) = ggx(rgb(0.5 + p.x * n.x), 0.5, 0)\nfn loft_rot_y(q: p3@Body) -> f = sphere(q - [0,0,0]@Body, 0.5)\n{first}\n{second}");
+    if let Err((_, text)) = compile(&src) { panic!("{text}"); }
+}
+
+#[test]
+fn implied_schedule_ignores_unpopulated_kinds_and_resolves_imports() {
+    let src = kind("", OK_TRACE, OK_MATERIAL);
+    let unused = "\nkind Ball @World () { trace(q) = sphere(q - [0,0,0]@World, 0.2); material(q,n) = ggx(rgb(1), 0.5, 0) }";
+    assert!(compile(&format!("{src}{unused}")).is_ok());
+    expect(Code::E011, &format!("use fake::lighting::*\n{src}"));
+    expect(Code::E505, &format!("{src}\nschedule Main {{ pass late reads [NeverWritten] writes [Other] {{ compute(entry: op) }} }}"));
+}
+
+#[test]
+fn bracketed_if_expression_scopes_branch_locals() {
+    let src = "fn choose(x: f) -> f = max(0, if x < 0 { let v = -x; v } else if x > 1 { let v = 2.0; v } else { x })\n".to_owned()
+        + &kind("", OK_TRACE, "ggx(rgb(choose(q.x)), 0.5, 0)");
+    if let Err((_, text)) = compile(&src) { panic!("{text}"); }
+}

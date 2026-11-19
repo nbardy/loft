@@ -255,7 +255,6 @@ fn render(
 impl Loaded {
     /// Builds every GPU object for `p` at `size`. `nonce` (any value but `u32::MAX`) forces a cold driver compile.
     pub fn new(g: &Gpu, p: &Program, size: (u32, u32), nonce: Option<u32>) -> Result<Loaded, String> {
-        if !p.motion.is_empty(){return Err("sample the scheduled motion and derive its current bounds before loading the still".into())}
         let d = &g.device;
         let nonce = nonce.unwrap_or(u32::MAX);
         let k_n = p.kinds.len();
@@ -285,7 +284,7 @@ impl Loaded {
         let bgl_present =
             layout(d, "present", &[(FS, texture(wgpu::TextureSampleType::Float { filterable: false })), (FS, texture(wgpu::TextureSampleType::Uint))]);
         // The disk pipeline cache, where the backend has one (see `gpu`).
-        let cache_path = g.cache_key.as_ref().map(|k| std::path::Path::new("out/meta/pipeline_cache").join(k));
+        let cache_path = g.cache_key.as_ref().map(|k| std::path::Path::new("out/meta/pipeline_cache").join(k).with_extension(format!("{nonce}.bin")));
         let cache_data = cache_path.as_ref().and_then(|p| std::fs::read(p).ok());
         stats.cache_bytes = cache_data.as_ref().map_or(0, Vec::len);
         // Unsafe by wgpu's contract: the bytes must come from `get_data` on a compatible adapter. They do (the file name
@@ -346,12 +345,10 @@ impl Loaded {
         let t = Instant::now();
         use wgpu::BufferUsages as U;
         let frame_buf = buffer(d, "frame", abi::FRAME_BYTES, U::UNIFORM | U::COPY_DST);
-        let [zenith,horizon]=p.sky.unwrap_or([[0.16,0.29,0.55],[0.48,0.55,0.64]]);
-        let inputs=buffer(d,"empty input table",16,U::STORAGE);
-        let environment=buffer(d,"sun and sky parameters",48,U::STORAGE|U::COPY_DST);
-        let mut colors=vec![];for color in [p.sun_color,zenith,horizon]{colors.extend(color);colors.push(0.)}
-        g.queue.write_buffer(&environment,0,&f32_bytes(&colors));
-        let g0 = bind(d, &bgl0, &[frame_buf.as_entire_binding(),inputs.as_entire_binding(),environment.as_entire_binding()]);
+        let inputs = buffer(d, "empty input table", 16, U::STORAGE);
+        let params = buffer(d, "parameters", (p.params.len() as u64 * 4).max(16), U::STORAGE | U::COPY_DST);
+        if !p.params.is_empty() { g.queue.write_buffer(&params, 0, &f32_bytes(&p.params)); }
+        let g0 = bind(d, &bgl0, &[frame_buf.as_entire_binding(), inputs.as_entire_binding(), params.as_entire_binding()]);
         let n_inst = p.instances.len() as u32;
         let mut inst = vec![];
         let mut bases = vec![];
@@ -449,7 +446,7 @@ impl Loaded {
         let bundle = be.finish(&wgpu::RenderBundleDescriptor { label: Some("vis64") });
         let shadow = (p.shadow_size > 0).then(|| {
             let frame_buf = buffer(d, "sun frame", abi::FRAME_BYTES, U::UNIFORM | U::COPY_DST);
-            let g0s = bind(d, &bgl0, &[frame_buf.as_entire_binding(),inputs.as_entire_binding(),environment.as_entire_binding()]);
+            let g0s = bind(d, &bgl0, &[frame_buf.as_entire_binding(),inputs.as_entire_binding(),params.as_entire_binding()]);
             let mut be = d.create_render_bundle_encoder(&wgpu::RenderBundleEncoderDescriptor {
                 label: Some("sun"),
                 color_formats: &[Some(VIS)],

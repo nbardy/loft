@@ -32,6 +32,8 @@ pub struct Prog<'a> {
     pub kind_order: Vec<&'a str>,
     pub consts: BTreeMap<&'a str, &'a ConstDecl>,
     pub spaces: HashSet<&'a str>,
+    pub structs: BTreeMap<&'a str, (&'a Ident, &'a [RowField])>,
+    pub aliases: BTreeMap<&'a str, (&'a Ident, &'a TyExpr)>,
     pub units: HashSet<&'a str>,
     pub scans: BTreeMap<&'a str, &'a ScanDecl>,
     pub schedule: Option<&'a ScheduleDecl>,
@@ -47,6 +49,8 @@ impl<'a> Prog<'a> {
             kind_order: vec![],
             consts: BTreeMap::new(),
             spaces: HashSet::new(),
+            structs: BTreeMap::new(),
+            aliases: BTreeMap::new(),
             units: HashSet::new(),
             scans: BTreeMap::new(),
             schedule: None,laws:BTreeMap::new(),checks:BTreeMap::new(),
@@ -69,9 +73,24 @@ impl<'a> Prog<'a> {
                         }
                     }
                 }
-                Item::Use(_) | Item::Camera(_) => {}
+                Item::Use(path) => {
+                    let parts: Vec<_> = path.iter().map(|n| n.name.as_str()).collect();
+                    if !matches!(parts.as_slice(), ["std", "geom" | "light" | "math" | "color" | "noise"] | ["engines", "realtime"]) {
+                        let span = path.first().unwrap().span.to(path.last().unwrap().span);
+                        return Err(Diag::new(Code::E011, span, format!("unresolved import {}", parts.join("::")), "use a module supplied by the loaded prelude"));
+                    }
+                }
+                Item::Camera(_) => {}
                 Item::Law(l)=>{name(&l.f.name)?;p.laws.insert(&l.f.name.name,l);}
                 Item::Check(f)=>{name(&f.name)?;p.checks.insert(&f.name.name,f);}
+                Item::Struct(n, fields) => {
+                    name(n)?;
+                    p.structs.insert(&n.name, (n, fields));
+                }
+                Item::TypeAlias(n, ty) => {
+                    name(n)?;
+                    p.aliases.insert(&n.name, (n, ty));
+                }
                 Item::Unit(n) => {
                     name(n)?;
                     p.units.insert(&n.name);
@@ -105,6 +124,14 @@ impl<'a> Prog<'a> {
         Ok(p)
     }
 
+    fn continuous_params(&self) -> impl Iterator<Item = (&str, &ConstDecl)> {
+        self.consts.iter().filter(|(_, c)| c.comptime && matches!(&c.ty, Some(TyExpr::Name(n)) if n.name == "f32")).map(|(&name, &c)| (name, c))
+    }
+
+    fn param_slot(&self, name: &str) -> Option<usize> {
+        self.continuous_params().position(|(key, _)| key == name).map(|i| 3 + i)
+    }
+
     pub fn kind_index(&self, name: &str) -> usize {
         self.kind_order.iter().position(|k| *k == name).expect("checked kind")
     }
@@ -114,22 +141,46 @@ impl<'a> Prog<'a> {
 pub fn parse_all(src: &Sources) -> Res<Vec<Module>> {
     let mut next = 0;
     let mut modules = src.files.iter().enumerate().map(|(i, (_, text))| parse::parse(i as u16, text, &mut next)).collect::<Res<Vec<_>>>()?;
-    // The exact-SDF rules certify these specific library bodies. An edited library
-    // goes through ordinary interval evaluation, including edits to their callees.
-    for (module,(_,text)) in modules.iter_mut().zip(&src.files) {
-        if blake3::hash(text.as_bytes()).to_hex().as_str() != "05ede07bbdd154e997c131f4058bb36b529266032a2128ac350d4b22fae98b4b" {continue;}
-        for item in &mut module.items {
-            let Item::Fn(f)=item else {continue};
-            let sp=f.name.span;
-            let make=|name:&str,next:&mut u32|{let id=*next;*next+=1;Expr{id,span:sp,kind:ExprKind::Name(name.into())}};
-            let ax=match f.name.name.as_str(){
-                "sphere"|"round_box"|"box_sdf"=>make("v",&mut next),
-                "capsule"=>make("p",&mut next),
-                "smin"|"ssub"=>{let args=["a","b"].map(|n|Arg{name:None,value:make(n,&mut next)}).to_vec();next+=1;Expr{id:next-1,span:sp,kind:ExprKind::Call{callee:Ident{name:"max".into(),span:sp},args}}},
-                _=>continue,
-            };
-            f.attrs.push(Attr{name:Ident{name:"lipschitz".into(),span:sp},args:vec![ax]});
+    // Certify the normalized function and the actual resolved call closure. A
+    // comment or a different function in the same file has no bearing on it.
+    let certified = {
+        let p = Prog::index(&modules)?;
+        let mut certified = HashSet::new();
+        for (name, hash) in [
+            ("box_sdf", "103768bf7d29ffc6232109015b9f5dc3419951aeba89bac263e4b8bbf2c22035"),
+            ("capsule", "d5969ede3cb6b897e19919fe25668130e063e5649a1287d6e2480e5e0113e261"),
+            ("round_box", "f34d6300722e78c429d9810a41bb4b0f5c4ded1b2e05f5fbfab8acc926fa05c9"),
+            ("smin", "90337285c51e676a04494e72cd5c0e7249e39f241ac12d77d4efa91c433117ca"),
+            ("sphere", "f8de200152a8ad78550c80e959ea5d93e4bd9e0e4921063373e07fbaf5368add"),
+            ("ssub", "0c3786ccda1d02f6cd30c6fca3cfb2645161b4365f2208a09f953edf00650697"),
+        ] {
+            if let Some(f) = p.fns.get(name) && cache::certificate(&p, f)? == hash {
+                certified.insert(f.name.span);
+            }
         }
+        certified
+    };
+    for item in modules.iter_mut().flat_map(|m| &mut m.items) {
+        let Item::Fn(f) = item else { continue };
+        let sp = f.name.span;
+        if !certified.contains(&sp) { continue; }
+        let make = |name: &str, next: &mut u32| {
+            let id = *next;
+            *next += 1;
+            Expr { id, span: sp, kind: ExprKind::Name(name.into()) }
+        };
+        let ax = match f.name.name.as_str() {
+            "sphere" | "round_box" | "box_sdf" => make("v", &mut next),
+            "capsule" => make("p", &mut next),
+            "smin" | "ssub" => {
+                let args = ["a", "b"].map(|n| Arg { name: None, value: make(n, &mut next) }).to_vec();
+                let id = next;
+                next += 1;
+                Expr { id, span: sp, kind: ExprKind::Call { callee: Ident { name: "max".into(), span: sp }, args } }
+            }
+            _ => unreachable!("known certified function"),
+        };
+        f.attrs.push(Attr { name: Ident { name: "lipschitz".into(), span: sp }, args: vec![ax] });
     }
     defaults::schedule(&mut modules,&mut next)?;
     infer::run(&mut modules)?;
@@ -163,6 +214,10 @@ pub fn pose_field(k: &KindDecl) -> Option<usize> {
 fn geometry_fields(k: &KindDecl) -> Vec<usize> {
     fn walk(e: &Expr, out: &mut Vec<String>) {
         match &e.kind {
+            ExprKind::If { condition, then, otherwise } => {
+                walk(condition, out);
+                for arm in [then, otherwise] { block(&arm.body, out); walk(&arm.value, out); }
+            }
             ExprKind::Member(b, m) => {
                 if matches!(&b.kind, ExprKind::Name(n) if n == "self") {
                     out.push(m.name.clone());
@@ -227,6 +282,7 @@ pub struct KindReport {
     pub l_min: f64,
     pub l_max: f64,
     pub evals: u64,
+    pub cache_hits: usize,
     pub draw: Draw,
 }
 
@@ -356,21 +412,30 @@ fn arg<'e>(pd: &'e PassDecl, name: &str) -> Res<&'e Expr> {
 
 /// The kind names among a pass's positional arguments.
 fn kind_args<'p>(p: &Prog<'p>, pd: &PassDecl) -> Res<Vec<&'p str>> {
-    pd.args
-        .iter()
-        .filter(|a| a.name.is_none())
-        .map(|a| match &a.value.kind {
-            ExprKind::Name(n) => p.kinds.get(n.as_str()).map(|k| k.name.name.as_str()).ok_or_else(|| Diag::new(Code::E011, a.value.span, format!("unknown kind `{n}`"), "declare the kind")),
-            _ => Err(Diag::new(Code::E520, a.value.span, format!("`{}` takes kind names", pd.verb.name), "write the kind's name")),
-        })
-        .collect()
+    let mut kinds = vec![];
+    for a in pd.args.iter().filter(|a| a.name.is_none()) {
+        let ExprKind::Name(n) = &a.value.kind else {
+            return Err(Diag::new(Code::E011, a.value.span, "expected kind name", "name a declared drawable kind"));
+        };
+        if a.value.span.file == Span::NONE.file && matches!(n.as_str(), "Drawables" | "Casters") {
+            kinds.extend(p.kind_order.iter().copied().filter(|k| {
+                let kind = p.kinds[k];
+                !kind.queries.is_empty() && (n == "Drawables" || pose_field(kind).is_some())
+            }));
+        } else if let Some((&name, _)) = p.kinds.get_key_value(n.as_str()) {
+            kinds.push(name);
+        } else {
+            return Err(Diag::new(Code::E011, a.value.span, format!("unknown kind {n}"), "name a declared drawable kind"));
+        }
+    }
+    Ok(kinds)
 }
 
 fn fn_name_arg<'e>(p: &Prog, pd: &'e PassDecl, name: &str) -> Res<&'e str> {
     let e = arg(pd, name)?;
     match &e.kind {
         ExprKind::Name(n) if p.fns.contains_key(n.as_str()) => Ok(n),
-        ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Call { .. } | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => Err(Diag::new(Code::E011, e.span, format!("`{name}:` names a library fn"), "write the fn's name, e.g. `sky: sky_color`")),
+        ExprKind::If { .. } | ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Call { .. } | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => Err(Diag::new(Code::E011, e.span, format!("`{name}:` names a library fn"), "write the fn's name, e.g. `sky: sky_color`")),
     }
 }
 
@@ -440,12 +505,20 @@ pub fn front(src: &Sources) -> Res<(Vec<Module>, Vec<Ty>)> {
 }
 
 pub fn compile(src: &Sources, overrides: &[(String, f64)]) -> Res<(Program, Report, Compiled)> {
-    compile_snapshot(src,overrides,&[])
+    compile_cached(src, overrides, std::path::Path::new("target/loft_cache"))
+}
+
+pub fn compile_cached(src: &Sources, overrides: &[(String, f64)], cache: &std::path::Path) -> Res<(Program, Report, Compiled)> {
+    compile_impl(src, overrides, &[], cache)
 }
 
 /// Re-derive local bounds and pack the sampled pose before drawing a requested
 /// still. The render path never culls an animated row against its time-zero box.
 pub fn compile_snapshot(src:&Sources,overrides:&[(String,f64)],samples:&[loft_ir::program::MotionSample])->Res<(Program,Report,Compiled)> {
+    compile_impl(src, overrides, samples, std::path::Path::new("target/loft_cache"))
+}
+
+fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[loft_ir::program::MotionSample], cache: &std::path::Path) -> Res<(Program, Report, Compiled)> {
     let mut ms = vec![];
     let mut clock = Instant::now();
     let mut lap = |name: &'static str, ms: &mut Vec<(&'static str, f64)>| {
@@ -490,12 +563,20 @@ pub fn compile_snapshot(src:&Sources,overrides:&[(String,f64)],samples:&[loft_ir
     let sched = p.schedule.ok_or_else(|| Diag::new(Code::E520, Span::NONE, "the program has no `schedule`", "add `schedule Main { ... }` to the scene"))?;
     let mut rows_fns: Vec<&FnDecl> = modules.iter().flat_map(|m| &m.items).filter_map(|i| if let Item::Build(f)=i {Some(f)}else{None}).collect();
     let (mut camera, mut sun, mut light, mut sky) = (None, None, None, None);
-    let (mut passes, mut verbs) = (vec![], vec![]);
+    let mut passes = vec![];
     let mut drawn: Vec<&str> = vec![];
     let mut culled: Vec<&str> = vec![];
     let mut casters: Vec<&str> = vec![];
     let mut shadow_size = 0u32;
+    let mut available: HashSet<&str> = ["FrameUniform", "InputsBuf", "ParamsBuf", "RowTables", "LutTables", "BodyTables", "StateBuf", "PoseBuf"].into_iter().collect();
     for pd in &sched.passes {
+        if let Some(resources) = &pd.resources {
+            if let Some(read) = resources.reads.iter().find(|r| !available.contains(r.name.as_str())) {
+                return Err(Diag::new(Code::E505, read.span, format!("{} read before it was written", read.name), "schedule its producer before this pass"));
+            }
+            // Generic compute/raster entry and bind-group lowering are Step 0 work.
+            return Err(Diag::new(Code::E405, pd.label.span, "custom entry is outside this phase’s renderer", "use a supported schedule operation"));
+        }
         let verb = pd.verb.name.as_str();
         match verb {
             v if p.fns.get(v).is_some_and(|f| f.comptime) => {
@@ -522,7 +603,6 @@ pub fn compile_snapshot(src:&Sources,overrides:&[(String,f64)],samples:&[loft_ir
             "cull_indirect" => {
                 culled = kind_args(&p, pd)?;
                 passes.push(Pass::Cull);
-                verbs.push(pd);
             }
             "render_bundle" => {
                 if !matches!(pd.args.first().map(|a| &a.value.kind), Some(ExprKind::Name(n)) if n == "Vis64") {
@@ -532,7 +612,7 @@ pub fn compile_snapshot(src:&Sources,overrides:&[(String,f64)],samples:&[loft_ir
                     if call.name != "draw_indirect" {
                         return Err(Diag::new(Code::E520, call.span, format!("`{}` in a render bundle", call.name), "write `draw_indirect(Kind, ...)`"));
                     }
-                    let fake = PassDecl { label: pd.label.clone(), verb: call.clone(), args: args.iter().map(|a| Arg { name: None, value: clone_name(&a.value) }).collect(), body: vec![] };
+                    let fake = PassDecl { label: pd.label.clone(), verb: call.clone(), args: args.iter().map(|a| Arg { name: None, value: clone_name(&a.value) }).collect(), body: vec![], resources: None };
                     for k in kind_args(&p, &fake)? {
                         if let Some(prm) = p.kinds[k].params.first() {
                             return Err(Diag::new(Code::E405, prm.span, "kind variants are not lowered yet", "move the parameter into the row for now"));
@@ -541,17 +621,15 @@ pub fn compile_snapshot(src:&Sources,overrides:&[(String,f64)],samples:&[loft_ir
                     }
                 }
                 passes.push(Pass::Vis((0..drawn.len() as u32).collect()));
-                verbs.push(pd);
             }
             "find_shadow_map" => {
                 casters = kind_args(&p, pd)?;
                 let e = arg(pd, "size")?;
                 shadow_size = as_f32(stage0(&p, &mut types, e, overrides)?, e.span)? as u32;
-                if !(64..=8192).contains(&shadow_size) || casters.is_empty() {
+                if !(64..=8192).contains(&shadow_size) || (!sched.implicit && casters.is_empty()) {
                     return Err(Diag::new(Code::E520, pd.verb.span, "a shadow map needs casters and a size of 64 to 8192 texels", "write `find_shadow_map(Kind, ..., size: 1024u)`"));
                 }
                 passes.push(Pass::Shadow(vec![]));
-                verbs.push(pd);
             }
             "tile_classify" => {
                 let tile = arg(pd, "tile")?;
@@ -559,19 +637,16 @@ pub fn compile_snapshot(src:&Sources,overrides:&[(String,f64)],samples:&[loft_ir
                     return Err(Diag::new(Code::E405, tile.span, "tiles are 8x8", "write `tile: 8u`"));
                 }
                 passes.push(Pass::Classify);
-                verbs.push(pd);
             }
             "shade_tiles" => {
                 light = Some(fn_name_arg(&p, pd, "light")?);
                 let s = arg(pd, "sun")?;
                 sun = Some(as_v3(stage0(&p, &mut types, s, overrides)?, s.span)?);
                 passes.push(Pass::Shade(vec![]));
-                verbs.push(pd);
             }
             "tonemap_aces" => {
                 sky = Some(fn_name_arg(&p, pd, "sky")?);
                 passes.push(Pass::Present);
-                verbs.push(pd);
             }
             other => {
                 return Err(Diag::new(
@@ -582,28 +657,22 @@ pub fn compile_snapshot(src:&Sources,overrides:&[(String,f64)],samples:&[loft_ir
                 ));
             }
         }
-    }
-    let order: Vec<&str> = verbs.iter().map(|v| v.verb.name.as_str()).collect();
-    let want: Vec<&str> = GPU_ORDER.iter().copied().filter(|v| *v != "find_shadow_map" || shadow_size > 0).collect();
-    if order != want {
-        return Err(Diag::new(Code::E505, sched.name.span, format!("GPU passes {order:?} out of dependency order"), format!("write each once, in order: {}", GPU_ORDER.join(", "))));
-    }
-    let mut a = culled.clone();
-    let mut b = drawn.clone();
-    a.sort_unstable();
-    b.sort_unstable();
-    if a != b || drawn.is_empty() || drawn.len() > abi::MAX_KINDS {
-        return Err(Diag::new(Code::E520, sched.name.span, format!("cull lists {culled:?} but the bundle draws {drawn:?}"), "cull exactly the kinds the bundle draws (1 to 32)"));
-    }
-    let id_of = |k: &str| drawn.iter().position(|d| *d == k);
-    let caster_ids = casters.iter().map(|c| id_of(c).map(|i| i as u32).ok_or_else(|| Diag::new(Code::E520, sched.name.span, format!("shadow caster `{c}` is not drawn"), "cast shadows from drawn kinds"))).collect::<Res<Vec<_>>>()?;
-    let ids: Vec<u32> = (0..drawn.len() as u32).collect();
-    for pass in &mut passes {
-        match pass {
-            Pass::Shade(k) => *k = ids.clone(),
-            Pass::Shadow(k) => *k = caster_ids.clone(),
-            Pass::Cull | Pass::Vis(_) | Pass::Classify | Pass::Present => {}
+        let (reads, writes): (&[&str], &[&str]) = match verb {
+            "orbit" => (&["FrameUniform"], &["CameraSlot"]),
+            "run_laws" => (&["StateBuf", "RowTables"], &["PoseBuf"]),
+            "check" => (&["RowTables", "PoseBuf"], &["VerdictBuf"]),
+            "cull_indirect" => (&["CameraSlot"], &["IndirectBuf"]),
+            "render_bundle" => (&["IndirectBuf"], &["Vis64", "DepthBuf"]),
+            "find_shadow_map" => (&["IndirectBuf"], &["ShadowMap"]),
+            "tile_classify" => (&["Vis64"], &["TileLists"]),
+            "shade_tiles" => (&["Vis64", "DepthBuf", "TileLists"], &["ColorHdr"]),
+            "tonemap_aces" => (&["ColorHdr"], &["Swapchain"]),
+            _ => (&[], &[]),
+        };
+        if let Some(read) = reads.iter().find(|r| !available.contains(**r)) {
+            return Err(Diag::new(Code::E505, pd.verb.span, format!("{read} read before it was written"), "schedule its producer before this pass"));
         }
+        available.extend(writes);
     }
     let camera = camera.ok_or_else(|| Diag::new(Code::E520, sched.name.span, "no camera", "add `pass camera: orbit(at: ..., radius: ..., height: ..., period: ..., fov: ...);`"))?;
     let (light, sky, sun) = (light.expect("checked order"), sky.expect("checked order"), sun.expect("checked order"));
@@ -664,6 +733,7 @@ pub fn compile_snapshot(src:&Sources,overrides:&[(String,f64)],samples:&[loft_ir
             }
         }
     }
+    let authored_params = p.continuous_params().map(|(_, c)| as_f32(eval::concrete(&ev.module_expr(&c.value)?, c.name.span)?, c.name.span)).collect::<Res<Vec<_>>>()?;
     let tables = ev.tables;
     let environment=|kind:&str|->Res<Option<[[f32;3];2]>>{
         let Some(k)=p.kinds.get(kind) else{return Ok(None)};
@@ -675,9 +745,41 @@ pub fn compile_snapshot(src:&Sources,overrides:&[(String,f64)],samples:&[loft_ir
     };
     let sky_colors=environment("Sky")?;
     let sun_row=environment("Sun")?;
-    let environment_defined=[sky_colors.is_some(),sun_row.is_some()];
-    let [sun,sun_color]=sun_row.unwrap_or([sun,loft_ir::program::default_sun_color()]);
+    let [sun, sun_color] = sun_row.unwrap_or([sun, defaults::SUN_COLOR]);
+    let [zenith, horizon] = sky_colors.unwrap_or(defaults::SKY_COLORS);
+    let mut params: Vec<f32> = [sun_color, zenith, horizon].into_iter().zip([0., f32::from(sky_colors.is_some()), 0.])
+        .flat_map(|([r, g, b], flag)| [r, g, b, flag]).collect();
+    params.extend(authored_params.into_iter().flat_map(|x| [x, 0., 0., 0.]));
     lap("stage0", &mut ms);
+
+    if sched.implicit {
+        let populated = |k: &&str| !tables[p.kind_index(k)].is_empty();
+        culled.retain(populated);
+        drawn.retain(populated);
+        casters.retain(populated);
+        if casters.is_empty() {
+            shadow_size = 0;
+            passes.retain(|p| !matches!(p, Pass::Shadow(_)));
+        }
+    }
+    let mut a = culled.clone();
+    let mut b = drawn.clone();
+    a.sort_unstable();
+    b.sort_unstable();
+    if a != b || b.windows(2).any(|pair| pair[0] == pair[1]) || drawn.len() > abi::MAX_KINDS {
+        return Err(Diag::new(Code::E520, sched.name.span, format!("cull lists {culled:?} but the bundle draws {drawn:?}"), "cull each drawable kind once (up to 32)"));
+    }
+    let caster_ids = casters.iter().map(|c| {
+        drawn.iter().position(|d| d == c).map(|i| i as u32).ok_or_else(|| Diag::new(Code::E520, sched.name.span, format!("shadow caster `{c}` is not drawn"), "cast shadows from drawn kinds"))
+    }).collect::<Res<Vec<_>>>()?;
+    let ids: Vec<u32> = (0..drawn.len() as u32).collect();
+    for pass in &mut passes {
+        match pass {
+            Pass::Vis(k) | Pass::Shade(k) => *k = ids.clone(),
+            Pass::Shadow(k) => *k = caster_ids.clone(),
+            Pass::Cull | Pass::Classify | Pass::Present => {}
+        }
+    }
 
     // Derived bounds and L, once per distinct local shape: rows that differ only in pose (or in fields the geometry
     // never reads) share one derivation, so the count follows shapes, not instances (Phase 0 derived every row).
@@ -720,7 +822,7 @@ pub fn compile_snapshot(src:&Sources,overrides:&[(String,f64)],samples:&[loft_ir
                         iv.luts = luts;
                         group
                             .iter()
-                            .map(|&r| cache::derive(domain, &keys[shape_of[r]], k.name.span, || match (surface, trace) {
+                            .map(|&r| cache::derive(cache, domain, &keys[shape_of[r]], k.name.span, || match (surface, trace) {
                                 (Some(s), _) => lip::derive_surface(&mut iv, s, t, r, k.name.span),
                                 (None, Some(f)) => lip::derive(&mut iv, f, t, r, k.name.span),
                                 (None, None) => unreachable!("checked: trace or surface"),
@@ -778,6 +880,7 @@ pub fn compile_snapshot(src:&Sources,overrides:&[(String,f64)],samples:&[loft_ir
             l_min: lips.iter().copied().fold(f32::INFINITY, f32::min).into(),
             l_max: lips.iter().copied().fold(0.0, f32::max).into(),
             evals,
+            cache_hits: derived.iter().filter(|d| d.evals == 0).count(),
             draw,
         });
         let stride = (words.len() / rows.len()) as u32;
@@ -791,19 +894,50 @@ pub fn compile_snapshot(src:&Sources,overrides:&[(String,f64)],samples:&[loft_ir
         lut_refs.push(emit::LutRef { name: l.name.clone(), offset: off, n: l.frames.len() as u32, lo: l.lo, hi: l.hi });
         off += l.frames.len() as u32;
     }
-    let mut texts = vec![];
-    let mut motion=vec![];
-    for (id,(name, kt)) in drawn.iter().zip(&kinds).enumerate() {
-        let mut shader=emit::kind_module(&p, &types, p.kinds[*name], light, &lut_refs, kt.draw,environment_defined)?;
-        if let Some((entry,meta))=emit::motion_module(&p,&types,p.kinds[*name],id)?{
-            shader.push_str(&entry);
-            if samples.is_empty(){motion.push(meta);}
-        }
-        texts.push((name.to_string(),shader));
+    let mut texts = Vec::new();
+    for (name, kt) in drawn.iter().zip(&kinds) {
+        let shader = emit::kind_module(&p, &types, p.kinds[*name], light, &lut_refs, kt.draw)?;
+        texts.push((name.to_string(), shader));
     }
+    let mut dispatches = vec![];
+    if samples.is_empty() {
+        for &name in &p.kind_order {
+            use loft_ir::program::DispatchRows;
+            let kind = p.kinds[name];
+            let draw = drawn.iter().position(|&n| n == name);
+            let table = &tables[p.kind_index(name)];
+            let output = || {
+                if let Some(draw) = draw {
+                    return Ok((draw, DispatchRows::Drawable(draw)));
+                }
+                if table.is_empty() {
+                    return Err(Diag::new(Code::E602, kind.name.span, "scheduled table has no rows", "emit a row or remove its scheduled operation"));
+                }
+                let mut words = vec![];
+                for row in table {
+                    pack(row, &mut words);
+                    words.extend([0.; abi::HIDDEN_WORDS as usize]);
+                }
+                Ok((texts.len(), DispatchRows::Table {
+                    name: name.into(), n_rows: table.len() as u32, stride: (words.len() / table.len()) as u32, words,
+                }))
+            };
+            if let Some((entry, dispatch)) = emit::motion_module(&p, &types, kind, output)? {
+                if let Some(draw) = draw {
+                    texts[draw].1.push_str(&entry);
+                } else {
+                    let mut kernel = emit::table_module(&p, &types, kind);
+                    kernel.push_str(&entry);
+                    texts.push((name.into(), kernel));
+                }
+                dispatches.push(dispatch);
+            }
+        }
+    }
+    let shared = texts.len();
     texts.push(("cull".into(), emit::cull_module()));
     texts.push(("classify".into(), emit::classify_module()));
-    texts.push(("present".into(), emit::present_module(&p, &types, sky,environment_defined)));
+    texts.push(("present".into(), emit::present_module(&p, &types, sky)));
     lap("emit", &mut ms);
     let shader_modules = texts.into_iter().map(|(n,w)| {
         let mut m=naga_module(&n,w,src)?;
@@ -812,20 +946,19 @@ pub fn compile_snapshot(src:&Sources,overrides:&[(String,f64)],samples:&[loft_ir
     }).collect::<Res<Vec<_>>>()?;
     lap("naga", &mut ms);
 
-    let n = drawn.len();
     let program = Program {
-        motion,
+        dispatches,
         modules: shader_modules,
         kinds,
         instances,
         camera,
-        sun, sun_color,sky:sky_colors,
+        sun, params,
         shadow_size,
         luts: luts.iter().flat_map(|l| l.frames.iter().flatten().copied()).collect(),
         passes,
-        cull: n,
-        classify: n + 1,
-        present: n + 2,
+        cull: shared,
+        classify: shared + 1,
+        present: shared + 2,
     };
     let drawn_owned = drawn.iter().map(|d| (p.kind_index(d), d.to_string())).collect();
     drop(p);
@@ -836,7 +969,7 @@ pub fn compile_snapshot(src:&Sources,overrides:&[(String,f64)],samples:&[loft_ir
 fn clone_name(e: &Expr) -> Expr {
     let kind = match &e.kind {
         ExprKind::Name(n) => ExprKind::Name(n.clone()),
-        ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Call { .. } | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => ExprKind::Bool(false),
+        ExprKind::If { .. } | ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Call { .. } | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => ExprKind::Bool(false),
     };
     Expr { id: e.id, span: e.span, kind }
 }

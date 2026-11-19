@@ -13,6 +13,18 @@ pub fn sample_motion(g: &Gpu, p: &Program, seconds: f32) -> Result<Vec<MotionSam
     use wgpu::BufferUsages as U;
     let empty = layout(d, "empty", &[]);
     let empty_group = bind(d, &empty, &[]);
+    let params_layout = d.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("snapshot parameters"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 2, visibility: CS, ty: storage(true), count: None,
+        }],
+    });
+    let params = buffer(d, "parameters", (p.params.len() as u64 * 4).max(16), U::STORAGE | U::COPY_DST);
+    if !p.params.is_empty() { g.queue.write_buffer(&params, 0, &f32_bytes(&p.params)); }
+    let parameters = d.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("snapshot parameters"), layout: &params_layout,
+        entries: &[wgpu::BindGroupEntry { binding: 2, resource: params.as_entire_binding() }],
+    });
     let inputs = layout(d, "motion rows", &[(CS, storage(true))]);
     let outputs = layout(
         d,
@@ -23,18 +35,18 @@ pub fn sample_motion(g: &Gpu, p: &Program, seconds: f32) -> Result<Vec<MotionSam
     g.queue
         .write_buffer(&range, 0, &bytes_of(&[ticks, 0, 0, 0]));
     let mut samples = vec![];
-    for step in &p.motion {
-        let k = &p.kinds[step.kind];
-        let m = shader(d, &p.modules[k.module], u32::MAX);
+    for step in &p.dispatches {
+        let (name, n_rows, _, words) = step.input.view(&p.kinds).ok_or("dispatch input table is missing")?;
+        let m = shader(d, &p.modules[step.module], u32::MAX);
         let pipe = compute(
             d,
-            "advance",
-            &[&empty, &inputs, &empty, &outputs],
+            &step.entry,
+            &[&params_layout, &inputs, &empty, &outputs],
             &m,
-            "advance",
+            &step.entry,
             None,
         );
-        let words = f32_bytes(&k.rows);
+        let words = f32_bytes(words);
         let rows = buffer(
             d,
             "initial rows",
@@ -44,7 +56,7 @@ pub fn sample_motion(g: &Gpu, p: &Program, seconds: f32) -> Result<Vec<MotionSam
         g.queue.write_buffer(&rows, 0, &words);
         let inputs = bind(d, &inputs, &[rows.as_entire_binding()]);
         let width = step.fields.len() + step.checks.len();
-        let len = u64::from(k.n_rows) * width as u64 * 16;
+        let len = u64::from(n_rows) * width as u64 * 16;
         if len == 0 {
             return Err("motion entry requires an emitted row and a write or check".into());
         }
@@ -64,13 +76,13 @@ pub fn sample_motion(g: &Gpu, p: &Program, seconds: f32) -> Result<Vec<MotionSam
         {
             let mut cp = enc.begin_compute_pass(&Default::default());
             cp.set_pipeline(&pipe);
-            for (i, group) in [&empty_group, &inputs, &empty_group, &outputs]
+            for (i, group) in [&parameters, &inputs, &empty_group, &outputs]
                 .into_iter()
                 .enumerate()
             {
                 cp.set_bind_group(i as u32, group, &[]);
             }
-            cp.dispatch_workgroups(k.n_rows.div_ceil(64), 1, 1);
+            cp.dispatch_workgroups(n_rows.div_ceil(step.workgroup_x), 1, 1);
         }
         enc.copy_buffer_to_buffer(&out, 0, &read, 0, Some(len));
         g.queue.submit([enc.finish()]);
@@ -108,7 +120,7 @@ pub fn sample_motion(g: &Gpu, p: &Program, seconds: f32) -> Result<Vec<MotionSam
             .map(|(j, n)| (n.clone(), column(j + step.fields.len()).collect()))
             .collect();
         samples.push(MotionSample {
-            kind: k.name.clone(),
+            kind: name.into(),
             fields,
             checks,
         });

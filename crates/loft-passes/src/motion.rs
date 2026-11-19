@@ -1,7 +1,7 @@
 //! Lower the row-local subset needed for a Phase 1.5 bakeoff snapshot.
 //! Phase 3 persistent state, solver tables and checkpoints use a separate schedule ABI.
 use super::*;
-use loft_ir::{Span, program::Motion};
+use loft_ir::{Span, program::{Dispatch, DispatchRows}};
 
 fn unsupported(sp: Span, what: &str) -> Diag {
     Diag::new(
@@ -15,8 +15,8 @@ pub fn motion_module(
     p: &Prog,
     types: &[Ty],
     kind: &KindDecl,
-    id: usize,
-) -> Res<Option<(String, Motion)>> {
+    output: impl FnOnce() -> Res<(usize, DispatchRows)>,
+) -> Res<Option<(String, Dispatch)>> {
     let mut laws = vec![];
     let mut checks = vec![];
     let mut fields = vec![];
@@ -96,12 +96,14 @@ pub fn motion_module(
     if laws.is_empty() && checks.is_empty() {
         return Ok(None);
     }
+    let (module, input) = output()?;
     let mut em = Emitter::new(p, types);
     em.motion = true;
     em.out.push_str(include_str!("det.wgsl"));
     let roots: Vec<_> = laws.iter().chain(&checks).copied().collect();
     let (lib, constants) = reachable(p, &roots, &[]);
     for n in constants {
+        if p.param_slot(&n).is_some() { continue; }
         let c = p.consts[n.as_str()];
         let value = em.expr(&c.value);
         writeln!(
@@ -114,9 +116,10 @@ pub fn motion_module(
         .unwrap();
     }
     for f in lib {
-        em.func(f, &format!("motion_fn_{}", wgsl_name(&f.name.name)));
+        em.func(f, &format!("motion_{}", fn_symbol(&f.name.name)));
     }
     for f in &laws {
+        em.locals = f.params.iter().map(|p| p.name.name.clone()).collect();
         let row = wgsl_name(&f.params[0].name.name);
         writeln!(
             em.out,
@@ -128,6 +131,7 @@ pub fn motion_module(
         writeln!(em.out, "return {row}; }}").unwrap();
     }
     for f in &checks {
+        em.locals = f.params.iter().map(|p| p.name.name.clone()).collect();
         writeln!(
             em.out,
             "fn check_{}({}: Row) -> vec2<f32> {{",
@@ -163,8 +167,11 @@ pub fn motion_module(
     em.out.push_str("}\n");
     Ok(Some((
         em.out,
-        Motion {
-            kind: id,
+        Dispatch {
+            module,
+            entry: "advance".into(),
+            workgroup_x: 64,
+            input,
             fields,
             checks: checks.iter().map(|c| c.name.name.clone()).collect(),
         },

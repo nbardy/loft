@@ -55,6 +55,7 @@ impl Ad<'_> {
     /// A deep copy with fresh ids (the checker types every node by id).
     fn cp(&mut self, x: &Expr) -> Expr {
         let kind = match &x.kind {
+            ExprKind::If { .. } => x.kind.clone(),
             ExprKind::Num { value, suffix, text, float } => ExprKind::Num { value: *value, suffix: *suffix, text: text.clone(), float: *float },
             ExprKind::Bool(b) => ExprKind::Bool(*b),
             ExprKind::Name(n) => ExprKind::Name(n.clone()),
@@ -92,6 +93,7 @@ impl Ad<'_> {
         let sp = x.span;
         let refuse = |what: &str| Diag::new(Code::E405, sp, format!("`diff` through {what} is not lowered yet"), "differentiate a fn written with arithmetic, calls and the smooth builtins");
         Ok(match &x.kind {
+            ExprKind::If { .. } => return Err(Diag::new(Code::E307, x.span, "conditional expression has no smooth derivative", "use a smooth blend")),
             ExprKind::Num { .. } | ExprKind::Bool(_) => None,
             ExprKind::Name(n) => self.live.contains(n).then(|| self.name(&format!("{n}__t"), sp)),
             ExprKind::Member(b, m) => {
@@ -523,7 +525,7 @@ pub fn run(modules: &mut Vec<Module>, next: &mut u32) -> Res<()> {
     for (k, f) in in_kinds {
         let kd = modules.iter_mut().flat_map(|m| m.items.iter_mut()).find_map(|item| match item {
             Item::Kind(kd) if kd.name.name == k => Some(kd),
-            Item::Build(_) | Item::Use(_) | Item::Law(_) | Item::Check(_) | Item::Camera(_) | Item::Kind(_) | Item::Space(_) | Item::Unit(_) | Item::Const(_) | Item::Fn(_) | Item::Scan(_) | Item::Schedule(_) => None,
+            Item::Struct(..) | Item::TypeAlias(..) | Item::Build(_) | Item::Use(_) | Item::Law(_) | Item::Check(_) | Item::Camera(_) | Item::Kind(_) | Item::Space(_) | Item::Unit(_) | Item::Const(_) | Item::Fn(_) | Item::Scan(_) | Item::Schedule(_) => None,
         });
         kd.expect("the kind the jvp came from").fns.push(f);
     }

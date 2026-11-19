@@ -250,7 +250,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
             ExprKind::Call { args, .. } => {
                 args.iter().filter_map(|x| if let ExprKind::Name(n) = &x.value.kind { Some(n.as_str()) } else { None }).collect()
             }
-            ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => vec![],
+            ExprKind::If { .. } | ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => vec![],
         };
         let lip_of = |x: &Val<S>| match x {
             Val::S(s) => s.lip(),
@@ -315,7 +315,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                     ExprKind::Call { callee, args } if crate::check::MAP_OPS.contains(&callee.name.as_str()) => {
                         (self.expr(&args[0].value)?, vec![(callee.name.as_str(), vec![])])
                     }
-                    ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Call { .. } | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => (self.expr(head)?, vec![]),
+                    ExprKind::If { .. } | ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Call { .. } | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => (self.expr(head)?, vec![]),
                 };
                 for (op, args) in stages {
                     let vals = args.iter().map(|a| self.expr(a)).collect::<Res<Vec<_>>>()?;
@@ -385,8 +385,13 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 let decl = self.p.kinds[kind.name.as_str()];
                 let mut row = vec![];
                 for rf in &decl.row {
-                    let e=fields.iter().find(|(f,_)|f.name==rf.name.name).map(|(_,e)|e).or(rf.default.as_ref()).expect("checked required field");
-                    let v = self.expr(e)?;
+                    let supplied = fields.iter().find(|(f, _)| f.name == rf.name.name);
+                    let (e, v) = if let Some((_, e)) = supplied {
+                        (e, self.expr(e)?)
+                    } else {
+                        let e = rf.default.as_ref().expect("checked required field");
+                        (e, self.module_expr(e)?)
+                    };
                     let v=concrete(&v,e.span)?;
                     if let Some(range)=&rf.range {self.validate_range(&rf.name,range,crate::as_f32(v.clone(),e.span)?,e.span)?;}
                     row.push(v);
@@ -401,9 +406,17 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
         Ok(Flow::Next)
     }
 
+    /// Defaults, refinements and module constants cannot see the emitting caller's locals.
+    pub(crate) fn module_expr(&mut self, e: &'a Expr) -> Res<Val<S>> {
+        let saved = std::mem::take(&mut self.env);
+        let result = self.expr(e);
+        self.env = saved;
+        result
+    }
+
     pub(crate) fn validate_range(&mut self,name:&Ident,r:&'a RowRange,x:f32,sp:Span)->Res<()>{
-        let lo=crate::as_f32(concrete(&self.expr(&r.lo)?,r.lo.span)?,r.lo.span)?;
-        let hi=match &r.hi{Some(e)=>crate::as_f32(concrete(&self.expr(e)?,e.span)?,e.span)?,None=>f32::INFINITY};
+        let lo=crate::as_f32(concrete(&self.module_expr(&r.lo)?,r.lo.span)?,r.lo.span)?;
+        let hi=match &r.hi{Some(e)=>crate::as_f32(concrete(&self.module_expr(e)?,e.span)?,e.span)?,None=>f32::INFINITY};
         if !x.is_finite() || !(if r.strict{x>lo}else{x>=lo}) || !(x<=hi){
             return Err(Diag::new(Code::E602,sp,format!("{} = {x} outside declared range",name.name),format!("supply a value {} {lo} and <= {hi}",if r.strict{">"}else{">="})).note(r.lo.span,"declared here"))
         }
@@ -436,7 +449,8 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 // The plane (i, j) turns by a: i' = cos i + sin j, j' = cos j - sin i (matches loft_rot_* in emit).
                 let (i, j) = match axis {
                     0 => (1, 2),
-                    1 => (2, 0),
+                    // Match loft_rot_y in WGSL: the inverse of +90° takes +Z to −X.
+                    1 => (0, 2),
                     _ => (0, 1),
                 };
                 let (s, co) = (a.un(Un::Sin), a.un(Un::Cos));
@@ -472,14 +486,43 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
         &self.types[e.id as usize]
     }
 
+    fn expr_arm(&mut self, arm: &'a ExprBlock) -> Res<Val<S>> {
+        let mark = self.env.len();
+        let result = (|| {
+            for stmt in &arm.body.stmts {
+                if let Flow::Ret(value) = self.stmt(stmt)? { return Ok(value); }
+            }
+            self.expr(&arm.value)
+        })();
+        self.env.truncate(mark);
+        result
+    }
+
     fn expr_inner(&mut self, e: &'a Expr) -> Res<Val<S>> {
         match &e.kind {
+            ExprKind::If { condition, then, otherwise } => {
+                match self.expr(condition)? {
+                    Val::B(Some(true)) => self.expr_arm(then),
+                    Val::B(Some(false)) => self.expr_arm(otherwise),
+                    Val::B(None) if then.body.stmts.is_empty() && otherwise.body.stmts.is_empty() => {
+                        let a = self.expr(&then.value)?;
+                        let b = self.expr(&otherwise.value)?;
+                        Ok(match (a, b) {
+                            (Val::S(a), Val::S(b)) => Val::S(a.join(&b)),
+                            (Val::V(a, al), Val::V(b, bl)) => Val::V(a.into_iter().zip(b).map(|(a, b)| a.join(&b)).collect(), al.max(bl)),
+                            (Val::B(a), Val::B(b)) => Val::B(if a == b { a } else { None }),
+                            (_, _) => return Err(err(e.span, "incompatible interval branches", "use a continuous field expression")),
+                        })
+                    }
+                    _ => Err(Diag::new(Code::E211, condition.span, "conditional block cannot be bounded over both paths", "use a continuous field expression")),
+                }
+            }
             ExprKind::Num { value, suffix, .. } => {
                 let v = if *suffix == NumSuffix::Deg { value.to_radians() } else { *value };
                 Ok(match self.ty(e) {
                     Ty::U32 => Val::U(v as u32),
                     Ty::I32 | Ty::AbstractInt => Val::I(v as i32),
-                    Ty::Void | Ty::Bool | Ty::F32 | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) | Ty::Frame(_) | Ty::Table(_) | Ty::Verdict | Ty::Id(_) | Ty::Bsdf => Val::S(S::c(f64::from(v as f32))),
+                    Ty::Void | Ty::Bool | Ty::F32 | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) | Ty::Frame(_) | Ty::Table(_) | Ty::Verdict | Ty::Struct(_) | Ty::Id(_) | Ty::Bsdf => Val::S(S::c(f64::from(v as f32))),
                 })
             }
             ExprKind::Bool(b) => Ok(Val::B(Some(*b))),
@@ -495,13 +538,10 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                     return Ok(match self.types[c.value.id as usize] {
                         Ty::U32 => Val::U(*x as u32),
                         Ty::I32 | Ty::AbstractInt => Val::I(*x as i32),
-                        Ty::Void | Ty::Bool | Ty::F32 | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) | Ty::Frame(_) | Ty::Table(_) | Ty::Verdict | Ty::Id(_) | Ty::Bsdf => Val::S(S::c(*x)),
+                        Ty::Void | Ty::Bool | Ty::F32 | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) | Ty::Frame(_) | Ty::Table(_) | Ty::Verdict | Ty::Struct(_) | Ty::Id(_) | Ty::Bsdf => Val::S(S::c(*x)),
                     });
                 }
-                let saved = std::mem::take(&mut self.env);
-                let v = self.expr(&c.value);
-                self.env = saved;
-                v
+                self.module_expr(&c.value)
             }
             ExprKind::Member(base, m) => {
                 if let ExprKind::Name(n) = &base.kind
@@ -580,7 +620,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                     Ty::Geo(Geo::Dir | Geo::Norm, _) => Ok(normalize(build(vals, 3))),
                     Ty::Geo(..) => Ok(build(vals, 3)),
                     Ty::VecN(n) => Ok(build(vals, n as usize)),
-                    other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::F32 | other @ Ty::AbstractInt | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Table(_) | other @ Ty::Verdict | other @ Ty::Id(_) | other @ Ty::Bsdf => unreachable!("checked ctor of {other}"),
+                    other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::F32 | other @ Ty::AbstractInt | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Table(_) | other @ Ty::Verdict | other @ Ty::Struct(_) | other @ Ty::Id(_) | other @ Ty::Bsdf => unreachable!("checked ctor of {other}"),
                 }
             }
             ExprKind::Call { callee, args } => {
@@ -791,7 +831,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
             "frame_axes" => build(v,12),
             "has_sky"=>Val::B(Some(self.p.kind_order.iter().position(|k|*k=="Sky").and_then(|i|self.tables.get(i)).is_some_and(|t|!t.is_empty()))),
             "sky_zenith"|"sky_horizon"|"sun_color"=>{
-                let (k,i,default)=match name{"sky_zenith"=>("Sky",0,[0.16,0.29,0.55]),"sky_horizon"=>("Sky",1,[0.48,0.55,0.64]),_=>("Sun",1,loft_ir::program::default_sun_color())};
+                let (k,i,default)=match name{"sky_zenith"=>("Sky",0,crate::defaults::SKY_COLORS[0]),"sky_horizon"=>("Sky",1,crate::defaults::SKY_COLORS[1]),_=>("Sun",1,crate::defaults::SUN_COLOR)};
                 self.p.kind_order.iter().position(|n|*n==k).and_then(|k|self.tables.get(k)).and_then(|rows|rows.first()).and_then(|row|row.get(i)).map(Self::lift).unwrap_or_else(||Val::V(default.map(|x|S::c(f64::from(x))).to_vec(),0.))
             }
             "coords" => v.remove(0),

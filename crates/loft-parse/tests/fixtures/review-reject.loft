@@ -1,0 +1,4 @@
+type Sample = m
+schedule Demo {
+  waive "missing reason tag"
+}

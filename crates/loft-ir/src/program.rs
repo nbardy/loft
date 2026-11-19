@@ -88,7 +88,6 @@ pub struct Instance {
     pub row: u32,
 }
 
-pub fn default_sun_color()->[f32;3]{[2.2,2.0,1.7]}
 
 /// Camera from the schedule's `orbit` pass, evaluated per frame at time t.
 #[derive(Clone, Copy, Debug)]
@@ -127,12 +126,36 @@ pub enum Pass {
 }
 
 /// Row-local laws and their terminal checks. The shader entry is advance;
-/// one vec4 per scalar write, followed by one (held, margin) pair per check.
-#[derive(Clone,Debug,serde::Serialize,serde::Deserialize)]
-pub struct Motion {
-    pub kind:usize,
-    pub fields:Vec<String>,
-    pub checks:Vec<String>,
+/// One vec4 per requested scalar write or check.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct Dispatch {
+    pub module: usize,
+    pub entry: String,
+    pub workgroup_x: u32,
+    pub input: DispatchRows,
+    pub fields: Vec<String>,
+    pub checks: Vec<String>,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub enum DispatchRows {
+    Drawable(usize),
+    Table {
+        name: String,
+        n_rows: u32,
+        stride: u32,
+        #[serde(with = "crate::sexp::words")]
+        words: Vec<f32>,
+    },
+}
+
+impl DispatchRows {
+    pub fn view<'a>(&'a self, kinds: &'a [KindTable]) -> Option<(&'a str, u32, u32, &'a [f32])> {
+        match self {
+            Self::Drawable(index) => kinds.get(*index).map(|k| (k.name.as_str(), k.n_rows, k.stride, k.rows.as_slice())),
+            Self::Table { name, n_rows, stride, words } => Some((name, *n_rows, *stride, words)),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -145,16 +168,15 @@ pub struct MotionSample {
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct Program {
     #[serde(default)]
-    pub motion:Vec<Motion>,
+    pub dispatches: Vec<Dispatch>,
     pub modules: Vec<ShaderModule>,
     pub kinds: Vec<KindTable>,
     pub instances: Vec<Instance>,
     pub camera: Orbit,
     pub sun: [f32; 3],
-    #[serde(default="default_sun_color")]
-    pub sun_color: [f32;3],
-    #[serde(default)]
-    pub sky: Option<[[f32;3];2]>,
+    /// Compiler-packed group 0 parameter storage.
+    #[serde(default, with = "crate::sexp::words")]
+    pub params: Vec<f32>,
     /// Shadow-map side in texels (0 without a shadow pass).
     pub shadow_size: u32,
     /// Every scan's baked table, concatenated (12 words per frame).

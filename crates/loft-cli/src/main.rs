@@ -57,105 +57,120 @@ fn overrides(args: &mut Vec<String>) -> Result<Vec<(String, f64)>, String> {
     Ok(out)
 }
 
-fn flag(args: &mut Vec<String>, name: &str) -> Option<String> {
-    let i = args.iter().position(|a| a == name)?;
-    let v = args.get(i + 1).cloned();
-    args.drain(i..(i + 2).min(args.len()));
-    v
+use budget::Failure;
+
+fn flag(args: &mut Vec<String>, name: &str) -> Result<Option<String>, Failure> {
+    let Some(i) = args.iter().position(|a| a == name) else { return Ok(None); };
+    let v = args.get(i + 1).filter(|a| !a.starts_with("--")).cloned()
+        .ok_or_else(|| Failure::Usage(format!("{name} requires a value")))?;
+    args.drain(i..i + 2);
+    Ok(Some(v))
 }
 
-fn command(mut args:Vec<String>) -> Result<(), String> {
-    let set = overrides(&mut args)?;
+fn command(mut args: Vec<String>) -> Result<(), Failure> {
+    let set = overrides(&mut args).map_err(Failure::Usage)?;
     let cmd = args.first().cloned().unwrap_or_default();
+    let time = if matches!(cmd.as_str(), "check" | "still") {
+        flag(&mut args, "--t")?.map_or(Ok(0.0), |v| {
+            v.parse::<f32>().ok().filter(|x| x.is_finite() && *x >= 0.)
+                .ok_or_else(|| Failure::Usage("--t takes nonnegative finite seconds".into()))
+        })?
+    } else { 0.0 };
+    let max_frame = if cmd == "still" {
+        flag(&mut args, "--max-frame-ms")?.map(|s| s.parse::<f64>().ok().filter(|x| x.is_finite() && *x >= 0.)
+            .ok_or_else(|| Failure::Usage("--max-frame-ms takes a nonnegative finite budget".into()))).transpose()?
+    } else { None };
+    let scene = |args: &[String]| args.get(1).map(PathBuf::from)
+        .ok_or_else(|| Failure::Usage(format!("usage: loft {cmd} SCENE")));
+    let exact = |args: &[String], min: usize, max: usize| {
+        if !(min..=max).contains(&args.len()) || args.iter().skip(1).any(|s| s.starts_with('-')) {
+            return Err(Failure::Usage(format!("invalid arguments for loft {cmd}")));
+        }
+        Ok(())
+    };
     match cmd.as_str() {
-        "ir" | "build" if cmd=="ir" || args.get(1).is_some_and(|p|p.ends_with(".sexp")) => {
-            let output=flag(&mut args,"-o");
-            args.retain(|a|a!="--sexp");
-            let path=Path::new(args.get(1).ok_or("usage: loft ir SCENE --sexp [-o FILE]")?);
-            let program=if path.extension().is_some_and(|e|e=="sexp") {
-                loft_ir::sexp::read(&std::fs::read_to_string(path).map_err(|e|e.to_string())?)?
+        "ir" | "build" if cmd == "ir" || args.get(1).is_some_and(|p| p.ends_with(".sexp")) => {
+            let output = flag(&mut args, "-o")?;
+            args.retain(|a| a != "--sexp");
+            exact(&args, 2, 2)?;
+            let path = scene(&args)?;
+            let program = if path.extension().is_some_and(|e| e == "sexp") {
+                let text = std::fs::read_to_string(&path).map_err(|e| Failure::Usage(format!("{}: {e}", path.display())))?;
+                loft_ir::sexp::read(&text).map_err(Failure::Compile)?
             } else {
-                let src=sources(path)?;
-                loft_passes::compile(&src,&set).map_err(|e|render(&e,&src))?.0
+                let src = sources(&path).map_err(Failure::Usage)?;
+                loft_passes::compile(&src, &set).map_err(|d| Failure::Compile(render(&d, &src)))?.0
             };
-            let text=loft_ir::sexp::write(&program)?;
-            if let Some(out)=output {std::fs::write(out,text).map_err(|e|e.to_string())?;}else if cmd=="ir"{println!("{text}");}
+            let text = loft_ir::sexp::write(&program).map_err(Failure::Compile)?;
+            if let Some(out) = output { std::fs::write(out, text).map_err(|e| Failure::Usage(e.to_string()))?; }
+            else if cmd == "ir" { println!("{text}"); }
             Ok(())
         }
         "check" | "show" => {
-            let scene = PathBuf::from(args.get(1).ok_or("usage: loft check|show SCENE")?);
-            let src = sources(&scene)?;
-            let (program, report, _) = loft_passes::compile(&src, &set).map_err(|d| render(&d, &src))?;
+            exact(&args, 2, if cmd == "show" { 3 } else { 2 })?;
+            let src = sources(&scene(&args)?).map_err(Failure::Usage)?;
+            let (program, report, _) = loft_passes::compile(&src, &set).map_err(|d| Failure::Compile(render(&d, &src)))?;
             if cmd == "show" {
                 for m in program.modules.iter().filter(|m| args.get(2).is_none_or(|n| *n == m.name)) {
                     println!("// ===== module {} =====\n{}", m.name, m.wgsl);
                 }
                 return Ok(());
             }
-            for k in &report.kinds {
-                println!(
-                    "kind {:<12} {:?}  rows {:>4}  shapes {:>3}  derived L {:.4}..{:.4}  bound evals {}",
-                    k.name, k.draw, k.rows, k.shapes, k.l_min, k.l_max, k.evals
-                );
+            if program.dispatches.iter().any(|m| !m.checks.is_empty()) {
+                let g = loft_runner::gpu().map_err(Failure::Device)?;
+                let mut failed = false;
+                for (name, verdict) in gates::authored_checks(&g, &program, time).map_err(Failure::Device)? {
+                    println!("check {name} at t={time}: {verdict}");
+                    failed |= !matches!(verdict, loft_ir::Verdict::Held { .. });
+                }
+                if failed { return Err(Failure::Truth("authored checks failed".into())); }
             }
-            let modules = program.modules.len();
-            println!("modules {modules}  passes {:?}", program.passes);
-            println!("{}", report.ms.iter().map(|(n, t)| format!("{n} {t:.2} ms")).collect::<Vec<_>>().join("  "));
+            for k in &report.kinds {
+                println!("kind {:<12} {:?}  rows {:>4}  shapes {:>3}  derived L {:.4}..{:.4}  bound evals {}",
+                    k.name, k.draw, k.rows, k.shapes, k.l_min, k.l_max, k.evals);
+            }
+            println!("modules {}  passes {:?}", program.modules.len(), program.passes);
             Ok(())
         }
         "still" => {
-            let scene = PathBuf::from(args.get(1).ok_or("usage: loft still SCENE OUT.png [--t S]")?);
-            let out = PathBuf::from(args.get(2).ok_or("usage: loft still SCENE OUT.png [--t S]")?);
-            let t: f32 = flag(&mut args, "--t").map_or(Ok(0.0), |v| v.parse().map_err(|_| "--t takes seconds"))?;
-            gates::still(&scene, &set, t, &out)
+            exact(&args, 3, 3)?;
+            gates::still(&scene(&args)?, &set, time, Path::new(&args[2]), max_frame)
         }
-        "gate" => gates::run(args.iter().any(|a| a == "--approve")),
+        "gate" => {
+            let only = flag(&mut args, "--only")?;
+            let approve = args.get(1).is_some_and(|s| s == "--approve");
+            if !set.is_empty() || args.len() != 1 + usize::from(approve) {
+                return Err(Failure::Usage("usage: loft gate [--only NAME,...] [--approve]".into()));
+            }
+            gates::run(approve, only.as_deref())
+        }
         "load" => {
-            let nonce: u32 = flag(&mut args, "--nonce").ok_or("load needs --nonce N")?.parse().map_err(|_| "--nonce takes a u32")?;
-            let scene = PathBuf::from(args.get(1).ok_or("usage: loft load SCENE --nonce N")?);
-            let g = loft_runner::gpu()?;
+            let nonce: u32 = flag(&mut args, "--nonce")?.and_then(|s| s.parse().ok()).filter(|&n| n != 0)
+                .ok_or_else(|| Failure::Usage("load needs --nonce N (a nonzero u32)".into()))?;
+            exact(&args, 2, 2)?;
+            let path = scene(&args)?;
+            let g = loft_runner::gpu().map_err(Failure::Device)?;
             let t = std::time::Instant::now();
-            let src = sources(&scene)?;
-            let (p, _, _) = loft_passes::compile(&src, &set).map_err(|d| render(&d, &src))?;
+            let src = sources(&path).map_err(Failure::Usage)?;
+            let (p, _, _) = loft_passes::compile(&src, &set).map_err(|d| Failure::Compile(render(&d, &src)))?;
             let front = t.elapsed().as_secs_f64();
-            let l = loft_runner::Loaded::new(&g, &p, (1280, 800), Some(nonce))?;
+            let l = loft_runner::Loaded::new(&g, &p, (1280, 800), Some(nonce)).map_err(Failure::Device)?;
             l.frame(&g, 0.0);
-            let gpu = l.gpu_ms(&g)?.map_or_else(|| "unavailable".into(), |(ms, _)| format!("{ms:.2} ms"));
-            let st = &l.stats;
-            println!(
-                "load {:.3} s  front {:.3} s  pipelines {:.1} ms  frame {gpu}  disk cache {}  ({})",
-                t.elapsed().as_secs_f64(),
-                front,
-                st.pipelines_ms,
-                g.cache_key.as_ref().map_or("none on this backend".to_string(), |k| format!("{k}: {} bytes read", st.cache_bytes)),
-                g.adapter
-            );
-            println!("{}", st.pipeline_ms.iter().map(|(n, t)| format!("{n} {t:.0}")).collect::<Vec<_>>().join(", "));
+            let gpu = l.gpu_ms(&g).map_err(Failure::Device)?.map_or_else(|| "unavailable".into(), |(ms, _)| format!("{ms:.2} ms"));
+            println!("load {:.3} s  front {front:.3} s  pipelines {:.1} ms  frame {gpu}  ({})",
+                t.elapsed().as_secs_f64(), l.stats.pipelines_ms, g.adapter);
             Ok(())
         }
-        _ => Err("usage: loft check|show|still|gate (see crates/loft-cli/src/main.rs)".into()),
+        _ => Err(Failure::Usage("usage: loft check|show|still|gate|load|ir".into())),
     }
-}
-
-fn run()->Result<(),budget::Failure>{
-    use budget::Failure;
-    let mut args:Vec<_>=std::env::args().skip(1).collect();
-    if args.iter().any(|s|s=="--max-frame-ms"){
-        let ms=flag(&mut args,"--max-frame-ms").and_then(|s|s.parse::<f64>().ok()).filter(|x|x.is_finite() && *x>=0.).ok_or_else(||Failure(5,"--max-frame-ms requires a nonnegative finite budget".into()))?;
-        let g=loft_runner::gpu().map_err(|e|Failure(6,e))?;
-        budget::timestamps(g.timestamps)?;
-        let mut measured_args=args.clone();let set=overrides(&mut measured_args).map_err(|e|Failure(5,e))?;
-        let scene=measured_args.get(1).ok_or_else(||Failure(5,"frame budget requires a scene path".into()))?;
-        budget::check(&g,Path::new(scene),&set,ms)?;
-    }
-    command(args).map_err(|e|Failure(1,e))
 }
 
 fn main() -> ExitCode {
-    match run() {
+    match command(std::env::args().skip(1).collect()) {
         Ok(()) => ExitCode::SUCCESS,
-        Err(budget::Failure(code,e)) => {
-            eprintln!("{e}");
+        Err(failure) => {
+            let (code, message) = failure.exit();
+            eprintln!("{message}");
             ExitCode::from(code)
         }
     }

@@ -22,6 +22,8 @@ pub struct Module {
 pub enum Item {
     Use(Vec<Ident>),
     Space(Vec<Ident>),
+    Struct(Ident, Vec<RowField>),
+    TypeAlias(Ident, TyExpr),
     Unit(Ident),
     Const(ConstDecl),
     Fn(FnDecl),
@@ -161,8 +163,10 @@ pub struct RowRange {
 
 #[derive(serde::Serialize, Clone, Debug)]
 pub struct ScheduleDecl {
+    pub implicit: bool,
     pub name: Ident,
     pub passes: Vec<PassDecl>,
+    pub waivers: Vec<(Ident, Ident)>,
 }
 
 /// `pass label: verb(args) { body calls };`
@@ -172,6 +176,14 @@ pub struct PassDecl {
     pub verb: Ident,
     pub args: Vec<Arg>,
     pub body: Vec<(Ident, Vec<Arg>)>,
+    pub resources: Option<PassResources>,
+}
+
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct PassResources {
+    pub reads: Vec<Ident>,
+    pub writes: Vec<Ident>,
+    pub body: Block,
 }
 
 #[derive(serde::Serialize, Clone, Debug)]
@@ -212,7 +224,18 @@ pub enum NumSuffix {
 }
 
 #[derive(serde::Serialize, Clone, Debug)]
+pub struct ExprBlock {
+    pub body: Block,
+    pub value: Box<Expr>,
+}
+
+#[derive(serde::Serialize, Clone, Debug)]
 pub enum ExprKind {
+    If {
+        condition: Box<Expr>,
+        then: ExprBlock,
+        otherwise: ExprBlock,
+    },
     Num { value: f64, suffix: NumSuffix, text: String, float: bool },
     Bool(bool),
     Name(String),
@@ -389,6 +412,7 @@ pub enum Ty {
     Map(Space, Space),
     /// A kind's row (`self`).
     Row(String),
+    Struct(String),
     /// Origin, tangent, normal, binormal.
     Frame(Space),
     /// An ordered sum of library lobes (`lobe` fns), bottom layer first.
@@ -415,6 +439,7 @@ impl std::fmt::Display for Ty {
             Ty::Geo(g, s) => write!(f, "{}@{s}", g.short()),
             Ty::Xform(a, b) => write!(f, "xf@{a}>{b}"),
             Ty::Map(a, b) => write!(f, "map {a} -> {b}"),
+            Ty::Struct(k) => write!(f, "{k}"),
             Ty::Row(k) => write!(f, "row of {k}"),
             Ty::Frame(s) => write!(f, "frame@{s}"),
             Ty::Bsdf => write!(f, "Bsdf"),
@@ -433,7 +458,7 @@ impl Ty {
             Ty::VecN(n) => Some(u32::from(*n)),
             Ty::Geo(..) => Some(3),
             Ty::Xform(..) | Ty::Frame(_) => Some(12),
-            Ty::Void | Ty::AbstractInt | Ty::Map(..) | Ty::Row(_) | Ty::Bsdf | Ty::Table(_) | Ty::Verdict => None,
+            Ty::Void | Ty::AbstractInt | Ty::Map(..) | Ty::Row(_) | Ty::Struct(_) | Ty::Bsdf | Ty::Table(_) | Ty::Verdict => None,
         }
     }
 }

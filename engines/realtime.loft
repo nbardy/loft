@@ -1,0 +1,11 @@
+# The default recipe. The compiler fills Drawables and Casters from populated kinds.
+# To fork it, copy the schedule into a scene and name the kinds explicitly.
+schedule Realtime {
+  orbit(at: [0, 0, 0], radius: 4, height: 0.5, period: 24, fov: 40deg)
+  cull_indirect(Drawables)
+  render_bundle(Vis64) { draw_indirect(Drawables) }
+  find_shadow_map(Casters, size: 1024)
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: sun_sky, sun: [0.5, 0.75, 0.35])
+  tonemap_aces(ColorHdr, sky: sky_color)
+}

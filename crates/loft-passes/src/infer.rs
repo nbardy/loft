@@ -53,7 +53,7 @@ fn syntax(
         Ty::Frame(s) => TyExpr::Frame(space(s)?),
         Ty::Xform(a, b) => TyExpr::Xform(space(a)?, space(b)?),
         Ty::Bsdf => TyExpr::Name(n("Bsdf")),
-        Ty::Row(k) | Ty::Id(k) => TyExpr::Name(n(k)),
+        Ty::Row(k) | Ty::Id(k) | Ty::Struct(k) => TyExpr::Name(n(k)),
         Ty::Table(k) => TyExpr::Table(n(k)),
         Ty::Map(..) | Ty::Verdict | Ty::Void => return None,
     })

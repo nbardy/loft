@@ -37,18 +37,33 @@ fn num(x: f64) -> Term {
 struct Proof<'a, 'b> {
     program: &'a Prog<'b>,
     fields: Env,
+    constants: Env,
     stack: Vec<String>,
 }
 impl Proof<'_, '_> {
     fn expr(&mut self, e: &Expr, env: &Env) -> Res<Option<Term>> {
         Ok(match &e.kind {
+            ExprKind::If { condition, then, otherwise } => {
+                self.expr(condition, env)?;
+                let mut result: Option<Term> = None;
+                for arm in [then, otherwise] {
+                    let mut locals = env.clone();
+                    self.block(&arm.body, &mut locals)?;
+                    let next = self.expr(&arm.value, &locals)?;
+                    result = match (result, next) {
+                        (Some(a), Some(b)) => Some(union(a, b)),
+                        (a, b) => a.or(b),
+                    };
+                }
+                result
+            }
             ExprKind::Num { value, suffix, .. } => Some(num(if *suffix == NumSuffix::Deg {
                 value.to_radians()
             } else {
                 *value
             })),
             ExprKind::Bool(_) => None,
-            ExprKind::Name(n) => env.get(n).copied(),
+            ExprKind::Name(n) => env.get(n).or_else(|| self.constants.get(n)).copied(),
             ExprKind::Member(b, f) => {
                 self.expr(b, env)?;
                 if matches!(&b.kind,ExprKind::Name(n) if n=="self") {
@@ -91,7 +106,9 @@ impl Proof<'_, '_> {
                         "declare a nonzero column range or clamp the divisor away from zero",
                     ));
                 }
-                a.zip(b).and_then(|(a, b)| {
+                // A missing interval must not erase a dependency on a row column.
+                let depends_on_row = a.is_some_and(|x| x.row) || b.is_some_and(|x| x.row);
+                let combined = a.zip(b).and_then(|(a, b)| {
                     let (x, y) = (a.interval, b.interval);
                     Some(term(
                         match op {
@@ -101,9 +118,10 @@ impl Proof<'_, '_> {
                             BinOp::Div => x.div(&y),
                             _ => return None,
                         },
-                        a.row || b.row,
+                        depends_on_row,
                     ))
-                })
+                });
+                combined.or_else(|| depends_on_row.then(|| unknown(true)))
             }
             ExprKind::Call { callee, args } => {
                 let args = args
@@ -237,6 +255,12 @@ impl Proof<'_, '_> {
 pub fn check(p: &Prog, types: &[Ty], overrides: &[(String, f64)]) -> Res<()> {
     let mut ev: Eval<f32> = Eval::new(p, types, vec![], overrides);
     let mut scalar = |e| as_f32(concrete(&ev.expr(e)?, e.span)?, e.span);
+    let constants: Env = p.consts.iter().filter_map(|(&name, c)| {
+        if !matches!(types.get(c.value.id as usize), Some(Ty::F32 | Ty::I32 | Ty::U32 | Ty::AbstractInt)) {
+            return None;
+        }
+        scalar(&c.value).ok().map(|x| (name.to_string(), num(x.into())))
+    }).collect();
     for k in p.kinds.values() {
         let Some(trace) = k.query(QueryKind::Trace) else {
             continue;
@@ -274,6 +298,7 @@ pub fn check(p: &Prog, types: &[Ty], overrides: &[(String, f64)]) -> Res<()> {
         Proof {
             program: p,
             fields,
+            constants: constants.clone(),
             stack: vec![],
         }
         .block(&trace.body, &mut Env::new())?;

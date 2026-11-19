@@ -79,6 +79,7 @@ pub fn parse(file: u16, source: &str, next: &mut u32) -> Res<Module> {
         locals: HashSet::new(),
         maps: HashSet::new(),
         derivatives: vec![],
+        kind_helpers: Default::default(),
     };
     p.seps();
     while !p.is("") {
@@ -100,6 +101,7 @@ struct Parser<'a, 'b> {
     locals: HashSet<String>,
     maps: HashSet<String>,
     derivatives: Vec<(Ident, Ident)>,
+    kind_helpers: std::collections::HashMap<String, String>,
 }
 fn named(name: &str, span: Span) -> Ident {
     Ident {
@@ -241,6 +243,35 @@ impl Parser<'_, '_> {
         };
         Ok(ty(name, n.span))
     }
+    fn upper_ident(&mut self) -> Res<Ident> {
+        if !self.cur().text.as_bytes().first().is_some_and(u8::is_ascii_uppercase) {
+            return self.err("an uppercase identifier");
+        }
+        self.ident()
+    }
+    fn column(&mut self) -> Res<RowField> {
+        let name = self.ident()?;
+        self.expect(":")?;
+        let ty = self.ty()?;
+        let range = self.range()?;
+        let default = if self.eat("=") { Some(self.expr(0)?) } else { None };
+        Ok(RowField { name, ty, range, default })
+    }
+    fn resources(&mut self, keyword: &str) -> Res<Vec<Ident>> {
+        let mut names = vec![];
+        if self.eat(keyword) {
+            self.expect("[")?;
+            while !self.eat("]") {
+                names.push(self.ident()?);
+                if !self.eat(",") {
+                    self.expect("]")?;
+                    break;
+                }
+            }
+        }
+        Ok(names)
+    }
+
     fn integer(&mut self) -> Res<u32> {
         let t = self.cur();
         let n = t.text.parse().map_err(|_| {
@@ -287,6 +318,23 @@ impl Parser<'_, '_> {
             }
             return Ok(Item::Space(ns));
         }
+        if self.eat("struct") {
+            let name = self.upper_ident()?;
+            self.expect("{")?;
+            self.seps();
+            let mut fields = vec![];
+            while !self.eat("}") {
+                fields.push(self.column()?);
+                if !self.eat(",") { self.end()?; }
+                self.seps();
+            }
+            return Ok(Item::Struct(name, fields));
+        }
+        if self.eat("type") {
+            let name = self.upper_ident()?;
+            self.expect("=")?;
+            return Ok(Item::TypeAlias(name, self.ty()?));
+        }
         let parameter = self.eat("param");
         if parameter || self.eat("const") {
             let name = self.ident()?;
@@ -312,28 +360,40 @@ impl Parser<'_, '_> {
             let name = self.ident()?;
             self.expect("{")?;
             self.seps();
-            let mut passes = vec![];
+            let (mut passes, mut waivers) = (vec![], vec![]);
             while !self.eat("}") {
+                if self.eat("waive") {
+                    let name = self.upper_ident()?;
+                    if self.cur().kind != Kind::String {
+                        return self.err("a quoted waiver reason");
+                    }
+                    let reason = self.pop();
+                    waivers.push((name, named(reason.text, reason.span)));
+                    self.end()?;
+                    continue;
+                }
+                let explicit = self.eat("pass");
                 let verb = self.ident()?;
-                let args = self.args()?;
-                let mut body = vec![];
-                if self.eat("{") {
-                    self.seps();
-                    while !self.eat("}") {
-                        let f = self.ident()?;
-                        body.push((f, self.args()?));
-                        self.end()?
+                let (mut args, mut body, mut resources) = (vec![], vec![], None);
+                if explicit {
+                    let reads = self.resources("reads")?;
+                    let writes = self.resources("writes")?;
+                    resources = Some(PassResources { reads, writes, body: self.block(false)? });
+                } else {
+                    args = self.args()?;
+                    if self.eat("{") {
+                        self.seps();
+                        while !self.eat("}") {
+                            let f = self.ident()?;
+                            body.push((f, self.args()?));
+                            self.end()?
+                        }
                     }
                 }
-                passes.push(PassDecl {
-                    label: verb.clone(),
-                    verb,
-                    args,
-                    body,
-                });
+                passes.push(PassDecl { label: verb.clone(), verb, args, body, resources });
                 self.end()?
             }
-            return Ok(Item::Schedule(ScheduleDecl { name, passes }));
+            return Ok(Item::Schedule(ScheduleDecl { implicit: false, name, passes, waivers }));
         }
         if self.eat("camera") {
             let name = self.ident()?;
@@ -603,13 +663,20 @@ impl Parser<'_, '_> {
         self.fields = row.iter().map(|f| f.name.name.clone()).collect();
         self.expect("{")?;
         self.seps();
-        let mut fns = vec![];
+        let fns = vec![];
         let mut queries = vec![];
         let mut maps = vec![];
         let start=self.at;
         let mut nested=0usize;
         while !self.is("") {
             if self.is("}") && nested==0{break}
+            if nested == 0 && self.eat("fn") {
+                let n = self.ident()?;
+                if self.kind_helpers.insert(n.name.clone(), format!("{}#{}", name.name, n.name)).is_some() {
+                    return Err(Diag::new(Code::E011, n.span, "duplicate kind helper", "declare one helper with this name"));
+                }
+                continue;
+            }
             if nested==0 && self.eat("map"){
                 let name=self.ident()?;self.expect("(")?;let param=self.ident()?;self.expect(")")?;self.expect("=")?;
                 let pos=self.at;maps.push((name,param,pos));continue;
@@ -626,7 +693,10 @@ impl Parser<'_, '_> {
                 self.expect("=")?;
                 self.map(n)?;
             } else if self.eat("fn") {
-                fns.push(self.function(false, false, false)?);
+                let mut f = self.function(false, false, false)?;
+                f.name.name = self.kind_helpers[&f.name.name].clone();
+                // Lift the lexically resolved declaration once. All passes use the same symbol.
+                self.module.items.push(Item::Fn(f));
             } else {
                 let n = self.ident()?;
                 let q = match n.name.as_str() {
@@ -734,6 +804,7 @@ impl Parser<'_, '_> {
             self.end()?;
         }
         self.fields.clear();
+        self.kind_helpers.clear();
         Ok(KindDecl {
             name,
             params,
@@ -749,6 +820,9 @@ impl Parser<'_, '_> {
         }
         if !eq {
             return self.err("= expression or a block");
+        }
+        if value && self.eat("if") {
+            return Ok(Block { stmts: vec![self.if_stmt(true)?] });
         }
         let e = self.expr(0)?;
         let sp = e.span;
@@ -818,6 +892,31 @@ impl Parser<'_, '_> {
             bind,
         })
     }
+    fn loop_body(&mut self, var: &Ident) -> Res<Block> {
+        // The binder shadows a row column only after the range/list has been parsed.
+        let fresh = self.locals.insert(var.name.clone());
+        let body = self.block(false);
+        if fresh {
+            self.locals.remove(&var.name);
+        }
+        body
+    }
+    fn if_stmt(&mut self, value: bool) -> Res<Stmt> {
+        let cond = self.expr(0)?;
+        let then = self.block(value)?;
+        let otherwise = if self.eat("else") {
+            Some(if self.eat("if") {
+                Block { stmts: vec![self.if_stmt(value)?] }
+            } else {
+                self.block(value)?
+            })
+        } else if value {
+            return self.err("an else branch");
+        } else {
+            None
+        };
+        Ok(Stmt::If { cond, then, otherwise })
+    }
     fn stmt(&mut self) -> Res<Stmt> {
         let sp = self.cur().span;
         if self.is("let") || self.is("var") {
@@ -864,7 +963,7 @@ impl Parser<'_, '_> {
             self.expect("in")?;
             if build && self.eat("[") {
                 let values = self.list("]")?.into_iter().map(|arg| arg.value).collect();
-                let body = self.block(false)?;
+                let body = self.loop_body(&var)?;
                 return Ok(Stmt::Each {
                     var,
                     values,
@@ -875,7 +974,7 @@ impl Parser<'_, '_> {
             let lo = self.expr(0)?;
             self.expect("..")?;
             let hi = self.expr(0)?;
-            let body = self.block(false)?;
+            let body = self.loop_body(&var)?;
             return Ok(Stmt::For {
                 comptime: build,
                 var,
@@ -886,18 +985,7 @@ impl Parser<'_, '_> {
             });
         }
         if self.eat("if") {
-            let cond = self.expr(0)?;
-            let then = self.block(false)?;
-            let otherwise = if self.eat("else") {
-                Some(self.block(false)?)
-            } else {
-                None
-            };
-            return Ok(Stmt::If {
-                cond,
-                then,
-                otherwise,
-            });
+            return self.if_stmt(false);
         }
         let e = self.expr(0)?;
         if self.eat("=") {
@@ -1033,6 +1121,13 @@ impl Parser<'_, '_> {
         }
         Ok(a)
     }
+    fn expr_arm(&mut self) -> Res<ExprBlock> {
+        let mut body = self.block(false)?;
+        let Some(Stmt::Expr(value)) = body.stmts.pop() else {
+            return self.err("a value at the end of the if arm");
+        };
+        Ok(ExprBlock { body, value: Box::new(value) })
+    }
     fn primary(&mut self) -> Res<Expr> {
         let span = self.cur().span;
         if self.eat("wgsl"){
@@ -1049,29 +1144,15 @@ impl Parser<'_, '_> {
             return Ok(self.node(span.to(end),ExprKind::Call{callee:name,args}));
         }
         if self.eat("if") {
-            let cond = self.expr(0)?;
-            let arm = |p: &mut Self| -> Res<Expr> {
-                p.expect("{")?;
-                p.seps();
-                let v = p.expr(0)?;
-                p.seps();
-                p.expect("}")?;
-                Ok(v)
-            };
-            let yes = arm(self)?;
+            let condition = Box::new(self.expr(0)?);
+            let then = self.expr_arm()?;
             self.expect("else")?;
-            let no = arm(self)?;
-            let args = [no, yes, cond]
-                .into_iter()
-                .map(|value| Arg { name: None, value })
-                .collect();
-            return Ok(self.node(
-                span,
-                ExprKind::Call {
-                    callee: named("loft_conditional", span),
-                    args,
-                },
-            ));
+            let otherwise = if self.is("if") {
+                ExprBlock { body: Block { stmts: vec![] }, value: Box::new(self.primary()?) }
+            } else {
+                self.expr_arm()?
+            };
+            return Ok(self.node(span, ExprKind::If { condition, then, otherwise }));
         }
         if self.eat("(") {
             let e = self.expr(0)?;
@@ -1131,6 +1212,10 @@ impl Parser<'_, '_> {
                     },
                 );
                 n.name = "sample_c2".into();
+            }
+            if let Some(resolved) = self.kind_helpers.get(&n.name) {
+                n.name = resolved.clone();
+                return Ok(self.node(span, ExprKind::Call { callee: n, args }));
             }
             if matches!(n.name.as_str(), "rgb" | "v2" | "v3" | "v4") {
                 let target = match n.name.as_str() {

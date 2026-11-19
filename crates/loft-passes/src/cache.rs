@@ -39,6 +39,18 @@ fn semantic(value: &mut serde_json::Value) {
         _ => {}
     }
 }
+pub(crate) fn fingerprint(value: impl serde::Serialize, sp: Span) -> Res<Vec<u8>> {
+    let mut ir = serde_json::to_value(value).map_err(|e| error(sp, e))?;
+    semantic(&mut ir);
+    serde_json::to_vec(&ir).map_err(|e| error(sp, e))
+}
+
+pub(crate) fn certificate(p: &Prog, f: &FnDecl) -> Res<String> {
+    let (helpers, names) = emit::reachable(p, &[f], &[]);
+    let constants: Vec<_> = names.iter().map(|n| p.consts[n.as_str()]).collect();
+    Ok(blake3::hash(&fingerprint((f, helpers, constants), f.name.span)?).to_hex().to_string())
+}
+
 pub(crate) fn kind_key(p: &Prog, k: &KindDecl, luts: &[Lut]) -> Res<blake3::Hasher> {
     static ABI: OnceLock<blake3::Hash> = OnceLock::new();
     let abi = ABI.get_or_init(|| {
@@ -60,13 +72,17 @@ pub(crate) fn kind_key(p: &Prog, k: &KindDecl, luts: &[Lut]) -> Res<blake3::Hash
         .collect();
     let (helpers, names) = emit::reachable(p, &roots, &[]);
     let constants: Vec<_> = names.iter().map(|n|p.consts[n.as_str()]).collect();
-    let mut ir = serde_json::to_value((&k.name.name, &k.row, roots, helpers, constants))
-        .map_err(|e| error(k.name.span, e))?;
-    semantic(&mut ir);
+    let mut references = emit::References::default();
+    for c in &constants {
+        references.expr(&c.value, &[]);
+    }
+    for f in roots.iter().chain(&helpers) {
+        references.scans.extend(emit::References::function(f).scans);
+    }
     let mut h = blake3::Hasher::new();
     h.update(abi.as_bytes());
-    h.update(&serde_json::to_vec(&ir).map_err(|e| error(k.name.span, e))?);
-    for l in luts {
+    h.update(&fingerprint((&k.name.name, &k.row, roots, helpers, constants), k.name.span)?);
+    for l in luts.iter().filter(|l| references.scans.contains(l.name.as_str())) {
         h.update(&(l.name.len() as u64).to_le_bytes());
         h.update(l.name.as_bytes());
         h.update(&l.lo.to_le_bytes());
@@ -82,6 +98,7 @@ pub(crate) fn kind_key(p: &Prog, k: &KindDecl, luts: &[Lut]) -> Res<blake3::Hash
 }
 
 pub(crate) fn derive(
+    dir: &Path,
     domain: &blake3::Hasher,
     fields: &[&RowVal],
     sp: Span,
@@ -97,7 +114,6 @@ pub(crate) fn derive(
         }
     }
     let key = key.finalize();
-    let dir = Path::new("target/loft_cache");
     let path = dir.join(format!("deriv_{key}.bin"));
     // The checksum covers both the key and seven f64s; a torn or misplaced file is a miss.
     let checksum = |b: &[u8]| blake3::keyed_hash(key.as_bytes(), b);
