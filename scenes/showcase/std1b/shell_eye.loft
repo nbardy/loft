@@ -1,0 +1,97 @@
+use stdlib::frames::transport::{frame, transport}
+use stdlib::geometry::shell::{coil_frame}
+use stdlib::geometry::eyes::{stalk_eye, lid_point}
+use stdlib::sdf::solid::{round_cone, sphere}
+use stdlib::geometry::analytic::{ray_round_cone}
+use stdlib::materials::bsdf::{ggx}
+use stdlib::noise::value::{noise2}
+
+# Coil and hinged eyes: a right-handed frame scan and posed eye rows.
+space Shell
+
+fn shell_frame(u: f) -> frame@Shell {
+  let base = frame([0]@Shell, dir([0, 0, 1]@Shell), dir([1, 0, 0]@Shell))
+  coil_frame(base, (u - 1) * 15.3, 0.69, 0.145, -0.31)
+}
+
+scan whorl u in 0..1 by 96 on bake_lut {
+  init = shell_frame(u)
+  step prev = transport(prev, shell_frame(u).o, dir(shell_frame(u).t))
+}
+
+kind Carapace @Shell (pose: xf@Shell>World, exponent: f in 0.8..1.2) {
+  surface(u, v) grid 144x44 {
+    let ring = whorl(u)
+    let a = TAU * v
+    let c = cos(a)
+    let s = -sin(a)
+    let scale = exp(0.145 * 15.3 * (u - 1))
+    let ridge = 1 + 0.06 * (0.5 + 0.5 * cos(123 * u))
+    # Leave the exponent on the row in the differentiated surface (E405).
+    let x = c * pow(c * c + 1e-6, 0.5 * (exponent - 1))
+    let y = s * pow(s * s + 1e-6, 0.5 * (exponent - 1))
+    ring.o + ring.n * (x * 0.43 * scale * ridge) + ring.b * (y * 0.34 * scale * ridge)
+  }
+  material(p, n, uv) {
+    let lines = 0.5 + 0.5 * cos(71 * uv.x + 2 * sin(TAU * uv.y))
+    let ink = clamp(lines + 0.34 * noise2(p.xy * 12), 0, 1)
+    ggx(mix([0.26, 0.29, 0.26], [0.79, 0.49, 0.26], ink), 0.57, 0)
+  }
+}
+
+kind Stalk @World (root: p3@World, tip: p3@World, ra: m > 0, rb: m > 0) {
+  trace(p) = round_cone(p, root, tip, ra, rb)
+  visible(ro, rd) = ray_round_cone(ro, rd, root, tip, ra, rb)
+  material(p, n) = ggx([0.23, 0.36, 0.29], 0.63, 0)
+}
+
+kind EyeGlobe @World (center: p3@World, front: d3@World, radius: m > 0) {
+  trace(p) = sphere(p - center, radius)
+  material(p, n) {
+    let facing = dot((p - center) / radius, front)
+    ggx(mix([0.78, 0.76, 0.55], [0.035, 0.09, 0.11], smoothstep(0.932, 0.961, facing)), 0.29, 0)
+  }
+}
+
+kind Eyelid @World (center: p3@World, front: d3@World, up: d3@World, hinge: d3@World, side: f, radius: m, angle: rad) {
+  surface(u, v) grid 14x24 {
+    lid_point(frame_axes(center, front, up, hinge), [u, v], angle, radius, side)
+  }
+  material(p, n, uv) = ggx([0.31, 0.47, 0.34], 0.71, 0)
+}
+
+# Open elliptical rings; the row axes keep the apertures oriented.
+kind Mantle @World (a: p3@World, b: p3@World, up: d3@World, side: d3@World, radii: v4) {
+  surface(u, v) grid 16x36 {
+    let x = cos(TAU * v)
+    let y = -sin(TAU * v)
+    let start = a + up * (radii.x * x) + side * (radii.y * y)
+    let end = b + up * (radii.z * x) + side * (radii.w * y)
+    mix(start, end, u)
+  }
+  material(p, n, uv) = ggx([0.22, 0.37, 0.30], 0.75, 0)
+}
+
+build fn eye(socket: p3@World, lean: f, slant: rad, upper: rad) {
+  let aim = place(socket, lean) * [0, 0, 1]@World
+  let at = frame(socket, dir([0, 1, 0]@World), dir(aim - socket))
+  let e = stalk_eye(at, 0.49, 0.15, [0.32, 1.32, 5]@World, slant)
+  let bend = at.o + at.t * (0.55 * 0.49) + at.n * (0.08 * 0.49)
+  emit Stalk(root: socket, tip: bend, ra: 0.094, rb: 0.079)
+  emit Stalk(root: bend, tip: e.o, ra: 0.079, rb: 0.067)
+  emit EyeGlobe(center: e.o, front: dir(e.t), radius: 0.15)
+  emit Eyelid(center: e.o, front: dir(e.t), up: dir(e.n), hinge: dir(e.b), side: 1, radius: 0.164, angle: upper)
+  emit Eyelid(center: e.o, front: dir(e.t), up: dir(e.n), hinge: dir(e.b), side: -1, radius: 0.159, angle: 0.59)
+}
+
+build {
+  emit Carapace(pose: place([-0.41, 0.79, -0.05]@World, 0.19), exponent: 1)
+  let a = [0.02, 0.42, 0.25]@World
+  let b = [0.93, 0.44, 0.52]@World
+  let f = frame(a, dir(b - a), dir([0, 1, 0]@World))
+  emit Mantle(a: a, b: b, up: dir(f.n), side: dir(f.b), radii: [0.31, 0.52, 0.23, 0.31])
+  eye([0.64, 0.54, 0.66]@World, -0.44, 0.12, 1.0)
+  eye([0.99, 0.54, 0.31]@World, 0.48, -0.17, 0.82)
+  emit Sun(dir: dir([-0.34, 0.78, 0.56]@World), color: [2.4, 2.1, 1.9])
+}
+camera Main { at: [0.02, 0.78, 0]@World, radius: 4.05, height: 0.42, period: 24s, fov: 39deg }

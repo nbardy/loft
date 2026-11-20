@@ -1,0 +1,23 @@
+use stdlib::engines::woodblock
+use stdlib::materials::bsdf::{ggx}
+use stdlib::noise::value::{noise2, fractal2, fractal3}
+use stdlib::sdf::marks::{isosceles_distance}
+use stdlib::sdf::solid::{sphere}
+
+# Noisy ink: broad drift, broken stipple and planar tapered stamps.
+fn pigment(p: v3, octaves: u) -> rgb {
+  let drift = fractal2(p.xy * 4 + [0.17, -0.39], octaves, 2, 0.48)
+  let grain = fractal3(p * 19, octaves, 2.03, 0.45)
+  let uv = p.xy * [6.9, 5.4] + [drift, 0.5 * drift]
+  let stamp = isosceles_distance(fract(uv) - [0.5, 0.2], 0.31, 0.63)
+  let edge = 1 - smoothstep(-0.03, 0.05, stamp + 0.1 * noise2(p.xy * 23))
+  mix([0.09, 0.18, 0.26], [0.65, 0.35, 0.17], clamp(0.7 * edge + 0.38 * grain, 0, 1))
+}
+
+kind Ink @World (octaves: u in 1..8) {
+  trace(p) = sphere(p - [0, 0.84, 0]@World, 0.83)
+  material(p, n) = ggx(pigment(p.xyz, octaves), 0.84, 0)
+}
+
+build { emit Ink(octaves: 4) }
+camera Main { at: [0, 0.84, 0]@World, radius: 3.25, height: 0.32, period: 24s, fov: 36deg }

@@ -1,0 +1,19 @@
+# Exact planar signed distance to the base [-half_width, half_width] at y=0
+# and apex (0,height). Nonnegative dimensions; zero turns the mark into a
+# segment or point with unsigned distance. The caller owns antialiasing.
+pub fn isosceles_distance(p: v2, half_width: m, height: m) -> m {
+  let q = [abs(p.x), p.y]
+  let edge = [-half_width, height]
+  let v = q - [half_width, 0]
+  let base = q - [clamp(q.x, 0, half_width), 0]
+  var slant = v
+  let l2 = dot(edge, edge)
+  if l2 > 0 {
+    slant = v - edge * clamp(dot(edge, v) / l2, 0, 1)
+  }
+  let d = sqrt(min(dot(base, base), dot(slant, slant)))
+  if half_width > 0 && height > 0 && q.y >= 0 && height * v.x + half_width * v.y <= 0 {
+    return -d
+  }
+  d
+}

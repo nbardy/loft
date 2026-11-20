@@ -1,0 +1,43 @@
+use stdlib::noise::cellular::{cellular2, facet_site}
+use stdlib::noise::value::{noise2, fractal2, fractal3}
+use stdlib::sdf::marks::{isosceles_distance}
+use stdlib::sdf::solid::{round_box, sphere}
+use stdlib::materials::bsdf::{ggx}
+
+# Folded facets: the site controls card tilt; its seam and the planar marks
+# keep the impression of folded, scored cardstock.
+space Card
+
+kind Facets @Card (pose: xf@Card>World, octaves: u in 1..8) {
+  trace(p) = round_box(p - [0]@Card, [0.93, 0.78, 0.55], 0.12)
+  material(p, n) {
+    let q = p.xyz * 4.8
+    let cell = facet_site(q)
+    let site = cell.xyz
+    let across = cellular2(q.xy * 0.72)
+    let seam = smoothstep(0.01, 0.16, cell.w)
+    let fold = dot(normalize([0.08 + fract(site.x), 0.12 + fract(site.y), 0.16 + fract(site.z)]),
+                   normalize([-0.32, 0.8, 0.71]))
+    let score = 1 - smoothstep(-0.02, 0.06, isosceles_distance(q.xy * 0.72 - across.zw, 0.16, 0.31))
+    let mottle = fractal3(q * 3.1, octaves, 1.9, 0.4) + fractal2(q.xy * 0.9, octaves, 2, 0.4)
+    let ink = mix([0.17, 0.28, 0.31], [0.80, 0.63, 0.39], fold * (0.40 + 0.60 * seam))
+    ggx(ink * (0.84 + 0.12 * mottle + 0.04 * noise2(q.xy) - 0.22 * score), 0.92, 0)
+  }
+}
+
+kind FacetPearl @World (at: p3@World) {
+  trace(p) = sphere(p - at, 0.28)
+  material(p, n) {
+    let q = (p-at).xyz * 12
+    let f = facet_site(q)
+    let c = cellular2(q.xz)
+    ggx(mix([0.24, 0.32, 0.37], [0.63, 0.73, 0.67], clamp(f.w + c.y - c.x, 0, 1)), 0.87, 0)
+  }
+}
+
+build {
+  emit Facets(pose: place([0, 0.89, 0]@World, -0.45), octaves: 3)
+  emit FacetPearl(at: [-1.12, 0.29, 0.46]@World)
+  emit Sun(dir: dir([-0.38, 0.72, 0.6]@World), color: [2.3, 2.1, 1.9])
+}
+camera Main { at: [0, 0.81, 0]@World, radius: 3.8, height: 0.57, period: 24s, fov: 39deg }

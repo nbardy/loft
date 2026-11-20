@@ -1,0 +1,58 @@
+use stdlib::noise::value::{hash3}
+
+# One jittered site per cell. Distances are to the two nearest sites within
+# the 3x3 window, ordered by y then x on ties. The second site beyond this
+# window is deliberately outside the contract.
+pub fn cellular2(p: v2) -> v4 {
+  let cell = floor(p)
+  let q = p - cell
+  var first = 8.0
+  var second = 8.0
+  var site = cell
+  for j in 0..3 {
+    for i in 0..3 {
+      let x = i32(cell.x) + i32(i) - 1
+      let y = i32(cell.y) + i32(j) - 1
+      let local = [f32(i) - 1 + hash3(x, y, 0), f32(j) - 1 + hash3(x, y, 1)]
+      let d = dot(local - q, local - q)
+      if d < first {
+        second = first
+        first = d
+        site = cell + local
+      } else {
+        second = min(second, d)
+      }
+    }
+  }
+  [sqrt(first), sqrt(second), site.x, site.y]
+}
+
+# xyz = nearest site in lattice coordinates, w = F2-F1 in lattice units.
+# Search only the 27 adjacent cells, in z/y/x order; an exact tie keeps the
+# first site and yields zero seam distance.
+pub fn facet_site(p: v3) -> v4 {
+  let cell = floor(p)
+  let q = p - cell
+  var first = 12.0
+  var second = 12.0
+  var site = cell
+  for k in 0..3 {
+    for j in 0..3 {
+      for i in 0..3 {
+        let x = i32(cell.x) + i32(i) - 1
+        let y = i32(cell.y) + i32(j) - 1
+        let z = i32(cell.z) + i32(k) - 1
+        let local = [f32(i) - 1 + hash3(x, y, z), f32(j) - 1 + hash3(x, y, z + 109), f32(k) - 1 + hash3(x, y, z + 227)]
+        let d = dot(local - q, local - q)
+        if d < first {
+          second = first
+          first = d
+          site = cell + local
+        } else {
+          second = min(second, d)
+        }
+      }
+    }
+  }
+  [site.x, site.y, site.z, sqrt(second) - sqrt(first)]
+}

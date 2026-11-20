@@ -24,3 +24,56 @@ pub fn vnoise(p: rgb) -> f {
 pub fn fbm2(p: rgb) -> f {
   0.667 * vnoise(p) + 0.333 * vnoise(p * 2.03 + [1.7, 9.2, 3.1])
 }
+
+fn planar_corner(x: i, y: i, offset: v2) -> f {
+  let angle = TAU * hash3(x, y, 0)
+  dot([cos(angle), sin(angle)], offset)
+}
+
+# Four gradients, quintic interpolation and sqrt(2) scaling from the legacy
+# planar lattice. Floor before converting to signed cells, including below zero.
+pub fn noise2(p: v2) -> f {
+  let cell = floor(p)
+  let q = p - cell
+  let w = q * q * q * (q * (q * 6.0 - [15.0, 15.0]) + [10.0, 10.0])
+  let x = i32(cell.x)
+  let y = i32(cell.y)
+  let a = planar_corner(x, y, q)
+  let b = planar_corner(x + 1, y, q - [1, 0])
+  let c = planar_corner(x, y + 1, q - [0, 1])
+  let d = planar_corner(x + 1, y + 1, q - [1, 1])
+  1.41421356237 * mix(mix(a, b, w.x), mix(c, d, w.x), w.y)
+}
+
+# Normalized planar gradient fBM. The caller supplies 1..8 octaves, an
+# in-range lattice at every octave, positive lacunarity and gain in [0, 1].
+pub fn fractal2(p: v2, octaves: u, lacunarity: f, gain: f) -> f {
+  var q = p
+  var amp = 1.0
+  var weight = 0.0
+  var sum = 0.0
+  for octave in 0..octaves {
+    sum = sum + amp * noise2(q)
+    weight = weight + amp
+    q = q * lacunarity + [37.5, 19.25]
+    amp = amp * gain
+  }
+  # An empty sum is zero, including at call sites without a positive row bound.
+  sum / max(1.0, weight)
+}
+
+# Normalized volume value fBM, using the same domain as fractal2. The two-octave
+# stock fbm2 above keeps its existing frequencies, weights and bit sequence.
+pub fn fractal3(p: v3, octaves: u, lacunarity: f, gain: f) -> f {
+  var q = p
+  var amp = 1.0
+  var weight = 0.0
+  var sum = 0.0
+  for octave in 0..octaves {
+    sum = sum + amp * vnoise(q)
+    weight = weight + amp
+    q = q * lacunarity + [37.5, 19.25, 11.125]
+    amp = amp * gain
+  }
+  sum / max(1.0, weight)
+}

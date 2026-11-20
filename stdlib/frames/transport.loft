@@ -1,8 +1,14 @@
 # Frames along a curve, for scans: a first frame from a tangent and an up hint, then rotation-minimising transport by
 # double reflection (Wang, Juttler, Zheng, Liu 2008): no twist accumulates, unlike a Frenet frame.
 
+# A parallel hint has no preferred roll. Choose an axis away from the tangent.
 pub fn frame[S](o: p3@S, t: d3@S, up: d3@S) -> frame@S {
-  let n = normalize(up - t * dot(up, t))
+  var projected = up - t * dot(up, t)
+  if dot(projected, projected) < 1e-12 {
+    let other = [0, select(0.0, 1.0, abs(t.z) > 0.9), select(1.0, 0.0, abs(t.z) > 0.9)]@S - [0]@S
+    projected = other - t * dot(other, t)
+  }
+  let n = normalize(projected)
   frame_axes(o, t, n, cross(t, n))
 }
 

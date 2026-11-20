@@ -1,0 +1,115 @@
+use stdlib::frames::transport::{frame, transport}
+use stdlib::geometry::analytic::{ray_round_cone}
+use stdlib::geometry::eyes::{stalk_eye, lid_point}
+use stdlib::geometry::growth::{growth_shoot}
+use stdlib::geometry::shell::{coil_frame}
+use stdlib::materials::bsdf::{emit_lobe}
+use stdlib::math::sampling::{cosine_sample, sample_key}
+use stdlib::noise::cellular::{cellular2, facet_site}
+use stdlib::noise::value::{noise2, fractal2, fractal3}
+use stdlib::sdf::marks::{isosceles_distance}
+use stdlib::sdf::solid::{round_cone, sphere}
+
+kind Cone @World (end: p3@World, ra: m, rb: m) {
+  trace(p) = round_cone(p, [0]@World, end, ra, rb)
+  visible(ro, rd) = ray_round_cone(ro, rd, [0]@World, end, ra, rb)
+  material(p, n) = emit_lobe([0, 0, 0])
+}
+
+kind Lattice @World (octaves: u in 1..8) {
+  trace(p) = sphere(p - [0]@World, 1)
+  material(p, n) = emit_lobe([noise2(p.xy), fractal2(p.xy, octaves, 2, 0.46), fractal3(p.xyz, octaves, 2, 0.46)])
+}
+
+kind Cells @World () {
+  trace(p) = sphere(p - [0]@World, 1)
+  material(p, n) {
+    let c = cellular2(p.xy)
+    let facet = facet_site(p.xyz)
+    emit_lobe([c.x, c.y, facet.w])
+  }
+}
+
+kind Site @World () {
+  trace(p) = sphere(p - [0]@World, 1)
+  material(p, n) {
+    let c = cellular2(p.xy)
+    let f = facet_site(p.xyz)
+    emit_lobe([c.z, c.w, f.z])
+  }
+}
+
+kind Marks @World () {
+  trace(p) = sphere(p - [0]@World, 1)
+  material(p, n) = emit_lobe([isosceles_distance(p.xy, 0.5, 1), isosceles_distance(p.xy, 0, 1),
+                             isosceles_distance(p.xy, 0, 0)])
+}
+
+# Direct scalar readback excludes lighting from the exact counter check.
+kind Samples @World (px: u, py: u, sample: u, bounce: u, dimension: u) {
+  trace(p) = sphere(p - [0]@World, sample_key(px, py, sample, bounce, dimension))
+  material(p, n) {
+    let a = sample_key(px, py, sample, bounce, 3)
+    let b = sample_key(px, py, sample, bounce, 4)
+    let wi = cosine_sample(n, [a, b])
+    emit_lobe([a, b, dot(n, wi)])
+  }
+}
+
+kind Ring @World (root: p3@World, tip: p3@World) {
+  surface(u, v) grid 4x12 {
+    let x = cos(TAU * v)
+    let y = sin(TAU * v)
+    let start = root + ([0.2 * x, 0, 0.3 * y]@World - [0]@World)
+    let end = tip + ([0.1 * x, 0, 0.17 * y]@World - [0]@World)
+    mix(start, end, u)
+  }
+  material(p, n, uv) = emit_lobe([0, 0, 0])
+}
+
+fn check_coil(u: f) -> frame@World {
+  let base = frame([0]@World, dir([0, 0, 1]@World), dir([0, 0, 1]@World))
+  coil_frame(base, (u - 1) * 8, 0.42, 0.16, 0.21)
+}
+
+scan check_frames u in 0..1 by 16 on bake_lut {
+  init = check_coil(u)
+  step prev = transport(prev, check_coil(u).o, dir(check_coil(u).t))
+}
+
+kind FrameSample @World () {
+  surface(u, v) grid 8x12 {
+    let f = check_frames(u)
+    f.o + f.n * (0.12 * cos(TAU * v)) - f.b * (0.09 * sin(TAU * v))
+  }
+  material(p, n, uv) = emit_lobe([0, 0, 0])
+}
+
+kind Lid @World (center: p3@World, front: d3@World, up: d3@World, hinge: d3@World, side: f) {
+  surface(u, v) grid 4x6 = lid_point(frame_axes(center, front, up, hinge), [u, v], 1.02, 0.17, side)
+  material(p, n, uv) = emit_lobe([0, 0, 0])
+}
+
+build {
+  emit Cone(end: [0, 2, 0]@World, ra: 1, rb: 0.5)
+  emit Cone(end: [0, 2, 0]@World, ra: 1, rb: 1)
+  emit Cone(end: [0]@World, ra: 0.5, rb: 0.75)
+  emit Cone(end: [0, 0.2, 0]@World, ra: 0.3, rb: 0.7)
+  emit Lattice(octaves: 1)
+  emit Lattice(octaves: 8)
+  emit Cells()
+  emit Site()
+  emit Marks()
+  emit Samples(px: 719, py: 373, sample: 5, bounce: 2, dimension: 3)
+  emit Samples(px: 719, py: 373, sample: 5, bounce: 2, dimension: 4)
+  let up = dir([0, 1, 0]@World)
+  let f = frame([0]@World, up, up)
+  let repeat = transport(f, [0]@World, dir([0, 0, 1]@World))
+  let root = growth_shoot(repeat, 0.47, 91, 2, 5, 0)
+  let tip = growth_shoot(repeat, 0.47, 91, 2, 5, 2)
+  emit Ring(root: root, tip: root + [tip.x - root.x, 0.8, tip.z - root.z])
+  emit FrameSample()
+  let eye = stalk_eye(repeat, 0.38, 0.15, [0.2, 0.7, 2]@World, 0.4)
+  emit Lid(center: eye.o, front: dir(eye.t), up: dir(eye.n), hinge: dir(eye.b), side: 1)
+  emit Lid(center: eye.o, front: dir(eye.t), up: dir(eye.n), hinge: dir(eye.b), side: -1)
+}

@@ -28,3 +28,28 @@ pub fn round_box[S](v: v3@S, half: rgb, r: f) -> f {
 pub fn ssub(a: f, b: f, k: f) -> f {
   -smin(-a, b, k)
 }
+
+# Exact distance in S to the convex hull of two endpoint balls. Radii are
+# nonnegative. Nested or coincident balls reduce to the containing ball.
+pub fn round_cone[S](p: p3@S, a: p3@S, b: p3@S, ra: m, rb: m) -> m {
+  let ba = b - a
+  let len = length(ba)
+  let delta = ra - rb
+  let pa = p - a
+  if len <= abs(delta) {
+    if delta >= 0 {
+      return length(pa) - ra
+    }
+    return length(p - b) - rb
+  }
+  let axis = ba / len
+  let y = dot(pa, axis)
+  let rho = length(pa - axis * y)
+  let s = delta / len
+  let c = sqrt((1 - s) * (1 + s))
+  # Clamping the minimizing ball center selects either cap or the side.
+  # After the containment test, c for a nonzero f32 slope gap exceeds
+  # 1e-6. The floor supplies the current interval checker a positive bound.
+  let station = clamp(y - rho * s / max(c, 1e-6), 0, len)
+  length(pa - axis * station) - (ra - s * station)
+}
