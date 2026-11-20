@@ -85,6 +85,7 @@ fn truth(program: &Program, twin: &Compiled) {
                     );
                 }
             }
+            Draw::Mesh { .. } => panic!("the bead and lantern fixtures have no imported meshes"),
             Draw::Analytic | Draw::Traced => {
                 let center: [f32; 3] = std::array::from_fn(|i| (row.lo[i] + row.hi[i]) * 0.5);
                 let center_trace = query(twin, row, center, FRONT).trace;
