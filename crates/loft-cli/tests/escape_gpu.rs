@@ -265,3 +265,66 @@ fn scatter_reference(seed: u32, span: u32) -> ([[f64; 2]; 16], f64) {
     }
     (grid, absolute_momentum)
 }
+
+#[test]
+fn nondet_law_matches_a_statistical_twin_and_refuses_cpu_stepping() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let src = loft_passes::source::Graph::text(&root, Path::new("scenes/drift_probe.loft"), r"
+        use stdlib::materials::bsdf::{ggx}
+        use stdlib::sdf::solid::{sphere}
+        space World
+        fn wave(x: f) -> f = wgsl (x: f) -> f { return sin(x); }
+        kind Wisp @World (x: f) {
+            trace(p) = sphere(p - [0, 0, 0]@World, 0.5)
+            material(p,n) = ggx(rgb(0.4), 0.8, 0)
+        }
+        build {
+            emit Wisp(x: -0.6)
+            emit Wisp(x: -0.1)
+            emit Wisp(x: 0.2)
+            emit Wisp(x: 0.8)
+        }
+        law drift(w: Wisp, dt) nondet writes w.{x} {
+            w.x = wave(w.x + dt + time * 0.01)
+        }
+        schedule Main { run_laws(drift) }
+    ");
+    let (program, _, _) = loft_passes::compile(&src, &[])
+        .unwrap_or_else(|diag| panic!("{}", diag.render(&src)));
+    let g = loft_cli::native::gpu().unwrap();
+    let mut runner = Runner::attach(
+        Arc::new(g.device.clone()),
+        Arc::new(g.queue.clone()),
+        HostCaps {
+            depth_convention: DepthConvention::StandardZeroToOne,
+            msaa_samples: 1,
+            features: GpuFeatures::empty(),
+        },
+    );
+    let motion = loft_passes::fusion::motion_bundle(&program, &program.dispatches[0], 0);
+    let id = runner.load_bundle(&motion).unwrap();
+    assert!(matches!(
+        runner.step_pass_cpu(id, loft_ir::PassId(0), 0..4, 1),
+        Err(loft_runner::RunnerError::Unsupported("NonDet ticks require GPU execution"))
+    ));
+
+    let initial = [-0.6_f64, -0.1, 0.2, 0.8];
+    let mut max_error = 0.0_f64;
+    for ticks in [1, 31, 128] {
+        let sampled = loft_cli::native::sample_motion(&g, &program, ticks as f32 / 120.).unwrap();
+        let [(field, values)] = sampled[0].fields.as_slice() else {
+            panic!("expected one motion field");
+        };
+        assert_eq!(field, "x");
+        assert_eq!(values.len(), initial.len());
+        for (&gpu, x) in values.iter().zip(initial) {
+            let expected = (1..=ticks).fold(x, |state, tick| {
+                (state + 1. / 120. + f64::from(tick) / 120. * 0.01).sin()
+            });
+            assert!(gpu.is_finite());
+            max_error = max_error.max((f64::from(gpu) - expected).abs());
+        }
+    }
+    eprintln!("{}: NonDet law, 12 observations, max={max_error:.9}", g.adapter);
+    assert!(max_error <= 0.00003);
+}
