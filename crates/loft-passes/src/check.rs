@@ -101,20 +101,7 @@ pub fn check(p: &Prog, types: &mut Vec<Ty>) -> Res<CheckedEffects> {
     }
     for law in p.laws.values() {
         let (reachable, constants) = crate::emit::reachable(p, &[&law.f], &[]);
-        let mut calls = crate::emit::References::default();
-        for name in constants {
-            calls.expr(&p.consts[name.as_str()].value, &[]);
-        }
-        for f in std::iter::once(&law.f).chain(reachable) {
-            if f.refuses_unverified_raw() {
-                return Err(Diag::new(Code::E504, f.name.span, "motion reaches unverified raw WGSL", "use wgsl det (...) after verifying the block is deterministic"));
-            }
-            calls.calls.extend(crate::emit::References::function(f).calls);
-        }
-        if let Some(call) = calls.calls.into_iter().find(|c| !p.fns.contains_key(c.name.as_str())
-            && matches!(crate::emit::motion_math(&c.name), crate::emit::MotionMath::Unavailable)) {
-            return Err(Diag::new(Code::E504, call.span, "no deterministic motion implementation for this operation", "rewrite it using deterministic operations"));
-        }
+        crate::det_check::source(p, std::iter::once(&law.f).chain(reachable), &constants)?;
     }
     for k in p.kinds.values(){if let Some(trace)=k.query(QueryKind::Trace) && let Some(f)=crate::emit::proof_dependencies(p,trace).into_iter().find(|f|f.raw.is_some()){
         return Err(Diag::new(Code::E211,f.name.span,"raw WGSL has no proven spatial Lipschitz bound","write the trace term in Loft or move it to the material"))

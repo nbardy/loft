@@ -10,6 +10,7 @@ mod cache;
 mod defaults;
 mod refine;
 mod provenance;
+mod det_check;
 mod infer;
 pub mod emit;
 pub mod eval;
@@ -613,7 +614,7 @@ fn pack(row: &[RowVal], out: &mut Vec<f32>) {
     }
 }
 
-fn naga_module(name: &str, text: String, src: &Sources, features: loft_ir::GpuFeatures) -> Res<ShaderModule> {
+fn naga_module(name: &str, text: String, src: &Sources, features: loft_ir::GpuFeatures, motion: Option<&det_check::Helpers>) -> Res<ShaderModule> {
     let mut prelude = quant::wgsl_prelude(&text, features);
     if text.contains("loft_ggx_energy(") {
         let table = if text.contains("var<storage, read> world_luts:") { Some("world_luts") }
@@ -622,9 +623,32 @@ fn naga_module(name: &str, text: String, src: &Sources, features: loft_ir::GpuFe
         prelude.push_str(&bsdf::energy_wgsl(table));
     }
     prelude.push_str(&text);
-    let map=provenance::Map::new(prelude);
     let diagnostic=|at:Option<Span>,message:String|Diag::new(Code::E701,at.unwrap_or(Span::NONE),format!("WGSL validation in {name}: {message}"),"correct the WGSL expression at this source location");
-    let module=naga::front::wgsl::parse_str(&map.shader).map_err(|e|diagnostic(e.labels().find_map(|(s,_)|map.origin(s)),e.emit_to_string(&map.shader)))?;
+    let parse = |map: &provenance::Map| naga::front::wgsl::parse_str(&map.shader).map_err(|e| {
+        let span = e.labels().find_map(|(s, _)| map.origin(s));
+        if e.message() == "the `f16` enable extension is not enabled"
+            && let Some(span) = span
+            && motion.is_some_and(|helpers| helpers.values().any(|f| f.raw.is_some() && f.name.span == span))
+        {
+            return Diag::new(Code::E504, span, "raw motion cannot use f16", "use f32 in motion code");
+        }
+        diagnostic(span, e.emit_to_string(&map.shader))
+    });
+    let (map, module) = if let Some(helpers) = motion.filter(|hs| hs.values().any(|f| f.raw.is_some())) {
+        let map = provenance::Map::new(prelude.clone());
+        let module = parse(&map)?;
+        if det_check::verify(&module, &map, src, helpers, &mut prelude)? {
+            let map = provenance::Map::new(prelude);
+            let module = parse(&map)?;
+            (map, module)
+        } else {
+            (map, module)
+        }
+    } else {
+        let map = provenance::Map::new(prelude);
+        let module = parse(&map)?;
+        (map, module)
+    };
     naga::valid::Validator::new(naga::valid::ValidationFlags::all(),naga::valid::Capabilities::default()).validate(&module).map_err(|e|diagnostic(e.spans().find_map(|(s,_)|map.origin(*s)),e.emit_to_string(&map.shader)))?;
     let origins=map.expressions(&module,src);
     Ok(ShaderModule{name:name.into(),wgsl:map.shader,naga:module,span:None,origins})
@@ -1248,6 +1272,7 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
         texts.push((name.to_string(), shader));
     }
     let mut dispatches = vec![];
+    let mut motion_helpers = BTreeMap::new();
     if samples.is_empty() {
         for &name in &p.kind_order {
             use crate::program::DispatchRows;
@@ -1270,7 +1295,8 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
                     name: name.into(), n_rows: table.len() as u32, stride: (words.len() / table.len()) as u32, words,
                 }))
             };
-            if let Some((entry, dispatch)) = emit::motion_module(&p, &types, kind, &priors, output)? {
+            if let Some((entry, dispatch, helpers)) = emit::motion_module(&p, &types, kind, &priors, output)? {
+                motion_helpers.insert(dispatch.module, helpers);
                 texts.push((format!("{name}.advance"), entry));
                 dispatches.push(dispatch);
             }
@@ -1284,7 +1310,8 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
                 return Err(Diag::new(Code::E502, table.span, "the scheduled solver state table has multiple owners",
                     "use one scheduled solver per dedicated state table"));
             }
-            let (entry, dispatch) = emit::solver::lower(&p, &mut types, texts.len(), solver, overrides)?;
+            let (entry, dispatch, helpers) = emit::solver::lower(&p, &mut types, texts.len(), solver, overrides)?;
+            motion_helpers.insert(dispatch.module, helpers);
             texts.push((format!("{name}.advance"), entry));
             dispatches.push(dispatch);
         }
@@ -1311,8 +1338,8 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
     lap("emit", &mut ms);
     let store_energy = texts.iter().any(|(_, w)| w.contains("loft_ggx_energy(")
         && (w.contains("var<storage, read> luts:") || w.contains("var<storage, read> world_luts:")));
-    let shader_modules = texts.into_iter().map(|(n,w)| {
-        let mut m=naga_module(&n, w, src, features)?;
+    let shader_modules = texts.into_iter().enumerate().map(|(i,(n,w))| {
+        let mut m=naga_module(&n, w, src, features, motion_helpers.get(&i))?;
         if let Some(k)=p.kinds.get(n.as_str()) {let (file,line,col,_,_)=src.locate(k.name.span); m.span=Some((file,line,col));}
         Ok(m)
     }).collect::<Res<Vec<_>>>()?;

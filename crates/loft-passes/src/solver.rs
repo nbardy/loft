@@ -4,13 +4,13 @@ use crate::check::motion_source::{Distance, SolverConfig, StateMemory, Step, Str
 use crate::program::{DispatchBinding, DispatchResource, DispatchRows};
 use loft_abi::AdvanceArgs;
 
-pub fn lower(
-    p: &Prog<'_>,
+pub fn lower<'a>(
+    p: &Prog<'a>,
     types: &mut Vec<Ty>,
     module: usize,
     solver: &SolverDecl,
     overrides: &[(String, f64)],
-) -> Res<(String, crate::program::Dispatch)> {
+) -> Res<(String, crate::program::Dispatch, crate::det_check::Helpers<'a>)> {
     let (table, config, steps) = scheduled(p, types, solver)?;
     let SolverConfig {
         strategy,
@@ -159,22 +159,8 @@ pub fn lower(
         },
     };
     let (functions, constants) = reachable(p, &[&root], &[]);
-    let mut calls = References::function(&root).calls;
-    let mut has_events = false;
-    for f in &functions {
-        if f.refuses_unverified_raw() {
-            return Err(nondeterministic(f.name.span));
-        }
-        calls.extend(References::function(f).calls);
-    }
-    for call in calls {
-        has_events |= call.name == "emit_event";
-        if !p.fns.contains_key(call.name.as_str())
-            && matches!(motion_math(&call.name), MotionMath::Unavailable)
-        {
-            return Err(nondeterministic(call.span));
-        }
-    }
+    let calls = crate::det_check::source(p, std::iter::once(&root).chain(functions.iter().copied()), &constants)?;
+    let has_events = calls.iter().any(|call| call.name == "emit_event");
 
     let mut em = Emitter::new(p, types);
     em.motion = true;
@@ -192,10 +178,7 @@ pub fn lower(
             .push_str(&crate::fusion::event_wgsl(2, 2, "loft_tick"));
     }
     writeln!(em.out, "struct Row {{\n{state}}}\n{declarations}").unwrap();
-    em.constants(&constants);
-    for f in functions {
-        em.func(f, &format!("motion_{}", fn_symbol(&f.name.name)));
-    }
+    let helpers = super::motion::emit_helpers(&mut em, &[&root], functions, constants);
     em.locals = table.fields.iter().map(|f| f.name.name.clone()).collect();
     em.locals.push("dt".into());
     writeln!(em.out, "fn solver_substep(loft_local_dt: f32) {{").unwrap();
@@ -294,6 +277,7 @@ pub fn lower(
             bindings,
             checks: vec![],
         },
+        helpers,
     ))
 }
 
@@ -355,13 +339,4 @@ fn sweep(em: &mut Emitter<'_, '_>, edge: &Distance<'_>, id: usize, sweep: Sweep)
 
 fn refuse(span: Span, msg: &str) -> Diag {
     Diag::new(Code::E405, span, msg, "use a packed GPU solver state")
-}
-
-fn nondeterministic(span: Span) -> Diag {
-    Diag::new(
-        Code::E504,
-        span,
-        "solver reaches an operation without a deterministic implementation",
-        "use deterministic Loft math or verified WGSL",
-    )
 }

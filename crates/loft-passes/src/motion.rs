@@ -7,13 +7,13 @@ fn unsupported(sp: Span, what: &str) -> Diag {
     Diag::new(Code::E405, sp, what, "use a row-local operation on a kind")
 }
 
-pub fn motion_module(
-    p: &Prog,
+pub fn motion_module<'a>(
+    p: &Prog<'a>,
     types: &[Ty],
     kind: &KindDecl,
     priors: &std::collections::BTreeMap<String, u32>,
     output: impl FnOnce() -> Res<(usize, DispatchRows)>,
-) -> Res<Option<(String, Dispatch)>> {
+) -> Res<Option<(String, Dispatch, crate::det_check::Helpers<'a>)>> {
     let mut laws = vec![];
     let mut checks = vec![];
     let mut fields = vec![];
@@ -103,8 +103,8 @@ var<private> loft_tick: u32;
     );
     let roots: Vec<_> = laws.iter().chain(&checks).copied().collect();
     let (lib, constants) = reachable(p, &roots, &[]);
-    let has_call = |name| roots.iter().chain(&lib).any(|f|
-        References::function(f).calls.iter().any(|c| c.name == name));
+    let calls = crate::det_check::source(p, roots.iter().chain(&lib).copied(), &constants)?;
+    let has_call = |name| calls.iter().any(|c| c.name == name);
     let has_events = has_call("emit_event");
     let has_priors = has_call("sample_prior");
     if has_priors {
@@ -115,10 +115,7 @@ var<private> loft_tick: u32;
         em.out
             .push_str(&crate::fusion::event_wgsl(2, 2, "loft_tick"));
     }
-    em.constants(&constants);
-    for f in lib {
-        em.func(f, &format!("motion_{}", fn_symbol(&f.name.name)));
-    }
+    let helpers = emit_helpers(&mut em, &roots, lib, constants);
     for f in &laws {
         em.locals = f.params.iter().map(|p| p.name.name.clone()).collect();
         let row = wgsl_name(&f.params[0].name.name);
@@ -257,5 +254,49 @@ var<private> loft_tick: u32;
             layout_hash: *layout.finalize().as_bytes(),
             checks: checks.iter().map(|c| c.name.name.clone()).collect(),
         },
+        helpers,
     )))
+}
+
+/// Loft dependencies are known before emission. For raw islands, make calls
+/// to emitted WGSL symbols available too. Naga resolves their actual targets.
+pub(super) fn emit_helpers<'a, 'r>(
+    em: &mut Emitter<'_, 'a>,
+    roots: &[&'r FnDecl],
+    mut functions: Vec<&'r FnDecl>,
+    mut constants: BTreeSet<String>,
+) -> crate::det_check::Helpers<'a> where 'a: 'r {
+    let p = em.p;
+    if functions.iter().any(|f| f.raw.is_some()) {
+        let symbols: std::collections::BTreeMap<_, _> = p.fns.iter()
+            .map(|(&name, f)| (format!("motion_{}", fn_symbol(name)), *f))
+            .collect();
+        let mut inspected = std::collections::HashSet::new();
+        let mut extra = Vec::new();
+        loop {
+            let before = extra.len();
+            for f in &functions {
+                if let Some(raw) = &f.raw && inspected.insert(f.name.name.as_str()) {
+                    for call in crate::det_check::called_symbols(&raw.body) {
+                        if let Some(candidate) = symbols.get(call)
+                            && !functions.iter().any(|f| std::ptr::eq(*f, *candidate))
+                            && !extra.contains(&candidate.name.name.as_str())
+                        {
+                            extra.push(candidate.name.name.as_str());
+                        }
+                    }
+                }
+            }
+            if extra.len() == before {
+                break;
+            }
+            (functions, constants) = reachable(p, roots, &extra);
+        }
+    }
+    em.constants(&constants);
+    functions.into_iter().map(|f| {
+        let symbol = format!("motion_{}", fn_symbol(&f.name.name));
+        em.func(f, &symbol);
+        (symbol, p.fns[f.name.name.as_str()])
+    }).collect()
 }
