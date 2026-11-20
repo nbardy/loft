@@ -1,13 +1,7 @@
-use stdlib::integrators::restir::{reservoir_add, reservoir_scale, reservoir_reuse}
-use stdlib::lighting::world
-
-use stdlib::integrators::direct::{sun_sky}
-
-use stdlib::sky::environment::*
+use stdlib::lighting::world::*
 
 # Realtime transport for a sun, matte surfaces and the legacy sky.
-# screen_pass exposes world rays. Vis64 itself exposes only one sample and
-# shade_tiles has no world hit or pixel coordinate in its lighting callback.
+# Raster visibility supplies the primary hit. Secondary rays use SceneWorld.
 
 # Legacy's secondary queries can start inside overlapping capsules. Find
 # the first positive cylinder or cap root, including exits from inside a row.
@@ -55,16 +49,14 @@ fn matched_capsule(ro: p3@World, rd: d3@World, a: p3@World, b: p3@World, r: m) -
     return select(nearest, -1.0, nearest == 1e30);
   }
 
-fn legacy_path(origin: v3, direction: v3, seed: u, bounces: u) -> rgb =
-  wgsl(origin: v3, direction: v3, seed: u, bounces: u) -> rgb {
-    // The screen pass hands over a jittered pinhole ray. Project its direction
-    // back into the pixel to use fixed coverage taps and the same RNG key as legacy.
-    let clip = frame.view_proj * vec4f(direction, 0.0);
-    let ndc = clip.xy / clip.w;
-    let px = floor((ndc * vec2f(0.5, -0.5) + 0.5) * vec2f(frame.size.xy));
-    let center = loft_ray(px + 0.5);
-    let taps = array(vec2f(0.375, 0.125), vec2f(0.875, 0.375),
-                     vec2f(0.125, 0.625), vec2f(0.625, 0.875));
+fn matched_sky(direction: rgb, sun: rgb) -> rgb {
+  mix([0.62, 0.72, 0.85], [0.13, 0.32, 0.62], pow(clamp(direction.y, 0.0, 1.0), 0.45))
+}
+
+fn matched_film(color: rgb) -> rgb { color / ([1.0, 1.0, 1.0] + color) }
+
+fn matched_bounce(n: n3@World, px: v2) -> v4 =
+  wgsl(n: n3@World, px: v2) -> v4 {
     let dims = array(3u, 4u);
     var xi: vec2f;
     for (var i = 0u; i < 2u; i++) {
@@ -78,88 +70,43 @@ fn legacy_path(origin: v3, direction: v3, seed: u, bounces: u) -> rgb =
       xi[i] = f32(word >> 8u) / 16777216.0;
     }
     let phi = 6.283185307179586 * xi.y;
-    let sun = normalize(frame.sun.xyz);
-    let horizon = vec3f(0.62, 0.72, 0.85);
-    let zenith = vec3f(0.13, 0.32, 0.62);
-    let sky = mix(horizon, zenith, pow(clamp(center.y, 0.0, 1.0), 0.45));
-    var keys: array<vec2u, 4>;
-    var colors: array<vec3f, 4>;
-    var used = 0u;
-    var sum = vec3f(0.0);
-
-    for (var i = 0u; i < 4u; i++) {
-      let d = loft_ray(px + taps[i]);
-      let tap = loft_bvh_trace_at(LoftRay(origin, d, 0.0001, 1e6), world_root(0u), false);
-      if tap.t < 0.0 {
-        sum += sky;
-        continue;
-      }
-      let key = vec2u(tap.leaf.kind_id, tap.leaf.row_id);
-      var slot = 0u;
-      while slot < used && any(keys[slot] != key) { slot++; }
-      if slot == used {
-        // Reconstruct the same row at pixel centre. At a silhouette, a tap
-        // can hit a row the centre missed, so use that tap's surface there.
-        var ray = LoftRay(origin, center, 0.0001, 1e6);
-        var t = loft_bvh_intersect(tap.leaf, ray);
-        if t < 0.0 {
-          ray.d = d;
-          t = tap.t;
-        }
-        let at = world_at(tap.leaf);
-        let p = origin + ray.d * t;
-        var g = vec3f(0.0);
-        for (var j = 0u; j < 3u; j++) {
-          var e = vec3f(0.0);
-          e[j] = 0.0001;
-          g[j] = world_field(key.x, at, p + e) - world_field(key.x, at, p - e);
-        }
-        let entering = dot(g, ray.d) < 0.0;
-        let n = normalize(select(-g, g, entering));
-        let hit = PathHit(t, p, n, key.x, at, entering, key.y);
-        var color = vec3f(0.0);
-        if bounces > 0u {
-          if dot(n, sun) > 0.0 {
-            let vis = world_visibility(0u, LoftRay(p, sun, 0.0001, 1e5));
-            color = world_eval(hit, -center, sun) * loft_params[0u].xyz * vis;
-          }
-          let axis = select(vec3f(0, 0, 1), vec3f(0, 1, 0), abs(n.z) > 0.9);
-          let u = normalize(cross(axis, n));
-          let sample = vec3f(sqrt(xi.x) * vec2f(cos(phi), sin(phi)), sqrt(1.0 - xi.x));
-          let wi = mat3x3f(u, cross(n, u), n) * sample;
-          // At depth one a secondary surface supplies emission only. The
-          // matched scene has matte rows and no emitters, just like legacy.
-          let next = world_trace(p, wi, 1e30);
-          var incident = mix(horizon, zenith, pow(clamp(wi.y, 0.0, 1.0), 0.45));
-          if next.t >= 0.0 {
-            incident = world_eval(next, -wi, vec3f(0.0));
-          } else if next.t < -1.0 {
-            incident = vec3f(0.0);
-          }
-          color += world_eval(hit, -center, wi) * (3.141592653589793 / sample.z) * incident;
-        }
-        keys[slot] = key;
-        colors[slot] = color;
-        used++;
-      }
-      sum += colors[slot];
-    }
-
-    // The screen path always applies ACES followed by hardware sRGB.
-    // Invert ACES on the Reinhard result to apply legacy's film curve.
-    let c = sum * 0.25;
-    let y = c / (1.0 + c);
-    let a = 2.51 - 2.43 * y;
-    let b = 0.03 - 0.59 * y;
-    return (sqrt(b*b + 0.56*a*y) - b) / (2.0*a);
+    let axis = select(vec3f(0, 0, 1), vec3f(0, 1, 0), abs(n.z) > 0.9);
+    let u = normalize(cross(axis, n));
+    let sample = vec3f(sqrt(xi.x) * vec2f(cos(phi), sin(phi)), sqrt(1.0 - xi.x));
+    return vec4f(mat3x3f(u, cross(n, u), n) * sample, sample.z);
   }
+
+fn matched_transport(w: World, hit: Hit, wo: d3@World, bounce: v4, sky: rgb) -> rgb =
+  wgsl(w: World, hit: Hit, wo: d3@World, bounce: v4, sky: rgb) -> rgb {
+    let sun = normalize(frame.sun.xyz);
+    let n = hit.n;
+    var color = vec3f(0.0);
+    if dot(n, sun) > 0.0 {
+      let vis = world_visibility(w, LoftRay(hit.p, sun, 0.0001, 1e5));
+      color = loft_eval_hit(hit, wo, sun) * loft_params[0u].xyz * vis;
+    }
+    let wi = bounce.xyz;
+    // A secondary hit contributes emission. A miss contributes the sky.
+    let next = world_trace_ray(w, LoftRay(hit.p, wi, 0.0001, 1e30));
+    var incident = vec3f(0.0);
+    if next.t >= 0.0 {
+      incident = world_eval(next, -wi, vec3f(0.0));
+    } else if next.t == -1.0 {
+      incident = sky;
+    }
+    return color + loft_eval_hit(hit, wo, wi) * (3.141592653589793 / bounce.w) * incident;
+  }
+
+fn matched_shade(w: World, hit: Hit, wo: d3@World, ink: bool, px: v2) -> rgb {
+  let bounce = matched_bounce(hit.n, px)
+  matched_transport(w, hit, wo, bounce, matched_sky(bounce.xyz, [0, 0, 0]))
+}
 
 pub schedule RealtimeMatched {
   orbit(at: [0, 0, 0], radius: 4, height: 0.5, period: 24, fov: 40deg)
   cull_indirect(Drawables)
   render_bundle(Vis64) { draw_indirect(Drawables) }
   tile_classify(Vis64, tile: 8)
-  shade_tiles(Vis64, light: sun_sky, sun: [0.45, 0.8, 0.35])
-  screen_pass(legacy_path, bounces: 1)
-  tonemap_aces(ColorHdr, sky: sky_color)
+  shade_tiles(Vis64, shade: matched_shade, samples: 4, sun: [0.45, 0.8, 0.35])
+  tonemap(ColorHdr, sky: matched_sky, film: matched_film)
 }

@@ -69,9 +69,12 @@ fn world_trace(o: vec3<f32>, d: vec3<f32>, limit: f32) -> PathHit {
 }
 
 fn world_trace_ray(world: u32, ray: LoftRay) -> PathHit {
+  return world_hit(loft_bvh_trace_at(ray, world_root(world), false), ray);
+}
+
+fn world_hit(hit: LoftBvhHit, ray: LoftRay) -> PathHit {
   let o = ray.o;
   let d = ray.d;
-  let hit = loft_bvh_trace_at(ray, world_root(world), false);
   let nearest = hit.t;
   if nearest < 0.0 { return PathHit(nearest, vec3(0.0), vec3(0.0), 0u, 0u, false, 0u); }
   let kind = hit.leaf.kind_id;

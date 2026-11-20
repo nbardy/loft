@@ -17,6 +17,7 @@ pub mod paths;
 mod material_shape;
 mod surface;
 mod lighting;
+pub(crate) mod shade_tiles;
 mod column;
 use material_shape::Layout;
 use loft_parse::ast::*;
@@ -833,16 +834,19 @@ fn material_layout<'k>(p: &Prog<'k>, k: &'k KindDecl) -> Res<Layout<'k>> {
     resolve(p, k.query(QueryKind::Material).expect("checked material"), &mut BTreeSet::new())
 }
 
+const SHADE_ENTRY: &str = "// One workgroup per 8x8 tile that classify listed for this kind.";
+const TWIN_BINDINGS: &str = "@group(3) @binding(0) var<storage, read> twin_in";
+
 /// The text of one kind's module. `light` is the library fn the shade pass calls (named in the schedule).
 pub fn kind_module(p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[LutRef], draw: Draw, aov: Aov) -> Res<String> {
-    emit_kind_module(p, types, k, light, luts, draw, aov, None)
+    emit_kind_module(p, types, k, Some(light), luts, draw, aov, None)
 }
 
 pub(crate) fn kind_module_edit(
     p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[LutRef],
     draw: Draw, aov: Aov, edit: &str,
 ) -> Res<String> {
-    emit_kind_module(p, types, k, light, luts, draw, aov, Some(edit))
+    emit_kind_module(p, types, k, Some(light), luts, draw, aov, Some(edit))
 }
 
 fn traced_march(count_steps: bool) -> String {
@@ -882,8 +886,8 @@ fn traced_march(count_steps: bool) -> String {
     out
 }
 
-fn emit_kind_module(
-    p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[LutRef],
+pub(super) fn emit_kind_module(
+    p: &Prog, types: &[Ty], k: &KindDecl, light: Option<&str>, luts: &[LutRef],
     draw: Draw, aov: Aov, edit: Option<&str>,
 ) -> Res<String> {
     let mut em = Emitter::new(p, types);
@@ -894,7 +898,7 @@ fn emit_kind_module(
     roots.extend(k.fns.iter());
     let mesh = matches!(draw, Draw::Mesh { .. });
     let mesh_lobe = mesh.then(|| p.linked(k.name.span, "ggx")).transpose()?;
-    let mut extra = vec![light];
+    let mut extra: Vec<_> = light.into_iter().collect();
     extra.extend(mesh_lobe);
     let (lib, consts) = reachable(p, &roots, &extra);
     em.row_header(k);
@@ -903,7 +907,7 @@ fn emit_kind_module(
     let mut lobes: Vec<_> = layout.lobes.iter().map(|(name, args)| (*name, args.len())).collect();
     if let Some(lobe) = mesh_lobe { lobes.push((lobe, 3)); }
     let invariants = lobes.iter().map(|(name, _)| {
-        if light == "sun_sky" { lighting::invariant_lets(p, p.fns[name]) } else { Vec::new() }
+        if light == Some("sun_sky") { lighting::invariant_lets(p, p.fns[name]) } else { Vec::new() }
     }).collect::<Vec<_>>();
     let mut bfields = vec![];
     let mut evals = String::new();
@@ -1037,7 +1041,7 @@ struct FsOut {{ @location(0) vis: vec2<u32> }}
         Draw::Analytic | Draw::Traced => {
             let (hit, split_ao) = match draw {
                 Draw::Analytic => ("  // Closed form: the author's `visible` query, in the kind's space (a rigid pose keeps t).\n  let t = q_visible(row, lro, lrd);\n  if t < 0.0 { discard; }\n".to_owned(),
-                    light == "woodblock_pigment" && aov == Aov::Beauty),
+                    light == Some("woodblock_pigment") && aov == Aov::Beauty),
                 Draw::Traced if edit.is_some() => ("  let t = loft_edit_march(row, lro, lrd, span);\n  if t < 0.0 { discard; }\n".to_owned(), false),
                 Draw::Traced => (traced_march(count_steps), false),
                 Draw::Surface { .. } | Draw::Mesh { .. } => unreachable!("ray draw"),
@@ -1178,9 +1182,13 @@ fn loft_box(ro: vec3<f32>, rd: vec3<f32>, lo: vec3<f32>, hi: vec3<f32>) -> vec2<
     }
     let shade = match aov {
         // The shelf light evaluates an emission-only stack exactly once at zero incident direction.
-        Aov::Beauty if light == "sun_sky" && layout.lobes.iter().all(|(name, _)| *name == "emit_lobe") =>
+        Aov::Beauty if light == Some("sun_sky") && layout.lobes.iter().all(|(name, _)| *name == "emit_lobe") =>
             "eval_bsdf(b, n, -rd, vec3<f32>(0.0))".into(),
-        Aov::Beauty => format!("{}(b, n, -rd, sun, loft_shadow(p, n), ao)", fn_symbol(light)),
+        Aov::Beauty => match light {
+            Some(light) => format!("{}(b, n, -rd, sun, loft_shadow(p, n), ao)", fn_symbol(light)),
+            // The tiled World module replaces this entry before validation.
+            None => "vec3<f32>(0.0)".into(),
+        },
         Aov::Albedo => layout.lobes.iter().enumerate().find_map(|(i, (name, _))| {
             let f = p.fns[*name];
             f.params.iter().take(f.params.len().saturating_sub(3))
@@ -1247,6 +1255,8 @@ fn loft_box(ro: vec3<f32>, rd: vec3<f32>, lo: vec3<f32>, hi: vec3<f32>) -> vec2<
         }
     }
     let tl = crate::unit(crate::TWIN_LIGHT);
+    let shade_entry = SHADE_ENTRY;
+    let twin_bindings = TWIN_BINDINGS;
     let _ = write!(
         em.out,
         r"{queries_end}
@@ -1271,7 +1281,7 @@ fn loft_shadow(p: vec3<f32>, n: vec3<f32>) -> f32 {{
 }}
 
 
-// One workgroup per 8x8 tile that classify listed for this kind.
+{shade_entry}
 @compute @workgroup_size(8, 8) fn shade(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {{
   if frame.cold.x == LOFT_NONCE {{ return; }}
   let tile = tiles[kp.kind_id * frame.size.w + wg.x];
@@ -1289,7 +1299,7 @@ fn loft_shadow(p: vec3<f32>, n: vec3<f32>) -> f32 {{
 
 
 
-@group(3) @binding(0) var<storage, read> twin_in: array<vec4<f32>>;
+{twin_bindings}: array<vec4<f32>>;
 @group(3) @binding(1) var<storage, read_write> twin_out: array<vec4<f32>>;
 
 // The twin gate: the frame's queries at CPU-chosen samples; the material is lit by one fixed light plus emission.
@@ -1441,13 +1451,21 @@ var<workgroup> mask: atomic<u32>;
 
 /// `sky` is the library fn named by the schedule's present pass.
 pub fn present_module(p: &Prog, types: &[Ty], sky: &str, aov: Aov, paper: Option<&str>) -> String {
+    emit_present(p, types, sky, aov, paper, None)
+}
+
+fn emit_present(p: &Prog, types: &[Ty], sky: &str, aov: Aov, paper: Option<&str>, film: Option<&str>) -> String {
     let mut em = Emitter::new(p, types);
     em.header(abi::NONCE_PLACEHOLDER);
     let mut roots = vec![sky];
-    if aov == Aov::Beauty { roots.extend(paper); }
+    if aov == Aov::Beauty {
+        roots.extend(paper);
+        roots.extend(film);
+    }
     let (lib, consts) = reachable(p, &[], &roots);
     em.library(&lib, &consts);
     let sky=fn_symbol(sky);
+    let film = film.map_or_else(|| "loft_aces".to_owned(), fn_symbol);
     let resolve = match (aov, paper.map(fn_symbol)) {
         (Aov::Beauty, Some(paper)) => format!(r"
   let center = textureLoad(vis_tex, px, 0).x;
@@ -1464,7 +1482,7 @@ pub fn present_module(p: &Prog, types: &[Ty], sky: &str, aov: Aov, paper: Option
   c = mix(c, vec3<f32>(0.025,0.02,0.035), min(line + 0.42*hatch,1.0));
   return vec4<f32>({paper}(loft_aces(c),pos.xy,0.04,0.03),1.0);
 "),
-        (Aov::Beauty, None) => format!("if textureLoad(vis_tex, px, 0).x == LOFT_EMPTY {{ c = {sky}(loft_ray(pos.xy), normalize(frame.sun.xyz)); }} return vec4<f32>(loft_aces(c), 1.0);"),
+        (Aov::Beauty, None) => format!("if textureLoad(vis_tex, px, 0).x == LOFT_EMPTY {{ c = {sky}(loft_ray(pos.xy), normalize(frame.sun.xyz)); }} return vec4<f32>({film}(c), 1.0);"),
         (Aov::Overdraw, _) => "return vec4<f32>(c, 1.0);".into(),
         (Aov::Depth, _) => "return vec4<f32>(select(c, vec3<f32>(1.0), textureLoad(vis_tex, px, 0).x == LOFT_EMPTY), 1.0);".into(),
         (Aov::Albedo | Aov::Normal | Aov::Id | Aov::SdfSteps | Aov::LipschitzRatio, _) =>
