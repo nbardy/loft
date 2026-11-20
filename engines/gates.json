@@ -5,24 +5,25 @@
     9.0
   ],
   "refs": {
-    "blobs-1@0": "8967b648732448ac56377c7271e72137fc8dd2c0925b0ac8f6a47452b8bca59f",
-    "blobs-1@4": "c97c1fbef2373bf3bc44abb347d5a6f975f47d458182591d290c624e51005664",
-    "blobs-1@9": "9092326d7bb10340204bab316a577b6177828fe6b440f3834073004e7ff6c6b2",
-    "blobs-20@0": "364ac637c758bde63a8806581b137baa2c19583a1c1fe02c1a6bd81648f3819e",
-    "blobs-20@4": "ab5d1bf7dc8e80c499ae9d74f50944ecdec7836cd754d33ee5f32e08d89c9771",
-    "blobs-20@9": "0320e385ede6dd60f274f86e7cc49b8ecff855015154058bb895d6612749a631",
-    "capsules-1@0": "0117400a6935786ad9d3512b71a923243aeaa586c3c22af88db12e8f05efb25c",
-    "capsules-1@4": "ee87ff2cdfb0c0f47ba16706ea6bcd16c7488bade1296a3b091b05731effe5f1",
-    "capsules-1@9": "8d27a65bf2ac8b301f89bb971ad78780c7c768bee4350e60dc216ae85d6f05b5",
-    "capsules-20@0": "b628c9e789fe84b97e1cdd4389a3f783a4187d2efeaec59cb148f80becdcf9de",
-    "capsules-20@4": "69e41f6dfde5ab454e59075ab7882f23ddbfd4148165dd7271bd8d02bff1c8e0",
-    "capsules-20@9": "174f33a66c4bf5ba1efe72880a915ca407f9183ac9e2282a9916b151c7eece28",
-    "hermit-1@0": "2ce23b0221cda002ec6ea408511bbe83e0cf27f306d39d77d716c108505aa311",
-    "hermit-1@4": "dc0a228412a3c23cb843cee9c9d86cd5b7d0417c1b6f09700cc75bacffa0c3cb",
-    "hermit-1@9": "434aba038da102dbbe3354565294c2fe3458430a4b2181f309928753d21d05f0",
-    "hermit-20@0": "b3fd278945cb6779c2d3c1c36b8a7ff21c6748c75222046f4330c65bdff053c1",
-    "hermit-20@4": "e849f4118746686e2105629b91db673e2216599d652ce65af56e4b62e67ff984",
-    "hermit-20@9": "ded05ade15319a46420aba8763dfb2b9e9b5874720866df1c6a630c499ae4754"
+    "blobs-1@0": "e51c76517daa2dc1c0f7c5fc30d0be153883299fe1ca499efc221fe1eddfbc4d",
+    "blobs-1@4": "71def46b569c00af525241efcf7d61c2cec77e45def876f3ba763dda7cf8e651",
+    "blobs-1@9": "13423334bd26fbe897da998a25383a000ff203b5e995f331f6d20354d2c8b26f",
+    "blobs-20@0": "509d7ea04971eb3fa511508ec6e532bc2c52388ca0e194d97e0b331a2f19249e",
+    "blobs-20@4": "f110fbc778f4698bbbe9320af2d21e0f20fe1faec22c92be182acc57d49a9c8b",
+    "blobs-20@9": "2908f83d5e2d8b7325ce33f77b8fd88ad505798ec1bd4e0dc4fda14ae4cd8b7d",
+    "capsules-1@0": "df19eaba565023913e4a2c2c18460fd46af3c30d9223d42ed91ea3998d591883",
+    "capsules-1@4": "5a97b44bdaa0a64865533c745509cd50fcf6b039d393c2dd6961a42f54fba394",
+    "capsules-1@9": "f4f8105ec1d4f4553d49b3c0cf0dc480bd69a30f4c8ca3cb418ee0c5a38b5774",
+    "capsules-20@0": "bb456f08db310fdebbc5a028a6d4e79bb65be3304a45f0285c03e044d4dd36a1",
+    "capsules-20@4": "3a7f9fd080ac3d3d80c1387ca79d429b3a571bb7c6fd2b8e6776e522ca3e59eb",
+    "capsules-20@9": "23fc19befa510dc8e8c82897212c1fbd09169018b34b4bcca24e696d79e2ce38",
+    "coral_shrine@0": "869cd3bb0fa22df683c15fbe636f32d67d6e51e4317fa84a602480e46aa2558a",
+    "hermit-1@0": "845f0d8fd03063e936ba6b95e74ae22634581efefe7316413710f84fcf15ebb8",
+    "hermit-1@4": "c9d6f1810e7f2d2e32c7377cd927b58c82a115d6bea0c13bcb39c4de2010d166",
+    "hermit-1@9": "9d20f01bd50e523f72f8d116ad3908eff55eda94a00f01bbfa642b1d5783804b",
+    "hermit-20@0": "ac0a9a8c83532f84efd30d819ae5189c1fa5ec3ec377ae4ae40cadfbbb737145",
+    "hermit-20@4": "5aafcc4890c6296858deac4a759976006ad3c3040b071cad136a283478ec4a4e",
+    "hermit-20@9": "43339a6a75a04a46f25b86107e09fe35a7bb100a5798c2eeb0f77c50a297bb8d"
   },
   "scenes": [
     {
@@ -120,6 +121,14 @@
       "set": {
         "count": 20
       }
+    },
+    {
+      "file": "engines/coral_shrine.loft",
+      "name": "coral_shrine",
+      "picture_frames": [
+        0.0
+      ],
+      "set": {}
     }
   ],
   "size": [
