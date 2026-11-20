@@ -29,6 +29,7 @@ pub(crate) struct Ck<'p, 'a> {
     local_units: HashMap<Span, Dimension>,
     expr_units: HashMap<u32, Dimension>,
     ownership: Option<(String,Vec<String>)>,
+    motion_read: bool,
     p: &'p Prog<'a>,
     types: &'p mut Vec<Ty>,
     scopes: Vec<HashMap<String, Local>>,
@@ -99,16 +100,14 @@ pub fn check(p: &Prog, types: &mut Vec<Ty>) -> Res<CheckedEffects> {
             }
         }
     }
-    for law in p.laws.values() {
-        let (reachable, constants) = crate::emit::reachable(p, &[&law.f], &[]);
+    for root in p.laws.values().map(|law| &law.f).chain(p.checks.values().copied()) {
+        let (reachable, constants) = crate::emit::reachable(p, &[root], &[]);
         let mut calls = crate::emit::References::default();
         for name in constants {
             calls.expr(&p.consts[name.as_str()].value, &[]);
         }
-        for f in std::iter::once(&law.f).chain(reachable) {
-            if f.refuses_unverified_raw() {
-                return Err(Diag::new(Code::E504, f.name.span, "motion reaches unverified raw WGSL", "use wgsl det (...) after verifying the block is deterministic"));
-            }
+        for f in std::iter::once(root).chain(reachable) {
+            crate::emit::det_check::source_function(f)?;
             calls.calls.extend(crate::emit::References::function(f).calls);
         }
         if let Some(call) = calls.calls.into_iter().find(|c| !p.fns.contains_key(c.name.as_str())
@@ -182,7 +181,7 @@ fn e003(span: Span, msg: impl Into<String>, fix: impl Into<String>) -> Diag {
 
 impl<'p,'a> Ck<'p,'a> {
     pub(crate) fn new(p:&'p Prog<'a>, types:&'p mut Vec<Ty>)->Self {
-        Self{p,types,scopes:vec![],comptime:false,ret:Ty::Void,fresh:0,sig_vars:vec![],hints:None,ownership:None,kernel:None,atomic_writes:BTreeMap::new(),pending_lowering:None,local_units:HashMap::new(),expr_units:HashMap::new()}
+        Self{p,types,scopes:vec![],comptime:false,ret:Ty::Void,motion_read:false,fresh:0,sig_vars:vec![],hints:None,ownership:None,kernel:None,atomic_writes:BTreeMap::new(),pending_lowering:None,local_units:HashMap::new(),expr_units:HashMap::new()}
     }
 
     fn lookup(&self, n: &str) -> Option<&Local> {
@@ -426,7 +425,10 @@ impl<'p,'a> Ck<'p,'a> {
             if matches!(&p.ty,Some(TyExpr::Name(n)) if self.p.kinds.contains_key(n.name.as_str())) {return Err(Diag::new(Code::E108,p.name.span,"read-only rows require a table parameter","write [Kind] instead of Kind"));}
         }
         if writes.is_none(){checked.ret=Some(TyExpr::Name(Ident{name:"Verdict".into(),span:f.name.span}));}
-        let result=self.func(&checked,None);self.ownership=None;result
+        self.motion_read = true;
+        let result=self.func(&checked,None);
+        self.motion_read = false;
+        self.ownership=None;result
     }
 
     /// `@lipschitz(param)` or `@lipschitz(max(a, b))`, naming the fn's own parameters; `@lobe` on a library fn
@@ -1099,9 +1101,9 @@ impl<'p,'a> Ck<'p,'a> {
                 ExprKind::Name(name) => self.p.plans.get(name.as_str()),
                 _ => None,
             }.ok_or_else(|| e003(prior.value.span, "expected a named plan", "name a declared plan"))?;
-            if self.ownership.is_none() || !crate::plan::closed(self.p, decl) {
-                return Err(Diag::new(Code::E405, span, "sample_prior needs a closed plan and a motion law",
-                    "bind every plan parameter at Stage 0 and sample from a law"));
+            if !self.motion_read || !crate::plan::closed(self.p, decl) {
+                return Err(Diag::new(Code::E405, span, "sample_prior needs a closed plan and a motion entry",
+                    "bind every plan parameter at Stage 0 and sample from a law or check"));
             }
             let actual = self.expr(&time.value)?;
             self.assignable(&actual, &Ty::F32, time.value.span)?;

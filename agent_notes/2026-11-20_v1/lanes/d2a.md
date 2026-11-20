@@ -1,0 +1,11 @@
+# D2A · Deterministic authored motion
+
+## Predictions before the build
+
+Base `6776d49`. The inherited controls isolate the first ordinary multiply/add errors in Crab x at tick 2 (`3c162fca/cb`), Heron score hip at tick 19 (`3f51b2fb/fa`), and Boss windup at tick 8 (`3c593be3/e1`). Separate rounding should select `3c162fca`, `3f51b2fb` on the old control score, and `3c593be3`. The live Heron hip now samples the solved curve and is expected to differ from the old score. The 0.60 s knot must remain `3f170a3d`. The tick-zero reachable-end reductions also need strict arithmetic. Expected packed verdict counts per tick are 2, 4, 2 at 32 B per record; the Boss outbox uses a 16 B header and 32 B records. Predict 0/481 differences on each bound table, including zero-tick checks, and 0/481 at every grouping/replay boundary.
+
+The full target STATE/POSE layout is Crab 816/800 B, Heron 336/512 B, Boss 2,928/3,072 B per creature. BODY uses 112/112/48 B per body/chain/segment. At the starting head the drawable entries have only 60/60/76 B row buffers, including draw metadata. A solved Heron prior adds 4,688 B (32 + 97 × 48).
+
+Integer significands give separate rounding without requiring a backend optimization switch. Add/sub use three low rounding bits, multiply a 48-bit product, and FMA aligns the exact product before the only rounding. Division can extract 28 quotient bits in four seven-bit integer chunks. Sqrt uses 27 fixed restoring steps. Dot goes from the first lane through the last lane; distance subtracts before dot. Row-local ownership avoids cross-workgroup reads of current-tick writes.
+
+Expect Crab lift at tick 10, drift under 0.001 mm and the 20 mm mutant missed. Predict 0.18 ms p95 for the 1,000-row dispatch with software divide/sqrt and both toe checks, above the 0.15 ms budget. Expected Heron pitch ceiling is 9.65°, max neck error under 0.2 mm and zero rear flips. Exact knot 0.59 m remains, and a nearby strict Hermite sample can undershoot it. Boss should hit/slip at ticks 60 and 75, rise to about 0.69 m, and produce the same two event records with zero drops as the v2 control. Predict that the 0.5 s Heron frame differs from main due to the new non-knot hip, and that Crab and Boss can differ because their old Metal path contracted the motion operations. Required picture result is zero changed RGBA bytes each.

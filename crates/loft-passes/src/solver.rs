@@ -159,12 +159,11 @@ pub fn lower(
         },
     };
     let (functions, constants) = reachable(p, &[&root], &[]);
+    det_check::source_function(&root)?;
     let mut calls = References::function(&root).calls;
     let mut has_events = false;
     for f in &functions {
-        if f.refuses_unverified_raw() {
-            return Err(nondeterministic(f.name.span));
-        }
+        det_check::source_function(f)?;
         calls.extend(References::function(f).calls);
     }
     for call in calls {
@@ -200,9 +199,12 @@ pub fn lower(
             .push_str(&crate::fusion::event_wgsl(2, 2, "loft_tick"));
     }
     writeln!(em.out, "struct Row {{\n{state}}}\n{declarations}").unwrap();
+    let mut raw = std::collections::BTreeMap::new();
     em.constants(&constants);
     for f in functions {
-        em.func(f, &format!("motion_{}", fn_symbol(&f.name.name)));
+        let symbol = format!("motion_{}", fn_symbol(&f.name.name));
+        if f.raw.is_some() { raw.insert(symbol.clone(), f.name.span); }
+        em.func(f, &symbol);
     }
     em.locals = table.fields.iter().map(|f| f.name.name.clone()).collect();
     em.locals.push("dt".into());
@@ -286,7 +288,7 @@ pub fn lower(
         });
     }
     Ok((
-        em.out,
+        det_check::lower(em.out, &raw, solver.name.span)?,
         crate::program::Dispatch {
             module,
             entry: AdvanceArgs::ENTRY.into(),

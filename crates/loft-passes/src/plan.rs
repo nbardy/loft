@@ -101,8 +101,10 @@ pub fn sample_prior_cpu(luts: &[f32], header_word: u32, time: f32) -> Option<[[f
         return None;
     }
     let q = ((time / duration) * spans as f32).clamp(0.0, spans as f32);
-    let i = q as u32;
-    let u = q - i as f32;
+    let nearest = (q + 0.5).floor() as u32;
+    let knot = duration * (nearest as f32 / spans as f32);
+    let i = if time == knot { nearest } else { q as u32 };
+    let u = if time == knot { 0.0 } else { q - i as f32 };
     let first = (i as usize)
         .checked_mul(SAMPLE_WORDS)?
         .checked_add(header[2].to_bits() as usize)?;
@@ -148,14 +150,16 @@ fn prior_row(o: u32) -> vec4f {
 }
 
 fn sample_prior(header: u32, t: f32) -> PriorSample {
-  if bitcast<u32>(luts[header + 3u]) != 1u {
+  if bitcast<u32>(luts[header + 3u]) != 1u || (bitcast<u32>(t) & 0x7fffffffu) >= 0x7f800000u {
     return PriorSample(vec4f(0.0), vec4f(0.0), vec4f(0.0, 0.0, 0.0, 1.0));
   }
   let duration = luts[header];
   let spans = bitcast<u32>(luts[header + 1u]) - 1u;
   let q = clamp(t / duration * f32(spans), 0.0, f32(spans));
-  let i = u32(q);
-  let u = q - f32(i);
+  let nearest = u32(floor(q + 0.5));
+  let knot = duration * (f32(nearest) / f32(spans));
+  let i = select(u32(q), nearest, t == knot);
+  let u = select(q - f32(i), 0.0, t == knot);
   let o = bitcast<u32>(luts[header + 2u]) + i * 12u;
   let p = prior_row(o);
   let v = prior_row(o + 4u);

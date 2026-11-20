@@ -192,6 +192,9 @@ pub struct Eval<'p, 'a, S> {
     pub time: S,
     /// Baked scans, for `sample_c2`.
     pub luts: &'p [Lut],
+    prior_luts: Option<(&'p std::collections::BTreeMap<String, u32>, &'p [f32])>,
+    local_priors: std::collections::BTreeMap<String, u32>,
+    local_prior_words: Vec<f32>,
 }
 
 fn err(span: Span, msg: impl Into<String>, fix: impl Into<String>) -> Diag {
@@ -205,7 +208,32 @@ fn norm<S: Scalar>(v: &[S]) -> f64 {
 
 impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
     pub fn new(p: &'p Prog<'a>, types: &'p [Ty], tables: Tables, overrides: &'p [(String, f64)]) -> Self {
-        Eval { p, types, tables, overrides, env: vec![], cause: None, steps: 0, time:S::frame_time(), luts: &[] }
+        Eval { p, types, tables, overrides, env: vec![], cause: None, steps: 0, time:S::frame_time(), luts: &[], prior_luts: None,
+            local_priors: Default::default(), local_prior_words: vec![] }
+    }
+
+    /// Reuse the compiler's prior words when evaluating a compiled scene.
+    pub fn bind_priors(&mut self, headers: &'p std::collections::BTreeMap<String, u32>, words: &'p [f32]) {
+        self.prior_luts = Some((headers, words));
+    }
+
+    fn prior_sample(&mut self, name: &str, time: f32, span: Span) -> Res<Val<S>> {
+        let (headers, words) = match self.prior_luts {
+            Some(bound) => bound,
+            None => {
+                if !self.local_priors.contains_key(name) {
+                    let plan = self.p.plans.get(name).ok_or_else(|| err(span, "missing prior", "declare the plan"))?;
+                    let prior = crate::plan::lower_source(self.p, plan, &mut self.local_prior_words)?
+                        .ok_or_else(|| err(span, "unbound prior", "bind every plan parameter"))?;
+                    self.local_priors.insert(name.to_owned(), prior.header_word);
+                }
+                (&self.local_priors, self.local_prior_words.as_slice())
+            }
+        };
+        let head = *headers.get(name).ok_or_else(|| err(span, "prior missing from LUT bindings", "bind the named plan"))?;
+        let sample = crate::plan::sample_prior_cpu(words, head, time)
+            .unwrap_or([[0.; 4], [0.; 4], [0., 0., 0., 1.]]);
+        Ok(Val::V(sample.into_iter().flatten().map(|x| S::c(f64::from(x))).collect(), 0.0))
     }
 
     /// Binds a name for the expressions evaluated next (a scan's parameter); `unbind` drops the latest.
@@ -570,6 +598,17 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                         let i = decl.row.iter().position(|f| f.name.name == m.name).expect("checked field");
                         Ok(Self::lift(&self.tables[k][r][i]))
                     }
+                    Val::V(c, _) if matches!(self.ty(base), Ty::Struct(k) if k == "PriorSample") => {
+                        let vec = |i, n| Ok(Val::V(c[i..i+n].to_vec(), 0.0));
+                        match m.name.as_str() {
+                            "pos" => vec(0, 3),
+                            "vel" => vec(4, 3),
+                            "rot" => vec(8, 4),
+                            "compliance" => Ok(Val::S(c[3].clone())),
+                            "active" => Ok(Val::B(c[7].cmp(BinOp::Ne, &S::c(0.0)))),
+                            _ => unreachable!("checked prior field"),
+                        }
+                    }
                     Val::V(c, l) if c.len() == 12 => {
                         let o = match frame_field(&m.name) {
                             "origin" => 0,
@@ -633,6 +672,12 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 }
             }
             ExprKind::Call { callee, args } => {
+                if callee.name == "sample_prior" {
+                    let ExprKind::Name(name) = &args[0].value.kind else { unreachable!("checked plan name") };
+                    let Val::S(time) = self.expr(&args[1].value)? else { unreachable!("checked prior time") };
+                    let time = time.exact().ok_or_else(|| err(e.span, "prior time varies over the evaluation", "sample at a fixed tick"))?;
+                    return self.prior_sample(name, time as f32, e.span);
+                }
                 if callee.name=="loft_conditional" && let Val::B(Some(b))=self.expr(&args[2].value)? {
                     return self.expr(&args[usize::from(b)].value);
                 }
