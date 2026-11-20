@@ -27,6 +27,12 @@ pub trait Scalar: Clone + std::fmt::Debug {
     fn mig(&self) -> f64;
     fn lip(&self) -> f64;
     fn with_lip(self, l: f64) -> Self;
+    /// Project a vector component, preserving its coordinate identity when available.
+    fn project(self, l: f64) -> Self { self.with_lip(l) }
+    /// Give a newly constructed vector and its projections a common coordinate system.
+    fn vector_basis(_components: &mut [Self], _l: f64) {}
+    /// Tighten the bound for a constructor whose components have a joint proof.
+    fn assembled_lip(_components: &[Self], fallback: f64) -> f64 { fallback }
     /// The single value when known exactly (comptime and the twin).
     fn exact(&self) -> Option<f64>;
     /// Lowest and highest value.
@@ -106,6 +112,13 @@ pub enum Val<S> {
     MapRef(String, bool),
     /// Lobes bottom first: the `@lobe` fn's name and the arguments bound at material time.
     Bsdf(Vec<Layer<S>>),
+}
+
+impl<S: Scalar> Val<S> {
+    pub(crate) fn vector(mut components: Vec<S>, l: f64) -> Self {
+        S::vector_basis(&mut components, l);
+        Self::V(components, l)
+    }
 }
 
 /// One baked scan: its parameter range and 12 words per frame (origin, tangent, normal, binormal).
@@ -189,6 +202,8 @@ pub struct Eval<'p, 'a, S> {
     /// The first expression that made a Lipschitz bound unbounded: where, and why.
     pub cause: Option<(Span, String)>,
     pub steps: u64,
+    /// The trace certificate used a changed vector norm rule.
+    pub(crate) vector_bound_changed: bool,
     pub time: S,
     /// Baked scans, for `sample_c2`.
     pub luts: &'p [Lut],
@@ -205,7 +220,7 @@ fn norm<S: Scalar>(v: &[S]) -> f64 {
 
 impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
     pub fn new(p: &'p Prog<'a>, types: &'p [Ty], tables: Tables, overrides: &'p [(String, f64)]) -> Self {
-        Eval { p, types, tables, overrides, env: vec![], cause: None, steps: 0, time:S::frame_time(), luts: &[] }
+        Eval { p, types, tables, overrides, env: vec![], cause: None, steps: 0, vector_bound_changed: false, time:S::frame_time(), luts: &[] }
     }
 
     /// Binds a name for the expressions evaluated next (a scan's parameter); `unbind` drops the latest.
@@ -440,11 +455,11 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                     (true, _) | (false, None) => c[0].un(Un::Abs),
                     (false, Some(s)) => c[0].mul(s),
                 };
-                Val::V(vec![x0, c[1].clone(), c[2].clone()], l)
+                Val::vector(vec![x0, c[1].clone(), c[2].clone()], l)
             }
             Stage::Translate(t, lt) if point => {
                 let out = c.iter().zip(t).map(|(a, b)| if fwd { a.add(b) } else { a.sub(b) }).collect();
-                Val::V(out, l + lt)
+                Val::vector(out, l + lt)
             }
             Stage::Translate(..) => Val::V(c, l),
             Stage::Rot(axis, a) => {
@@ -463,7 +478,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 let mut out = c.clone();
                 out[i] = co.mul(&c[i]).add(&s.mul(&c[j]));
                 out[j] = co.mul(&c[j]).sub(&s.mul(&c[i]));
-                Val::V(out, if a.lip() > 0.0 { f64::INFINITY } else { l })
+                Val::vector(out, if a.lip() > 0.0 { f64::INFINITY } else { l })
             }
         }
     }
@@ -583,9 +598,12 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                         let idx: Vec<usize> =
                             m.name.chars().map(|ch| "xyzw".find(ch).or_else(|| "rgba".find(ch)).expect("checked")).collect();
                         if idx.len() == 1 {
-                            Ok(Val::S(c[idx[0]].clone().with_lip(l)))
+                            Ok(Val::S(c[idx[0]].clone().project(l)))
                         } else {
-                            Ok(Val::V(idx.iter().map(|&i| c[i].clone().with_lip(l)).collect(), l))
+                            // A repeated coordinate is a broadcast, not an orthogonal projection.
+                            let copies = idx.iter().map(|i| idx.iter().filter(|j| *j == i).count()).max().unwrap();
+                            self.vector_bound_changed |= copies > 1 && l > 0.0;
+                            Ok(Val::vector(idx.iter().map(|&i| c[i].clone()).collect(), l * (copies as f64).sqrt()))
                         }
                     }
                     other @ Val::Void | other @ Val::S(_) | other @ Val::B(_) | other @ Val::U(_) | other @ Val::I(_) | other @ Val::X(_) | other @ Val::MapRef(..) | other @ Val::Bsdf(_) => unreachable!("checked member of {other:?}"),
@@ -599,7 +617,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                     Val::Void | Val::S(_) | Val::V(..) | Val::B(_) | Val::X(_) | Val::Row(..) | Val::MapRef(..) | Val::Bsdf(_) => return Err(err(e.span, "index not a known integer", "index with an integer")),
                 };
                 match b {
-                    Val::V(c, l) => c.get(i).map(|x| Val::S(x.clone().with_lip(l))).ok_or_else(|| err(e.span, "index out of range", "index 0..n")),
+                    Val::V(c, l) => c.get(i).map(|x| Val::S(x.clone().project(l))).ok_or_else(|| err(e.span, "index out of range", "index 0..n")),
                     other @ Val::Void | other @ Val::S(_) | other @ Val::B(_) | other @ Val::U(_) | other @ Val::I(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) | other @ Val::Bsdf(_) => unreachable!("checked index of {other:?}"),
                 }
             }
@@ -607,7 +625,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 let v = self.expr(x)?;
                 Ok(match (op, v) {
                     (UnOp::Neg, Val::S(s)) => Val::S(s.neg()),
-                    (UnOp::Neg, Val::V(c, l)) => Val::V(c.iter().map(S::neg).collect(), l),
+                    (UnOp::Neg, Val::V(c, l)) => Val::vector(c.iter().map(S::neg).collect(), l),
                     (UnOp::Neg, Val::I(i)) => Val::I(-i),
                     (UnOp::Not, Val::B(b)) => Val::B(b.map(|b| !b)),
                     (_, other) => unreachable!("checked unary on {other:?}"),
@@ -625,10 +643,10 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                         let ex = |s: &S| s.exact().ok_or_else(|| err(e.span, "an Xform built from values that vary", "build Xforms at stage 0"));
                         Ok(Val::X(Rigid::yaw([ex(&o[0])? as f32, ex(&o[1])? as f32, ex(&o[2])? as f32], ex(yaw)? as f32)))
                     }
-                    Ty::Frame(_) => Ok(build(vals, 12)),
-                    Ty::Geo(Geo::Dir | Geo::Norm, _) => Ok(normalize(build(vals, 3))),
-                    Ty::Geo(..) => Ok(build(vals, 3)),
-                    Ty::VecN(n) => Ok(build(vals, n as usize)),
+                    Ty::Frame(_) => Ok(self.build(vals, 12)),
+                    Ty::Geo(Geo::Dir | Geo::Norm, _) => Ok(normalize(self.build(vals, 3))),
+                    Ty::Geo(..) => Ok(self.build(vals, 3)),
+                    Ty::VecN(n) => Ok(self.build(vals, n as usize)),
                     other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::F32 | other @ Ty::AbstractInt | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Table(_) | other @ Ty::Verdict | other @ Ty::Struct(_) | other @ Ty::Array(..) | other @ Ty::Id(_) | other @ Ty::Bsdf => unreachable!("checked ctor of {other}"),
                 }
             }
@@ -713,7 +731,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                     })
                     .collect();
                 // Rigid: an isometry keeps the bound.
-                Val::V(out, *l)
+                Val::vector(out, *l)
             }
             (_, Val::U(p), Val::U(q)) => match op {
                 Add => Val::U(p.wrapping_add(*q)),
@@ -795,7 +813,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                             if mig > 0.0 { (lp * max_mag(&q) + max_mag(&p) * lq) / (mig * mig) } else { f64::INFINITY }
                         }
                     };
-                    Val::V(c, if lp == 0.0 && lq == 0.0 { 0.0 } else { l })
+                    Val::vector(c, if lp == 0.0 && lq == 0.0 { 0.0 } else { l })
                 }
                 (Val::V(p, lp), Val::S(s)) => {
                     let c: Vec<S> = p.iter().map(|u| if op == Mul { u.mul(&s) } else { u.div(&s) }).collect();
@@ -806,16 +824,44 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                     } else {
                         f64::INFINITY
                     };
-                    Val::V(c, if lp == 0.0 && s.lip() == 0.0 { 0.0 } else { l })
+                    Val::vector(c, if lp == 0.0 && s.lip() == 0.0 { 0.0 } else { l })
                 }
                 (Val::S(s), Val::V(p, lp)) => {
                     let c: Vec<S> = p.iter().map(|u| s.mul(u)).collect();
                     let l = norm(&p) * s.lip() + s.mag() * lp;
-                    Val::V(c, if lp == 0.0 && s.lip() == 0.0 { 0.0 } else { l })
+                    Val::vector(c, if lp == 0.0 && s.lip() == 0.0 { 0.0 } else { l })
                 }
                 (p, q) => unreachable!("checked binary {op:?} on {p:?} and {q:?}"),
             },
         })
+    }
+
+    fn build(&mut self, vals: Vec<Val<S>>, n: usize) -> Val<S> {
+        let mut c = vec![];
+        let mut l2 = 0.0;
+        for v in vals {
+            match v {
+                Val::S(s) => {
+                    l2 += s.lip() * s.lip();
+                    c.push(s);
+                }
+                Val::V(x, l) => {
+                    l2 += l * l;
+                    c.extend(x.into_iter().map(|s| s.project(l)));
+                }
+                Val::I(i) => c.push(S::c(f64::from(i))),
+                Val::U(u) => c.push(S::c(f64::from(u))),
+                other @ Val::Void | other @ Val::B(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) | other @ Val::Bsdf(_) => unreachable!("checked component {other:?}"),
+            }
+        }
+        if c.len() == 1 {
+            c = vec![c[0].clone(); n];
+            l2 *= n as f64;
+        }
+        let fallback = l2.sqrt();
+        let l = S::assembled_lip(&c, fallback);
+        self.vector_bound_changed |= l < fallback;
+        Val::vector(c, l)
     }
 
     fn builtin(&mut self, name: &str, mut v: Vec<Val<S>>, e: &'a Expr) -> Val<S> {
@@ -831,13 +877,13 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
         let un = |x: &Val<S>, f: Un| match x {
             Val::S(s) => Val::S(s.un(f)),
             Val::V(c, l) => {
-                let c: Vec<S> = c.iter().map(|s| s.un(f)).collect();
+                let c: Vec<S> = c.iter().map(|s| s.clone().project(*l).un(f)).collect();
                 // abs is 1-Lipschitz componentwise, so it keeps the vector bound; the rest bound per component.
                 let l = match f {
                     Un::Abs => *l,
                     Un::Sin | Un::Cos | Un::Sqrt | Un::Exp | Un::Floor | Un::Fract | Un::Sign => c.iter().map(|s| s.lip() * s.lip()).sum::<f64>().sqrt(),
                 };
-                Val::V(c, l)
+                Val::vector(c, l)
             }
             other @ Val::Void | other @ Val::B(_) | other @ Val::U(_) | other @ Val::I(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) | other @ Val::Bsdf(_) => unreachable!("checked unary builtin on {other:?}"),
         };
@@ -851,7 +897,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
             }
         };
         match name {
-            "frame_axes" => build(v,12),
+            "frame_axes" => self.build(v,12),
             "has_sky"=>Val::B(Some(self.p.kind_order.iter().position(|k|*k=="Sky").and_then(|i|self.tables.get(i)).is_some_and(|t|!t.is_empty()))),
             "sky_zenith" | "sky_horizon" | "sun_color" => {
                 let (kind, column, default) = match name {
@@ -1037,7 +1083,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 };
                 if name == "u32" { Val::U(x as u32) } else { Val::I(x as i32) }
             }
-            "vec2" | "vec3" | "vec4" | "vec2f" | "vec3f" | "vec4f" => build(v, (name.as_bytes()[3] - b'0') as usize),
+            "vec2" | "vec3" | "vec4" | "vec2f" | "vec3f" | "vec4f" => self.build(v, (name.as_bytes()[3] - b'0') as usize),
             other => unreachable!("checked builtin {other}"),
         }
     }
@@ -1102,31 +1148,6 @@ fn sign_cell<S: Scalar>(x: &S) -> S {
         Some(false) => S::c(-1.0),
         None => S::c(-1.0).join(&S::c(1.0)).with_lip(f64::INFINITY),
     }
-}
-
-fn build<S: Scalar>(vals: Vec<Val<S>>, n: usize) -> Val<S> {
-    let mut c = vec![];
-    let mut l2 = 0.0;
-    for v in vals {
-        match v {
-            Val::S(s) => {
-                l2 += s.lip() * s.lip();
-                c.push(s);
-            }
-            Val::V(x, l) => {
-                l2 += l * l;
-                c.extend(x);
-            }
-            Val::I(i) => c.push(S::c(f64::from(i))),
-            Val::U(u) => c.push(S::c(f64::from(u))),
-            other @ Val::Void | other @ Val::B(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) | other @ Val::Bsdf(_) => unreachable!("checked component {other:?}"),
-        }
-    }
-    if c.len() == 1 {
-        c = vec![c[0].clone(); n];
-        l2 *= n as f64;
-    }
-    Val::V(c, l2.sqrt())
 }
 
 fn normalize<S: Scalar>(v: Val<S>) -> Val<S> {
