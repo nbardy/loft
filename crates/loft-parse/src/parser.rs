@@ -1273,7 +1273,7 @@ impl<'src> Parser<'src, '_> {
         Ok(fs)
     }
     fn emit(&mut self, bind: Option<Ident>, span: Span) -> Res<Stmt> {
-        let kind = self.ident()?;
+        let kind = self.reference()?;
         self.expect("(")?;
         let fields = self.fields(")")?;
         Ok(Stmt::Emit {

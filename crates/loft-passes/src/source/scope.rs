@@ -305,6 +305,9 @@ struct Scope<'a> {
 
 impl Scope<'_> {
     fn resolve(&self, name: &str, span: Span, space: bool) -> Res<Option<String>> {
+        if let Some(derived) = self.derivatives.get(name) {
+            return Ok(Some(derived.clone()));
+        }
         if let Some((alias, member)) = name.split_once("::") {
             let (modules, _) = self.modules.get(alias).ok_or_else(|| error(span, alias))?;
             for module in modules {
@@ -341,9 +344,6 @@ impl Scope<'_> {
             && let Some(decl) = self.own.values.get(kind)
         {
             return Ok(Some(format!("{}#{helper}", decl.key)));
-        }
-        if let Some(derived) = self.derivatives.get(name) {
-            return Ok(Some(derived.clone()));
         }
         if bare.contains(name) {
             return Err(error(span, name));
