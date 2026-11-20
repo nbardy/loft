@@ -19,12 +19,12 @@ kernel add_signed(dst: [SignedCell], n: u) allow(atomics, workgroup, dynamic_loo
   }
 }
 
-kernel accumulate_float(dst: [FloatCell]) allow(atomics) {
+kernel accumulate_float(dst: [FloatCell]) nondet allow(atomics) {
   let x = global_id(0)
   atomic_add(dst[0].value, f32(x + 1) * 0.5)
 }
 
-kernel read_bake(dst: [FloatCell]) allow(atomics) {
+kernel read_bake(dst: [FloatCell]) nondet allow(atomics) {
   atomic_add(dst[0].value, sample_lod(Probe, [0.375, 0.5], 1.5))
 }
 
@@ -38,10 +38,10 @@ schedule Main {
     compute(entry: add_signed, extent: 1, workgroup: 8, dst: Fixed, n: 1)
   }
   pass floating writes [Float] {
-    compute(entry: accumulate_float, extent: 8, dst: Float)
+    compute(entry: accumulate_float, extent: 8, dst: Float, fixed_scale: 256)
   }
   pass texel reads [Probe] writes [Texel] {
-    compute(entry: read_bake, extent: 1, dst: Texel)
+    compute(entry: read_bake, extent: 1, dst: Texel, fixed_scale: 256)
   }
   pass seed writes [Source] {
     dispatch("seed.wgsl", "seed", 1)

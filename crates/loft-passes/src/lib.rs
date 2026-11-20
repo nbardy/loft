@@ -408,6 +408,8 @@ pub struct AuthoredCompute {
     pub tables: BTreeMap<String, loft_ir::TableId>,
     pub determinism: BTreeMap<loft_ir::TableId, Determinism>,
     pub truth: BTreeMap<String, loft_ir::Verdict>,
+    pub tiers: BTreeMap<String, Determinism>,
+    producers: BTreeMap<loft_ir::TableId, Span>,
 }
 
 /// One kind's queries on the CPU in f32 (the twin). Traced and analytic kinds take a world point and direction;
@@ -670,6 +672,7 @@ fn naga_module(name: &str, text: String, src: &Sources, features: loft_ir::GpuFe
     let module=naga::front::wgsl::parse_str(&map.shader).map_err(|e|diagnostic(e.labels().find_map(|(s,_)|map.origin(s)),e.emit_to_string(&map.shader)))?;
     let mut caps = naga::valid::Capabilities::default();
     caps.set(naga::valid::Capabilities::SUBGROUP, features.contains(loft_ir::GpuFeatures::SUBGROUPS));
+    caps.set(naga::valid::Capabilities::SHADER_FLOAT32_ATOMIC, features.contains(loft_ir::GpuFeatures::FLOAT32_ATOMICS));
     naga::valid::Validator::new(naga::valid::ValidationFlags::all(), caps).validate(&module).map_err(|e|diagnostic(e.spans().find_map(|(s,_)|map.origin(*s)),e.emit_to_string(&map.shader)))?;
     let origins=map.expressions(&module,src);
     Ok(ShaderModule{name:name.into(),wgsl:map.shader,naga:module,span:None,origins})
@@ -716,7 +719,12 @@ pub fn compile_snapshot_aov(src: &Sources, overrides: &[(String, f64)], samples:
 }
 
 pub fn compile_aov(src: &Sources, overrides: &[(String, f64)], aov: emit::Aov) -> Res<(Program, Report, Compiled)> {
-    compile_impl(src, overrides, &[], std::path::Path::new("target/loft_cache"), aov, loft_ir::GpuFeatures::empty())
+    compile_for_device(src, overrides, aov, loft_ir::GpuFeatures::empty())
+}
+
+/// Link source-authored compute for the features enabled on the host's device.
+pub fn compile_for_device(src: &Sources, overrides: &[(String, f64)], aov: emit::Aov, features: loft_ir::GpuFeatures) -> Res<(Program, Report, Compiled)> {
+    compile_impl(src, overrides, &[], std::path::Path::new("target/loft_cache"), aov, features)
 }
 
 fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::program::MotionSample], cache: &std::path::Path, aov: emit::Aov, features: loft_ir::GpuFeatures) -> Res<(Program, Report, Compiled)> {
@@ -788,7 +796,7 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
             if let Some(read) = resources.reads.iter().find(|r| !available.contains(r.name.as_str())) {
                 return Err(Diag::new(Code::E505, read.span, format!("{} read before it was written", read.name), "schedule its producer before this pass"));
             }
-            compute.lower(&p, &mut types, src, overrides, pd, resources, &compute_rows)?;
+            compute.lower(&p, &mut types, src, overrides, (pd, resources, &compute_rows), features)?;
             available.extend(resources.writes.iter().map(|r| r.name.as_str()));
             continue;
         }
@@ -1546,9 +1554,10 @@ impl AuthoredCompute {
 
     fn lower(
         &mut self, p: &Prog<'_>, types: &mut Vec<Ty>, src: &Sources, overrides: &[(String, f64)],
-        decl: &PassDecl, resources: &PassResources, rows: &BTreeMap<&str, &str>,
+        (decl, resources, rows): (&PassDecl, &PassResources, &BTreeMap<&str, &str>),
+        features: loft_ir::GpuFeatures,
     ) -> Res<()> {
-        use loft_ir::{BindAccess, DispatchExtent, ModuleBlob, ModuleId, PassId, PassRun, QueueClass, ShaderTarget};
+        use loft_ir::{BindAccess, DispatchExtent, GpuFeatures, ModuleBlob, ModuleId, PassId, PassRun, QueueClass, ShaderTarget};
         let err = |message: String| Diag::new(Code::E520, decl.label.span, message, "match the pass body, tables and declared resource effects");
         if self.truth.contains_key(&decl.label.name) {
             return Err(err(format!("duplicate compute pass {}", decl.label.name)));
@@ -1559,6 +1568,9 @@ impl AuthoredCompute {
         let mut allowed = BTreeMap::new();
         for (access, names) in [(BindAccess::ReadStorage, &resources.reads), (BindAccess::ReadWriteStorage, &resources.writes)] {
             for name in names {
+                if allowed.contains_key(name.name.as_str()) {
+                    return Err(err(format!("{} is listed more than once", name.name)));
+                }
                 if p.bakes.contains_key(name.name.as_str()) {
                     if access != BindAccess::ReadStorage {
                         return Err(err(format!("{} is written by its texture bake", name.name)));
@@ -1578,7 +1590,7 @@ impl AuthoredCompute {
                 }
             }
         }
-        let (entry, extent, wgsl, mut bindings) = match (callee.name.as_str(), args.as_slice()) {
+        let (entry, extent, wgsl, mut bindings, converted, tier) = match (callee.name.as_str(), args.as_slice()) {
             ("dispatch", [Arg { value: Expr { kind: ExprKind::String(file), .. }, .. },
                           Arg { value: Expr { kind: ExprKind::String(entry), .. }, .. }, extent]) => {
                 let extent = compute_extent(p, types, overrides, &extent.value)?;
@@ -1588,7 +1600,7 @@ impl AuthoredCompute {
                 let path = std::path::Path::new(origin).with_file_name(file);
                 let file = std::fs::read_to_string(&path).map_err(|e| err(format!("{}: {e}", path.display())))?;
                 let (wgsl, bindings) = link_raw_compute(&file, &entry, &allowed, &self.bundle.tables).map_err(err)?;
-                (entry, extent, wgsl, bindings)
+                (entry, extent, wgsl, bindings, Vec::new(), Determinism::NonDet)
             }
             ("compute", args) => {
                 let bad = || err("write compute(entry: kernel_name, extent: n, parameter: value, ...)".into());
@@ -1606,6 +1618,21 @@ impl AuthoredCompute {
                 {
                     return Err(err("workgroup size exceeds the portable device limits".into()));
                 }
+                let scale = named.remove("fixed_scale");
+                let float_atomics = match (emit::kernel_uses_float(kernel, types), scale) {
+                    (false, None) => emit::FloatAtomics::Native,
+                    (false, Some(_)) => return Err(err("fixed_scale requires a float atomic destination".into())),
+                    (true, None) => return Err(err("float atomic compute requires a portable fixed_scale".into())),
+                    (true, Some(scale)) => {
+                        let scale = match stage0(p, types, scale, overrides)? {
+                            RowVal::U(n) if n.is_power_of_two() && n <= (1 << 24) => n,
+                            RowVal::I(n) if n > 0 && (n as u32).is_power_of_two() && n <= (1 << 24) => n as u32,
+                            _ => return Err(err("fixed_scale must be a positive integer power of two up to 2^24".into())),
+                        };
+                        if features.contains(GpuFeatures::FLOAT32_ATOMICS) { emit::FloatAtomics::Native }
+                        else { emit::FloatAtomics::Fixed(scale) }
+                    }
+                };
                 let mut arguments = Vec::new();
                 let mut bindings = Vec::new();
                 let mut table_args = Vec::new();
@@ -1624,10 +1651,11 @@ impl AuthoredCompute {
                         if !used_tables.insert(table) {
                             return Err(err(format!("{table} is bound to more than one kernel parameter")));
                         }
-                        let access = if let Some(&det) = kernel.writes.get(name) {
-                            self.determinism.entry(id).and_modify(|old| *old = (*old).max(det)).or_insert(det);
-                            BindAccess::ReadWriteStorage
-                        } else { BindAccess::ReadStorage };
+                        if kernel.tier.is_det() && let Some(producer) = self.producers.get(&id) {
+                            return Err(Diag::new(Code::E504, value.span, format!("Det kernel {entry} consumes NonDet table {table}"),
+                                "use a Det producer or tag the consumer nondet").note(*producer, "NonDet producer"));
+                        }
+                        let access = if kernel.writes.contains_key(name) { BindAccess::ReadWriteStorage } else { BindAccess::ReadStorage };
                         if access != declared {
                             return Err(err(format!("declared access for {table} disagrees with kernel {entry}")));
                         }
@@ -1642,8 +1670,8 @@ impl AuthoredCompute {
                     }
                 }
                 if !named.is_empty() { return Err(bad()); }
-                let wgsl = emit::kernel_module(p, types, kernel, &arguments, &table_args, workgroup);
-                let module = naga_module(entry, wgsl, src, loft_ir::GpuFeatures::SUBGROUPS)?;
+                let (wgsl, converted) = emit::kernel_module(p, types, kernel, &arguments, &table_args, workgroup, float_atomics);
+                let module = naga_module(entry, wgsl, src, features | GpuFeatures::SUBGROUPS)?;
                 for (_, global) in module.naga.global_variables.iter() {
                     let Some(name) = global.name.as_deref() else { continue; };
                     let Some(name) = name.strip_prefix(bake_tex::SAMPLE_TEXTURE_PREFIX) else { continue; };
@@ -1654,21 +1682,38 @@ impl AuthoredCompute {
                     used_tables.insert(name);
                 }
                 if used_tables.len() != allowed.len() { return Err(bad()); }
-                ("main".into(), extent, module.wgsl, bindings)
+                ("main".into(), extent, module.wgsl, bindings, converted, kernel.tier)
             }
             _ => return Err(err("write dispatch(\"module.wgsl\", \"entry\", extent) or compute(entry: kernel, extent: n, ...)".into())),
         };
         bindings.sort_by_key(|b| (b.group, b.slot));
-        let wave = self.bundle.passes.len().try_into().map_err(|_| err("too many compute passes".into()))?;
+        for binding in bindings.iter().filter(|b| b.access == BindAccess::ReadWriteStorage) {
+            self.determinism.insert(binding.resource, tier);
+            if !tier.is_det() { self.producers.entry(binding.resource).or_insert(decl.label.span); }
+        }
         let module = ModuleId(self.bundle.modules.len() as u32);
         self.bundle.modules.push(ModuleBlob {
             id: module, hash: *blake3::hash(wgsl.as_bytes()).as_bytes(), target: ShaderTarget::Wgsl,
             bytes: wgsl.into_bytes().into_boxed_slice(),
         });
-        self.bundle.passes.push(loft_ir::PassDecl {
-            id: PassId(u32::from(wave)), wave, queue: QueueClass::Graphics, bindings: bindings.into_boxed_slice(),
-            run: PassRun::Compute { module, entry, dispatch: DispatchExtent::Fixed(extent) },
-        });
+        let conversion_groups = converted.iter().map(|b| self.bundle.tables[b.resource.0 as usize].capacity.div_ceil(64))
+            .max().map(|groups| [groups.min(65535), 1, 1]);
+        let mut append = |entry, extent, bindings: Vec<_>| {
+            let wave = self.bundle.passes.len().try_into().map_err(|_| err("too many compute passes".into()))?;
+            self.bundle.passes.push(loft_ir::PassDecl {
+                id: PassId(u32::from(wave)), wave, queue: QueueClass::Graphics, bindings: bindings.into_boxed_slice(),
+                run: PassRun::Compute { module, entry, dispatch: DispatchExtent::Fixed(extent) },
+            });
+            Ok(())
+        };
+        if let Some(groups) = conversion_groups {
+            append("loft_fixed_prepare".into(), groups, converted.clone())?;
+            append(entry, extent, bindings)?;
+            append("loft_fixed_finish".into(), groups, converted)?;
+        } else {
+            append(entry, extent, bindings)?;
+        }
+        self.tiers.insert(decl.label.name.clone(), tier);
         self.truth.insert(decl.label.name.clone(), loft_ir::Verdict::Unknown { reason: "NoCpuTwin".into() });
         Ok(())
     }
@@ -1708,14 +1753,14 @@ fn link_raw_compute(
     if mapped.len() != allowed.len() { return Err("pass declares resources unused by its selected WGSL entry".into()); }
     // Keep the requested entry only. Other entry points may have unrelated interfaces.
     ir.entry_points.retain(|ep| ep.stage == ShaderStage::Compute && ep.name == entry);
-    let mut slots = [0; 4];
     let mut bindings = Vec::new();
     for (_, (handle, resource, access)) in mapped {
+        let binding = ir.global_variables[handle].binding.as_ref().expect("linked global");
         let group = access.group();
-        let slot = &mut slots[group as usize];
-        ir.global_variables[handle].binding = Some(naga::ResourceBinding { group: u32::from(group), binding: *slot });
-        bindings.push(loft_ir::PassBinding { group, slot: *slot, resource, access });
-        *slot += 1;
+        if binding.group != u32::from(group) {
+            return Err(format!("WGSL binding {} must use group {group} for {access:?}", binding.binding));
+        }
+        bindings.push(loft_ir::PassBinding { group, slot: binding.binding, resource, access });
     }
     let info = validate(&ir)?;
     let wgsl = naga::back::wgsl::write_string(&ir, &info, naga::back::wgsl::WriterFlags::empty())

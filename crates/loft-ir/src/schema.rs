@@ -148,6 +148,12 @@ macro_rules! bundle_schema {
             4 => GenerateMips {
                 texture: TableId,
             },
+            5 => ComputeNonDetTicks {
+                module: ModuleId,
+                entry: String,
+                max_ticks: u32,
+                instances: TableId,
+            },
         });
 
         $record!(#[derive(Clone, Debug)]

@@ -44,6 +44,7 @@ bitflags::bitflags! {
         const RAY_QUERY = 1 << 7;
         const PACKED_INT8_DOT = 1 << 8;
         const COOP_MATRIX = 1 << 9;
+        const FLOAT32_ATOMICS = 1 << 10;
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

@@ -17,7 +17,7 @@ type_alias:  "type" UIDENT "=" type_expr
 const_decl:  "const" IDENT (":" type_expr)? "=" expr
 input_decl:  "input" LIDENT ":" type_expr ("=" expr)?
 param_decl:  "param" LIDENT ":" type_expr "=" expr ("in" expr ".." expr)?
-kernel_decl: "kernel" LIDENT "(" params? ")" ("allow" "(" capability ("," capability)* ","? ")")? block
+kernel_decl: "kernel" LIDENT "(" params? ")" "nondet"? ("allow" "(" capability ("," capability)* ","? ")")? block
 capability: "atomics" | "workgroup" | "subgroups" | "dynamic_loops"
 bake_tex_decl: "bake_tex" UIDENT bake_tex_dim LIDENT "on" bake_tex_clock "mips" "(" ("true" | "false") ")" "(" LIDENT ":" type_expr ")" block
 bake_tex_dim: GRID_DIM | TEX_DIM_3D | "cube" GRID_DIM
@@ -55,7 +55,7 @@ body_field: LIDENT ":" (expr (".." expr)? | body_fields)
 
 state_decl:  "state" UIDENT ("checkpoint" INT)? ("home" LIDENT)? "{" (_NL? col (("," | _sep) col)* ("," | _sep)?)? "}"
 
-law_decl:    "law" LIDENT "(" params ")" "writes" write_set block
+law_decl:    "law" LIDENT "(" params ")" "nondet"? "writes" write_set block
 write_set:   LIDENT ("." "{" ident_list "}")?
 
 solver_decl: "solver" UIDENT "over" path_ref (_NL? "writes" (LIDENT | UIDENT) ("." "{" ident_list "}")?)? _NL? "config" "{" field_inits "}" _NL? solver_block

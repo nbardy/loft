@@ -18,10 +18,30 @@ Where the documents overlap, precedence is **07 > PATCH_V1_2 > 06_ADDENDUM > 00�
 
 - Use `emit_event(...)` for the outbox. `emit` remains the build-stage row constructor.
 - `E501` is used twice (undeclared field write, and the schedule DAG's read-before-write). The DAG error becomes `E505`.
-- Motion `wgsl` blocks must be marked deterministic; the spelling is `wgsl det (...) -> T { ... }` (a keyword, not an `@` attribute).
+- Det motion `wgsl` blocks use the keyword spelling `wgsl det (...) -> T { ... }`.
 - `--max-frame-ms` on a device without timestamp queries (some browsers) exits `6` with the reason, never a guessed time.
 
 
 ## Lead ruling, 20 Nov 2026: exactness is not a goal (owner)
 
 Wherever this spec says bit-identical or bit-exact (for example decision 15, the Twin gate and E504), read it as an **opt-in determinism contract**: a scene or library that needs exact replay or training reproducibility declares it, and only then do E504 and bit-exact twin checks apply. Everywhere else, pictures and the twin are judged by perceptual and statistical tolerances. Stochastic, temporal and race-tolerant GPU techniques (Monte Carlo with temporal reuse, float atomics in physics) are allowed outside the opt-in.
+
+## Lead ruling, 20 Nov 2026: physics tiers
+
+- Kernels and motion laws default to **Det**. Gameplay and rollback rigs use this tier.
+  Integer or fixed-point deposits can be Det when each contribution and destination
+  is deterministic, every partial sum fits, and results are read in a later pass.
+- Write `kernel name(...) nondet` or `law name(...) nondet` for race-tolerant physics.
+  A Det consumer of a NonDet table gets E504. Keep NonDet laws on separate row tables.
+  Untyped whole WGSL passes carry NonDet provenance for tables they write.
+- A NonDet kernel declares its hardware permissions with `allow(...)`. For float
+  `atomic_add`, supply `fixed_scale` on the scheduled `compute` call. The linker uses
+  float atomics when enabled on the device and signed fixed-point accumulation
+  otherwise. Each completed pass publishes f32 values. The scale is a positive
+  power of two up to 2²⁴. Keep each cell's scaled initial magnitude plus the sum
+  of absolute scaled contributions below 2³¹. Nonfinite or overflowing fixed
+  cells publish NaN. The caller checks finiteness.
+- NonDet updates run outside the exact CPU twin and exact replay. Check them
+  against an independent statistical twin with named seeds, initial states,
+  physical error limits and conservation budgets. Without observations, report
+  Unknown. A passing fixed-point result leaves the NonDet tier unchanged.

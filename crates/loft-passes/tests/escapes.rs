@@ -41,14 +41,14 @@ fn authored_compute_links_shader_access_and_reports_effects() {
             reason: "NoCpuTwin".into()
         }
     );
-    assert_eq!(out.bundle.passes.len(), 5);
+    assert_eq!(out.bundle.passes.len(), 9);
     assert!(
-        out.bundle.passes[2]
+        out.bundle.passes[5]
             .bindings
             .iter()
             .any(|b| b.group == 3 && b.access == BindAccess::SampledTex)
     );
-    let pass = &out.bundle.passes[4];
+    let pass = &out.bundle.passes[8];
     assert!(matches!(pass.run, PassRun::Compute { ref entry, .. } if entry == "copy_rows"));
     assert_eq!(
         pass.bindings
@@ -56,8 +56,8 @@ fn authored_compute_links_shader_access_and_reports_effects() {
             .map(|b| (b.group, b.slot, b.access))
             .collect::<Vec<_>>(),
         [
-            (1, 0, BindAccess::ReadStorage),
-            (2, 0, BindAccess::ReadWriteStorage)
+            (1, 5, BindAccess::ReadStorage),
+            (2, 5, BindAccess::ReadWriteStorage)
         ]
     );
 }
@@ -128,4 +128,76 @@ fn baked_texture_sampling_emits_dimensioned_wgsl() {
     let shader = &program.modules[program.kinds[0].module].wgsl;
     assert!(shader.contains("textureSampleLevel(loft_bake_texture_Mask, loft_bake_sampler,"));
     assert!(shader.contains("@group(3) @binding(3) var loft_bake_texture_Mask: texture_2d<f32>"));
+}
+
+#[test]
+fn scatter_selects_float_atomics_or_fixed_point_at_link() {
+    let src = sources("particle_scatter.loft", include_str!("../../../scenes/particle_scatter.loft"));
+    for (features, expected, dispatches) in [
+        (loft_ir::GpuFeatures::empty(), "atomic<i32>", 3),
+        (loft_ir::GpuFeatures::FLOAT32_ATOMICS, "atomic<f32>", 1),
+    ] {
+        let (_, _, compiled) = loft_passes::compile_for_device(&src, &[], loft_passes::emit::Aov::Beauty, features)
+            .unwrap_or_else(|d| panic!("{}", d.render(&src)));
+        let bundle = compiled.compute.bundle;
+        assert_eq!(bundle.passes.len(), dispatches);
+        assert_eq!(compiled.compute.tiers["scatter"], Determinism::NonDet);
+        assert!(std::str::from_utf8(&bundle.modules[0].bytes).unwrap().contains(expected));
+    }
+}
+
+#[test]
+fn det_kernel_refuses_nondet_data_and_untagged_float_atomics() {
+    let fixture = include_str!("escapes/compute.loft");
+    let untagged = fixture.replace("accumulate_float(dst: [FloatCell]) nondet", "accumulate_float(dst: [FloatCell])");
+    let src = sources("compute.loft", &untagged);
+    assert_eq!(loft_passes::front(&src).err().unwrap().code, loft_ir::Code::E504);
+
+    let consumer = fixture.replace(
+        "schedule Main {",
+        "kernel copy_input(src: [FloatCell], dst: [SignedCell]) allow(atomics) {
+            atomic_add(dst[0].value, i32(src[0].value))
+         }
+         schedule Main {",
+    ).replace(
+        "  pass seed writes",
+        "  pass consume reads [Float] writes [Fixed] {
+             compute(entry: copy_input, extent: 1, src: Float, dst: Fixed)
+         }
+         pass seed writes",
+    );
+    let src = sources("compute.loft", &consumer);
+    let error = loft_passes::compile(&src, &[]).err().unwrap();
+    assert_eq!(error.code, loft_ir::Code::E504, "{}", error.render(&src));
+}
+
+#[test]
+fn nondet_law_keeps_gpu_math_and_refuses_mixed_tiers() {
+    let scene = r"
+        space World
+        fn raw_sine(x: f) -> f = wgsl (x: f) -> f { return sin(x); }
+        kind Body @World (x: f, y: f) {
+            trace(p) = sphere(p - [0, 0, 0]@World, 0.5)
+            material(p,n) = ggx(rgb(0.4), 0.8, 0)
+        }
+        build { emit Body(x: 0, y: 0) }
+        law drift(b: Body, dt) nondet writes b.{x} { b.x = raw_sine(b.x + dt) }
+        law move(b: Body, dt) writes b.{y} { b.y = b.y + dt }
+        schedule Main { run_laws(drift) }
+    ";
+    let src = sources("motion.loft", scene);
+    let (program, _, _) = loft_passes::compile(&src, &[]).unwrap_or_else(|d| panic!("{}", d.render(&src)));
+    let step = &program.dispatches[0];
+    assert_eq!(step.tier, Determinism::NonDet);
+    let bundle = loft_passes::fusion::motion_bundle(&program, step, 2);
+    assert!(matches!(bundle.passes[0].run, PassRun::ComputeNonDetTicks { .. }));
+    assert_eq!(bundle.state.unwrap().checkpoint_slots, 0);
+    assert!(!program.modules[step.module].wgsl.contains("fn det_sin"));
+    let roundtrip = loft_passes::sexp::read(&loft_passes::sexp::write(&program).unwrap()).unwrap();
+    assert_eq!(roundtrip.dispatches[0].tier, Determinism::NonDet);
+    for variant in [scene.replace("drift(b: Body, dt) nondet", "drift(b: Body, dt)"), scene.replace("run_laws(drift)", "run_laws(drift, move)")] {
+        let src = sources("motion.loft", &variant);
+        let error = loft_passes::compile(&src, &[]).err().unwrap();
+        assert_eq!(error.code, loft_ir::Code::E504, "{}", error.render(&src));
+    }
 }

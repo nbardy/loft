@@ -14,7 +14,7 @@ fn sources(scene: &str) -> loft_ir::Sources {
     let mut src = loft_ir::Sources::default();
     for path in files
         .into_iter()
-        .chain([root.join("crates/loft-passes/tests/escapes").join(scene)])
+        .chain([root.join(scene)])
     {
         src.add(
             path.display().to_string(),
@@ -26,7 +26,7 @@ fn sources(scene: &str) -> loft_ir::Sources {
 
 #[test]
 fn source_compute_bundle_runs_with_gpu_readback() {
-    let src = sources("compute.loft");
+    let src = sources("crates/loft-passes/tests/escapes/compute.loft");
     let (program, _, compiled) =
         loft_passes::compile(&src, &[]).unwrap_or_else(|d| panic!("{}", d.render(&src)));
     let compute = compiled.compute;
@@ -142,8 +142,8 @@ fn source_compute_bundle_runs_with_gpu_readback() {
             expected,
             (expected as f32 * 0.5).to_bits(),
             0.375f32.to_bits(),
-            3 * 7,
-            3 * 11
+            42,
+            0
         ]
     );
     eprintln!(
@@ -159,7 +159,7 @@ fn source_compute_bundle_runs_with_gpu_readback() {
 
 #[test]
 fn opted_out_trace_renders_beauty_and_normals() {
-    let src = sources("geometry.loft");
+    let src = sources("crates/loft-passes/tests/escapes/geometry.loft");
     let g = loft_cli::native::gpu().unwrap();
     for aov in [Aov::Beauty, Aov::Normal] {
         let (program, report, _) = loft_passes::compile_aov(&src, &[], aov)
@@ -180,4 +180,104 @@ fn opted_out_trace_renders_beauty_and_normals() {
             g.adapter, report.kinds[0].proof
         );
     }
+}
+
+#[test]
+fn particle_scatter_statistical_twin() {
+    let src = sources("scenes/particle_scatter.loft");
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+    let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
+    let feature = wgpu::Features::SHADER_FLOAT32_ATOMIC & adapter.features();
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        required_features: feature,
+        ..Default::default()
+    })).unwrap();
+    let device = Arc::new(device);
+    let queue = Arc::new(queue);
+    let target = device.create_texture(&wgpu::TextureDescriptor {
+        label: None,
+        size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    }).create_view(&Default::default());
+    let readback = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: 128,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let mut choices = vec![GpuFeatures::empty()];
+    if !feature.is_empty() { choices.push(GpuFeatures::FLOAT32_ATOMICS); }
+    else { eprintln!("{}: float32 atomics unavailable", adapter.get_info().name); }
+    for features in choices {
+        let mut runner = Runner::attach(device.clone(), queue.clone(), HostCaps {
+            depth_convention: DepthConvention::StandardZeroToOne,
+            msaa_samples: 1,
+            features,
+        });
+        let (mut worst_cell, mut worst_global) = (0.0_f64, 0.0_f64);
+        let mut squared_error = 0.0;
+        for seed in 0_u32..32 {
+            let span = if seed % 2 == 0 { 16 } else { 2 };
+            let reverse = seed & 2 != 0;
+            let args = [
+                ("SEED".into(), f64::from(seed)),
+                ("SPAN".into(), f64::from(span)),
+                ("REVERSE".into(), f64::from(u8::from(reverse))),
+            ];
+            let (_, _, compiled) = loft_passes::compile_for_device(&src, &args, Aov::Beauty, features)
+                .unwrap_or_else(|d| panic!("{}", d.render(&src)));
+            let table = compiled.compute.tables["Grid"];
+            let id = runner.load_bundle(&compiled.compute.bundle).unwrap();
+            let mut encoder = device.create_command_encoder(&Default::default());
+            runner.encode_into(id, &mut encoder, &target, None, 0., 0.).unwrap();
+            encoder.copy_buffer_to_buffer(&runner.export_buffer(id, table).unwrap(), 0, &readback, 0, 128);
+            queue.submit([encoder.finish()]);
+            let slice = readback.slice(..);
+            let (tx, rx) = std::sync::mpsc::channel();
+            slice.map_async(wgpu::MapMode::Read, move |result| tx.send(result).unwrap());
+            device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+            rx.recv().unwrap().unwrap();
+            let mapped = slice.get_mapped_range().unwrap();
+            let gpu = mapped.chunks_exact(4).map(|bytes| f64::from(f32::from_le_bytes(bytes.try_into().unwrap())));
+            let (cpu, absolute_momentum) = scatter_reference(seed, span);
+            let mut difference = [0.0; 2];
+            for (i, (gpu, cpu)) in gpu.zip(cpu.into_iter().flatten()).enumerate() {
+                assert!(gpu.is_finite());
+                let error = gpu - cpu;
+                worst_cell = worst_cell.max(error.abs());
+                squared_error += error * error;
+                difference[i % 2] += error;
+            }
+            worst_global = worst_global.max((difference[0] / 256.).abs())
+                .max((difference[1] / absolute_momentum).abs());
+            drop(mapped);
+            readback.unmap();
+        }
+        let rms = (squared_error / (32. * 16. * 2.)).sqrt();
+        eprintln!("{} {features:?}: 32 seeds, max={worst_cell:.9}, RMS={rms:.9}, conservation={worst_global:.9}",
+            adapter.get_info().name);
+        assert!(worst_cell <= 0.0001 && rms <= 0.00003 && worst_global <= 0.00001);
+    }
+}
+
+fn scatter_reference(seed: u32, span: u32) -> ([[f64; 2]; 16], f64) {
+    let mut grid = [[0.; 2]; 16];
+    let mut absolute_momentum = 0.;
+    for id in 0_u32..256 {
+        let word = id.wrapping_mul(747796405).wrapping_add(seed.wrapping_mul(2891336453));
+        let (cell, fraction) = ((word >> 20) % span, f64::from((word >> 16) & 15) / 16.);
+        let momentum = f64::from(((word >> 24) % 127) as i32 - 63) / 63.;
+        absolute_momentum += momentum.abs();
+        grid[cell as usize][0] += 1. - fraction;
+        grid[cell as usize][1] += momentum * (1. - fraction);
+        let next = ((cell + 1) % span) as usize;
+        grid[next][0] += fraction;
+        grid[next][1] += momentum * fraction;
+    }
+    (grid, absolute_momentum)
 }

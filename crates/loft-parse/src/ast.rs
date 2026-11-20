@@ -129,12 +129,21 @@ pub struct PlanDecl {
 #[derive(serde::Serialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum KernelCapability { Atomics, Workgroup, Subgroups, DynamicLoops }
 
-#[derive(serde::Serialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Determinism { Det, NonDet }
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Determinism {
+    #[default]
+    Det,
+    NonDet,
+}
+
+impl Determinism {
+    pub fn is_det(&self) -> bool { *self == Self::Det }
+}
 
 #[derive(serde::Serialize, Clone, Debug)]
 pub struct KernelDecl {
     pub f: FnDecl,
+    pub tier: Determinism,
     pub allow: std::collections::BTreeSet<KernelCapability>,
     /// Checked atomic destinations, keyed by the table parameter at this entry.
     pub writes: std::collections::BTreeMap<String, Determinism>,
@@ -150,6 +159,7 @@ pub enum GeometryProof { Required, Unproved(UnprovedReason) }
 #[derive(serde::Serialize, Clone, Debug)]
 pub struct LawDecl {
     pub f: FnDecl,
+    pub tier: Determinism,
     pub writes: Vec<Ident>,
 }
 

@@ -89,17 +89,24 @@ pub fn check(p: &Prog, types: &mut Vec<Ty>) -> Res<CheckedEffects> {
     }
     if let Some(s)=p.schedule {
         let mut owners=HashMap::new();
+        let mut tiers=HashMap::new();
         for pd in s.passes.iter().filter(|pd| pd.verb.name=="run_laws"){
             for a in &pd.args{
                 let ExprKind::Name(n)=&a.value.kind else{return Err(e003(a.value.span,"expected a law name","name a declared law"))};
                 let law=p.laws.get(n.as_str()).ok_or_else(||Diag::new(Code::E011,a.value.span,"unknown scheduled law","declare the law before scheduling it"))?;
                 if let Some(TyExpr::Name(k))=law.f.params.first().and_then(|prm|prm.ty.as_ref()){
+                    if let Some((tier, first)) = tiers.insert(&k.name, (law.tier, law.f.name.span))
+                        && tier != law.tier
+                    {
+                        return Err(Diag::new(Code::E504, law.f.name.span, "Det and NonDet laws share a row table",
+                            "schedule the NonDet laws on their own kind").note(first, "other tier scheduled here"));
+                    }
                     for f in &law.writes{if let Some(prev)=owners.insert((&k.name,&f.name),f.span){return Err(Diag::new(Code::E502,f.span,format!("conflicting writes on {}.{}",k.name,f.name),"give one scheduled law ownership of this field").note(prev,"first writer declared here"));}}
                 }
             }
         }
     }
-    for law in p.laws.values() {
+    for law in p.laws.values().filter(|law| law.tier.is_det()) {
         let (reachable, constants) = crate::emit::reachable(p, &[&law.f], &[]);
         let mut calls = crate::emit::References::default();
         for name in constants {
@@ -1291,14 +1298,16 @@ impl<'p,'a> Ck<'p,'a> {
                     return Err(e003(table.span, "atomic destination is not a table parameter", "write the destination through its table parameter"));
                 }
                 let det = match ts[0] {
-                    Ty::U32 | Ty::I32 => Determinism::Det,
-                    Ty::F32 => Determinism::NonDet,
+                    Ty::U32 | Ty::I32 => self.kernel.unwrap().tier,
+                    Ty::F32 if self.kernel.unwrap().tier == Determinism::NonDet => Determinism::NonDet,
+                    Ty::F32 => return Err(Diag::new(Code::E504, dst.value.span, "float atomic accumulation requires NonDet",
+                        "tag the kernel nondet or accumulate integers with an explicit fixed-point scale")),
                     _ => return Err(e003(dst.value.span, "atomic destination must be u, i or f", "use a scalar accumulator")),
                 };
                 self.assignable(&ts[1], &ts[0], val.value.span)?;
                 if ts[1] == Ty::AbstractInt { self.set(&val.value, ts[0].clone()); }
                 self.atomic_writes.entry(n.clone()).and_modify(|d| *d = (*d).max(det)).or_insert(det);
-                return Ok(ts[0].clone());
+                return Ok(Ty::Void);
             }
             "global_id" => {
                 if self.kernel.is_some() && !self.comptime && let [axis] = ts.as_slice() {
@@ -1315,7 +1324,13 @@ impl<'p,'a> Ck<'p,'a> {
             }
             "subgroup_add" => {
                 self.require(KernelCapability::Subgroups, span)?;
-                if let [t @ (Ty::F32 | Ty::U32 | Ty::I32)] = ts.as_slice() { return Ok(t.clone()); }
+                if let [t @ (Ty::F32 | Ty::U32 | Ty::I32)] = ts.as_slice() {
+                    if *t == Ty::F32 && self.kernel.unwrap().tier.is_det() {
+                        return Err(Diag::new(Code::E504, span, "floating subgroup reduction requires NonDet",
+                            "tag the kernel nondet or reduce integer contributions"));
+                    }
+                    return Ok(t.clone());
+                }
                 return Err(e003(span, "subgroup_add takes one numeric scalar", "pass an f, i or u value"));
             }
             "mix_bsdf" => {

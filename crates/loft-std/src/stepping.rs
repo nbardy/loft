@@ -24,14 +24,10 @@ pub struct Fused {
 }
 impl Fused {
     pub fn reflect(ir: &naga::Module, pass: &PassDecl) -> Result<Self> {
-        let PassRun::ComputeFusedTicks {
-            entry,
-            max_ticks,
-            instances,
-            ..
-        } = &pass.run
-        else {
-            return Err(Error::AbiMismatch);
+        let (entry, max_ticks, instances) = match &pass.run {
+            PassRun::ComputeFusedTicks { entry, max_ticks, instances, .. }
+            | PassRun::ComputeNonDetTicks { entry, max_ticks, instances, .. } => (entry, max_ticks, instances),
+            _ => return Err(Error::AbiMismatch),
         };
         let e = ir
             .entry_points
@@ -223,8 +219,10 @@ pub fn step_bundle_cpu(
         .iter()
         .find(|p| p.id == pass)
         .ok_or(Error::UnknownResource)?;
-    let PassRun::ComputeFusedTicks { module, .. } = decl.run else {
-        return Err(Error::AbiMismatch);
+    let module = match decl.run {
+        PassRun::ComputeFusedTicks { module, .. } => module,
+        PassRun::ComputeNonDetTicks { .. } => return Err(Error::Unsupported("NonDet ticks require GPU execution")),
+        _ => return Err(Error::AbiMismatch),
     };
     let blob = bundle
         .modules

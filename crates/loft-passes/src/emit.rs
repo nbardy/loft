@@ -156,6 +156,7 @@ pub struct Emitter<'p, 'a> {
     maps: Vec<(String, Vec<MapStage>)>,
     luts: &'p [LutRef],
     motion:bool,
+    motion_tier: Determinism,
     priors: Option<&'p std::collections::BTreeMap<String, u32>>,
     locals: Vec<String>,
     temp: u32,
@@ -163,7 +164,7 @@ pub struct Emitter<'p, 'a> {
     in_prepared_light: bool,
     baked_column: Option<u32>,
     sampled_bakes: BTreeSet<String>,
-    kernel_atomics: BTreeMap<(String, String), Ty>,
+    kernel_atomics: BTreeMap<(String, String), AtomicScalar>,
     kernel_sampling: bool,
 }
 
@@ -334,7 +335,7 @@ fn reachable_impl<'a>(p: &Prog<'a>, roots: &[&'a FnDecl], extra: &[&str], proof_
 
 impl<'p, 'a> Emitter<'p, 'a> {
     pub fn new(p: &'p Prog<'a>, types: &'p [Ty]) -> Self {
-        Emitter { p, types, out: String::new(), maps: vec![], luts: &[],motion:false,priors:None,locals:vec![],temp:0,
+        Emitter { p, types, out: String::new(), maps: vec![], luts: &[],motion:false,motion_tier:Determinism::Det,priors:None,locals:vec![],temp:0,
             prepare_light: false, in_prepared_light: false, baked_column: None, sampled_bakes: BTreeSet::new(), kernel_atomics: BTreeMap::new(), kernel_sampling: false }
     }
 
@@ -596,7 +597,10 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 {
                     let location = self.member(base, m);
                     let load = format!("atomicLoad(&{location})");
-                    return if ty == Ty::F32 { format!("bitcast<f32>({load})") } else { load };
+                    return match ty {
+                        AtomicScalar::U32 | AtomicScalar::I32 | AtomicScalar::Float(FloatAtomics::Native) => load,
+                        AtomicScalar::Float(FloatAtomics::Fixed(_)) => format!("loft_fixed_decode({load})"),
+                    };
                 }
                 if let ExprKind::Name(n) = &base.kind
                     && m.name == "cell"
@@ -705,7 +709,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 if callee.name == "atomic_add" {
                     let (table, index, field) = atomic_target(&args[0].value).expect("checked atomic destination");
                     let value = self.expr(&args[1].value);
-                    if self.kernel_atomics.get(&(table.to_owned(), field.to_owned())) == Some(&Ty::F32) {
+                    if matches!(self.kernel_atomics.get(&(table.to_owned(), field.to_owned())), Some(AtomicScalar::Float(FloatAtomics::Fixed(_)))) {
                         let index = self.expr(index);
                         return format!("{}(u32({index}), {value})", float_atomic_symbol(table, field));
                     }
@@ -744,7 +748,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                     let steps = if a.len() == 5 { a[3].as_str() } else { "24u" };
                     return format!("loft_authored_volume({}, {}, {}, {steps}, {})", a[0], a[1], a[2], a.last().unwrap());
                 }
-                if self.motion && matches!(motion_math(&callee.name), MotionMath::Fixed){return format!("det_{}({})",callee.name,a.join(", "));}
+                if self.motion && self.motion_tier.is_det() && matches!(motion_math(&callee.name), MotionMath::Fixed){return format!("det_{}({})",callee.name,a.join(", "));}
                 if matches!(callee.name.as_str(),"held"|"missed"){return format!("CheckValue({}u, 0u, {})",if callee.name=="held"{1}else{2},a[0]);}
                 let name = match callee.name.as_str() {
                     "ggx_energy" => "loft_ggx_energy".into(),
@@ -1653,6 +1657,20 @@ fn atomic_target(expr: &Expr) -> Option<(&str, &Expr, &str)> {
     Some((table, index, &field.name))
 }
 
+/// Float table fields keep their f32 representation at every pass boundary.
+#[derive(Clone, Copy)]
+pub(crate) enum FloatAtomics {
+    Native,
+    Fixed(u32),
+}
+
+#[derive(Clone, Copy)]
+enum AtomicScalar {
+    I32,
+    U32,
+    Float(FloatAtomics),
+}
+
 fn float_atomic_symbol(table: &str, field: &str) -> String {
     format!("loft_atomic_add_{}_{table}_{field}", table.len())
 }
@@ -1668,9 +1686,10 @@ fn table_struct(em: &mut Emitter<'_, '_>, symbol: &str, row: &str, parameter: Op
         let field_ty = em.resolve(&field.ty);
         let atomic = parameter.and_then(|p| em.kernel_atomics.get(&(p.to_owned(), name.clone())));
         let ty = match atomic {
-            Some(Ty::F32 | Ty::U32) => "atomic<u32>".to_owned(),
-            Some(Ty::I32) => "atomic<i32>".to_owned(),
-            _ => wty(&field_ty),
+            Some(AtomicScalar::U32) => "atomic<u32>".to_owned(),
+            Some(AtomicScalar::I32 | AtomicScalar::Float(FloatAtomics::Fixed(_))) => "atomic<i32>".to_owned(),
+            Some(AtomicScalar::Float(FloatAtomics::Native)) => "atomic<f32>".to_owned(),
+            None => wty(&field_ty),
         };
         let name = if em.p.kinds.contains_key(row) { format!("r_{name}") } else { member_name(name) };
         let _ = writeln!(em.out, "  {name}: {ty},");
@@ -1715,17 +1734,29 @@ pub(crate) fn table_layout(p: &Prog<'_>, row: &str, span: Span) -> Res<loft_ir::
     Ok(loft_ir::StructLayout { stride_bytes: stride, offsets: members.iter().map(|m| m.offset).collect() })
 }
 
+pub(crate) fn kernel_uses_float(k: &KernelDecl, types: &[Ty]) -> bool {
+    References::function(&k.f).atomic_targets.iter().any(|target| types[target.id as usize] == Ty::F32)
+}
+
 pub(crate) fn kernel_module(
     p: &Prog<'_>, types: &[Ty], k: &KernelDecl,
     arguments: &[String], bindings: &[(&str, &str, loft_ir::PassBinding)], workgroup: [u32; 3],
-) -> String {
+    float_atomics: FloatAtomics,
+) -> (String, Vec<loft_ir::PassBinding>) {
     let mut em = Emitter::new(p, types);
     em.kernel_sampling = true;
     em.header(abi::NONCE_PLACEHOLDER);
     for target in References::function(&k.f).atomic_targets {
         let (table, _, field) = atomic_target(target).expect("checked atomic destination");
-        em.kernel_atomics.insert((table.to_owned(), field.to_owned()), em.ty_of(target).clone());
+        let scalar = match em.ty_of(target) {
+            Ty::U32 => AtomicScalar::U32,
+            Ty::I32 => AtomicScalar::I32,
+            Ty::F32 => AtomicScalar::Float(float_atomics),
+            _ => unreachable!("checked atomic scalar"),
+        };
+        em.kernel_atomics.insert((table.to_owned(), field.to_owned()), scalar);
     }
+    let (mut encode, mut decode, mut converted) = (String::new(), String::new(), Vec::new());
     let (helpers, consts) = reachable(p, &[&k.f], &[]);
     nested_table_structs(&mut em, &bindings.iter().map(|(_, row, _)| *row).collect::<Vec<_>>());
     em.library(&helpers, &consts);
@@ -1736,23 +1767,66 @@ pub(crate) fn kernel_module(
         let resource = wgsl_name(param);
         let _ = writeln!(em.out, "@group({}) @binding({}) var<storage, {access}> {resource}: array<{ty}>;",
             binding.group, binding.slot);
+        let mut conversions = Vec::new();
         for ((table, field), kind) in &em.kernel_atomics {
-            if table != param || kind != &Ty::F32 { continue; }
+            if table != param || !matches!(kind, AtomicScalar::Float(FloatAtomics::Fixed(_))) { continue; }
             let function = float_atomic_symbol(table, field);
             let field = if p.kinds.contains_key(row) { format!("r_{field}") } else { member_name(field) };
-            // WGSL float addition uses a bitwise compare-exchange retry, even on devices with integer atomics only.
             let _ = writeln!(em.out, "
-fn {function}(index: u32, value: f32) -> f32 {{
-  var old = atomicLoad(&{resource}[index].{field});
+fn {function}(index: u32, value: f32) {{
+  let ptr = &{resource}[index].{field};
+  let delta = loft_fixed_encode(value);
+  var old = atomicLoad(ptr);
   loop {{
-    let sum = bitcast<u32>(bitcast<f32>(old) + value);
-    let next = atomicCompareExchangeWeak(&{resource}[index].{field}, old, sum);
+    let sum = loft_fixed_sum(old, delta);
+    let next = atomicCompareExchangeWeak(ptr, old, sum);
     if next.exchanged {{ break; }}
     old = next.old_value;
   }}
-  return bitcast<f32>(old);
 }}");
+            conversions.push(field);
         }
+        if !conversions.is_empty() {
+            converted.push(*binding);
+            // A separate dispatch changes representation before any concurrent accumulation.
+            for body in [&mut encode, &mut decode] {
+                let _ = writeln!(body, "for (var i = gid.x; i < arrayLength(&{resource}); i += groups.x * 64u) {{");
+            }
+            for field in conversions {
+                let ptr = format!("&{resource}[i].{field}");
+                let _ = writeln!(encode, "atomicStore({ptr}, loft_fixed_encode(bitcast<f32>(atomicLoad({ptr}))));");
+                let _ = writeln!(decode, "atomicStore({ptr}, bitcast<i32>(loft_fixed_decode(atomicLoad({ptr}))));");
+            }
+            encode.push_str("}\n");
+            decode.push_str("}\n");
+        }
+    }
+    if let FloatAtomics::Fixed(scale) = float_atomics && !converted.is_empty() {
+        let _ = write!(em.out, r#"
+const LOFT_FIXED_SCALE: f32 = {scale}.0;
+const LOFT_FIXED_INVALID: i32 = -2147483647i - 1i;
+fn loft_fixed_encode(x: f32) -> i32 {{
+    let fixed = round(x * LOFT_FIXED_SCALE);
+    if abs(fixed) < 2147483648.0 {{ return i32(fixed); }}
+    return LOFT_FIXED_INVALID;
+}}
+fn loft_fixed_decode(x: i32) -> f32 {{
+    if x == LOFT_FIXED_INVALID {{ return bitcast<f32>(0x7fc00000u); }}
+    return f32(x) / LOFT_FIXED_SCALE;
+}}
+fn loft_fixed_sum(a: i32, b: i32) -> i32 {{
+    if a == LOFT_FIXED_INVALID || b == LOFT_FIXED_INVALID {{ return LOFT_FIXED_INVALID; }}
+    if b > 0i && a > 2147483647i - b {{ return LOFT_FIXED_INVALID; }}
+    if b < 0i && a < -2147483647i - b {{ return LOFT_FIXED_INVALID; }}
+    return a + b;
+}}
+@compute @workgroup_size(64) fn loft_fixed_prepare(@builtin(global_invocation_id) gid: vec3u, @builtin(num_workgroups) groups: vec3u) {{
+{encode}
+}}
+@compute @workgroup_size(64) fn loft_fixed_finish(@builtin(global_invocation_id) gid: vec3u, @builtin(num_workgroups) groups: vec3u) {{
+{decode}
+}}
+"#);
     }
     let mut f = k.f.clone();
     f.params.retain(|p| !matches!(p.ty, Some(TyExpr::Table(_))));
@@ -1766,5 +1840,5 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
   loft_gid = gid;
   loft_kernel({});
 }}", arguments.join(", "));
-    em.out
+    (em.out, converted)
 }
