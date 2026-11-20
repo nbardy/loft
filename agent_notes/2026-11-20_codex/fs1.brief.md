@@ -17,3 +17,9 @@ Final message ≤100 words.
 3. **No `lsof` anywhere in the recorder.** At most one spindump or stackshot per incident at a time; the second stackshot only after the first finishes.
 4. **Prefer one bulk process-list read** over per-PID reads. Read per-PID detail only for the top few by footprint or CPU, and never for processes younger than about 1 s (the convoy formed around a short-lived git).
 5. **Keep the cost claim honest:** re-measure the idle CPU and RAM after the changes, and update the README "Cost" section if it moved.
+
+**Refinements (lead, 20 Nov; supersede the points above where they differ):**
+- The single in-flight lookup that gets stuck IS the stall detector. Keep it, and never add a second.
+- During a stall, capture **raw kernel stackshot buffers only** (one at onset and one about 60 s later; the 20:18:32 buffer was captured fine mid-stall). Do NOT symbolicate during the stall: spindump's symbolication step is what blocked. Symbolicate after the stall clears or on the next boot, then attach the result to the crash review.
+- **Spawn lineage:** prefer `eslogger exec fork exit` (Endpoint Security, macOS 13+; needs root and Full Disk Access), which streams parent, PID and argv with no polling. If it is unavailable, fall back to the existing scan, and record the fallback reason in the samples as a typed reason, not silently.
+- Say in the lane note which of these claims you verified on this machine and which are inference.
