@@ -986,6 +986,7 @@ pub(super) fn emit_kind_module(
     }
     // Draw-form glue: the vis entry points, how shade rebuilds the hit, and the twin's geometry.
     let count_steps = aov == Aov::SdfSteps && draw == Draw::Traced && edit.is_none();
+    let uses_world_hit = light.is_none() && aov == Aov::Beauty;
     let (mut vis, mut geometry, twin_geo) = match draw {
         Draw::Surface { nu, nv } => (
             format!(
@@ -1039,7 +1040,16 @@ struct FsOut {{ @location(0) vis: vec2<u32> }}
         ),
         Draw::Mesh { .. } => crate::world::mesh::draw(),
         Draw::Analytic | Draw::Traced => {
+            // World shading reconstructs the point using the same pixel ray and
+            // near offset as traversal. Proxy interpolation rounds that ray
+            // differently, which can move a secondary origin across a surface.
+            let primary_direction = if uses_world_hit { "loft_ray(v.pos.xy)" } else { "normalize(v.wp - ro)" };
             let (hit, split_ao) = match draw {
+                Draw::Analytic if uses_world_hit => (r"  let near = select(0.0001, 0.0, frame.cold.y == 1u);
+  let local_t = q_visible(row, loft_xf_pt(xf, ro + near * rd), lrd);
+  if local_t < 0.0 { discard; }
+  let t = near + local_t;
+".to_owned(), false),
                 Draw::Analytic => ("  // Closed form: the author's `visible` query, in the kind's space (a rigid pose keeps t).\n  let t = q_visible(row, lro, lrd);\n  if t < 0.0 { discard; }\n".to_owned(),
                     light == Some("woodblock_pigment") && aov == Aov::Beauty),
                 Draw::Traced if edit.is_some() => ("  let t = loft_edit_march(row, lro, lrd, span);\n  if t < 0.0 { discard; }\n".to_owned(), false),
@@ -1083,7 +1093,7 @@ fn loft_box(ro: vec3<f32>, rd: vec3<f32>, lo: vec3<f32>, hi: vec3<f32>) -> vec2<
   if frame.cold.x == LOFT_NONCE {{ discard; }}
   let row = load_row(v.row);
   var ro = frame.eye.xyz;
-  var rd = normalize(v.wp - ro);
+  var rd = {primary_direction};
   // The sun's view is orthographic: every ray runs along `eye.xyz`, starting outside the row's bound.
   if frame.cold.y == 1u {{
     rd = frame.eye.xyz;
