@@ -38,7 +38,7 @@ WGSL checks none of these. You find them as wrong pictures or flaky motion.
 **3. It can analyse the program, because it sees maths as maths:**
 - automatic derivatives (`spine'(u)`, normals);
 - interval and Lipschitz bounds;
-- a CPU twin of GPU code, so motion is testable bit for bit and runnable for training;
+- a CPU twin of GPU code, so motion is testable against the GPU and runnable for training;
 - constraints with honest verdicts (Held, Missed or Unknown);
 - `solve`.
 
@@ -47,7 +47,7 @@ None of this is possible on opaque shader text.
 **4. The tools come with it:**
 - Tier 0 hot edits;
 - naga cost telemetry and AOV heatmaps;
-- bit-exact `.loftlog` replay;
+- deterministic `.loftlog` replay where a scene opts in;
 - `.loftb` bundles;
 - the training contract;
 - picture, speed and truth gates on every scene.

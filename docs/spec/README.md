@@ -20,3 +20,8 @@ Where the documents overlap, precedence is **07 > PATCH_V1_2 > 06_ADDENDUM > 00â
 - `E501` is used twice (undeclared field write, and the schedule DAG's read-before-write). The DAG error becomes `E505`.
 - Motion `wgsl` blocks must be marked deterministic; the spelling is `wgsl det (...) -> T { ... }` (a keyword, not an `@` attribute).
 - `--max-frame-ms` on a device without timestamp queries (some browsers) exits `6` with the reason, never a guessed time.
+
+
+## Lead ruling, 20 Nov 2026: exactness is not a goal (owner)
+
+Wherever this spec says bit-identical or bit-exact (for example decision 15, the Twin gate and E504), read it as an **opt-in determinism contract**: a scene or library that needs exact replay or training reproducibility declares it, and only then do E504 and bit-exact twin checks apply. Everywhere else, pictures and the twin are judged by perceptual and statistical tolerances. Stochastic, temporal and race-tolerant GPU techniques (Monte Carlo with temporal reuse, float atomics in physics) are allowed outside the opt-in.

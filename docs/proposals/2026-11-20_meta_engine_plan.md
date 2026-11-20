@@ -48,7 +48,7 @@ Decided here:
   anywhere in the product. The CLI and the WASM build are Rust.
 - **Units ship first-class but inferred**; literals need suffixes only where a unit is ambiguous.
 - **Tier 0 is edit-time only**, one dirty kind at a time, kind-bucketed; motion and solver laws never run in Tier 0.
-- **Bit-identity is per device**; across devices the contract is the stated tolerances.
+- **Exactness is not a goal** (owner, 20 Nov 2026). Pictures and the twin are judged by perceptual and statistical tolerances. Exact determinism is an opt-in contract for scenes that need exact replay or training reproducibility.
 
 Open, for the chief scientist (motion) and the first slice (render): see §6 and
 `docs/handoff/2026-11-19_motion_chief_scientist.md`.
@@ -58,7 +58,7 @@ Open, for the chief scientist (motion) and the first slice (render): see §6 and
 | Gate | Pass condition |
 |---|---|
 | Pictures | Every scene in the new corpus renders every expected frame; perceptual diff against its approved reference within tolerance; a missing frame fails |
-| Twin | CPU twin equals GPU per device to the bit for motion; fields within the tier contract |
+| Twin | CPU twin agrees with GPU within stated tolerances; exact agreement only where a scene opts into determinism (replay, training) |
 | Speed | p95 frame time and GPU command count within the scene's budget |
 | Load | Shader modules, pipelines, cold and warm load within budget; module count independent of instance count |
 | Truth | Every constraint check is Held, or the scene declares the Missed/Unknown it expects |
