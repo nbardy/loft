@@ -2,6 +2,20 @@
 
 ## Legacy retirement
 
+One locked Apple M4 Metal run on `33cdcbf` scored Pictures **0/18**, Twin **36/36**,
+Speed **12/12**, Load **31/33** and Truth **34/34**, with zero contended verdicts.
+All 18 gate RGBA hashes and all nine bead renders matched archived main bit for bit. The two
+Load misses were Hermit's 14 pipelines against a budget of 13. All 1,510 historical beauty
+hashes verified. The reference approval queue is unchanged. [Gate measurements](../../out/meta/del2/five-gates.json) · [Exact frame comparisons](../../out/meta/del2/pixels.json)
+
+The single native build produced 25 test executables. **152/153** tests passed, including all
+six mutants and the three transferred image-comparison tests. The Tier 0 promotion test measured
+**0.581 ms** p95 against **0.500 ms**, with zero of 140,000 pixels over 1/255. Isolated checks
+measured **0.667 ms** and **0.796 ms**. The same test executable (identical SHA-256) measured
+**0.787 ms** on concurrent unchanged main. This timing miss remains open. The wasm32 runner
+checked with web-sys, doctests passed, and Earley and llguidance each returned all 280 expected
+outcomes. [Native and main evidence](../../out/meta/del2/gate.json)
+
 The root Cargo workspace owns the native and WebAssembly builds. The 18 approved images in
 `tests/fixtures/gate-refs/` carry the same RGBA hashes pinned in `engines/gates.json`.
 `loft gate` records each rendered RGBA hash in `out/meta/gate.json` for exact comparisons with
