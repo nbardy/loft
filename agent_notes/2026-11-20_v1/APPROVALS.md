@@ -10,8 +10,9 @@ pairs and queue them. An integrator re-pins a reference only when the change is 
 |---|---|---|---|
 | 2026-11-20 | Phase 4 layered material, all 18 gate frames (capsules, blobs and hermit; 1 and 20; t = 0/4/9) | out/meta/i4-fix/approval/*_{old,new}.webp; out/meta/i6/approval_needed.md | **Approved.** Gradient sky, richer shell and coat highlights; geometry and pose unchanged; no artefacts. Re-pin tests/fixtures/gate-refs to the current main renders. |
 | 2026-11-20 | Coral Shrine Lipschitz fix (loft/s1-lip 871ea94) | out/meta/s1_lip/shrine-review.webp | **Approved.** The old lantern was a truncated march; the new one is solid, with far fewer steps. |
+| 2026-11-20 | Bead look (d1d, examples/bead.ts at 1.37 s) | out/meta/d1d/approval/bead-whole-{old,new}.webp | **Approved.** Visually identical toon bands, bore, rim and cast shadow; fixed band widths instead of derivative-dependent are not noticeable. |
+| 2026-11-20 | Coral Shrine per-hit shadows (d1b) | out/meta/d1b/approval/coral-{old,new}.webp | **Rejected.** Cost Shrine 19.2 ms against a 4.0 ms budget; shadow maps (pf1a) stay. |
 
 ## Pending lead review
-- Bead look (out/meta/d1d/approval/OWNER_APPROVAL_NEEDED.md)
 - Phase 5 corpus beauty pairs (out/meta/i5-r2/approval_needed.md). Approval alone certifies nothing; defects first.
 - Sky bake look change (x2c), when it lands.
