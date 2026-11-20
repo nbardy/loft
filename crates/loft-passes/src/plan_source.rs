@@ -17,14 +17,14 @@ fn invalid(span: Span, message: &str) -> Diag {
     )
 }
 
-fn objective_terms<'a>(e: &'a Expr, terms: &mut Vec<&'a Expr>) {
-    match &e.kind {
-        ExprKind::Binary(BinOp::Add, left, right) => {
-            objective_terms(left, terms);
-            objective_terms(right, terms);
-        }
-        _ => terms.push(e),
+fn objective_terms<'a>(e: &'a Expr, terms: &mut Vec<Weight<'a>>) -> Res<()> {
+    if let ExprKind::Binary(BinOp::Add, left, right) = &e.kind {
+        objective_terms(left, terms)?;
+        objective_terms(right, terms)?;
+    } else {
+        terms.push(weight(e)?);
     }
+    Ok(())
 }
 
 fn call(e: &Expr) -> Res<(&str, &[Arg])> {
@@ -147,19 +147,29 @@ pub(crate) fn check_source(plan: &PlanDecl) -> Res<()> {
             return Err(invalid(field.name.span, "duplicate plan parameter"));
         }
     }
-    let mut objectives = vec![];
-    objective_terms(&plan.objective, &mut objectives);
-    for e in objectives {
-        weight(e)?;
-    }
-    let mut flight = false;
-    for e in &plan.holds {
-        if matches!(constraint(e)?, Constraint::Flight(..)) && std::mem::replace(&mut flight, true)
-        {
-            return Err(invalid(e.span, "only one ballistic interval is supported"));
+    PlanSource::bind(plan).map(|_| ())
+}
+
+struct PlanSource<'a> {
+    objectives: Vec<Weight<'a>>,
+    holds: Vec<Constraint<'a>>,
+}
+
+impl<'a> PlanSource<'a> {
+    fn bind(plan: &'a PlanDecl) -> Res<Self> {
+        let mut objectives = vec![];
+        objective_terms(&plan.objective, &mut objectives)?;
+        let mut flight = false;
+        let mut holds = Vec::with_capacity(plan.holds.len());
+        for e in &plan.holds {
+            let hold = constraint(e)?;
+            if matches!(hold, Constraint::Flight(..)) && std::mem::replace(&mut flight, true) {
+                return Err(invalid(e.span, "only one ballistic interval is supported"));
+            }
+            holds.push(hold);
         }
+        Ok(Self { objectives, holds })
     }
-    Ok(())
 }
 
 enum Asset {
@@ -312,11 +322,10 @@ pub(crate) fn lower_source(
             .transpose()
             .map(|v| v.unwrap_or(0.001))
     };
-    let mut terms = vec![];
-    objective_terms(&decl.objective, &mut terms);
-    let mut objectives = vec![];
-    for e in terms {
-        objectives.push(match weight(e)? {
+    let source = PlanSource::bind(decl)?;
+    let mut objectives = Vec::with_capacity(source.objectives.len());
+    for weight in source.objectives {
+        objectives.push(match weight {
             Weight::Effort(w) => Objective::Effort(num(w)?),
             Weight::Jerk(w) => Objective::Jerk(num(w)?),
             Weight::Near(spline, weights) => {
@@ -336,8 +345,8 @@ pub(crate) fn lower_source(
         });
     }
     let (mut holds, mut flight) = (vec![], None);
-    for e in &decl.holds {
-        holds.push(match constraint(e)? {
+    for hold in source.holds {
+        holds.push(match hold {
             Constraint::Position(t, p, l) => Hold::PosAt {
                 time: num(t)?,
                 position: vec(p)?,

@@ -28,3 +28,31 @@ fn author_card_uses_the_native_parser() {
     }
     assert!(blocks>0);
 }
+
+#[test]
+fn forward_kind_helper_shadows_a_builtin_only_inside_its_kind() {
+    use loft_parse::ast::{ExprKind, Item, QueryKind, Stmt};
+
+    let source = "space World\n\
+        kind Scoped @World () { trace(p) = sin(0.0); fn sin(x: f) -> f = cos(x) }\n\
+        fn outside(x: f) -> f = sin(x)";
+    let module = loft_parse::parse(0, source, &mut 0).unwrap();
+    let [Item::Space(_), Item::Fn(helper), Item::Kind(kind), Item::Fn(outside)] =
+        module.items.as_slice()
+    else {
+        panic!("expected the helper to be lifted before its kind");
+    };
+    for (function, expected) in [
+        (kind.query(QueryKind::Trace).unwrap(), "Scoped#sin"),
+        (helper, "cos"),
+        (outside, "sin"),
+    ] {
+        let [Stmt::Return(Some(expr), _)] = function.body.stmts.as_slice() else {
+            panic!("expected a call in {}", function.name.name);
+        };
+        let ExprKind::Call { callee, .. } = &expr.kind else {
+            panic!("expected a call in {}", function.name.name);
+        };
+        assert_eq!(callee.name, expected);
+    }
+}

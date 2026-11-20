@@ -1,5 +1,6 @@
 //! Lossless token tree. Byte spans partition the input, including EOF trivia.
 //! WGSL islands are single leaves, so a Loft source edit never parses shader comments as Loft.
+use crate::ast::Dimension;
 use loft_ir::{Code, Diag, Res, Span};
 use logos::Logos;
 
@@ -51,6 +52,37 @@ pub enum Node {
 #[derive(Clone, Debug)]
 pub struct Cst {
     pub roots: Vec<Node>,
+}
+
+pub(crate) struct Unit {
+    dimension: [i32; 4],
+    pub factor: f64,
+}
+
+impl Unit {
+    pub const ONE: Self = Self { dimension: [0; 4], factor: 1. };
+
+    pub fn named(symbol: &str) -> Option<Self> {
+        let (dimension, factor) = match symbol {
+            "m" => ([1, 0, 0, 0], 1.),
+            "mm" => ([1, 0, 0, 0], 0.001),
+            "s" => ([0, 1, 0, 0], 1.),
+            "kg" => ([0, 0, 1, 0], 1.),
+            "rad" => ([0, 0, 0, 1], 1.),
+            "deg" => ([0, 0, 0, 1], std::f64::consts::PI / 180.),
+            "Hz" => ([0, -1, 0, 0], 1.),
+            "N" => ([1, -2, 1, 0], 1.),
+            "J" => ([2, -2, 1, 0], 1.),
+            _ => return None,
+        };
+        Some(Self { dimension, factor })
+    }
+
+    pub fn add(&self, dimension: &mut Dimension, power: f64) {
+        for (component, exponent) in dimension.iter_mut().zip(self.dimension) {
+            *component += power * f64::from(exponent);
+        }
+    }
 }
 
 fn raw_end(text: &str) -> Option<usize> {
@@ -163,10 +195,7 @@ impl Cst {
                         .bytes()
                         .take_while(|c| c.is_ascii_alphanumeric() || *c == b'_')
                         .count();
-                    if !matches!(
-                        &rest[..len],
-                        "m" | "mm" | "s" | "kg" | "rad" | "deg" | "N" | "Hz" | "J"
-                    ) {
+                    if Unit::named(&rest[..len]).is_none() {
                         break;
                     }
                     let mut n = 1 + len;
@@ -261,31 +290,31 @@ impl Cst {
         Ok(Self { roots })
     }
 
-    pub fn tokens(&self) -> Vec<&Token> {
-        fn walk<'a>(nodes: &'a [Node], out: &mut Vec<&'a Token>) {
-            for n in nodes {
-                match n {
-                    Node::Leaf(t) => out.push(t),
-                    Node::Group {
-                        open,
-                        children,
-                        close,
-                    } => {
-                        out.push(open);
-                        walk(children, out);
-                        out.push(close);
+    pub(crate) fn visit_tokens<'a>(&'a self, mut visit: impl FnMut(&'a Token)) {
+        fn walk<'a>(nodes: &'a [Node], visit: &mut impl FnMut(&'a Token)) {
+            for node in nodes {
+                match node {
+                    Node::Leaf(token) => visit(token),
+                    Node::Group { open, children, close } => {
+                        visit(open);
+                        walk(children, visit);
+                        visit(close);
                     }
                 }
             }
         }
-        let mut out = vec![];
-        walk(&self.roots, &mut out);
-        out
+        walk(&self.roots, &mut visit);
+    }
+
+    pub fn tokens(&self) -> Vec<&Token> {
+        let mut tokens = vec![];
+        self.visit_tokens(|t| tokens.push(t));
+        tokens
     }
 
     pub fn write(&self, source: &str) -> String {
         let mut out = String::new();
-        for t in self.tokens() {
+        self.visit_tokens(|t| {
             for (_, s) in &t.leading {
                 out.push_str(&source[s.lo as usize..s.hi as usize]);
             }
@@ -293,7 +322,7 @@ impl Cst {
             for (_, s) in &t.trailing {
                 out.push_str(&source[s.lo as usize..s.hi as usize]);
             }
-        }
+        });
         out
     }
 }

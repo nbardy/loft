@@ -1,15 +1,16 @@
 //! Recursive descent over the lossless CST. Newlines are virtual separators;
 //! all expression and diagnostic spans still address the original UTF-8.
-use crate::cst::{Cst, Kind, Trivia};
+use crate::cst::{Cst, Kind, Trivia, Unit};
 use crate::ast::*;
 use loft_ir::{Code, Diag, Res, Span};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Copy)]
 struct Lex<'a> {
     text: &'a str,
     span: Span,
     kind: Kind,
+    next_in_scope: usize,
 }
 
 fn continued(prev: &str, next: &str, depth: usize) -> bool {
@@ -39,8 +40,9 @@ pub fn parse(file: u16, source: &str, next: &mut u32) -> Res<Module> {
     let tree = Cst::parse(file, source)?;
     let mut tokens = vec![];
     let mut depth = 0usize;
+    let mut braces = Vec::new();
     let mut prev = "";
-    for t in tree.tokens() {
+    tree.visit_tokens(|t| {
         let word = t.text(source);
         if (!continued(prev, word, depth)
             || (prev == "*"
@@ -55,20 +57,27 @@ pub fn parse(file: u16, source: &str, next: &mut u32) -> Res<Module> {
                 text: ";",
                 span: *s,
                 kind: Kind::Newline,
+                next_in_scope: tokens.len() + 1,
             });
         }
         tokens.push(Lex {
             text: word,
             span: t.span,
             kind: t.kind,
+            next_in_scope: tokens.len() + 1,
         });
         match word {
             "(" | "[" => depth += 1,
             ")" | "]" => depth -= 1,
+            "{" => braces.push(tokens.len() - 1),
+            "}" => {
+                let open = braces.pop().expect("CST matched this brace");
+                tokens[open].next_in_scope = tokens.len();
+            }
             _ => (),
         }
         prev = word;
-    }
+    });
     let mut p = Parser {
         tokens,
         at: 0,
@@ -107,7 +116,7 @@ struct Parser<'a, 'b> {
     in_opt_out: bool,
     proof: GeometryProof,
     derivatives: Vec<(Ident, Ident)>,
-    kind_helpers: std::collections::HashMap<String, String>,
+    kind_helpers: HashMap<String, String>,
 }
 fn named(name: &str, span: Span) -> Ident {
     Ident {
@@ -209,24 +218,30 @@ impl<'src> Parser<'src, '_> {
             self.expect("]")?;
             return Ok(TyExpr::Table(t));
         }
-        if unit(self.cur().text) || self.is("1") {
-            let span = self.cur().span;
+        if Unit::named(self.cur().text).is_some() || self.is("1") {
             let mut dim = [0.; 4];
             let mut sign = 1.;
             loop {
-                if !unit(self.cur().text) && !self.is("1") {
-                    return self.err("a unit atom");
-                }
-                let atom = self.pop();
-                let mut power = sign;
-                if self.eat("^") {
-                    if self.eat("-") { power = -power; }
-                    power *= f64::from(self.integer()?);
-                }
-                add_unit(&mut dim, atom.text, power);
-                if self.eat("/") { sign = -1.; }
-                else if self.eat("*") { sign = 1.; }
-                else { break; }
+                let atom = if self.is("1") { Unit::ONE } else {
+                    let Some(unit) = Unit::named(self.cur().text) else {
+                        return self.err("a unit atom");
+                    };
+                    unit
+                };
+                self.pop();
+                let power = if self.eat("^") {
+                    let sign = if self.eat("-") { -sign } else { sign };
+                    sign * f64::from(self.integer()?)
+                } else {
+                    sign
+                };
+                atom.add(&mut dim, power);
+                sign = match self.cur().text {
+                    "/" => -1.,
+                    "*" => 1.,
+                    _ => break,
+                };
+                self.pop();
             }
             self.module.dimensions.push((span, dim));
             return Ok(ty("f32", span));
@@ -282,19 +297,28 @@ impl<'src> Parser<'src, '_> {
         let default = if self.eat("=") { Some(self.expr(0)?) } else { None };
         Ok(RowField { name, ty, range, default })
     }
-    fn resources(&mut self, keyword: &str) -> Res<Vec<Ident>> {
-        let mut names = vec![];
-        if self.eat(keyword) {
-            self.expect("[")?;
-            while !self.eat("]") {
-                names.push(self.ident()?);
-                if !self.eat(",") {
-                    self.expect("]")?;
-                    break;
-                }
+    fn comma_list<T>(
+        &mut self,
+        close: &str,
+        mut item: impl FnMut(&mut Self) -> Res<T>,
+    ) -> Res<Vec<T>> {
+        let mut items = vec![];
+        while !self.eat(close) {
+            items.push(item(self)?);
+            if !self.eat(",") {
+                self.expect(close)?;
+                break;
             }
         }
-        Ok(names)
+        Ok(items)
+    }
+
+    fn resources(&mut self, keyword: &str) -> Res<Vec<Ident>> {
+        if !self.eat(keyword) {
+            return Ok(vec![]);
+        }
+        self.expect("[")?;
+        self.comma_list("]", Self::ident)
     }
 
     fn integer(&mut self) -> Res<u32> {
@@ -422,17 +446,12 @@ impl<'src> Parser<'src, '_> {
         self.seps();
         let writes = if self.eat("writes") {
             let owner = self.ident()?;
-            let mut fields = vec![];
-            if self.eat(".") {
+            let fields = if self.eat(".") {
                 self.expect("{")?;
-                while !self.eat("}") {
-                    fields.push(self.ident()?);
-                    if !self.eat(",") {
-                        self.expect("}")?;
-                        break;
-                    }
-                }
-            }
+                self.comma_list("}", Self::ident)?
+            } else {
+                vec![]
+            };
             Some((owner, fields))
         } else {
             None
@@ -531,301 +550,278 @@ impl<'src> Parser<'src, '_> {
         if build {
             return self.err("a build block or build fn");
         }
-        if self.eat("lobe") {
-            return Ok(Item::Fn(self.function(false, public, true)?));
-        }
-        if self.eat("space") {
-            let mut ns = vec![self.ident()?];
-            while self.cur().kind == Kind::Word {
-                ns.push(self.ident()?)
-            }
-            return Ok(Item::Space(ns));
-        }
-        if self.eat("struct") {
-            let name = self.upper_ident()?;
-            self.expect("{")?;
-            self.seps();
-            let mut fields = vec![];
-            while !self.eat("}") {
-                fields.push(self.column()?);
-                if !self.eat(",") { self.end()?; }
-                self.seps();
-            }
-            return Ok(Item::Struct(name, fields));
-        }
-        if self.eat("type") {
-            let name = self.upper_ident()?;
-            self.expect("=")?;
-            return Ok(Item::TypeAlias(name, self.ty()?));
-        }
-        let parameter = self.eat("param");
-        if parameter || self.eat("const") {
-            let name = self.ident()?;
-            let t = if self.eat(":") {
-                Some(self.ty()?)
-            } else {
-                None
-            };
-            self.expect("=")?;
-            let value = self.expr(0)?;
-            return Ok(Item::Const(ConstDecl {
-                range: if parameter { self.range()? } else { None },
-                comptime: parameter,
-                name,
-                ty: t,
-                value,
-            }));
-        }
-        if self.eat("body") {
-            return Ok(Item::Body(self.upper_ident()?, self.body_items(false)?));
-        }
-        if self.eat("state") {
-            let name = self.upper_ident()?;
-            let checkpoint = self.eat("checkpoint").then(|| self.integer()).transpose()?;
-            let home = self.eat("home").then(|| self.ident()).transpose()?;
-            self.expect("{")?;
-            let fields = self.columns("}")?;
-            return Ok(Item::State(StateDecl { name, checkpoint, home, fields }));
-        }
-        if self.eat("solver") {
-            return self.solver().map(Item::Solver);
-        }
-        if self.eat("plan") {
-            return self.plan().map(Item::Plan);
-        }
-        if self.eat("bake_tex") {
-            return self.bake_tex().map(Item::Bake);
-        }
-        if self.eat("kind") {
-            return self.kind().map(Item::Kind);
-        }
-        if self.eat("schedule") {
-            let name = self.ident()?;
-            self.expect("{")?;
-            self.seps();
-            let mut radiance = None;
-            let (mut passes, mut waivers) = (vec![], vec![]);
-            while !self.eat("}") {
-                if self.eat("type") {
-                    let n = self.cur().span;
-                    self.expect("Radiance")?;
-                    self.expect("=")?;
-                    if radiance.replace((named("Radiance", n), self.ty()?)).is_some() {
-                        return Err(Diag::new(Code::E011, n, "duplicate Radiance binding", "bind Radiance once"));
-                    }
-                    self.end()?;
-                    continue;
+        let keyword = self.pop().text;
+        match keyword {
+            "lobe" => self.function(false, public, true).map(Item::Fn),
+            "space" => {
+                let mut ns = vec![self.ident()?];
+                while self.cur().kind == Kind::Word {
+                    ns.push(self.ident()?)
                 }
-                if self.eat("waive") {
-                    let name = self.upper_ident()?;
-                    if self.cur().kind != Kind::String {
-                        return self.err("a quoted waiver reason");
-                    }
-                    let reason = self.pop();
-                    waivers.push((name, named(reason.text, reason.span)));
-                    self.end()?;
-                    continue;
-                }
-                let explicit = self.eat("pass");
-                let verb = self.ident()?;
-                let (mut args, mut body, mut resources) = (vec![], vec![], None);
-                if explicit {
-                    let reads = self.resources("reads")?;
-                    let writes = self.resources("writes")?;
-                    resources = Some(PassResources { reads, writes, body: self.block(false)? });
+                Ok(Item::Space(ns))
+            }
+            "struct" => {
+                let name = self.upper_ident()?;
+                self.expect("{")?;
+                Ok(Item::Struct(name, self.columns("}")?))
+            }
+            "type" => {
+                let name = self.upper_ident()?;
+                self.expect("=")?;
+                Ok(Item::TypeAlias(name, self.ty()?))
+            }
+            "param" | "const" => {
+                let parameter = keyword == "param";
+                let name = self.ident()?;
+                let t = if self.eat(":") {
+                    Some(self.ty()?)
                 } else {
-                    args = self.args()?;
-                    if self.eat("{") {
-                        self.seps();
-                        while !self.eat("}") {
-                            let f = self.ident()?;
-                            body.push((f, self.args()?));
-                            self.end()?
+                    None
+                };
+                self.expect("=")?;
+                let value = self.expr(0)?;
+                Ok(Item::Const(ConstDecl {
+                    range: if parameter { self.range()? } else { None },
+                    comptime: parameter,
+                    name,
+                    ty: t,
+                    value,
+                }))
+            }
+            "body" => Ok(Item::Body(self.upper_ident()?, self.body_items(false)?)),
+            "state" => {
+                let name = self.upper_ident()?;
+                let checkpoint = self.eat("checkpoint").then(|| self.integer()).transpose()?;
+                let home = self.eat("home").then(|| self.ident()).transpose()?;
+                self.expect("{")?;
+                let fields = self.columns("}")?;
+                Ok(Item::State(StateDecl { name, checkpoint, home, fields }))
+            }
+            "solver" => self.solver().map(Item::Solver),
+            "plan" => self.plan().map(Item::Plan),
+            "bake_tex" => self.bake_tex().map(Item::Bake),
+            "kind" => self.kind().map(Item::Kind),
+            "schedule" => {
+                let name = self.ident()?;
+                self.expect("{")?;
+                self.seps();
+                let mut radiance = None;
+                let (mut passes, mut waivers) = (vec![], vec![]);
+                while !self.eat("}") {
+                    if self.eat("type") {
+                        let n = self.cur().span;
+                        self.expect("Radiance")?;
+                        self.expect("=")?;
+                        if radiance.replace((named("Radiance", n), self.ty()?)).is_some() {
+                            return Err(Diag::new(Code::E011, n, "duplicate Radiance binding", "bind Radiance once"));
+                        }
+                        self.end()?;
+                        continue;
+                    }
+                    if self.eat("waive") {
+                        let name = self.upper_ident()?;
+                        if self.cur().kind != Kind::String {
+                            return self.err("a quoted waiver reason");
+                        }
+                        let reason = self.pop();
+                        waivers.push((name, named(reason.text, reason.span)));
+                        self.end()?;
+                        continue;
+                    }
+                    let explicit = self.eat("pass");
+                    let verb = self.ident()?;
+                    let (mut args, mut body, mut resources) = (vec![], vec![], None);
+                    if explicit {
+                        let reads = self.resources("reads")?;
+                        let writes = self.resources("writes")?;
+                        resources = Some(PassResources { reads, writes, body: self.block(false)? });
+                    } else {
+                        args = self.args()?;
+                        if self.eat("{") {
+                            self.seps();
+                            while !self.eat("}") {
+                                let f = self.ident()?;
+                                body.push((f, self.args()?));
+                                self.end()?
+                            }
                         }
                     }
+                    passes.push(PassDecl { label: verb.clone(), verb, args, body, resources });
+                    self.end()?
                 }
-                passes.push(PassDecl { label: verb.clone(), verb, args, body, resources });
-                self.end()?
+                Ok(Item::Schedule(ScheduleDecl { implicit: false, name, passes, waivers, radiance }))
             }
-            return Ok(Item::Schedule(ScheduleDecl { implicit: false, name, passes, waivers, radiance }));
-        }
-        if self.eat("world") {
-            let name = self.upper_ident()?;
-            self.expect("{")?;
-            self.seps();
-            self.expect("things")?;
-            self.expect(":")?;
-            self.expect("[")?;
-            self.seps();
-            let mut things = Vec::new();
-            while !self.eat("]") {
-                things.push(self.upper_ident()?);
-                if !self.eat(",") { self.expect("]")?; break; }
+            "world" => {
+                let name = self.upper_ident()?;
+                self.expect("{")?;
                 self.seps();
-            }
-            self.eat(",");
-            self.seps();
-            self.expect("}")?;
-            return Ok(Item::World(name, things));
-        }
-        if self.eat("camera") {
-            let name = self.ident()?;
-            self.expect("{")?;
-            let fields = self.fields("}")?;
-            return Ok(Item::Camera(CameraDecl { name, fields }));
-        }
-        if self.eat("scan") {
-            let name = self.ident()?;
-            let var = self.ident()?;
-            self.expect("in")?;
-            let lo = self.expr(0)?;
-            self.expect("..")?;
-            let hi = self.expr(0)?;
-            self.expect("by")?;
-            let steps = self.primary()?;
-            self.expect("on")?;
-            self.expect("bake_lut")?;
-            self.expect("{")?;
-            self.seps();
-            self.expect("init")?;
-            self.expect("=")?;
-            let init = self.expr(0)?;
-            self.end()?;
-            self.expect("step")?;
-            let prev = self.ident()?;
-            self.expect("=")?;
-            let step = self.expr(0)?;
-            self.end()?;
-            self.expect("}")?;
-            return Ok(Item::Scan(ScanDecl {
-                name,
-                at: var.clone(),
-                var_ty: ty("f32", var.span),
-                var,
-                lo,
-                hi,
-                steps,
-                init,
-                prev,
-                step,
-                elem: None,
-            }));
-        }
-        if self.eat("kernel") {
-            let name = self.ident()?;
-            let params = self.params()?;
-            let mut allow = std::collections::BTreeSet::new();
-            if self.eat("allow") {
-                self.expect("(")?;
-                loop {
-                    let cap = self.ident()?;
-                    let value = match cap.name.as_str() {
-                        "atomics" => KernelCapability::Atomics,
-                        "workgroup" => KernelCapability::Workgroup,
-                        "subgroups" => KernelCapability::Subgroups,
-                        "dynamic_loops" => KernelCapability::DynamicLoops,
-                        _ => return Err(Diag::new(Code::E001, cap.span, "unknown kernel capability",
-                            "use atomics, workgroup, subgroups or dynamic_loops")),
-                    };
-                    if !allow.insert(value) {
-                        return Err(Diag::new(Code::E011, cap.span, "duplicate kernel capability", "list it once"));
+                self.expect("things")?;
+                self.expect(":")?;
+                self.expect("[")?;
+                self.seps();
+                let mut things = vec![];
+                while !self.eat("]") {
+                    things.push(self.upper_ident()?);
+                    if !self.eat(",") {
+                        self.expect("]")?;
+                        break;
                     }
-                    if !self.eat(",") || self.is(")") { break; }
+                    self.seps();
                 }
-                self.expect(")")?;
+                self.eat(",");
+                self.seps();
+                self.expect("}")?;
+                Ok(Item::World(name, things))
             }
-            let body = self.block(false)?;
-            let f = FnDecl { comptime: false, attrs: vec![], name, params, ret: None, body, raw: None };
-            return Ok(Item::Kernel(KernelDecl { f, allow, writes: Default::default() }));
-        }
-        if self.eat("law") {
-            let name = self.ident()?;
-            let params = self.params()?;
-            self.seps();
-            self.expect("writes")?;
-            let owner = self.ident()?;
-            if params.first().map(|p| &p.name.name) != Some(&owner.name) {
-                return Err(Diag::new(
-                    Code::E501,
-                    owner.span,
-                    "writes targets a different row",
-                    "name the first law parameter",
-                ));
+            "camera" => {
+                let name = self.ident()?;
+                self.expect("{")?;
+                let fields = self.fields("}")?;
+                Ok(Item::Camera(CameraDecl { name, fields }))
             }
-            self.expect(".")?;
-            self.expect("{")?;
-            let mut writes = vec![];
-            while !self.eat("}") {
-                writes.push(self.ident()?);
-                if !self.eat(",") {
-                    self.expect("}")?;
-                    break;
+            "scan" => {
+                let name = self.ident()?;
+                let var = self.ident()?;
+                self.expect("in")?;
+                let lo = self.expr(0)?;
+                self.expect("..")?;
+                let hi = self.expr(0)?;
+                self.expect("by")?;
+                let steps = self.primary()?;
+                self.expect("on")?;
+                self.expect("bake_lut")?;
+                self.expect("{")?;
+                self.seps();
+                self.expect("init")?;
+                self.expect("=")?;
+                let init = self.expr(0)?;
+                self.end()?;
+                self.expect("step")?;
+                let prev = self.ident()?;
+                self.expect("=")?;
+                let step = self.expr(0)?;
+                self.end()?;
+                self.expect("}")?;
+                return Ok(Item::Scan(ScanDecl {
+                    name,
+                    at: var.clone(),
+                    var_ty: ty("f32", var.span),
+                    var,
+                    lo,
+                    hi,
+                    steps,
+                    init,
+                    prev,
+                    step,
+                    elem: None,
+                }));
+            }
+            "kernel" => {
+                let name = self.ident()?;
+                let params = self.params()?;
+                let mut allow = std::collections::BTreeSet::new();
+                if self.eat("allow") {
+                    self.expect("(")?;
+                    loop {
+                        let cap = self.ident()?;
+                        let value = match cap.name.as_str() {
+                            "atomics" => KernelCapability::Atomics,
+                            "workgroup" => KernelCapability::Workgroup,
+                            "subgroups" => KernelCapability::Subgroups,
+                            "dynamic_loops" => KernelCapability::DynamicLoops,
+                            _ => return Err(Diag::new(Code::E001, cap.span, "unknown kernel capability",
+                                "use atomics, workgroup, subgroups or dynamic_loops")),
+                        };
+                        if !allow.insert(value) {
+                            return Err(Diag::new(Code::E011, cap.span, "duplicate kernel capability", "list it once"));
+                        }
+                        if !self.eat(",") || self.is(")") { break; }
+                    }
+                    self.expect(")")?;
                 }
+                let body = self.block(false)?;
+                let f = FnDecl { comptime: false, attrs: vec![], name, params, ret: None, body, raw: None };
+                Ok(Item::Kernel(KernelDecl { f, allow, writes: Default::default() }))
             }
-            self.seps();
-            let body = self.block(false)?;
-            return Ok(Item::Law(LawDecl {
-                f: FnDecl {
+            "law" => {
+                let name = self.ident()?;
+                let params = self.params()?;
+                self.seps();
+                self.expect("writes")?;
+                let owner = self.ident()?;
+                if params.first().map(|p| &p.name.name) != Some(&owner.name) {
+                    return Err(Diag::new(
+                        Code::E501,
+                        owner.span,
+                        "writes targets a different row",
+                        "name the first law parameter",
+                    ));
+                }
+                self.expect(".")?;
+                self.expect("{")?;
+                let writes = self.comma_list("}", Self::ident)?;
+                self.seps();
+                let body = self.block(false)?;
+                return Ok(Item::Law(LawDecl {
+                    f: FnDecl {
+                        comptime: false,
+                        attrs: vec![],
+                        name,
+                        params,
+                        ret: None,
+                        body,
+                        raw: None,
+                    },
+                    writes,
+                }));
+            }
+            "check" => {
+                let name = self.ident()?;
+                let params = self.params()?;
+                self.expect("->")?;
+                let ret = Some(self.ty()?);
+                let body = self.body(true)?;
+                return Ok(Item::Check(FnDecl {
                     comptime: false,
                     attrs: vec![],
                     name,
                     params,
-                    ret: None,
+                    ret,
                     body,
                     raw: None,
-                },
-                writes,
-            }));
-        }
-        if self.eat("check") {
-            let name = self.ident()?;
-            let params = self.params()?;
-            self.expect("->")?;
-            let ret = Some(self.ty()?);
-            let body = self.body(true)?;
-            return Ok(Item::Check(FnDecl {
-                comptime: false,
-                attrs: vec![],
-                name,
-                params,
-                ret,
-                body,
-                raw: None,
-            }));
-        }
-        if self.eat("retarget") {
-            let name = self.upper_ident()?;
-            self.expect("from")?;
-            let source = self.upper_ident()?;
-            self.expect("to")?;
-            let target = self.upper_ident()?;
-            self.expect("{")?;
-            let fields = self.fields("}")?;
-            return Ok(Item::Retarget { name, source, target, fields });
-        }
-        if self.eat("use") {
-            let mut path = vec![self.ident()?];
-            while self.eat("::") {
-                if self.eat("*") {
-                    break;
-                }
-                path.push(self.ident()?)
+                }));
             }
-            return Ok(Item::Use(path));
+            "retarget" => {
+                let name = self.upper_ident()?;
+                self.expect("from")?;
+                let source = self.upper_ident()?;
+                self.expect("to")?;
+                let target = self.upper_ident()?;
+                self.expect("{")?;
+                let fields = self.fields("}")?;
+                Ok(Item::Retarget { name, source, target, fields })
+            }
+            "use" => {
+                let mut path = vec![self.ident()?];
+                while self.eat("::") {
+                    if self.eat("*") {
+                        break;
+                    }
+                    path.push(self.ident()?)
+                }
+                Ok(Item::Use(path))
+            }
+            _ => Err(Diag::new(
+                if matches!(keyword, "target" | "input") {
+                    Code::E405
+                } else {
+                    Code::E404
+                },
+                start,
+                format!("unsupported module item `{}`", keyword),
+                "declare a v1 item or put row generation inside build { ... }",
+            )),
         }
-        Err(Diag::new(
-            if matches!(
-                self.cur().text,
-                "target" | "input"
-            ) {
-                Code::E405
-            } else {
-                Code::E404
-            },
-            start,
-            format!("unsupported module item `{}`", self.cur().text),
-            "declare a v1 item or put row generation inside build { ... }",
-        ))
     }
     fn bake_tex(&mut self) -> Res<BakeDecl> {
         let name = self.upper_ident()?;
@@ -877,21 +873,11 @@ impl<'src> Parser<'src, '_> {
 
     fn params(&mut self) -> Res<Vec<Param>> {
         self.expect("(")?;
-        let mut out = vec![];
-        while !self.eat(")") {
-            let name = self.ident()?;
-            let ty = if self.eat(":") {
-                Some(self.ty()?)
-            } else {
-                None
-            };
-            out.push(Param { name, ty });
-            if !self.eat(",") {
-                self.expect(")")?;
-                break;
-            }
-        }
-        Ok(out)
+        self.comma_list(")", |p| {
+            let name = p.ident()?;
+            let ty = p.eat(":").then(|| p.ty()).transpose()?;
+            Ok(Param { name, ty })
+        })
     }
     fn function(&mut self, build: bool, public: bool, lobe: bool) -> Res<FnDecl> {
         let n = self.ident()?;
@@ -967,6 +953,38 @@ impl<'src> Parser<'src, '_> {
             None
         })
     }
+    fn kind_scope(&mut self, kind: &Ident) -> Res<Vec<(Ident, Ident, usize)>> {
+        let start = self.at;
+        let mut maps = vec![];
+        // Forward helpers and maps are visible across the kind. The CST has
+        // already matched braces, so indexing their headers skips query bodies.
+        while !matches!(self.cur().text, "}" | "") {
+            if self.eat("fn") {
+                let helper = self.ident()?;
+                let symbol = format!("{}#{}", kind.name, helper.name);
+                if self.kind_helpers.insert(helper.name, symbol).is_some() {
+                    return Err(Diag::new(Code::E011, helper.span, "duplicate kind helper", "declare one helper with this name"));
+                }
+            } else if self.eat("map") {
+                let (name, formal) = self.map_header()?;
+                maps.push((name, formal, self.at));
+            } else {
+                self.at = self.cur().next_in_scope;
+            }
+        }
+        self.at = start;
+        Ok(maps)
+    }
+
+    fn map_header(&mut self) -> Res<(Ident, Ident)> {
+        let name = self.ident()?;
+        self.expect("(")?;
+        let formal = self.ident()?;
+        self.expect(")")?;
+        self.expect("=")?;
+        Ok((name, formal))
+    }
+
     fn kind(&mut self) -> Res<KindDecl> {
         let name = self.ident()?;
         let mut params = vec![];
@@ -996,61 +1014,18 @@ impl<'src> Parser<'src, '_> {
         self.expect("@")?;
         let space = self.space()?;
         self.expect("(")?;
-        let mut row = vec![];
-        while !self.eat(")") {
-            let name = self.ident()?;
-            self.expect(":")?;
-            let t = self.ty()?;
-            let range = self.range()?;
-            let default = if self.eat("=") {
-                Some(self.expr(0)?)
-            } else {
-                None
-            };
-            row.push(RowField {
-                name,
-                ty: t,
-                range,
-                default,
-            });
-            if !self.eat(",") {
-                self.expect(")")?;
-                break;
-            }
-        }
+        let row = self.comma_list(")", Self::column)?;
         self.fields = row.iter().map(|f| f.name.name.clone()).collect();
         self.expect("{")?;
         self.seps();
         self.proof = GeometryProof::Required;
         let fns = vec![];
         let mut queries = vec![];
-        let mut maps = vec![];
-        let start=self.at;
-        let mut nested=0usize;
-        while !self.is("") {
-            if self.is("}") && nested==0{break}
-            if nested == 0 && self.eat("fn") {
-                let n = self.ident()?;
-                if self.kind_helpers.insert(n.name.clone(), format!("{}#{}", name.name, n.name)).is_some() {
-                    return Err(Diag::new(Code::E011, n.span, "duplicate kind helper", "declare one helper with this name"));
-                }
-                continue;
-            }
-            if nested==0 && self.eat("map"){
-                let name=self.ident()?;self.expect("(")?;let param=self.ident()?;self.expect(")")?;self.expect("=")?;
-                let pos=self.at;maps.push((name,param,pos));continue;
-            }
-            match self.pop().text{"{"=>nested+=1,"}"=>nested-=1,_=>{}}
-        }
-        self.at=start;
+        let maps = self.kind_scope(&name)?;
         while !self.eat("}") {
             if self.eat("map") {
-                let n = self.ident()?;
-                self.expect("(")?;
-                self.ident()?;
-                self.expect(")")?;
-                self.expect("=")?;
-                self.map(n)?;
+                let (name, _) = self.map_header()?;
+                self.map(name)?;
             } else if self.eat("fn") {
                 let mut f = self.function(false, false, false)?;
                 f.name.name = self.kind_helpers[&f.name.name].clone();
@@ -1382,25 +1357,16 @@ impl<'src> Parser<'src, '_> {
         self.list(")")
     }
     fn list(&mut self, end: &str) -> Res<Vec<Arg>> {
-        let mut a = vec![];
-        while !self.eat(end) {
-            let name = if self.tokens.get(self.at + 1).is_some_and(|t| t.text == ":") {
-                let n = self.ident()?;
-                self.expect(":")?;
-                Some(n)
+        self.comma_list(end, |p| {
+            let name = if p.tokens.get(p.at + 1).is_some_and(|t| t.text == ":") {
+                let name = p.ident()?;
+                p.expect(":")?;
+                Some(name)
             } else {
                 None
             };
-            a.push(Arg {
-                name,
-                value: self.expr(0)?,
-            });
-            if !self.eat(",") {
-                self.expect(end)?;
-                break;
-            }
-        }
-        Ok(a)
+            Ok(Arg { name, value: p.expr(0)? })
+        })
     }
     fn expr(&mut self, min: u8) -> Res<Expr> {
         let sp = self.cur().span;
@@ -1687,9 +1653,7 @@ impl<'src> Parser<'src, '_> {
                 let rest = &units[at..];
                 let n = rest.bytes().take_while(u8::is_ascii_alphabetic).count();
                 let sym = &rest[..n];
-                if !unit(sym) {
-                    return Err(bad());
-                }
+                let unit = Unit::named(sym).ok_or_else(bad)?;
                 at += n;
                 let mut power = 1;
                 if units[at..].starts_with('^') {
@@ -1701,14 +1665,9 @@ impl<'src> Parser<'src, '_> {
                     at += units[at..].bytes().take_while(u8::is_ascii_digit).count();
                     power = units[start..at].parse::<i32>().map_err(|_| bad())?
                 }
-                let factor: f64 = match sym {
-                    "mm" => 0.001,
-                    "deg" => std::f64::consts::PI / 180.,
-                    _ => 1.,
-                };
                 let exponent = power.checked_mul(op).ok_or_else(bad)?;
-                add_unit(&mut dim, sym, f64::from(exponent));
-                value *= factor.powi(exponent);
+                unit.add(&mut dim, f64::from(exponent));
+                value *= unit.factor.powi(exponent);
                 if at < units.len() {
                     op = match units.as_bytes()[at] {
                         b'/' => -1,
@@ -1731,27 +1690,6 @@ impl<'src> Parser<'src, '_> {
             },
         ))
     }
-}
-fn add_unit(dim: &mut Dimension, symbol: &str, power: f64) {
-    let base = match symbol {
-        "1" => [0, 0, 0, 0],
-        "m" | "mm" => [1, 0, 0, 0],
-        "s" => [0, 1, 0, 0],
-        "kg" => [0, 0, 1, 0],
-        "rad" | "deg" => [0, 0, 0, 1],
-        "Hz" => [0, -1, 0, 0],
-        "N" => [1, -2, 1, 0],
-        "J" => [2, -2, 1, 0],
-        _ => unreachable!("validated unit symbol"),
-    };
-    for (v, e) in dim.iter_mut().zip(base) { *v += power * f64::from(e); }
-}
-
-fn unit(s: &str) -> bool {
-    matches!(
-        s,
-        "m" | "mm" | "rad" | "deg" | "kg" | "s" | "N" | "J" | "Hz"
-    )
 }
 fn operator(s: &str) -> Option<(u8, BinOp)> {
     use BinOp::*;
