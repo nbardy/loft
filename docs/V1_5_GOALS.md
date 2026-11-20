@@ -13,9 +13,9 @@ interval. Numbers taken under contention don't count.
 
 | ID | Target | Check | Status |
 |---|---|---|---|
-| G1.1 | `shade_tiles` exposes `(hit, px, world)` from the raster visibility buffer, plus optional MSAA/subpixel visibility, so RT shadows, one-bounce GI and ReSTIR run on top of the vis-buffer and never replace it with full-screen software primary rays | `engines/realtime_matched` uses it, with no 4-tap primary-ray `screen_pass` | open (lane v15a) |
-| G1.2 | Matched heavy-lighting A/B, 20 groups: new ≤ old p95 | AB_OLD_VS_NEW.md §B rerun uncontended. Was 56–58 ms new against 26–29 ms old, under contention | open |
-| G1.3 | Matched light-lighting A/B, re-measured uncontended: new ≤ old | §A rerun | open |
+| G1.1 | `shade_tiles` exposes `(hit, px, world)` from the raster visibility buffer, plus optional MSAA/subpixel visibility, so RT shadows, one-bounce GI and ReSTIR run on top of the vis-buffer and never replace it with full-screen software primary rays | `engines/realtime_matched` uses it, with no 4-tap primary-ray `screen_pass` | implemented in v15a with adaptive subpixel visibility and software World queries; both B stills meet picture tolerance |
+| G1.2 | Matched heavy-lighting A/B, 20 groups: new ≤ old p95 | AB_OLD_VS_NEW.md §B rerun uncontended. Was 56–58 ms new against 26–29 ms old, under contention | open; triangle preflights 5.621 and 7.051 ms p95 exceeded 0.150 ms |
+| G1.3 | Matched light-lighting A/B, re-measured uncontended: new ≤ old | §A rerun | open; triangle preflights 5.621 and 7.051 ms p95 exceeded 0.150 ms |
 
 ## P1: modern GPU physics (critique #8 / scientist #8)
 

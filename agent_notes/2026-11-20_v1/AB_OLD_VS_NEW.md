@@ -52,15 +52,13 @@ local AO taps, sun and 12 fixed sky directions, background and ACES fit as shipp
 Legacy writes sRGB with the shader into UNORM. Native uses an sRGB target.
 
 **B. Raise native to legacy's realtime workload.** Legacy runs the original `realtime()`.
-The authored [native schedule](../../engines/realtime_matched.loft) uses the same Lambertian
+The original [native schedule](https://github.com/nbardy/loft/blob/faba061/stdlib/engines/realtime_matched.loft) uses the same Lambertian
 BRDF, pixel-indexed PCG draw, one cosine-distributed diffuse ray, an analytic sun visibility
 ray, and the legacy sky and Reinhard-to-sRGB film curve. At depth one, a secondary surface
 supplies emission only. Every capsule here is matte and nonemissive.
 
-Native's raster schedule has a single-sample Vis64 and its `shade_tiles` callback receives
-a BSDF and lighting vectors without a hit, pixel coordinate or world query context.
-`screen_pass` exposes world rays but replaces the raster schedule with a full-screen draw.
-The recipe uses four software visibility taps, groups them by hit row, and shades each distinct
+The original B used `screen_pass` because the raster callback exposed only BSDF and lighting vectors.
+The full-screen draw used four software visibility taps, grouped them by hit row, and shaded each distinct
 row once at pixel center when possible. Legacy uses the multisampled raster proxy and shades
 its covered rows at pixel center. Its capsule hit shader runs at pixel frequency. Native uses
 its BVH for coverage, sun and bounce queries. The B fixture uses a two-root capsule
@@ -152,10 +150,8 @@ so these are the two recorded sweeps. Treat the differences below as observed de
 Each decomposition compares its own run's p95s. Both start with the same legacy-full to
 native-reduced gap and change one side's feature workload first.
 
-Run `tools/ab_legacy.sh LEGACY_WORKTREE NEW_OUTPUT_DIRECTORY --matched` with the legacy
-dependencies installed. The [paired measurements and frame hashes](ab2/results.json) accompany
-the q95 sheets. [Lossless frames and raw logs](../../out/meta/ab2/) are preserved locally.
-
+The [paired measurements and frame hashes](ab2/results.json) accompany the historical
+q95 sheets. [Lossless frames and raw logs](../../out/meta/ab2/) are preserved locally.
 
 The shipped gate produced 18/18 exact RGBA hashes against the previously scored X2 main.
 Twin held 36/36 and Truth held 34/34. The separate Speed gate flagged all six cases as
@@ -166,3 +162,44 @@ The workspace native suite passed 153/154 tests. The existing Tier 0 promotion t
 test measured 0.805 ms p95 overhead against its 0.500 ms budget, with zero image
 differences above 1/255. That test also missed on X2 main.
 [Workspace test log](../../out/meta/ab2-checks/workspace-gpu-tests.log)
+
+### Raster-backed rerun · v15a
+
+The revised B runs Cull, Vis, Classify, Shade and Present. The shade callback
+receives the raster hit, view direction, pixel index and World. Shadows use a
+World visibility ray and the diffuse bounce uses a World hit query. Linear
+radiance resolves before the authored Reinhard curve and hardware sRGB.
+With `samples: 4`, a 3×3 neighborhood of raster IDs selects edges for four-tap
+coverage. Interior pixels use the stored row and reconstruct the center hit
+with the same intersection arithmetic as edge taps. A subpixel feature can
+escape refinement if the raster missed it throughout that neighborhood. This is an adaptive subpixel
+resolve on Vis64. It uses the software BVH for secondary rays. wgpu 30.0.1
+exposes Metal ray queries, while Loft's bundle and native render bindings have
+no acceleration-structure resource to attach to World. The standalone triangle
+probe has its own device request and TLAS binding.
+
+Run `tools/ab_legacy.sh LEGACY_WORKTREE NEW_OUTPUT_DIRECTORY --matched` for one
+paired sweep at 1280 × 800 and t = 0. It holds both compile slots and the GPU
+lock, checks for Cargo and rustc, and records 40 fullscreen triangle GPU stamps
+before and after timing. A triangle p95 at or above 0.150 ms invalidates a sweep.
+The native p95 interval uses binomial order statistics. The tagged legacy CLI
+reports aggregate quantiles, so its observed median and maximum supply conservative
+bounds on the corresponding confidence interval. [Lane record](lanes/v15a.md)
+
+Both preflights held the GPU and compile locks and found no Cargo or rustc
+processes. The before-control p95s were **5.621 and 7.051 ms**, against
+the 0.150 ms limit. Device utilization stayed at 97–100% in the observed
+samples. Both sweeps stopped before collecting either engine's paired frame
+times. The historical contended timings remain in Tables A and B.
+
+| Pair | Groups | Quiet legacy p95 | Quiet native p95 | RGB PSNR vs legacy | Native RGBA pixels over 2/255 vs main |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| A | 1 | — | — | 47.52 dB | 0 / 1,024,000 |
+| A | 20 | — | — | 55.70 dB | 0 / 1,024,000 |
+| B | 1 | — | — | 47.37 dB | 27 / 1,024,000 |
+| B | 20 | — | — | 37.38 dB | 483 / 1,024,000 |
+
+A's serialized programs and decoded RGBA were exact against `faba061`.
+B's 20-group picture had 99.9528% of pixels within 2/255. The largest
+connected difference was two pixels, with 15 isolated sky-mask changes.
+[Rerun evidence](../../out/meta/v15a/) · [Second preflight and final pixel comparison](../../out/meta/v15a-final/)
