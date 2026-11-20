@@ -187,6 +187,7 @@ fn attach(requirements: Option<Requirements>) -> Result<Gpu, RayError> {
     }
     let info = adapter.get_info();
     Ok(Gpu {
+        raw_adapter: adapter,
         device,
         queue,
         device_signature: format!("{} ({:?}) {} {}", info.name, info.backend, info.driver, info.driver_info),

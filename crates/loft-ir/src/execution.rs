@@ -1,42 +1,78 @@
 //! Extension declarations stored in the bundle's DATA section.
 //! A reserved table with a byte stride is rejected by readers that do not know the extension.
-use loft_ir::{ElemFormat, PassId, TableDecl, TableId, TableLifetime};
+use crate::{ElemFormat, PassId, TableDecl, TableId, TableLifetime};
 
-pub(crate) const DESCRIPTOR: TableId = TableId(u32::MAX);
-const VERSION: u32 = 1;
+pub const DESCRIPTOR: TableId = TableId(u32::MAX);
+const VERSION: u32 = 2;
 
 #[derive(Default)]
-pub(crate) struct Execution {
+pub struct Execution {
     pub initializers: Vec<Initializer>,
     pub additive: Vec<PassId>,
+    pub ranges: Vec<BufferView>,
 }
-pub(crate) struct Initializer {
+pub struct BufferView {
+    pub pass: PassId,
+    pub group: u8,
+    pub slot: u32,
+    pub offset: u64,
+    pub size: u64,
+}
+pub struct Initializer {
     pub name: String,
     pub passes: Vec<PassId>,
     pub clock: Clock,
     pub image: Option<Image>,
 }
-pub(crate) enum Clock {
+pub enum Clock {
     Load,
     Dirty(Vec<usize>),
 }
-pub(crate) struct Image {
+pub struct Image {
     pub table: TableId,
     pub dimension: Dimension,
     pub extent: [u32; 3],
     pub levels: u32,
+    pub format: ImageStorage,
 }
 #[derive(Clone, Copy)]
-pub(crate) enum Dimension {
+pub enum Dimension {
     Plane,
     Volume,
     Cube,
 }
 
+#[derive(Clone, Copy)]
+pub enum ImageStorage {
+    LegacyReflect,
+    R8Unorm,
+    R16Float,
+    R32Float,
+    Rgba8Unorm,
+    Rgba16Float,
+}
+
+impl ImageStorage {
+    fn encode(self) -> u32 {
+        match self {
+            Self::LegacyReflect => 0, Self::R8Unorm => 1, Self::R16Float => 2,
+            Self::R32Float => 3, Self::Rgba8Unorm => 4, Self::Rgba16Float => 5,
+        }
+    }
+
+    fn decode(word: u32) -> Option<Self> {
+        Some(match word {
+            0 => Self::LegacyReflect, 1 => Self::R8Unorm, 2 => Self::R16Float,
+            3 => Self::R32Float, 4 => Self::Rgba8Unorm, 5 => Self::Rgba16Float,
+            _ => return None,
+        })
+    }
+}
+
 impl Execution {
     #[allow(dead_code)]
     pub fn table(&self) -> Option<TableDecl> {
-        if self.initializers.is_empty() && self.additive.is_empty() { return None; }
+        if self.initializers.is_empty() && self.additive.is_empty() && self.ranges.is_empty() { return None; }
         let mut bytes = VERSION.to_le_bytes().to_vec();
         let put = |bytes: &mut Vec<u8>, word: u32| bytes.extend(word.to_le_bytes());
         put(&mut bytes, self.initializers.len() as u32);
@@ -60,11 +96,20 @@ impl Execution {
                     put(&mut bytes, image.table.0);
                     for n in image.extent { put(&mut bytes, n); }
                     put(&mut bytes, image.levels);
+                    put(&mut bytes, image.format.encode());
                 }
             }
         }
         put(&mut bytes, self.additive.len() as u32);
         for id in &self.additive { put(&mut bytes, id.0); }
+        put(&mut bytes, self.ranges.len() as u32);
+        for range in &self.ranges {
+            put(&mut bytes, range.pass.0);
+            put(&mut bytes, u32::from(range.group));
+            put(&mut bytes, range.slot);
+            bytes.extend(range.offset.to_le_bytes());
+            bytes.extend(range.size.to_le_bytes());
+        }
         Some(TableDecl { id: DESCRIPTOR, format: ElemFormat::U8, lifetime: TableLifetime::Static,
             stride_bytes: 1, capacity: bytes.len() as u32, initial: bytes.into() })
     }
@@ -79,6 +124,7 @@ impl Execution {
                 Some(bytes)
             }
             fn word(&mut self) -> Option<u32> { Some(u32::from_le_bytes(self.take(4)?.try_into().ok()?)) }
+            fn long(&mut self) -> Option<u64> { Some(u64::from_le_bytes(self.take(8)?.try_into().ok()?)) }
             fn list<T>(&mut self, mut item: impl FnMut(&mut Self) -> Option<T>) -> Option<Vec<T>> {
                 let count = self.word()? as usize;
                 if count > self.0.len() / 4 { return None; }
@@ -88,7 +134,11 @@ impl Execution {
         if table.stride_bytes != 1 || table.capacity as usize != table.initial.len()
             || table.format != ElemFormat::U8 || table.lifetime != TableLifetime::Static { return None; }
         let mut rd = Reader(&table.initial);
-        if rd.word()? != VERSION { return None; }
+        let legacy = match rd.word()? {
+            1 => true,
+            VERSION => false,
+            _ => return None,
+        };
         let initializers = rd.list(|r| {
             let len = r.word()? as usize;
             let name = std::str::from_utf8(r.take(len)?).ok()?.to_owned();
@@ -106,11 +156,16 @@ impl Execution {
                 _ => return None,
             };
             let image = if let Some(dimension) = dim {
-                Some(Image { table: TableId(r.word()?), dimension, extent: [r.word()?, r.word()?, r.word()?], levels: r.word()? })
+                Some(Image { table: TableId(r.word()?), dimension, extent: [r.word()?, r.word()?, r.word()?], levels: r.word()?,
+                    format: if legacy { ImageStorage::LegacyReflect } else { ImageStorage::decode(r.word()?)? } })
             } else { None };
             Some(Initializer { name, passes, clock, image })
         })?;
         let additive = rd.list(|r| Some(PassId(r.word()?)))?;
-        rd.0.is_empty().then_some(Self { initializers, additive })
+        let ranges = if legacy { vec![] } else { rd.list(|r| Some(BufferView {
+            pass: PassId(r.word()?), group: r.word()?.try_into().ok()?, slot: r.word()?,
+            offset: r.long()?, size: r.long()?,
+        }))? };
+        rd.0.is_empty().then_some(Self { initializers, additive, ranges })
     }
 }

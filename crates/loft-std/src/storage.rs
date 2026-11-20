@@ -98,6 +98,7 @@ pub fn attachment(t: TextureDecl, limits: &wgpu::Limits) -> Result<wgpu::Texture
         return Err(RunnerError::AbiMismatch);
     }
     let mut usage = T::TEXTURE_BINDING | T::RENDER_ATTACHMENT;
+    if t.samples == 1 { usage |= T::COPY_SRC; }
     if matches!(t.format, ImageFormat::Rgba16Float) {
         usage |= T::STORAGE_BINDING;
     }

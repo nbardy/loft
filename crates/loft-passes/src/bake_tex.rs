@@ -52,6 +52,16 @@ impl Bake {
         u32::BITS - side.leading_zeros()
     }
 
+    pub(crate) fn storage(&self) -> Result<loft_ir::execution::ImageStorage, String> {
+        use loft_ir::execution::ImageStorage as S;
+        use naga::StorageFormat as F;
+        Ok(match self.format {
+            F::R8Unorm => S::R8Unorm, F::R16Float => S::R16Float, F::R32Float => S::R32Float,
+            F::Rgba8Unorm => S::Rgba8Unorm, F::Rgba16Float => S::Rgba16Float,
+            _ => return Err("unsupported bake image format".into()),
+        })
+    }
+
     pub fn passes(&self, table: TableId, first: PassId) -> Vec<PassDecl> {
         let size = self.size();
         let mut group = self.workgroup();

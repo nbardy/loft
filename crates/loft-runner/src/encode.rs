@@ -3,10 +3,13 @@ use command::{Dispatch, Pass, Stamps, Work};
 use loft_std::{bindings::slot, edits::Pipelines, frame::Templates, schedule::{self, Order}};
 use std::collections::{BTreeSet, HashMap};
 use wgpu::util::DeviceExt;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
 
 type Tables = BTreeMap<TableId, Table>;
 pub(super) struct Group {
     pub slots: Vec<(wgpu::BindGroupLayoutEntry, TableId)>,
+    ranges: BTreeMap<u32, (u64, u64)>,
     layout: wgpu::BindGroupLayout,
     cached: Option<(u64, wgpu::BindGroup)>,
 }
@@ -14,7 +17,13 @@ impl Group {
     pub fn bound(&self) -> &wgpu::BindGroup { &self.cached.as_ref().expect("prepared group").1 }
     fn resolve(&mut self, d: &wgpu::Device, tables: &Tables, epoch: u64) -> Result<()> {
         if interop::stale(self.cached.as_ref().map(|(e,_)| *e), self.slots.iter().map(|(_,id)| tables[id].epoch)) {
-            let handles = self.slots.iter().map(|(e,id)| tables[id].resource.bind(e)).collect::<Result<Vec<_>>>()?;
+            let limits = d.limits();
+            let handles = self.slots.iter().map(|(e,id)| {
+                let t = &tables[id];
+                let logical = interop::logical_size(&t.decl);
+                // A runtime array must see the declared bytes, even when the host allocation has padding.
+                t.resource.bind(e, logical, self.ranges.get(&e.binding).copied().unwrap_or((0, logical)), &limits)
+            }).collect::<Result<Vec<_>>>()?;
             let entries = self.slots.iter().zip(&handles).map(|((e,_),h)| wgpu::BindGroupEntry { binding:e.binding, resource:h.binding() }).collect::<Vec<_>>();
             self.cached = Some((epoch, d.create_bind_group(&wgpu::BindGroupDescriptor { label: None, layout: &self.layout, entries: &entries })));
         }
@@ -24,9 +33,9 @@ impl Group {
 
 struct Kernel { pipeline: wgpu::ComputePipeline, layout: wgpu::PipelineLayout, module: ModuleId, entry: String }
 
-fn pipeline(d: &wgpu::Device, layout: &wgpu::PipelineLayout, module: &wgpu::ShaderModule, entry: &str) -> wgpu::ComputePipeline {
+fn pipeline(d: &wgpu::Device, layout: &wgpu::PipelineLayout, module: &wgpu::ShaderModule, entry: &str, cache: Option<&wgpu::PipelineCache>) -> wgpu::ComputePipeline {
     d.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: None, layout: Some(layout), module, entry_point: Some(entry), compilation_options: Default::default(), cache: None,
+        label: None, layout: Some(layout), module, entry_point: Some(entry), compilation_options: Default::default(), cache,
     })
 }
 enum Operation {
@@ -57,6 +66,9 @@ pub(super) struct ComputeCache {
     pub input: inputs::Inputs,
     pub outbox: Option<TableId>,
     mip_pipelines: mips::Pipelines,
+    pub creates: PipelineCreates,
+    cache: Option<wgpu::PipelineCache>,
+    rasters: Vec<(embed::RasterRecipe, wgpu::RenderPipeline)>,
     templates: Templates,
     order: Vec<Order>,
     passes: BTreeMap<PassId, Command>,
@@ -64,14 +76,80 @@ pub(super) struct ComputeCache {
     clears: BTreeSet<TableId>,
 }
 
-impl ComputeCache {
-    pub fn new(d: &wgpu::Device, b: &Bundle) -> Result<Self> {
-        Self::prepare(d, b, &[])
-    }
+#[derive(Default)]
+pub struct PipelineCreates {
+    pub compute: Vec<(String, f64)>,
+    pub render: Vec<(String, f64)>,
+}
 
-    pub fn prepare(d: &wgpu::Device, b: &Bundle, additive: &[PassId]) -> Result<Self> {
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn timed<T>(create: impl FnOnce() -> T) -> (T, f64) {
+    let start = Instant::now();
+    let value = create();
+    (value, start.elapsed().as_secs_f64() * 1e3)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(super) fn timed<T>(create: impl FnOnce() -> T) -> (T, f64) {
+    (create(), f64::NAN)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn create_all<T: Send, P: Send>(recipes: Vec<T>, create: impl Fn(T) -> P + Sync) -> Vec<P> {
+    {
+        if std::env::var_os("LOFT_SERIAL_PIPELINES").is_none() {
+            return std::thread::scope(|scope| {
+                let create = &create;
+                let jobs = recipes.into_iter().map(|recipe| scope.spawn(move || create(recipe))).collect::<Vec<_>>();
+                jobs.into_iter().map(|job| job.join().expect("pipeline creation worker")).collect()
+            });
+        }
+    }
+    recipes.into_iter().map(create).collect()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn create_all<T, P>(recipes: Vec<T>, create: impl Fn(T) -> P) -> Vec<P> {
+    recipes.into_iter().map(create).collect()
+}
+
+impl ComputeCache {
+    pub fn prepare(d: &wgpu::Device, b: &Bundle, exec: &execution::Execution,
+        adapter: Option<&wgpu::Adapter>, cache: Option<&wgpu::PipelineCache>) -> Result<Self> {
         use wgpu::{BufferBindingType::{Storage, Uniform}, BufferUsages as U};
         let schedule = schedule::Schedule::new(b, d.features())?;
+        let mut ranges = BTreeMap::new();
+        for range in &exec.ranges {
+            if ranges.insert((range.pass, range.group, range.slot), (range.offset, range.size)).is_some() {
+                return Err(RunnerError::AbiMismatch);
+            }
+        }
+        let limits = d.limits();
+        let usages = b.tables.iter().map(|t| (t.id, (interop::logical_size(t), interop::buffer_usage(b, t.id))))
+            .collect::<BTreeMap<_,_>>();
+        for (&id, pass) in &schedule.passes {
+            let slots = match pass {
+                schedule::Pass::Kernel { slots, .. } | schedule::Pass::Draw(_, slots) => slots,
+                schedule::Pass::Mips(_) => continue,
+            };
+            for (group, slots) in (1u8..).zip(slots) {
+                for (slot, table) in slots {
+                    let range = ranges.remove(&(id, group, slot.binding));
+                    match slot.ty {
+                        wgpu::BindingType::Buffer { .. } => {
+                            let (logical, usage) = usages[table];
+                            let (offset, size) = range.unwrap_or((0, logical));
+                            interop::buffer_range(logical, usage, logical, offset, size, slot, &limits)?;
+                        }
+                        wgpu::BindingType::StorageTexture { format, access, .. } if range.is_none() =>
+                            interop::storage_access(d.features(), adapter, format, access)?,
+                        _ if range.is_some() => return Err(RunnerError::AbiMismatch),
+                        _ => {}
+                    }
+                }
+            }
+        }
+        if !ranges.is_empty() { return Err(RunnerError::AbiMismatch); }
         let templates = Templates::new(b, 256)?;
         let mut modules = BTreeMap::new();
         for m in &b.modules {
@@ -87,7 +165,7 @@ impl ComputeCache {
         let frame = d.create_buffer(&wgpu::BufferDescriptor { label: None, size: 256, usage: U::UNIFORM | U::COPY_DST, mapped_at_creation: false });
         let limit = d.limits().max_storage_buffer_binding_size;
         let input = inputs::Inputs::new(&b.resources.inputs, limit)?;
-        let input_buffer = allocate(d, input.size());
+        let input_buffer = allocate(d, input.size(), U::STORAGE | U::COPY_DST);
         let params = params::Params::new(&b.params, limit)?;
         let param_buffer = d.create_buffer_init(&wgpu::util::BufferInitDescriptor { label:None, usage:U::STORAGE | U::COPY_DST, contents:params.bytes() });
         let entries = [&frame, &input_buffer, &param_buffer].into_iter().enumerate()
@@ -95,12 +173,14 @@ impl ComputeCache {
         let fixed = d.create_bind_group(&wgpu::BindGroupDescriptor { label:None, layout:&layout, entries:&entries });
         let mut layouts = HashMap::new();
         let mut pipelines = HashMap::new();
-        let mut link = |slots: schedule::Slots| {
-            let groups: Vec<_> = slots.into_iter().map(|slots| {
+        let mut link = |id, slots: schedule::Slots| {
+            let groups: Vec<_> = slots.into_iter().enumerate().map(|(index, slots)| {
                 let entries: Vec<_> = slots.iter().map(|(e,_)| *e).collect();
                 let layout = layouts.entry(entries.clone()).or_insert_with(|| d.create_bind_group_layout(
                     &wgpu::BindGroupLayoutDescriptor { label: None, entries:&entries })).clone();
-                Group { slots, layout, cached:None }
+                let ranges = exec.ranges.iter().filter(|r| r.pass == id && usize::from(r.group) == index + 1)
+                    .map(|r| (r.slot, (r.offset, r.size))).collect();
+                Group { slots, ranges, layout, cached:None }
             }).collect();
             let bind_group_layouts = std::iter::once(Some(&layout)).chain(groups.iter().map(|g| Some(&g.layout))).collect::<Vec<_>>();
             let key = groups.iter().map(|g| g.layout.clone()).collect::<Vec<_>>();
@@ -109,18 +189,45 @@ impl ComputeCache {
             (groups, pl)
         };
         let mut passes = BTreeMap::new();
+        let mut linked = Vec::new();
+        let mut unique = HashMap::new();
+        let mut recipes = Vec::new();
         for (id, pass) in schedule.passes {
+            let (groups, layout) = match &pass {
+                schedule::Pass::Kernel { slots, .. } | schedule::Pass::Draw(_, slots) => {
+                    let (groups, layout) = link(id, slots.clone());
+                    (groups, Some(layout))
+                }
+                schedule::Pass::Mips(_) => (vec![], None),
+            };
+            if let schedule::Pass::Kernel { module, entry, .. } = &pass {
+                let key = (*module, entry.clone(), layout.clone().expect("kernel layout"));
+                unique.entry(key.clone()).or_insert_with(|| {
+                    let index = recipes.len();
+                    recipes.push(key);
+                    index
+                });
+            }
+            linked.push((id, pass, groups, layout));
+        }
+        let built = create_all(recipes, |(module, entry, layout)| {
+            let (pipe, ms) = timed(|| pipeline(d, &layout, &modules[&module], &entry, cache));
+            (pipe, (format!("{} {entry}", module.0), ms))
+        });
+        let mut creates = PipelineCreates::default();
+        creates.compute.extend(built.iter().map(|(_, ms)| ms.clone()));
+        for (id, pass, groups, layout) in linked {
             let (groups, op) = match pass {
-                schedule::Pass::Kernel { module, entry, slots, work } => {
-                    let (groups, layout) = link(slots);
-                    let pipeline = pipeline(d, &layout, &modules[&module], &entry);
+                schedule::Pass::Kernel { module, entry, work, .. } => {
+                    let layout = layout.expect("kernel layout");
+                    let pipeline = built[unique[&(module, entry.clone(), layout.clone())]].0.clone();
                     let k = Kernel { pipeline, layout, module, entry };
                     (groups, match work { schedule::Work::Dispatch(e) => Operation::Dispatch(k,e), schedule::Work::Ticks(f) => Operation::Ticks(k,f) })
                 }
-                schedule::Pass::Draw(spec, slots) => {
-                    let (groups, layout) = link(slots);
+                schedule::Pass::Draw(spec, _) => {
+                    let layout = layout.expect("draw layout");
                     let shaders = spec.draws.iter().map(|d| modules[&d.decl.module].clone()).collect();
-                    (groups, Operation::Draw(embed::Render { spec, shaders, layout, cached:None, additive: additive.contains(&id), override_pipeline: None }))
+                    (groups, Operation::Draw(embed::Render { spec, shaders, layout, cached:None, additive: exec.additive.contains(&id), override_pipeline: None }))
                 }
                 schedule::Pass::Mips(id) => (vec![], Operation::Mips(id,None)),
             };
@@ -129,11 +236,20 @@ impl ComputeCache {
         let waves = loft_std::bundle::passes(&b.passes).map(|p| (p.id, p.wave)).collect();
         let clears = b.resources.resets.iter().copied().filter(|id| b.tables.iter().any(|t|
             t.id == *id && t.initial.is_empty())).collect();
-        Ok(Self { waves, clears, fixed, frame, input_buffer, param_buffer, params, input, outbox:schedule.outbox, mip_pipelines: Default::default(), templates, order:schedule.order, passes })
+        Ok(Self { waves, clears, fixed, frame, input_buffer, param_buffer, params, input, outbox:schedule.outbox, mip_pipelines: Default::default(), creates, cache: cache.cloned(), rasters: vec![], templates, order:schedule.order, passes })
     }
 
     pub fn resource_bindings(&self, id: TableId) -> impl Iterator<Item=&wgpu::BindGroupLayoutEntry> {
         self.passes.values().flat_map(|c| &c.groups).flat_map(|g| &g.slots).filter_map(move |(e,t)| (*t == id).then_some(e))
+    }
+    pub fn check_buffer(&self, table: TableId, capacity: u64, usage: wgpu::BufferUsages, logical: u64, limits: &wgpu::Limits) -> Result<()> {
+        for group in self.passes.values().flat_map(|c| &c.groups) {
+            for (slot, _) in group.slots.iter().filter(|(_, id)| *id == table) {
+                let (offset, size) = group.ranges.get(&slot.binding).copied().unwrap_or((0, logical));
+                interop::buffer_range(capacity, usage, logical, offset, size, slot, limits)?;
+            }
+        }
+        Ok(())
     }
     pub fn fused(&self, id: PassId) -> Option<&stepping::Fused> {
         if let Operation::Ticks(_, f) = &self.passes.get(&id)?.op { Some(f) } else { None }
@@ -164,6 +280,7 @@ pub(super) use loft_std::frame::Clock;
 pub struct FrameOptions<'a> {
     pub uniform: Option<&'a dyn Fn(TableId) -> Vec<u8>>,
     pub timestamps: Option<&'a wgpu::QuerySet>,
+    pub timestamp_start: u32,
 }
 
 #[derive(Default)]
@@ -175,14 +292,26 @@ pub struct FrameRecord {
 struct Batch<'a> {
     encoder: &'a mut wgpu::CommandEncoder,
     timer: Option<&'a wgpu::QuerySet>,
+    timestamp_start: u32,
     pending: Option<(u16, Pass)>,
     report: FrameRecord,
+    stamp_error: bool,
 }
-impl Batch<'_> {
+impl<'a> Batch<'a> {
+    fn stamps(&mut self) -> Option<Stamps<'a>> {
+        let set = self.timer?;
+        let start = (self.report.stages.len() as u32).checked_mul(2)
+            .and_then(|index| self.timestamp_start.checked_add(index));
+        if let Some(start) = start.filter(|start| start.checked_add(1).is_some_and(|end| end < set.count())) {
+            Some(Stamps { set, start: Some(start), end: Some(start + 1) })
+        } else {
+            self.stamp_error = true;
+            None
+        }
+    }
     fn flush(&mut self) {
         if let Some((wave, pass)) = self.pending.take() {
-            let start = self.report.stages.len() as u32 * 2;
-            let stamps = self.timer.map(|set| Stamps { set, start: Some(start), end: Some(start + 1) });
+            let stamps = self.stamps();
             self.report.commands += pass.record(self.encoder, stamps);
             self.report.stages.push(wave.to_string());
         }
@@ -204,7 +333,22 @@ impl Instance {
     pub fn prepare(&mut self, d: &wgpu::Device, target: Option<&embed::Target<'_>>, to: u32) -> Result<()> {
         let c = &mut self.compute;
         let tables = &self.tables;
-        let mut raster_pipelines = Vec::new();
+        let mut recipes = Vec::new();
+        for cmd in c.passes.values() {
+            if let Operation::Draw(draw) = &cmd.op {
+                let target = target.ok_or(RunnerError::Unsupported("render attachments are required"))?;
+                draw.misses(target, |id| tables.get(&id)?.attachment(), &mut recipes)?;
+            }
+        }
+        recipes.retain(|(recipe, _)| !c.rasters.iter().any(|(r, _)| r == recipe));
+        let created = create_all(recipes, |(recipe, shader)| {
+            let (pipe, ms) = timed(|| recipe.create(d, &shader, c.cache.as_ref()));
+            (recipe, pipe, ms)
+        });
+        for (recipe, pipe, ms) in created {
+            c.creates.render.push((recipe.name(), ms));
+            c.rasters.push((recipe, pipe));
+        }
         let limit = d.limits().max_compute_workgroups_per_dimension;
         for (&id, cmd) in &mut c.passes {
             for group in &mut cmd.groups { group.resolve(d, tables, self.resource_epoch)?; }
@@ -212,7 +356,7 @@ impl Instance {
                 Operation::Dispatch(_, extent) => { resolve(d, tables, extent)?; }
                 Operation::Ticks(_, f) => stepping::check_fused(f, id, tables, to, &mut self.history, limit)?,
                 Operation::Draw(draw) => draw.prepare(d, target.ok_or(RunnerError::Unsupported("render attachments are required"))?,
-                    &c.fixed, &cmd.groups, tables, self.resource_epoch, &mut raster_pipelines)?,
+                    &c.fixed, &cmd.groups, tables, self.resource_epoch, &c.rasters)?,
                 Operation::Mips(id, chain) => {
                     let table = &tables[id];
                     if chain.as_ref().is_none_or(|(epoch,_)| *epoch != table.epoch) {
@@ -221,7 +365,7 @@ impl Instance {
                             Some(&dim) => dim,
                             None => loft_std::mips::portable(&texture)?,
                         };
-                        *chain = Some((table.epoch, c.mip_pipelines.prepare(d, &texture, dim).map_err(RunnerError::InvalidShader)?));
+                        *chain = Some((table.epoch, c.mip_pipelines.prepare(d, &texture, dim, c.cache.as_ref(), &mut c.creates.compute)?));
                     }
                 }
             }
@@ -235,6 +379,9 @@ impl Instance {
 
     pub fn record_frame(&mut self, d: &wgpu::Device, enc: &mut wgpu::CommandEncoder, clock: Clock<'_>,
         target: Option<&embed::Target<'_>>, options: FrameOptions<'_>) -> Result<FrameRecord> {
+        if options.timestamps.is_some_and(|set| !matches!(set.ty(), wgpu::QueryType::Timestamp) || options.timestamp_start >= set.count()) {
+            return Err(RunnerError::AbiMismatch);
+        }
         self.edits.update(d, &mut self.compute)?;
         self.prepare(d, target, clock.to)?;
         let c = &mut self.compute;
@@ -264,7 +411,7 @@ impl Instance {
         let dirty = self.record_initializers(d, enc, None, false)?;
         let c = &mut self.compute;
         let tables = &self.tables;
-        let mut batch = Batch { encoder: enc, timer: options.timestamps, pending: None,
+        let mut batch = Batch { encoder: enc, timer: options.timestamps, timestamp_start: options.timestamp_start, pending: None, stamp_error: false,
             report: FrameRecord { commands: load.commands + dirty.commands, ..Default::default() } };
         let mut written = BTreeSet::new();
         let initializers: BTreeSet<_> = self.initializers.clocks.iter().flat_map(|i| &i.passes).copied().collect();
@@ -288,8 +435,8 @@ impl Instance {
                 }
                 Operation::Mips(_, chain) => {
                     batch.flush();
-                    let start = batch.report.stages.len() as u32 * 2;
-                    batch.report.commands += chain.as_ref().expect("prepared mip chain").1.encode(batch.encoder, batch.timer.map(|set| (set, start)));
+                    let stamps = batch.stamps().map(|s| (s.set, s.start.expect("first mip stamp")));
+                    batch.report.commands += chain.as_ref().expect("prepared mip chain").1.encode(batch.encoder, stamps);
                     batch.report.stages.push(c.waves[&id].to_string());
                 }
                 Operation::Ticks(k, f) => {
@@ -309,6 +456,7 @@ impl Instance {
         };
         for item in &c.order { item.visit(&mut record); }
         batch.flush();
+        if batch.stamp_error { return Err(RunnerError::Capacity); }
         if let (Some(buf), Some(events)) = (event_buffer.as_ref(), &mut self.outbox) { events.end(batch.encoder,buf); }
         Ok(batch.report)
     }
@@ -324,7 +472,13 @@ impl Instance {
                 let start = report.stages.len() as u32 * 2;
                 let stamp = timer.map(|set| Stamps { set, start: Some(start), end: Some(start + 1) });
                 report.commands += match &cmd.op {
-                    Operation::Dispatch(k, extent) => cmd.dispatch(&c.fixed, k, resolve(d, &self.tables, extent)?).record(enc, stamp),
+                    Operation::Dispatch(k, extent) => {
+                        let pass = cmd.dispatch(&c.fixed, k, resolve(d, &self.tables, extent)?);
+                        match self.initializers.packed.get(id) {
+                            Some(output) => output.record(&pass, enc, stamp),
+                            None => pass.record(enc, stamp),
+                        }
+                    },
                     Operation::Mips(_, chain) => chain.as_ref().expect("prepared mip chain").1.encode(enc, timer.map(|set| (set, start))),
                     Operation::Draw(_) | Operation::Ticks(..) => return Err(RunnerError::AbiMismatch),
                 };
@@ -370,7 +524,7 @@ impl ModuleRecipe {
         let module = d.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: None, source: wgpu::ShaderSource::Wgsl(source.into()),
         });
-        ModulePipelines { render: self.raster.create(d, &module), shade: pipeline(d, &self.layout, &module, &self.entry) }
+        ModulePipelines { render: self.raster.create(d, &module, None), shade: pipeline(d, &self.layout, &module, &self.entry, None) }
     }
 }
 

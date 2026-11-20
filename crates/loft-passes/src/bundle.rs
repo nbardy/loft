@@ -1,16 +1,16 @@
 //! Convert the existing lowered schedule to the pass-derived bundle ABI.
 use crate::{
     Compiled,
-    execution::{self, Execution, Initializer, Image},
     program::{DispatchRows, Draw, Pass, Program},
 };
-use loft_ir::*;
+use loft_ir::{*, execution::{self, Execution, Initializer, Image}};
 use naga::{AddressSpace, ShaderStage, StorageAccess, TypeInner, valid};
 use std::collections::BTreeMap;
 
 type Result<T> = std::result::Result<T, String>;
-type Resources<'a> = BTreeMap<&'a str, TableId>;
-type Bindings = BTreeMap<(String, ShaderStage), Vec<(String, PassBinding)>>;
+type Resources = BTreeMap<Address, TableId>;
+type Address = (u32, u32);
+type Bindings = BTreeMap<(String, ShaderStage), Vec<(Address, Option<String>, PassBinding)>>;
 
 struct Builder {
     bundle: Bundle,
@@ -66,13 +66,15 @@ fn shader(mut ir: naga::Module, name: &str, nonce: Option<u32>, draw_words: u32)
                 ));
             }
         };
+        let original = (binding.group, binding.binding);
         let group = access.group();
         let slot = &mut slots[group as usize];
         binding.group = u32::from(group);
         binding.binding = *slot;
-        let name = global.name.clone().ok_or("unnamed shader resource")?;
+        let name = global.name.clone();
         resources.push((
             handle,
+            original,
             name,
             PassBinding {
                 group,
@@ -98,8 +100,8 @@ fn shader(mut ir: naga::Module, name: &str, nonce: Option<u32>, draw_words: u32)
                     (entry.name.clone(), entry.stage),
                     resources
                         .iter()
-                        .filter(|(handle, _, _)| !usage[*handle].is_empty())
-                        .map(|(_, name, binding)| (name.clone(), *binding))
+                        .filter(|(handle, _, _, _)| !usage[*handle].is_empty())
+                        .map(|(_, address, name, binding)| (*address, name.clone(), *binding))
                         .collect(),
                 )
             })
@@ -196,18 +198,17 @@ impl Builder {
         &mut self,
         run: PassRun,
         entries: &[(ModuleId, &str, ShaderStage)],
-        resources: &Resources<'_>,
+        resources: &Resources,
     ) -> Result<()> {
         let mut bindings = BTreeMap::new();
         for (module, name, stage) in entries {
             let decl = self.bindings[module.0 as usize]
                 .get(&(name.to_string(), *stage))
                 .ok_or_else(|| format!("module {} has no {stage:?} entry {name}", module.0))?;
-            for (resource, binding) in decl {
+            for (original, symbol, binding) in decl {
                 let mut binding = *binding;
-                binding.resource = *resources
-                    .get(resource.as_str())
-                    .ok_or_else(|| format!("entry {name} needs {resource}"))?;
+                binding.resource = resources.get(original).copied()
+                    .ok_or_else(|| format!("entry {name} needs original binding {original:?} ({symbol:?})"))?;
                 if bindings
                     .insert((binding.group, binding.slot), binding)
                     .is_some_and(|b| b != binding)
@@ -232,7 +233,7 @@ impl Builder {
         module: usize,
         name: &str,
         dispatch: DispatchExtent,
-        resources: &Resources<'_>,
+        resources: &Resources,
     ) -> Result<()> {
         let module = ModuleId(module as u32);
         self.pass(
@@ -252,7 +253,7 @@ impl Builder {
         entries: (&str, &str),
         args: (TableId, u32, Option<TableId>),
         targets: (TableId, Option<TableId>),
-        resources: &Resources<'_>,
+        resources: &Resources,
     ) -> Result<()> {
         let module = ModuleId(module as u32);
         let (vertex, fragment) = entries;
@@ -401,8 +402,9 @@ pub fn lower_program(
     for step in program.dispatches.iter().filter(|_| !opts.picture_only) {
         let mut motion = crate::fusion::motion_bundle(program, step, 0);
         let mut resources = Resources::new();
+        let mut row_table = None;
         for table in motion.tables.drain(..) {
-            let (name, id) = match table.id.0 {
+            let id = match table.id.0 {
                 0 => {
                     let rows = match &step.input {
                         DispatchRows::Drawable(i) => kinds[*i].0,
@@ -413,34 +415,17 @@ pub fn lower_program(
                             table.lifetime,
                         ),
                     };
-                    ("rows", rows)
+                    row_table = Some(rows);
+                    rows
                 }
-                1 => ("loft_advance_args", b.words(6, [0; 6])),
-                2 => ("results", b.transient(table.stride_bytes, table.capacity)),
-                3 => (
-                    "loft_outbox",
-                    b.transient(table.stride_bytes, table.capacity),
-                ),
-                4 => ("luts", luts),
+                1 => b.words(6, [0; 6]),
+                2 | 3 => b.transient(table.stride_bytes, table.capacity),
+                4 => luts,
                 _ => return Err("unknown fixed-step resource".into()),
             };
-            let shader = &program.modules[step.module].naga;
-            let original = motion.passes[0]
-                .bindings
-                .iter()
-                .find(|entry| entry.resource == table.id)
+            let original = motion.passes[0].bindings.iter().find(|entry| entry.resource == table.id)
                 .ok_or("fixed-step resource has no binding")?;
-            let symbol = shader
-                .global_variables
-                .iter()
-                .find_map(|(_, global)| {
-                    let address = global.binding.as_ref()?;
-                    (address.group == u32::from(original.group) && address.binding == original.slot)
-                        .then_some(global.name.as_deref())
-                        .flatten()
-                })
-                .ok_or_else(|| format!("missing fixed-step resource {name}"))?;
-            resources.insert(symbol, id);
+            resources.insert((u32::from(original.group), original.slot), id);
         }
         let module = ModuleId(step.module as u32);
         b.pass(
@@ -448,7 +433,7 @@ pub fn lower_program(
                 module,
                 entry: step.entry.clone(),
                 max_ticks: loft_abi::AdvanceArgs::MAX_TICKS,
-                instances: *resources.get("rows").ok_or("fixed-step rows are missing")?,
+                instances: row_table.ok_or("fixed-step rows are missing")?,
             },
             &[(module, &step.entry, ShaderStage::Compute)],
             &resources,
@@ -532,7 +517,7 @@ pub fn lower_program(
         execution.initializers.push(Initializer { name: format!("{} bake surface", kind.name),
             passes: vec![PassId(b.bundle.passes.len() as u32)], clock: execution::Clock::Load, image: None });
         b.compute(kind.module, "bake_surface", DispatchExtent::Fixed([count.div_ceil(64), 1, 1]),
-            &Resources::from([("rows", rows), ("kp", kp), ("luts", luts), ("loft_grid_out", points)]))?;
+            &Resources::from([((1, 0), rows), ((1, 2), kp), ((1, 3), luts), ((2, 6), points)]))?;
         grid_data.insert(k, (points, index));
         b.wave += 1;
     }
@@ -555,16 +540,16 @@ pub fn lower_program(
             Clock::Dirty(words) => execution::Clock::Dirty(words.clone()),
         };
         execution.initializers.push(Initializer { name: bake.name.clone(), passes: ids, clock,
-            image: Some(Image { table: texture, dimension, extent: bake.size(), levels: bake.mip_count() }) });
+            image: Some(Image { table: texture, dimension, extent: bake.size(), levels: bake.mip_count(), format: bake.storage()? }) });
     }
-    let mut present = Resources::from([("hdr_tex", hdr), ("vis_tex", vis)]);
+    let mut present = Resources::from([((1, 0), hdr), ((1, 1), vis)]);
     if let Some(path) = &program.path {
         for (symbol, data) in crate::bundle::path_words(program, path)? {
             present.insert(symbol, b.words(1, data));
         }
         if matches!(path.integrator, crate::emit::paths::Integrator::Spectral) {
             let bins = b.transient(4, 4 * 128 * 128);
-            present.insert("loft_local_bins", bins);
+            present.insert((2, 5), bins);
             b.bundle.resources.resets.push(bins);
             b.compute(program.present, "photons", DispatchExtent::Fixed([1024, 1, 1]), &present)?;
             b.wave += 1;
@@ -579,29 +564,22 @@ pub fn lower_program(
                 "cull",
                 DispatchExtent::Fixed([(program.instances.len() as u32).div_ceil(64), 1, 1]),
                 &Resources::from([
-                    ("insts", instances),
-                    ("bases", bases),
-                    ("draw_args", draw_args),
-                    ("visible", visible),
+                    ((1, 0), instances),
+                    ((1, 3), bases),
+                    ((1, 1), draw_args),
+                    ((1, 2), visible),
                 ]),
             )?,
-            Pass::Classify => b.compute(
-                program.classify,
-                "classify",
-                DispatchExtent::Fixed(groups),
-                &Resources::from([
-                    ("vis_tex", vis),
-                    ("shade_args", shade_args),
-                    ("tiles", tiles),
-                ]),
-            )?,
+            // Archived Classify calls its (1,1) buffer data. The address is the ABI.
+            Pass::Classify => b.compute(program.classify, "classify", DispatchExtent::Fixed(groups),
+                &Resources::from([((1, 0), vis), ((1, 1), shade_args), ((1, 2), tiles)]))?,
             Pass::Vis(ids) | Pass::Shadow(ids) | Pass::Shade(ids) => {
                 for &id in ids {
                     let k = id as usize;
                     let (rows, kp) = kinds[k];
                     let mut resources =
-                        Resources::from([("rows", rows), ("kp", kp), ("luts", luts)]);
-                    if let Some(&(points, _)) = grid_data.get(&k) { resources.insert("loft_grid", points); }
+                        Resources::from([((1, 0), rows), ((1, 2), kp), ((1, 3), luts)]);
+                    if let Some(&(points, _)) = grid_data.get(&k) { resources.insert((2, 5), points); }
                     if (matches!(pass, Pass::Vis(_) | Pass::Shadow(_)) || opts.overdraw)
                         && matches!(program.kinds[k].draw, Draw::Analytic | Draw::Traced)
                     {
@@ -615,7 +593,7 @@ pub fn lower_program(
                     let offset = id * arg_words * 4;
                     match pass {
                         Pass::Vis(_) => {
-                            resources.insert("visible", visible);
+                            resources.insert((1, 1), visible);
                             b.draw(
                                 program.kinds[k].module,
                                 (vs, "fs"),
@@ -629,7 +607,7 @@ pub fn lower_program(
                                 PassId(b.bundle.passes.len() as u32),
                                 alternate.ok_or("missing alternate frame")?,
                             ));
-                            resources.insert("visible", all_rows);
+                            resources.insert((1, 1), all_rows);
                             b.draw(
                                 program.kinds[k].module,
                                 (vs, "fs"),
@@ -639,19 +617,19 @@ pub fn lower_program(
                             )?;
                         }
                         Pass::Shade(_) if opts.overdraw => {
-                            resources.insert("visible", visible);
+                            resources.insert((1, 1), visible);
                             execution.additive.push(PassId(b.bundle.passes.len() as u32));
                             b.draw(program.kinds[k].module, ("vs", "fs_overdraw"),
                                 (draw_args, offset, None), (hdr, None), &resources)?;
                         }
                         Pass::Shade(_) => {
                             resources.extend([
-                                ("visible", visible),
-                                ("vis_tex", vis),
-                                ("hdr", hdr),
-                                ("tiles", tiles),
-                                ("shadow_tex", shadow),
-                                ("shadow_smp", sampler),
+                                ((1, 1), visible),
+                                ((2, 0), vis),
+                                ((2, 1), hdr),
+                                ((2, 2), tiles),
+                                ((2, 3), shadow),
+                                ((2, 4), sampler),
                             ]);
                             b.compute(
                                 program.kinds[k].module,
@@ -702,7 +680,7 @@ fn append_bvh(nodes: &mut Vec<u32>, leaves: &mut Vec<u32>, tree: &crate::bvh::Bv
     Ok(root)
 }
 
-fn path_words(program: &Program, path: &crate::emit::paths::PathTrace) -> Result<[(&'static str, Vec<u32>); 5]> {
+fn path_words(program: &Program, path: &crate::emit::paths::PathTrace) -> Result<[(Address, Vec<u32>); 5]> {
     let p = program;
     let mut words = vec![0u32; 1 + 2 * p.kinds.len()];
     let mut nodes = Vec::new();
@@ -727,8 +705,30 @@ fn path_words(program: &Program, path: &crate::emit::paths::PathTrace) -> Result
     if nodes.is_empty() { nodes.resize(8, 0); }
     if leaves.is_empty() { leaves.resize(2, 0); }
     Ok([
-        ("world_words", words), ("loft_bvh_nodes", nodes), ("loft_bvh_leaves", leaves),
-        ("world_luts", p.luts.iter().map(|v| v.to_bits()).collect()),
-        ("world_lamps", path.lamps.as_flattened().as_flattened().iter().map(|v| v.to_bits()).collect()),
+        ((2, 0), words), ((2, 1), nodes), ((2, 4), leaves),
+        ((2, 2), p.luts.iter().map(|v| v.to_bits()).collect()),
+        ((2, 3), path.lamps.as_flattened().as_flattened().iter().map(|v| v.to_bits()).collect()),
     ])
+}
+
+/// Declare the compiler's GPU twin with the same fixed frame ABI and pass-derived groups.
+pub fn lower_twin(ir: naga::Module, lut: &[f32], kind: [u32; 4], rows_bytes: u64,
+    params: Vec<ParamMeta>, frame: Vec<u8>, samples: &[f32]) -> Result<(Bundle, TableId, TableId)> {
+    if !samples.len().is_multiple_of(8) || samples.is_empty() { return Err("invalid twin sample extent".into()); }
+    let count = u32::try_from(samples.len() / 8).map_err(|_| "too many twin samples")?;
+    let (code, bindings) = shader(ir, "twin", None, 4)?;
+    let mut b = Builder { bundle: Bundle::default(), bindings: vec![bindings], wave: 0 };
+    b.bundle.modules.push(ModuleBlob { id: ModuleId(0), target: ShaderTarget::Wgsl,
+        hash: *blake3::hash(code.as_bytes()).as_bytes(), bytes: code.into_bytes().into_boxed_slice() });
+    b.bundle.params = params;
+    let rows = b.table(4, u32::try_from(rows_bytes / 4).map_err(|_| "twin row extent")?, vec![], TableLifetime::External);
+    let luts = b.words(1, lut.iter().map(|v| v.to_bits()));
+    let kp = b.words(4, kind);
+    let input = b.words(8, samples.iter().map(|v| v.to_bits()));
+    let output = b.transient(64, count);
+    let frame = b.table(frame.len() as u32, 1, frame, TableLifetime::Static);
+    b.bundle.resources.frame = Some(FrameData { main: frame, variants: vec![], time_offset: 140 });
+    b.compute(0, "twin", DispatchExtent::Fixed([count.div_ceil(64), 1, 1]),
+        &Resources::from([((1, 0), rows), ((1, 3), luts), ((1, 2), kp), ((3, 0), input), ((3, 1), output)]))?;
+    Ok((b.bundle, rows, output))
 }

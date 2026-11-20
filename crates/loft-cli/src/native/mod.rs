@@ -2,7 +2,6 @@
 mod motion;
 mod edit;
 pub use edit::TraceSession;
-use loft_runner::command::{self, Dispatch, Work};
 use loft_passes::emit::Aov;
 use std::sync::Mutex;
 pub mod ray_query;
@@ -12,13 +11,13 @@ use loft_passes::program::{abi, Pass, Program};
 use loft_ir::{HostCaps, GpuFeatures, DepthConvention, InstanceId, ModuleId, TableId, KindId, ParamId, ParamMeta, IrTy};
 use loft_runner::{Runner, frame::FrameOptions};
 use std::sync::Arc;
-use std::borrow::Cow;
 use std::time::Instant;
 
 pub struct Gpu {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub adapter: String,
+    raw_adapter: wgpu::Adapter,
     pub device_signature: String,
     pub timestamps: bool,
     /// The disk pipeline cache's file name, when the backend has one (Vulkan); `None` on Metal.
@@ -35,7 +34,6 @@ pub fn request_gpu(ray_query: bool) -> Result<Gpu, String> {
 }
 
 pub const COLOR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
-const DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 /// What loading built and how long each step took (milliseconds).
 #[derive(Clone, Debug, Default)]
@@ -109,28 +107,12 @@ fn f32_bytes(xs: &[f32]) -> Vec<u8> {
     xs.iter().flat_map(|w| w.to_le_bytes()).collect()
 }
 
-fn layout(device: &wgpu::Device, label: &str, entries: &[(wgpu::ShaderStages, wgpu::BindingType)]) -> wgpu::BindGroupLayout {
-    let entries: Vec<_> = entries
-        .iter()
-        .enumerate()
-        .map(|(i, (visibility, ty))| wgpu::BindGroupLayoutEntry { binding: i as u32, visibility: *visibility, ty: *ty, count: None })
-        .collect();
-    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some(label), entries: &entries })
+fn param_words(words: &[f32]) -> Vec<ParamMeta> {
+    words.iter().enumerate().map(|(word, &value)| ParamMeta {
+        id: ParamId(word as u32), name: word.to_string(), ty: IrTy::F32, offset_bytes: word as u32 * 4,
+        default: [value, 0., 0., 0.], range: None,
+    }).collect()
 }
-
-fn bind(device: &wgpu::Device, layout: &wgpu::BindGroupLayout, resources: &[wgpu::BindingResource<'_>]) -> wgpu::BindGroup {
-    let entries: Vec<_> =
-        resources.iter().enumerate().map(|(i, r)| wgpu::BindGroupEntry { binding: i as u32, resource: r.clone() }).collect();
-    device.create_bind_group(&wgpu::BindGroupDescriptor { label: None, layout, entries: &entries })
-}
-
-fn storage(read_only: bool) -> wgpu::BindingType {
-    wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only }, has_dynamic_offset: false, min_binding_size: None }
-}
-const UNIFORM: wgpu::BindingType =
-    wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None };
-const ALL: wgpu::ShaderStages = wgpu::ShaderStages::VERTEX_FRAGMENT.union(wgpu::ShaderStages::COMPUTE);
-const CS: wgpu::ShaderStages = wgpu::ShaderStages::COMPUTE;
 
 fn buffer(device: &wgpu::Device, label: &str, size: u64, usage: wgpu::BufferUsages) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor { label: Some(label), size: size.max(16), usage, mapped_at_creation: false })
@@ -146,77 +128,6 @@ fn tex(device: &wgpu::Device, label: &str, size: (u32, u32), format: wgpu::Textu
         format,
         usage,
         view_formats: &[],
-    })
-}
-
-fn compute(device: &wgpu::Device, label: &str, layouts: &[&wgpu::BindGroupLayout], module: &wgpu::ShaderModule, entry: &str, cache: Option<&wgpu::PipelineCache>) -> wgpu::ComputePipeline {
-    compute_constants(device, label, layouts, module, entry, cache, &[])
-}
-
-fn compute_constants(device: &wgpu::Device, label: &str, layouts: &[&wgpu::BindGroupLayout], module: &wgpu::ShaderModule, entry: &str, cache: Option<&wgpu::PipelineCache>, constants: &[(&str, f64)]) -> wgpu::ComputePipeline {
-    let layouts: Vec<Option<&wgpu::BindGroupLayout>> = layouts.iter().map(|l| Some(*l)).collect();
-    let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &layouts, immediate_size: 0 });
-    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some(label),
-        layout: Some(&pl),
-        module,
-        entry_point: Some(entry),
-        compilation_options: wgpu::PipelineCompilationOptions { constants, ..Default::default() },
-        cache,
-    })
-}
-
-#[allow(clippy::too_many_arguments)]
-fn render(
-    device: &wgpu::Device,
-    label: &str,
-    layouts: &[&wgpu::BindGroupLayout],
-    module: &wgpu::ShaderModule,
-    entries: (&str, &str),
-    target: wgpu::TextureFormat,
-    depth: bool,
-    cull: Option<wgpu::Face>,
-    cache: Option<&wgpu::PipelineCache>,
-) -> wgpu::RenderPipeline {
-    render_blended(device, label, layouts, module, entries, target, depth, cull, cache, None)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn render_blended(
-    device: &wgpu::Device,
-    label: &str,
-    layouts: &[&wgpu::BindGroupLayout],
-    module: &wgpu::ShaderModule,
-    entries: (&str, &str),
-    target: wgpu::TextureFormat,
-    depth: bool,
-    cull: Option<wgpu::Face>,
-    cache: Option<&wgpu::PipelineCache>,
-    blend: Option<wgpu::BlendState>,
-) -> wgpu::RenderPipeline {
-    let layouts: Vec<Option<&wgpu::BindGroupLayout>> = layouts.iter().map(|l| Some(*l)).collect();
-    let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &layouts, immediate_size: 0 });
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some(label),
-        layout: Some(&pl),
-        vertex: wgpu::VertexState { module, entry_point: Some(entries.0), compilation_options: Default::default(), buffers: &[] },
-        fragment: Some(wgpu::FragmentState {
-            module,
-            entry_point: Some(entries.1),
-            compilation_options: Default::default(),
-            targets: &[Some(wgpu::ColorTargetState { format: target, blend, write_mask: wgpu::ColorWrites::ALL })],
-        }),
-        primitive: wgpu::PrimitiveState { cull_mode: cull, front_face: wgpu::FrontFace::Ccw, ..Default::default() },
-        depth_stencil: depth.then(|| wgpu::DepthStencilState {
-            format: DEPTH,
-            depth_write_enabled: Some(true),
-            depth_compare: Some(wgpu::CompareFunction::Less),
-            stencil: Default::default(),
-            bias: Default::default(),
-        }),
-        multisample: Default::default(),
-        multiview_mask: None,
-        cache,
     })
 }
 
@@ -289,35 +200,32 @@ impl Gpu {
         let format = wgpu::TextureFormat::Rgba8Unorm;
         let image = tex(d, "speed control", size, format, wgpu::TextureUsages::RENDER_ATTACHMENT);
         let view = image.create_view(&Default::default());
-        let module = d.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("speed control"),
-            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(
-                "@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
-                   let p = array(vec2(-1., -1.), vec2(3., -1.), vec2(-1., 3.));
-                   return vec4(p[i], 0., 1.);
-                 }
-                 @fragment fn fs() -> @location(0) vec4<f32> { return vec4(0.25, 0.5, 0.75, 1.); }",
-            )),
-        });
-        let pipe = render(d, "speed control", &[], &module, ("vs", "fs"), format, false, None, None);
+        use loft_ir::{Bundle, IndirectDraw, ModuleBlob, PassDecl, PassId, PassRun, QueueClass, ShaderTarget, TableDecl,
+            TableLifetime, TargetDesc, ElemFormat};
+        let source = b"@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+            let p = array(vec2(-1., -1.), vec2(3., -1.), vec2(-1., 3.)); return vec4(p[i], 0., 1.); }
+            @fragment fn fs() -> @location(0) vec4f { return vec4(0.25, 0.5, 0.75, 1.); }";
+        let bundle = Bundle {
+            modules: vec![ModuleBlob { id: ModuleId(0), target: ShaderTarget::Wgsl,
+                hash: *blake3::hash(source).as_bytes(), bytes: source.as_slice().into() }],
+            tables: vec![TableDecl { id: TableId(0), format: ElemFormat::U32, lifetime: TableLifetime::Static,
+                stride_bytes: 4, capacity: 4, initial: bytes_of(&[3, 1, 0, 0]).into() }],
+            passes: vec![PassDecl { id: PassId(0), wave: 0, queue: QueueClass::Graphics, bindings: Box::new([]),
+                run: PassRun::RenderBundle { draws: Box::new([IndirectDraw { module: ModuleId(0),
+                    vertex_entry: "vs".into(), fragment_entry: "fs".into(), args: TableId(0), offset_bytes: 0, vertex: None, index: None }]),
+                    color_targets: Box::new([TargetDesc { table: TableId(1) }]), depth: None, msaa: 1 } }],
+            ..Default::default()
+        };
+        let mut runner = attach_runner(self);
+        let id = runner.load_bundle(&bundle).map_err(runner_error)?;
+        runner.prepare_frame(id, &view).map_err(runner_error)?;
         let c = Clock::new(self, 2);
         let mut times = [0.; 11];
         for ms in &mut times {
             let mut encoder = d.create_command_encoder(&Default::default());
-            {
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &view, depth_slice: None, resolve_target: None,
-                        ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store },
-                    })],
-                    timestamp_writes: Some(wgpu::RenderPassTimestampWrites {
-                        query_set: &c.set, beginning_of_pass_write_index: Some(0), end_of_pass_write_index: Some(1),
-                    }),
-                    ..Default::default()
-                });
-                pass.set_pipeline(&pipe);
-                pass.draw(0..3, 0..1);
-            }
+            runner.encode_frame(id, &mut encoder, &view, 0., FrameOptions {
+                timestamps: Some(&c.set), ..Default::default()
+            }).map_err(runner_error)?;
             self.queue.submit([encoder.finish()]);
             let ticks = read_clock(self, &c)?;
             let duration = ticks[1].checked_sub(ticks[0]).filter(|&x| x > 0 && ticks[0] != 0)
@@ -327,6 +235,12 @@ impl Gpu {
         times[2..].sort_by(f64::total_cmp);
         Ok(times[6])
     }
+}
+
+fn attach_runner(g: &Gpu) -> Runner {
+    Runner::attach(Arc::new(g.device.clone()), Arc::new(g.queue.clone()), HostCaps {
+        depth_convention: DepthConvention::StandardZeroToOne, msaa_samples: 1, features: GpuFeatures::empty(),
+    })
 }
 
 fn runner_error(err: loft_runner::RunnerError) -> String { format!("{err:?}") }
@@ -349,10 +263,7 @@ impl Loaded {
         }
         let edit = edit.map(|(i, tape)| Ok::<_, String>((i, tape.shader(&p.modules[p.kinds[i].module].wgsl)?, tape.bytes())))
             .transpose()?;
-        let params = p.params.iter().enumerate().map(|(word, &value)| ParamMeta {
-            id: ParamId(word as u32), name: word.to_string(), ty: IrTy::F32, offset_bytes: word as u32 * 4,
-            default: [value, 0., 0., 0.], range: None,
-        }).collect();
+        let params = param_words(&p.params);
         let frame = |sun, alternate: Option<([f32; 3], [f32; 3], u32)>| frame_bytes(
             p.camera, p.sun, size, 0., sun, alternate.map(|(lo, hi, side)| sun_camera(p.sun, lo, hi, side)));
         let plan = loft_passes::bundle::lower_program(p, params, size, loft_passes::bundle::Options {
@@ -362,9 +273,19 @@ impl Loaded {
         let color_format = if aov == Aov::Beauty { COLOR } else { wgpu::TextureFormat::Rgba8Unorm };
         let color = tex(d, "color", size, color_format, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC);
         let color_view = color.create_view(&Default::default());
-        let caps = HostCaps { depth_convention: DepthConvention::StandardZeroToOne,
-            msaa_samples: 1, features: GpuFeatures::empty() };
-        let mut runner = Runner::attach(Arc::new(d.clone()), Arc::new(g.queue.clone()), caps);
+        let cache_path = g.cache_key.as_ref().map(|key| std::path::Path::new("out/meta/pipeline_cache")
+            .join(key).with_extension(format!("{}.bin", nonce.unwrap_or(0))));
+        let cache_data = cache_path.as_ref().and_then(|path| std::fs::read(path).ok());
+        // The cache key identifies the adapter and driver, and wgpu checks the header again.
+        let cache = cache_path.as_ref().map(|_| {
+            #[allow(unsafe_code)]
+            unsafe {
+                d.create_pipeline_cache(&wgpu::PipelineCacheDescriptor {
+                    label: Some("loft"), data: cache_data.as_deref(), fallback: true,
+                })
+            }
+        });
+        let mut runner = attach_runner(g).with_adapter(g.raw_adapter.clone(), cache.clone());
         let layouts_start = Instant::now();
         let scope = d.push_error_scope(wgpu::ErrorFilter::Validation);
         let prepared = runner.load_bundle(&plan.bundle).and_then(|id| {
@@ -374,12 +295,21 @@ impl Loaded {
         if let Some(err) = pollster::block_on(scope.pop()) { return Err(err.to_string()); }
         let id = prepared.map_err(runner_error)?;
         d.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| e.to_string())?;
+        let creates = runner.pipeline_creates(id).map_err(runner_error)?;
         let mut stats = LoadStats { modules: plan.bundle.modules.len(),
-            render_pipelines: p.kinds.len() + 1, compute_pipelines: p.kinds.len() + 2,
+            render_pipelines: creates.render.len(), compute_pipelines: creates.compute.len(),
             modules_ms: (layouts_start - started).as_secs_f64() * 1e3,
-            pipelines_ms: layouts_start.elapsed().as_secs_f64() * 1e3, ..Default::default() };
-        stats.compute_pipelines += p.kinds.iter().filter(|kind| aov != Aov::Overdraw &&
-            p.modules[kind.module].naga.entry_points.iter().any(|e| e.name == "bake_surface")).count();
+            pipelines_ms: layouts_start.elapsed().as_secs_f64() * 1e3,
+            cache_bytes: cache_data.as_ref().map_or(0, Vec::len),
+            pipeline_ms: creates.render.iter().chain(&creates.compute).cloned().collect(), ..Default::default() };
+        if let (Some(path), Some(data)) = (cache_path, cache.and_then(|cache| cache.get_data())) {
+            let parent = path.parent().expect("cache directory");
+            if std::fs::create_dir_all(parent).is_ok()
+                && let Ok(mut tmp) = tempfile::NamedTempFile::new_in(parent) {
+                use std::io::Write;
+                if tmp.write_all(&data).is_ok() { let _ = tmp.persist(path); }
+            }
+        }
 
         let stages = runner.load_stage_count(id).map_err(runner_error)?;
         if stages != 0 {
@@ -434,16 +364,22 @@ impl Loaded {
     }
 
     fn submit_frame(&self, g: &Gpu, t: f32, samples: u32, clock: Option<&Clock>) -> (u32, wgpu::SubmissionIndex) {
+        let mut enc = g.device.create_command_encoder(&Default::default());
+        let commands = self.record_frame(&mut enc, &self.color_view, t, samples, clock.map(|c| &c.set), 0)
+            .expect("prepared frame");
+        (commands, g.queue.submit([enc.finish()]))
+    }
+
+    pub fn record_frame(&self, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView,
+        t: f32, samples: u32, timestamps: Option<&wgpu::QuerySet>, timestamp_start: u32) -> Result<u32, String> {
         let uniform = |table| {
             let mut bytes = frame_bytes(self.camera, self.sun, self.size, t, table != self.frame_table, self.light_view);
             bytes[188..192].copy_from_slice(&samples.to_le_bytes());
             bytes
         };
-        let mut runner = self.runner.lock().unwrap();
-        let mut enc = g.device.create_command_encoder(&Default::default());
-        let options = FrameOptions { uniform: Some(&uniform), timestamps: clock.map(|c| &c.set) };
-        let report = runner.encode_frame(self.id, &mut enc, &self.color_view, t.into(), options).expect("prepared frame");
-        (report.commands, g.queue.submit([enc.finish()]))
+        let options = FrameOptions { uniform: Some(&uniform), timestamps, timestamp_start };
+        self.runner.lock().unwrap().encode_frame(self.id, encoder, target, t.into(), options)
+            .map(|r| r.commands).map_err(runner_error)
     }
 
     /// Profile a finite stream on this device's queue. Immediate reads use one
@@ -521,64 +457,26 @@ impl Loaded {
 
     /// The presented picture, tightly packed RGBA8 (sRGB), top row first.
     pub fn pixels(&self, g: &Gpu) -> Result<Vec<u8>, String> {
-        let (w, h) = self.size;
-        let row = (w * 4).next_multiple_of(256);
-        let buf = buffer(&g.device, "readback", u64::from(row * h), wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST);
-        let mut enc = g.device.create_command_encoder(&Default::default());
-        enc.copy_texture_to_buffer(
-            self.color.as_image_copy(),
-            wgpu::TexelCopyBufferInfo { buffer: &buf, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: Some(h) } },
-            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
-        );
-        g.queue.submit([enc.finish()]);
-        buf.map_async(wgpu::MapMode::Read, .., |r| r.expect("readback map"));
-        g.device.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| e.to_string())?;
-        let view = buf.get_mapped_range(..).map_err(|e| e.to_string())?;
-        Ok(view.chunks_exact(row as usize).flat_map(|r| r[..(w * 4) as usize].to_vec()).collect())
+        loft_runner::read_texture(&g.device, &g.queue, &self.color, 0).map_err(runner_error)
     }
 
     /// The twin: runs kind `k`'s queries on the GPU at samples of 8 floats each (p.xyz or (u, v, 0), row as bits,
     /// dir.xyz, 0); returns 16 floats each (trace, visible, 0, 0 | material rgb, 0 | surface point, 0 | surface
     /// normal, 0). Built on demand; not part of a frame.
     pub fn twin(&self, g: &Gpu, k: usize, samples: &[f32]) -> Result<Vec<f32>, String> {
-        let d = &g.device;
-        use wgpu::BufferUsages as U;
-        let init = |bytes: &[u8], usage: U| {
-            let b = buffer(d, "twin", bytes.len() as u64, usage | U::COPY_DST);
-            if !bytes.is_empty() { g.queue.write_buffer(&b, 0, bytes); }
-            b
-        };
-        let rows = self.rows(k)?;
-        let luts = init(&f32_bytes(&self.luts), U::STORAGE);
-        let count = init(&bytes_of(&self.kind_words[k]), U::UNIFORM);
-        let frame = init(&frame_bytes(self.camera, self.sun, self.size, 0., false, self.light_view), U::UNIFORM);
-        let params = init(&f32_bytes(&self.params.lock().unwrap()), U::STORAGE);
-        let empty_buf = buffer(d, "twin empty", 16, U::STORAGE);
-        let fixed = layout(d, "frame", &[(ALL, UNIFORM), (ALL, storage(true)), (ALL, storage(true))]);
-        let kind = layout(d, "kind", &[(ALL, storage(true)), (wgpu::ShaderStages::VERTEX, storage(true)),
-            (ALL, UNIFORM), (ALL, storage(true))]);
-        let empty = layout(d, "empty", &[]);
-        let twin = layout(d, "twin", &[(CS, storage(true)), (CS, storage(false))]);
-        let shader = d.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("twin"),
-            source: wgpu::ShaderSource::Naga(Cow::Owned(self.twin_sources[k].clone())) });
-        let pipe = compute(d, "twin", &[&fixed, &kind, &empty, &twin], &shader, "twin", None);
-        let size = (samples.len() * 4) as u64;
-        let input = init(&f32_bytes(samples), U::STORAGE);
-        let output = buffer(d, "twin out", 2 * size, U::STORAGE | U::COPY_SRC);
-        let read = buffer(d, "twin read", 2 * size, U::MAP_READ | U::COPY_DST);
-        let groups = vec![
-            bind(d, &fixed, &[frame.as_entire_binding(), empty_buf.as_entire_binding(), params.as_entire_binding()]),
-            bind(d, &kind, &[rows.as_entire_binding(), empty_buf.as_entire_binding(), count.as_entire_binding(), luts.as_entire_binding()]),
-            bind(d, &empty, &[]), bind(d, &twin, &[input.as_entire_binding(), output.as_entire_binding()]),
-        ];
-        let mut enc = d.create_command_encoder(&Default::default());
-        command::Pass::Compute(vec![Dispatch { pipeline: pipe, groups,
-            work: Work::Direct([((samples.len()/8) as u32).div_ceil(64),1,1]) }]).record(&mut enc,None);
-        enc.copy_buffer_to_buffer(&output, 0, &read, 0, None);
+        if samples.is_empty() { return Ok(vec![]); }
+        let src_rows = self.rows(k)?;
+        let (bundle, rows, output) = loft_passes::bundle::lower_twin(self.twin_sources[k].clone(), &self.luts,
+            self.kind_words[k], src_rows.size(), param_words(&self.params.lock().unwrap()),
+            frame_bytes(self.camera, self.sun, self.size, 0., false, self.light_view), samples)?;
+        let mut runner = attach_runner(g);
+        let id = runner.load_bundle(&bundle).map_err(runner_error)?;
+        runner.bind_external_buffer(id, rows, src_rows).map_err(runner_error)?;
+        let mut enc = g.device.create_command_encoder(&Default::default());
+        runner.encode_frame(id, &mut enc, &self.color_view, 0., Default::default()).map_err(runner_error)?;
         g.queue.submit([enc.finish()]);
-        read.map_async(wgpu::MapMode::Read, .., |r| r.expect("twin map"));
-        wait_for(g, None)?;
-        let view = read.get_mapped_range(..).map_err(|e| e.to_string())?;
+        let output = runner.export_buffer(id, output).ok_or("missing twin output")?;
+        let view = loft_runner::read_buffer(&g.device, &g.queue, &output).map_err(runner_error)?;
         Ok(view.as_chunks::<4>().0.iter().copied().map(f32::from_le_bytes).collect())
     }
 

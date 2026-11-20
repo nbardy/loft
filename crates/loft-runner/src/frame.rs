@@ -1,6 +1,6 @@
 //! Frame entry points for hosts that also own presentation and timestamp readback.
 use super::*;
-pub use encode::{FrameOptions, FrameRecord, ModulePipelines, ModuleRecipe};
+pub use encode::{FrameOptions, FrameRecord, ModulePipelines, ModuleRecipe, PipelineCreates};
 
 impl Runner {
     pub fn prepare_frame(&mut self, id: InstanceId, view: &wgpu::TextureView) -> Result<()> {
@@ -25,13 +25,22 @@ impl Runner {
         inst.tables.get(inst.initializers.images.get(name)?)?.texture()
     }
 
+    pub fn pipeline_creates(&mut self, id: InstanceId) -> Result<&PipelineCreates> {
+        Ok(&self.instance(id)?.compute.creates)
+    }
+
     pub fn encode_frame(&mut self, id: InstanceId, enc: &mut wgpu::CommandEncoder, view: &wgpu::TextureView,
         time: f64, options: FrameOptions<'_>) -> Result<FrameRecord> {
-        let (device, caps) = (self.device.clone(), self.caps);
-        let clock = encode::Clock { id, time, dt: loft_abi::AdvanceArgs::DT, to: (time * 120.).round() as u32,
-            keep: 0, timer: None };
-        self.instance(id)?.record_frame(&device, enc, clock, Some(&embed::Target { color: view, depth: None, caps }), options)
+        self.record_frame(id, enc, view, None, time, loft_abi::AdvanceArgs::DT, options)
     }
+
+    pub fn record_frame(&mut self, id: InstanceId, enc: &mut wgpu::CommandEncoder, color: &wgpu::TextureView,
+        depth: Option<&wgpu::TextureView>, time: f64, dt: f32, options: FrameOptions<'_>) -> Result<FrameRecord> {
+        let (device, caps) = (self.device.clone(), self.caps);
+        let clock = encode::Clock { id, time, dt, to: (time * 120.).round() as u32, keep: 0, timer: None };
+        self.instance(id)?.record_frame(&device, enc, clock, Some(&embed::Target { color, depth, caps }), options)
+    }
+
 
     pub fn module_pipelines(&mut self, id: InstanceId, module: ModuleId) -> Result<(ModuleRecipe, ModulePipelines)> {
         self.instance(id)?.compute.recipe(module)

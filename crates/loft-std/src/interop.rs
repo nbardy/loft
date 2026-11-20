@@ -133,6 +133,30 @@ pub fn texture_view(tex: &wgpu::Texture, binding: BindingType) -> Result<wgpu::T
     }))
 }
 
+pub fn storage_access(
+    features: wgpu::Features, adapter: Option<&wgpu::Adapter>,
+    format: wgpu::TextureFormat, access: wgpu::StorageTextureAccess,
+) -> Result<()> {
+    use wgpu::{StorageTextureAccess as A, TextureFormatFeatureFlags as F};
+    let required = match access {
+        A::WriteOnly => F::STORAGE_WRITE_ONLY,
+        A::ReadOnly => F::STORAGE_READ_ONLY,
+        A::ReadWrite => F::STORAGE_READ_WRITE,
+        A::Atomic => F::STORAGE_ATOMIC,
+    };
+    let mut granted = format.guaranteed_format_features(features);
+    if features.contains(wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES)
+        && let Some(adapter) = adapter
+    {
+        granted = adapter.get_texture_format_features(format);
+    }
+    if !granted.allowed_usages.contains(T::STORAGE_BINDING) || !granted.flags.contains(required)
+        || (access == A::Atomic && !features.contains(wgpu::Features::TEXTURE_ATOMIC)) {
+        return Err(RunnerError::TextureAccess { format, access });
+    }
+    Ok(())
+}
+
 pub fn check_texture<'a>(
     bindings: impl Iterator<Item = &'a wgpu::BindGroupLayoutEntry>,
     shape: TextureShape,
@@ -148,58 +172,41 @@ pub fn check_texture<'a>(
     Ok(())
 }
 
-pub fn validate_buffer<'a>(
-    bundle: &Bundle,
-    t: &TableDecl,
-    buf: &wgpu::Buffer,
-    limits: &wgpu::Limits,
-    bindings: impl Iterator<Item = &'a wgpu::BindGroupLayoutEntry>,
-) -> Result<()> {
-    let table = t.id;
-    let mut required = B::STORAGE;
-    if matches!(t.lifetime, TableLifetime::DynamicArena { .. }) {
-        required |= B::COPY_SRC | B::COPY_DST;
-    }
-    if bundle.state.as_ref().is_some_and(|s| s.table == table) {
-        required |= B::COPY_SRC | B::COPY_DST;
-    }
-    for p in crate::bundle::passes(&bundle.passes) {
-        match &p.run {
-            PassRun::Compute {
-                dispatch: DispatchExtent::Indirect { buf, .. },
-                ..
-            } if *buf == table => required |= B::INDIRECT,
-            PassRun::RenderBundle { draws, .. } => {
-                for draw in draws {
-                    if draw.args == table {
-                        required |= B::INDIRECT;
-                    }
-                    if draw.vertex == Some(table) {
-                        required |= B::VERTEX;
-                    }
-                    if draw.index == Some(table) {
-                        required |= B::INDEX;
-                    }
-                }
-            }
+pub fn buffer_usage(bundle: &Bundle, table: TableId) -> B {
+    let mut usage = B::COPY_SRC | B::COPY_DST;
+    for pass in crate::bundle::passes(&bundle.passes) {
+        if pass.bindings.iter().any(|b| b.resource == table) { usage |= B::STORAGE; }
+        match &pass.run {
+            PassRun::Compute { dispatch: DispatchExtent::Indirect { buf, .. }, .. } if *buf == table => usage |= B::INDIRECT,
+            PassRun::RenderBundle { draws, .. } => for draw in draws {
+                if draw.args == table { usage |= B::INDIRECT; }
+                if draw.vertex == Some(table) { usage |= B::VERTEX; }
+                if draw.index == Some(table) { usage |= B::INDEX; }
+            },
             _ => {}
         }
     }
-    let min = (u64::from(t.capacity) * u64::from(t.stride_bytes)).max(4);
-    let mut storage = false;
-    let mut binding_min = 0;
-    for bind in bindings {
-        let BindingType::Buffer { min_binding_size, .. } = bind.ty else {
-            return Err(RunnerError::AbiMismatch);
-        };
-        storage = true;
-        binding_min = binding_min.max(min_binding_size.map_or(0, std::num::NonZeroU64::get));
-    }
-    if storage && (buf.size() > limits.max_storage_buffer_binding_size || !buf.size().is_multiple_of(4)) {
+    usage
+}
+
+pub fn logical_size(t: &TableDecl) -> u64 {
+    (u64::from(t.capacity) * u64::from(t.stride_bytes)).max(4)
+}
+
+pub fn buffer_range(
+    capacity: u64, usage: B, logical: u64, offset: u64, size: u64,
+    slot: &wgpu::BindGroupLayoutEntry, limits: &wgpu::Limits,
+) -> Result<wgpu::BufferSize> {
+    let BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { .. }, min_binding_size, .. } = slot.ty
+        else { return Err(RunnerError::AbiMismatch); };
+    if !usage.contains(B::STORAGE) || !offset.is_multiple_of(u64::from(limits.min_storage_buffer_offset_alignment))
+        || !size.is_multiple_of(4) || size < min_binding_size.map_or(4, wgpu::BufferSize::get)
+        || size > limits.max_storage_buffer_binding_size
+        || offset.checked_add(size).is_none_or(|end| end > logical.min(capacity))
+    {
         return Err(RunnerError::AbiMismatch);
     }
-    check_buffer(buf.size(), buf.usage(), min.max(binding_min), required)?;
-    Ok(())
+    wgpu::BufferSize::new(size).ok_or(RunnerError::AbiMismatch)
 }
 #[cfg(test)]
 mod tests {
@@ -326,14 +333,14 @@ impl Resource {
     }
 }
 pub enum Bound<'a> {
-    Buffer(&'a wgpu::Buffer),
+    Buffer(wgpu::BufferBinding<'a>),
     Image(wgpu::TextureView),
     Sampler(&'a wgpu::Sampler),
 }
 impl<'a> Bound<'a> {
     pub fn binding(&self) -> wgpu::BindingResource<'_> {
         match self {
-            Self::Buffer(buffer) => buffer.as_entire_binding(),
+            Self::Buffer(binding) => wgpu::BindingResource::Buffer(binding.clone()),
             Self::Image(view) => wgpu::BindingResource::TextureView(view),
             Self::Sampler(sampler) => wgpu::BindingResource::Sampler(sampler),
         }
@@ -341,12 +348,16 @@ impl<'a> Bound<'a> {
 }
 
 impl Resource {
-    pub fn bind(&self, slot: &wgpu::BindGroupLayoutEntry) -> Result<Bound<'_>> {
+    pub fn bind(&self, slot: &wgpu::BindGroupLayoutEntry, logical: u64, range: (u64, u64), limits: &wgpu::Limits) -> Result<Bound<'_>> {
         if slot.count.is_some() {
             return Err(RunnerError::Unsupported("texture binding arrays"));
         }
         match (self, slot.ty) {
-            (Self::Buffer(Some(buf)), BindingType::Buffer { .. }) => Ok(Bound::Buffer(buf)),
+            (Self::Buffer(Some(buf)), BindingType::Buffer { .. }) => {
+                let (offset, size) = range;
+                let size = buffer_range(buf.size(), buf.usage(), logical, offset, size, slot, limits)?;
+                Ok(Bound::Buffer(wgpu::BufferBinding { buffer: buf, offset, size: Some(size) }))
+            }
             (
                 Self::Texture(TextureBinding::Bound(_, tex)),
                 BindingType::Texture { .. } | BindingType::StorageTexture { .. },

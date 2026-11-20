@@ -31,11 +31,14 @@ impl Dimension {
         ]
     }
 
-    pub fn group(self) -> [u32; 3] {
+    pub fn group(self, limits: &Limits) -> [u32; 3] {
         match self {
             Self::D2 => [8, 8, 1],
             Self::D3 => [4, 4, 4],
-            Self::Cube => [8, 8, 6],
+            Self::Cube => {
+                let z = limits.max_compute_workgroup_size_z.min(limits.max_compute_invocations_per_workgroup / 64);
+                [8, 8, if z >= 6 { 6 } else { 1 }]
+            },
         }
     }
 }
@@ -72,7 +75,7 @@ impl Clock {
     }
 }
 
-pub fn source(dim: Dimension, format: TextureFormat) -> Result<String, &'static str> {
+pub fn source(dim: Dimension, format: TextureFormat, limits: &Limits) -> Result<String, &'static str> {
     let (format, scalar) = match format {
         TextureFormat::R8Unorm => ("r8unorm", true),
         TextureFormat::R16Float => ("r16float", true),
@@ -86,7 +89,7 @@ pub fn source(dim: Dimension, format: TextureFormat) -> Result<String, &'static 
         Dimension::D3 => ("3d", "id", "vec3", "p, 0", "at", 8),
         Dimension::Cube => ("2d_array", "id.xy", "vec2", "p, i32(id.z), 0", "at, i32(id.z)", 4),
     };
-    let [wx, wy, wz] = dim.group();
+    let [wx, wy, wz] = dim.group(limits);
     let zero = if scalar { "0.0" } else { "vec4<f32>(0.0)" };
     let channel = if scalar { ".x" } else { "" };
     let average = if scalar {
@@ -142,7 +145,7 @@ mod tests {
                 TextureFormat::Rgba8Unorm,
                 TextureFormat::Rgba16Float,
             ] {
-                let text = source(dim, format).unwrap();
+                let text = source(dim, format, &Limits::default()).unwrap();
                 let ir =
                     naga::front::wgsl::parse_str(&text).unwrap_or_else(|e| panic!("{}", e.emit_to_string(&text)));
                 naga::valid::Validator::new(
