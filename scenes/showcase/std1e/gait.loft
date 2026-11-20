@@ -317,9 +317,9 @@ pub law step(w: Walker, dt: s) writes w.{x, z, vx, vz, lean, lean_rate, last_bea
   let land3 = landing && flight_site == 3
   let ax = [select(xs.x, aim.x, land0), select(xs.y, aim.x, land1), select(xs.z, aim.x, land2), select(xs.w, aim.x, land3)]
   let az = [select(zs.x, aim.y, land0), select(zs.y, aim.y, land1), select(zs.z, aim.y, land2), select(zs.w, aim.y, land3)]
+  # Derive constrained velocity from the accepted, grid-aligned displacement.
+  # Dividing the unrounded projection magnifies an ulp into a state change.
   let accepted_velocity = if !fits { [0.0, 0.0] } else if length(leashed - free) > 1e-6 {
-    # Derive constrained velocity from the accepted, grid-aligned displacement.
-    # Dividing the unrounded projection magnifies an ulp into a state change.
     (centre - c) / dt
   } else { v + dt * acceleration }
   let next_velocity = floor(accepted_velocity * row_scale + v2(0.5)) / row_scale
