@@ -13,11 +13,11 @@ log_status() {
   free_pct="$(memory_pressure 2>/dev/null | awk '/System-wide memory free percentage:/ {gsub(/%/,"",$5); print $5}' || echo "?")"
   {
     echo "=== [$ts] free_mem=${free_pct}% ==="
-    for w in wave15 wave4 wave15_2; do
+    for w in wave15 wave4 final wave15_2; do
       [ -f "$DIR/${w}.finished" ] && echo "  $w: FINISHED" || echo "  $w: running/waiting"
     done
     local done_list=""
-    for s in build1 cam1 v15a v15b v15c iv15 std1b std1c std1d std1e port1 ix4 v15_exec v15_perf v15_native cap1c v15_bloat cap1b iv15_2; do
+    for s in build1 cam1 cl1 fs1 cam2 fs2 wrap1 v15a v15b v15c iv15 std1b std1c std1d std1e port1 ix4 v15_exec v15_stdlib_finish v15_perf v15_native cap1c v15_bloat cap1b iv15_2; do
       if [ -f "$DIR/${s}.done" ]; then done_list="${done_list} ${s}"; fi
     done
     echo "  done:${done_list:- (none yet)}"
