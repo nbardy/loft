@@ -29,4 +29,3 @@ arithmetic, pinned B/D code and original ink stay in place. The harbor bridge
 uses D's irradiance and an approximate sky gloss. Papercraft prepares the
 normal in the estimator callback and repeats that calculation in the style
 callback because D has no shared prepare result.
-
