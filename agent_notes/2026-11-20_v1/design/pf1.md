@@ -151,6 +151,12 @@ The sun-map change applies the playbook’s static-bake idea to an existing exac
 
 **Evidence for fusion.** The dependence-preserving HDR comparison made all Present HDR reads address one texel of the same live texture. Present ended last in every one of its 800 treatment frames. The Present median saved .111/.018 ms, while whole-frame p50 regressed .011/.070 ms. It preserves the producer dependency and changes the picture. These data do not support the playbook’s .4–1.0 ms fusion estimate. A fused pixel-equivalent pipeline would also have to preserve half-float rounding, sky coverage, sRGB conversion and Shrine’s neighboring Vis reads.
 
+## Verification on main
+
+The separate five-gate run on the published diagnostics commit `f2de05f` measured **6.775 ms p95** on Hermit-20 with a .096 ms triangle control. The initial dedicated replay was 5.585 ms. Both used the same renderer, resolution and orbit. The difference limits the precision of an absolute p95 forecast. Compare lane candidates with a same-run control as well as the absolute gate.
+
+All **18/18** actual RGBA hashes matched the previously scored main in `out/meta/del2/five-gates.json`. Against the approved references, Pictures held 0/18. Twin held 36/36, Speed 8/12, Load 24/33 and Truth 34/34. Bead held 9/9. Grammar passed 280/280. Native tests passed 152/153. The existing Tier 0 promotion test measured .921 ms overhead p95 against .500 ms. The full wrapper stopped there. Its remaining doctest, wasm, bead and five-gate checks were run individually. The raw gate report and log are included in the archive.
+
 ## Reproduction and evidence
 
 The measurements contain module counts, baseline quantiles, per-kind coverage, A/B arm summaries and pixel differences. The archive contains the baseline and ABBA timestamps, probe patches, timing scripts, captured shading MSL and options, the arithmetic witness and the predictions recorded before each experiment. Full-resolution lossless AOVs, paired beauty frames and Vis/indirect readbacks are under `out/meta/pf1/` in the primary checkout. [Measurements](pf1/measurements.json) · [Raw profiles and probe sources](pf1/profiles.tar.gz)
