@@ -23,7 +23,22 @@ Read:
 - the noise, geometry and SDF helpers wherever they live;
 - examples/bosses/lib.
 
-For each item, give what it does, its size, and whether it is worth porting: does it earn its tokens, and is it used by the flagship scenes?
+For each item, record:
+- what it does;
+- its size in lines and tokens;
+- the flagship scenes that use it;
+- three findings:
+  - **Pattern fit.** Does it map to kinds and rows, staging, spaces and forkable `.loft`? Or does it rely on what we designed out: host-side loops that unroll, per-instance constants baked into code, styles welded to paint words, parameters that can only be changed inside the framework?
+  - **Speed.** Use known measurements where they exist (agent_notes/2026-11-18_cook/*.final.md, for example the volume march at 20–61 ms, AO at +0.066 ms, f16 at no gain, the old profiles in docs/legacy). Otherwise estimate the per-pixel cost: samples, march steps, octaves, passes.
+  - **Flexibility.** Can a consumer change the look or behaviour by editing ordinary code, or are decisions sealed inside it?
+
+Then give ONE verdict per item:
+- **port**: fits the pattern, is fast enough and flexible; port it as is, rewritten idiomatically;
+- **port-rewrite**: the idea is worth keeping but the implementation is slow, inflexible or off-pattern; say what changes;
+- **reference-only**: keep as inspiration only (a note in stdlib/REFERENCE.md pointing at the legacy path); do not port;
+- **drop**: superseded or not worth its tokens.
+
+Put this in a table in std1.md, section 0 "Old stdlib audit", BEFORE the tree design. The tree may only contain items with a port or port-rewrite verdict.
 
 Write agent_notes/2026-11-20_v1/design/std1.md containing:
 1. **The stdlib/ tree:** directories, files and layering. Lower layers (math, noise, sdf, frames) import nothing above them, and the layers above import downward. List every module with its public functions as typed E+ signatures.
