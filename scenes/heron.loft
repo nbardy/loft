@@ -1,35 +1,13 @@
 space World
 
 const HERON_REST = 0.85m
+const HERON_CROUCH = 0.59m
 const HERON_TAKEOFF = 0.77s
 const HERON_LAND = 1.55s
 const HERON_LAND_X = 1.4m
 const HERON_BLOCK_Y = 0.20m
 const HERON_TOE_R = 0.018m
 const HERON_NECK = 1.55m
-
-plan HeronHop(
-  keys: PriorSpline = PriorSpline([0, 0.85m, 0]@World, [0, 0.59m, 0]@World,
-                                  [0.65m, 1.69m, 0]@World, [1.4m, 1.05m, 0]@World),
-  rail: Box = Box([0.65m, 0.09m, 0]@World, [0.035m, 0.09m, 0.42m]),
-  block: SurfaceRow = SurfaceRow(1.05m, [0, 0, 0]),
-  duration: s = 2.4s, bottom: s = 0.60s, launch: s = 0.77s, touch: s = 1.55s
-) -> PriorTable {
-  knots: 24, duration: duration
-  minimize effort(1.0) + jerk(0.25) + near(keys, pos: 8.0, vel: 0.5)
-  subject_to {
-    arrive_at(0s, [0, 0.85m, 0]@World, [0, 0, 0]@World)
-    acc_at(0s, [0, 0, 0]@World)
-    pos_at(bottom, [0, 0.59m, 0]@World, tol: 0m)
-    vel_at(bottom, [0, 0, 0]@World, tol: 0m)
-    arrive_at(launch, [0, 0.85m, 0]@World,
-      [1.4 / (touch - launch), 0.20 / (touch - launch) + 4.905 * (touch - launch), 0]@World)
-    clear(rail, margin: 0.08m)
-    land_on(block, at: duration)
-    pitch_in(-12deg, 12deg)
-    flight_ballistic(from: launch, to: touch)
-  }
-}
 
 fn heron_fish(t: s) -> p3@World = [-1.25 + 4.0 * smootherstep(0.2, 2.0, t), 0.13, 3.0]@World
 
@@ -86,10 +64,15 @@ fn heron_leg_end(h: HuntingHeron, side: f) -> p3@World =
   ik_reachable_end(heron_leg_root(h, side), heron_pin(h.x, h.foot_y, side),
     0.45m, 0.48m, dir([0.0, 0.0, -1.0]@World))
 
+fn heron_height(t: s) -> m {
+  if t <= HERON_TAKEOFF { return act_crouch(HERON_REST, HERON_CROUCH, 0.60s, HERON_TAKEOFF, t) }
+  if t >= HERON_LAND { return HERON_REST + HERON_BLOCK_Y }
+  act_ballistic(HERON_REST, HERON_REST + HERON_BLOCK_Y, HERON_LAND - HERON_TAKEOFF, t - HERON_TAKEOFF)
+}
+
 law heron_step(h: HuntingHeron, dt) writes h.{x, hip_y, lean, pin_x, foot_y, look_x, look_y, look_z} {
   let flight = clamp((time - HERON_TAKEOFF) / (HERON_LAND - HERON_TAKEOFF), 0.0, 1.0)
-  let prior = sample_prior(HeronHop, time)
-  let height = if prior.active { prior.pos.y } else { h.hip_y }
+  let height = heron_height(time)
   let fish = heron_fish(time)
   h.x = HERON_LAND_X * flight
   h.hip_y = height
@@ -102,7 +85,6 @@ law heron_step(h: HuntingHeron, dt) writes h.{x, hip_y, lean, pin_x, foot_y, loo
 }
 
 check heron_neck_length(h: HuntingHeron) -> m {
-  if !sample_prior(HeronHop, time).active { return unknown(SolveFailed) }
   var arc = 0.0
   for i in 0..6 { arc = arc + dist(heron_neck_joint(h, i), heron_neck_joint(h, i + 1)) }
   let error = abs(arc - HERON_NECK)

@@ -66,9 +66,9 @@ fn wrappers() -> String {
     let mut component = |op: &str, shapes: &[usize], input: &[&str], ret: &str| {
         let name = symbol(op, shapes);
         let width = *shapes.iter().max().unwrap();
-        let ty = |n, scalar| {
+        let ty = |n, scalar: &str| {
             if n == 1 {
-                format!("{scalar}")
+                scalar.to_owned()
             } else {
                 format!("vec{n}<{scalar}>")
             }
@@ -343,27 +343,36 @@ impl Verify<'_> {
     #[allow(clippy::wildcard_enum_match_arm)] // Closed effect set of the CPU entry.
     fn body(
         &self,
+        f: &Function,
         block: &Block,
         raw: bool,
         events: bool,
         calls: &mut BTreeSet<Handle<Function>>,
     ) -> Res<()> {
+        let mut previous = None;
         for (s, &at) in block.span_iter() {
             match s {
                 S::Emit(_) | S::Return { .. } | S::Break | S::Continue | S::Store { .. } => {}
-                S::Block(b) => self.body(b, raw, events, calls)?,
+                S::Block(b) => self.body(f, b, raw, events, calls)?,
                 S::If { accept, reject, .. } => {
-                    self.body(accept, raw, events, calls)?;
-                    self.body(reject, raw, events, calls)?;
+                    self.body(f, accept, raw, events, calls)?;
+                    self.body(f, reject, raw, events, calls)?;
                 }
                 S::Loop {
-                    body, continuing, ..
-                } if !raw => {
-                    self.body(body, raw, events, calls)?;
-                    self.body(continuing, raw, events, calls)?;
-                }
-                S::Loop { .. } => {
-                    return Err(self.error(at, "raw loop without a verified trip count"));
+                    body,
+                    continuing,
+                    break_if,
+                } => {
+                    if raw
+                        && (break_if.is_some()
+                            || self
+                                .raw_for_bound(f, body, continuing, at, previous)
+                                .is_none())
+                    {
+                        return Err(self.error(at, "raw loop without a verified trip count"));
+                    }
+                    self.body(f, body, raw, events, calls)?;
+                    self.body(f, continuing, raw, events, calls)?;
                 }
                 S::Call { function, .. } => {
                     let target = self.module.functions[*function]
@@ -384,8 +393,127 @@ impl Verify<'_> {
                 } if events => {}
                 _ => return Err(self.error(at, format!("{s:?}"))),
             }
+            if !matches!(s, S::Emit(_)) {
+                previous = Some(s);
+            }
         }
         Ok(())
+    }
+
+    fn raw_for_bound(
+        &self,
+        f: &Function,
+        body: &Block,
+        continuing: &Block,
+        site: naga::Span,
+        previous: Option<&S>,
+    ) -> Option<()> {
+        let fresh_load = |h: Handle<E>, block: &Block| match f.expressions[h] {
+            E::Load { pointer }
+                if block.iter().take_while(|s| matches!(s, S::Emit(_))).any(
+                    |s| matches!(s, S::Emit(r) if r.index_range().contains(&(h.index() as u32))),
+                ) =>
+            {
+                Some(pointer)
+            }
+            _ => None,
+        };
+        let integer = |h: Handle<E>| -> Option<i64> {
+            let literal = match f.expressions[h] {
+                E::Constant(c) => &self.module.global_expressions[self.module.constants[c].init],
+                ref e => e,
+            };
+            match *literal {
+                E::Literal(naga::Literal::U32(n)) => Some(i64::from(n)),
+                E::Literal(naga::Literal::I32(n)) => Some(i64::from(n)),
+                _ => None,
+            }
+        };
+        // A WGSL for-loop becomes a leading guard and a continuing update.
+        // Require fresh counter loads, a fixed initializer, and no body writes.
+        let S::If {
+            condition,
+            accept,
+            reject,
+        } = body.iter().find(|s| !matches!(s, S::Emit(_)))?
+        else {
+            return None;
+        };
+        if !accept.is_empty() || !matches!(&**reject, [S::Break]) {
+            return None;
+        }
+        let E::Binary { op, left, right } = f.expressions[*condition] else {
+            return None;
+        };
+        let (counter, stop, op) = if let Some(counter) = fresh_load(left, body) {
+            (counter, integer(right)?, op)
+        } else {
+            let op = match op {
+                B::Less => B::Greater,
+                B::LessEqual => B::GreaterEqual,
+                B::Greater => B::Less,
+                B::GreaterEqual => B::LessEqual,
+                _ => return None,
+            };
+            (fresh_load(right, body)?, integer(left)?, op)
+        };
+        let E::LocalVariable(local) = f.expressions[counter] else {
+            return None;
+        };
+        let init = &f.local_variables[local];
+        let start = match previous {
+            Some(S::Store { pointer, value })
+                if f.expressions[*pointer] == E::LocalVariable(local) =>
+            {
+                integer(*value)?
+            }
+            _ => {
+                let decl = f.local_variables.get_span(local).to_range()?;
+                let site = site.to_range()?;
+                if decl.start < site.start || decl.end > site.end {
+                    return None;
+                }
+                init.init.map_or(Some(0), integer)?
+            }
+        };
+        let mut updates = continuing.iter().filter(|s| !matches!(s, S::Emit(_)));
+        let S::Store { pointer, value } = updates.next()? else {
+            return None;
+        };
+        if f.expressions[*pointer] != E::LocalVariable(local) || updates.next().is_some() {
+            return None;
+        }
+        let E::Binary {
+            op: update,
+            left,
+            right,
+        } = f.expressions[*value]
+        else {
+            return None;
+        };
+        if f.expressions[fresh_load(left, continuing)?] != E::LocalVariable(local) {
+            return None;
+        }
+        let step = match update {
+            B::Add => integer(right)?,
+            B::Subtract => -integer(right)?,
+            _ => return None,
+        };
+        let distance = match op {
+            B::Less if step > 0 => stop - start,
+            B::LessEqual if step > 0 => stop - start + 1,
+            B::Greater if step < 0 => start - stop,
+            B::GreaterEqual if step < 0 => start - stop + 1,
+            _ => return None,
+        };
+        let trips = (distance.max(0) + step.abs() - 1) / step.abs();
+        let last = start + trips * step;
+        let representable = match self.module.types[init.ty].inner {
+            T::Scalar(naga::Scalar::I32) => i32::try_from(last).is_ok(),
+            T::Scalar(naga::Scalar::U32) => u32::try_from(last).is_ok(),
+            _ => false,
+        };
+        (representable && trips <= 65_536 && !writes_local(f, body, local)).then_some(())
     }
 
     fn function(
@@ -394,10 +522,20 @@ impl Verify<'_> {
         info: &FunctionInfo,
         primitive: bool,
         calls: &mut BTreeSet<Handle<Function>>,
-    ) -> Res<BTreeMap<Handle<E>, (Handle<Function>, Vec<Handle<E>>)>> {
+    ) -> Res<Rewrites> {
         let name = f.name.as_deref().unwrap_or("");
         let raw = self.raw.contains_key(name);
-        self.body(&f.body, raw, name == "emit_event", calls)?;
+        if raw
+            && f.arguments.iter().any(|arg| {
+                matches!(
+                    self.module.types[arg.ty].inner,
+                    T::Pointer { .. } | T::ValuePointer { .. }
+                )
+            })
+        {
+            return Err(refusal(self.fallback, "raw pointer parameter"));
+        }
+        self.body(f, &f.body, raw, name == "emit_event", calls)?;
         let mut rewrites = BTreeMap::new();
         for (h, e) in f.expressions.iter() {
             let at = f.expressions.get_span(h);
@@ -411,6 +549,20 @@ impl Verify<'_> {
         }
         Ok(rewrites)
     }
+}
+
+fn writes_local(f: &Function, block: &Block, local: Handle<naga::LocalVariable>) -> bool {
+    block.iter().any(|statement| match statement {
+        S::Store { pointer, .. } => f.expressions[*pointer] == E::LocalVariable(local),
+        S::Block(body) => writes_local(f, body, local),
+        S::If { accept, reject, .. } => {
+            writes_local(f, accept, local) || writes_local(f, reject, local)
+        }
+        S::Loop {
+            body, continuing, ..
+        } => writes_local(f, body, local) || writes_local(f, continuing, local),
+        _ => false,
+    })
 }
 
 type Rewrites = BTreeMap<Handle<E>, (Handle<Function>, Vec<Handle<E>>)>;
@@ -489,7 +641,7 @@ pub(super) fn lower(wgsl: String, raw: &BTreeMap<String, Span>, fallback: Span) 
             .unwrap_or(fallback);
         refusal(span, e.emit_to_string(&map.shader))
     })?;
-    let validate = |m| {
+    let validate = |m: &naga::Module| {
         Validator::new(ValidationFlags::all(), Capabilities::default())
             .validate(m)
             .map_err(|e| {
@@ -557,4 +709,46 @@ pub(super) fn lower(wgsl: String, raw: &BTreeMap<String, Span>, fallback: Span) 
     let verified = validate(&module)?;
     naga::back::wgsl::write_string(&module, &verified, naga::back::wgsl::WriterFlags::empty())
         .map_err(|e| refusal(fallback, e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verifies_raw_loop_bounds_and_rejects_native_float_ops() {
+        let shader = |body: &str| {
+            format!(
+                r"
+            @group(0) @binding(0) var<storage, read_write> data: array<f32>;
+            fn raw(x: f32) -> f32 {{ {body} }}
+            @compute @workgroup_size(1) fn advance() {{ data[0] = raw(data[0]); }}
+        "
+            )
+        };
+        let span = Span {
+            file: 0,
+            lo: 12,
+            hi: 15,
+        };
+        let raw = BTreeMap::from([("raw".into(), span)]);
+        for guard in ["i < 3u", "3u > i"] {
+            let body =
+                format!("var y = x; for (var i = 0u; {guard}; i++) {{ y = y * x + x; }} return y;");
+            let lowered = lower(shader(&body), &raw, span).unwrap();
+            assert!(lowered.contains("d_mul_bits") && lowered.contains("d_add_bits"));
+        }
+        for body in [
+            "var y = x; for (var i = 0u; i < u32(x); i++) { y = y * x; } return y;",
+            "for (var i = 0u; i < 3u; i++) { i = 0u; } return x;",
+            "for (var i = 0u; i >= 0u; i--) {} return x;",
+            "loop {} return x;",
+            "return pow(x, x);",
+            "return data[0];",
+        ] {
+            let error = lower(shader(body), &raw, Span::NONE).unwrap_err();
+            assert_eq!(error.code, Code::E504, "{body}");
+            assert_eq!(error.span, span, "{body}");
+        }
+    }
 }

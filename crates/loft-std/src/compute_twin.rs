@@ -410,6 +410,7 @@ fn math(fun: M, args: Vec<Value>) -> Result<Value> {
     let c = it.next();
     Ok(match (fun, a, b, c) {
         (M::CountLeadingZeros, Some(U(x)), _, _) => U(x.leading_zeros()),
+        (M::CountLeadingZeros, Some(I(x)), _, _) => I(x.leading_zeros() as i32),
         (M::Abs, Some(F(x)), _, _) => F(x.abs()),
         (M::Abs, Some(I(x)), _, _) => I(x.wrapping_abs()),
         (M::Sqrt, Some(F(x)), _, _) => F(x.sqrt()),
