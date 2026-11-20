@@ -417,3 +417,8 @@ The X2f size audit and four proposed cuts are recorded in [the lean-down plan](d
 
 ## Flagship scenes not yet ported (owner, 20 Nov)
 - The 5-crab idol lineup dance (examples/bosses/crab_lineup.ts, lineup_shots.ts; song score crab_song.ts), the crab_live motion (examples/motion/crab_live.ts, stage.ts), the bosses (wreckers_lamp, reefback_titan, maelstrom_wyrm, thundermaw, tithe_fleet), and the first lanterns. engines/hermit.loft exists; the "nice hermit" look must match the best old render. Lane: port1.
+
+## stdlib/ tree (owner, 20 Nov)
+- Port the good parts of the old std (styles: woodblock, toon, sketch, paint, papercraft, neon, biolume, gloss, pbr, sea, whitewater, foam, sky, post; the light transport WGSL; motion body/move/roam; noise/sdf/geometry) into a layered stdlib/ tree: stdlib/noise, stdlib/sdf, stdlib/styles, stdlib/lighting, and so on. Higher layers import lower ones.
+- Forking is copy-paste: copy a std file into your own folder and `use` the copy.
+- Design lane std1, then std1a (restructure), then the port lanes. All in wave x4.
