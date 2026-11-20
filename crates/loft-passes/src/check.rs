@@ -752,8 +752,8 @@ impl<'p,'a> Ck<'p,'a> {
                     return Err(Diag::new(
                         Code::E404,
                         *span,
-                        "`emit` appends a row at stage 0 and runs only inside a `comptime fn`",
-                        "call a `comptime fn` from the schedule's rows pass and emit there",
+                        "`emit` appends a row at build time",
+                        "move the emit into a `build` block or a `build fn`",
                     ));
                 }
                 let Some(k) = self.p.kinds.get(kind.name.as_str()) else {

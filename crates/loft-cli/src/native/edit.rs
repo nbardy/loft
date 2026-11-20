@@ -188,7 +188,9 @@ impl TraceSession {
         let tape_writes = changed_ranges(&self.tape.bytes(), &tape);
         let dirty_columns = self.stride - abi::HIDDEN_WORDS as usize;
         let mut row_patches = Vec::new();
-        for (i, ([lo, hi], lip)) in next.local_bounds.iter().zip(&next.lips).enumerate() {
+        // The proxy clips the world ray before applying the inverse pose.
+        for (i, (bound, lip)) in next.bounds.iter().zip(&next.lips).enumerate() {
+            let (lo, hi) = (bound.lo, bound.hi);
             let begin = i * self.stride + dirty_columns;
             let words = [lo[0], lo[1], lo[2], hi[0], hi[1], hi[2], *lip];
             if self.rows[begin..begin + words.len()]

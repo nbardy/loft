@@ -338,29 +338,13 @@ impl TraceSource {
                 Some(RowVal::X(x)) => *x,
                 _ => crate::eval::Rigid::yaw([0.; 3], 0.),
             };
-            let (mut lo, mut hi) = ([f32::INFINITY; 3], [f32::NEG_INFINITY; 3]);
-            for corner in 0..8 {
-                let q = std::array::from_fn(|i| {
-                    if corner >> i & 1 == 0 {
-                        d.lo[i] as f32
-                    } else {
-                        d.hi[i] as f32
-                    }
-                });
-                let q = crate::rot(&pose, q);
-                for i in 0..3 {
-                    lo[i] = lo[i].min(q[i] + pose.t[i]);
-                    hi[i] = hi[i].max(q[i] + pose.t[i]);
-                }
-            }
+            let [lo, hi] = crate::world_bound(d, &pose, r, span)?;
             instances.push(Instance {
                 lo,
                 hi,
                 kind: self.kind as u32,
                 row: r as u32,
             });
-            // Marching reads local coordinates. Only the culling table uses
-            // the transformed AABB.
             local_bounds.push([d.lo, d.hi].map(|v| v.map(|x| x as f32)));
             lips.push(d.l as f32);
         }

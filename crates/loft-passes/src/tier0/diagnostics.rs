@@ -1,4 +1,4 @@
-//! Full rendered diagnostics for every implemented v1 code in E101–E503.
+//! Full rendered diagnostics for every v1 code in E101–E503.
 use crate::{Code, Sources, compile};
 use std::path::Path;
 
@@ -130,6 +130,23 @@ law read(h: K, other: K) writes h.{r} { h.r = 1 }
 "###,
     ),
     (
+        Code::E201,
+        r###"space Ball
+kind K @Ball (pose: xf@Ball>World) {
+  trace(p) = sphere(p - [0,0,0]@Ball, 0.5)
+  material(p,n) = ggx(rgb(0.5), 0.5, 0)
+}
+build { emit K(pose: place([1e20,0,0]@World)) }
+"###,
+        r###"error[E201]: row 0: the world bound has no finite positive extent on every axis
+  --> case.loft:2:6
+   |
+  2 | kind K @Ball (pose: xf@Ball>World) {
+   |      ^
+   = fix: give the shape finite extents and place it close enough to the origin to preserve them in f32
+"###,
+    ),
+    (
         Code::E210,
         r###"space World Local
 kind K @Local (pose: xf@Local>World, r: f = 1) {
@@ -201,6 +218,27 @@ fn slope(t: f) -> f = bump'(t)
 "###,
     ),
     (
+        Code::E308,
+        r###"space Ball
+scan curve u in 0..1 by 4 on bake_lut {
+  init = frame([0,0,0]@Ball, dir([0,0,0]@Ball), dir([0,1,0]@Ball))
+  step prev = prev
+}
+kind K @Ball (pose: xf@Ball>World) {
+  trace(p) = sphere(p - [0,0,0]@Ball, 0.5)
+  material(p,n) = ggx(rgb(0.5), 0.5, 0)
+}
+build { emit K(pose: place([0,0,0]@World)) }
+"###,
+        r###"error[E308]: scan `curve` has a degenerate frame at knot 0
+  --> case.loft:3:10
+   |
+  3 |   init = frame([0,0,0]@Ball, dir([0,0,0]@Ball), dir([0,1,0]@Ball))
+   |          ^^^^^
+   = fix: supply a finite nonzero tangent and an independent normal at this knot
+"###,
+    ),
+    (
         Code::E401,
         r###"space World Local
 kind K[length: m] @Local (pose: xf@Local>World, r: f = 1) {
@@ -260,12 +298,12 @@ kind K @Local (pose: xf@Local>World, r: f = 1) {
 }
 build { emit K(pose: place([0,0,0]@World)) }
 "###,
-        r###"error[E404]: `emit` appends a row at stage 0 and runs only inside a `comptime fn`
+        r###"error[E404]: `emit` appends a row at build time
   --> case.loft:3:14
    |
   3 |   trace(p) { emit K(pose: pose); 1.0 }
    |              ^^^^
-   = fix: call a `comptime fn` from the schedule's rows pass and emit there
+   = fix: move the emit into a `build` block or a `build fn`
 "###,
     ),
     (

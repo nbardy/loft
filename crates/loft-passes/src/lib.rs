@@ -408,6 +408,24 @@ pub(crate) fn unit(v: [f32; 3]) -> [f32; 3] {
 fn rot(r: &eval::Rigid, v: [f32; 3]) -> [f32; 3] {
     [0, 1, 2].map(|i| r.r[i][0] * v[0] + r.r[i][1] * v[1] + r.r[i][2] * v[2])
 }
+/// The proxy and the culling table both read this box in world-space f32.
+fn world_bound(d: &lip::Derived, pose: &eval::Rigid, row: usize, span: Span) -> Res<[[f32; 3]; 2]> {
+    let (mut lo, mut hi) = ([f32::INFINITY; 3], [f32::NEG_INFINITY; 3]);
+    for corner in 0..8 {
+        let q = std::array::from_fn(|i| if corner >> i & 1 == 0 { d.lo[i] as f32 } else { d.hi[i] as f32 });
+        let w = rot(pose, q);
+        for i in 0..3 {
+            let x = w[i] + pose.t[i];
+            lo[i] = lo[i].min(x);
+            hi[i] = hi[i].max(x);
+        }
+    }
+    if (0..3).any(|i| !(lo[i].is_finite() && hi[i].is_finite() && lo[i] < hi[i])) {
+        return Err(Diag::new(Code::E201, span, format!("row {row}: the world bound has no finite positive extent on every axis"),
+            "give the shape finite extents and place it close enough to the origin to preserve them in f32"));
+    }
+    Ok([lo, hi])
+}
 fn v3<S: eval::Scalar>(x: [f32; 3]) -> Val<S> {
     Val::V(x.iter().map(|c| S::c(f64::from(*c))).collect(), 0.0)
 }
@@ -933,20 +951,27 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
             if n < 4 || n > 65_536 || hi <= lo {
                 return Err(Diag::new(Code::E602, sc.name.span, "a scan needs 4 to 65,536 steps over a range lo < hi", "fix `steps` or the range"));
             }
-            let frame = |v: Val<f32>, span: Span| -> Res<[f32; 12]> {
-                match v {
-                    Val::V(c, _) if c.len() == 12 && c.iter().all(|x| x.is_finite()) => Ok(std::array::from_fn(|i| c[i])),
-                    other => Err(Diag::new(Code::E701, span, format!("the scan produced {other:?}"), "keep the step's frame finite (a zero tangent cannot be normalised)")),
+            let frame = |v: Val<f32>, span: Span, knot: usize| -> Res<[f32; 12]> {
+                let Val::V(words, _) = v else { unreachable!("checked frame type") };
+                let axes: [f32; 12] = words.try_into().expect("frame layout");
+                let [_, _, _, tx, ty, tz, nx, ny, nz, bx, by, bz] = axes.map(f64::from);
+                let volume = tx*(ny*bz - nz*by) + ty*(nz*bx - nx*bz) + tz*(nx*by - ny*bx);
+                if axes.iter().all(|x| x.is_finite()) && volume != 0.0 {
+                    Ok(axes)
+                } else {
+                    Err(Diag::new(Code::E308, span,
+                        format!("scan `{}` has a degenerate frame at knot {knot}", sc.name.name),
+                        "supply a finite nonzero tangent and an independent normal at this knot"))
                 }
             };
             ev.bind(&sc.var.name, Val::S(lo));
-            let mut frames = vec![frame(ev.expr(&sc.init)?, sc.init.span)?];
+            let mut frames = vec![frame(ev.expr(&sc.init)?, sc.init.span, 0)?];
             ev.unbind();
             for i in 1..n {
                 let t = lo + (hi - lo) * i as f32 / (n - 1) as f32;
                 ev.bind(&sc.prev.name, Val::V(frames[i - 1].to_vec(), 0.0));
                 ev.bind(&sc.at.name, Val::S(t));
-                frames.push(frame(ev.expr(&sc.step)?, sc.step.span)?);
+                frames.push(frame(ev.expr(&sc.step)?, sc.step.span, i)?);
                 ev.unbind();
                 ev.unbind();
             }
@@ -1170,20 +1195,11 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
         }
         for (r, row) in rows.iter().enumerate() {
             let d = &derived[shape_of[r]];
-            // World bound: the local bound's eight corners through the row's rigid pose.
-            let (mut lo, mut hi) = ([f32::INFINITY; 3], [f32::NEG_INFINITY; 3]);
-            let x = match pose.map(|i| &row[i]) {
+            let pose = match pose.map(|i| &row[i]) {
                 Some(RowVal::X(x)) => *x,
                 _ => eval::Rigid::yaw([0.0; 3], 0.0),
             };
-            for c in 0..8 {
-                let q = [0, 1, 2].map(|i| if c >> i & 1 == 0 { d.lo[i] as f32 } else { d.hi[i] as f32 });
-                let w = rot(&x, q);
-                for i in 0..3 {
-                    lo[i] = lo[i].min(w[i] + x.t[i]);
-                    hi[i] = hi[i].max(w[i] + x.t[i]);
-                }
-            }
+            let [lo, hi] = world_bound(d, &pose, r, k.name.span)?;
             pack(row, &mut words);
             words.extend(lo);
             words.extend(hi);
