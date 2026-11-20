@@ -1,6 +1,8 @@
 //! A single render-kind tape. Motion and raw shader code stay in Tier 1.
 #[path = "tier0_author.rs"]
 mod author;
+#[path = "tier0/plan.rs"]
+mod plan;
 pub use author::{TAPE_BYTES, TraceEdit, authored_trace};
 #[path = "tier0/session.rs"]
 mod session;
@@ -179,12 +181,38 @@ impl Tape {
     }
 
     pub fn run(&self, resources: &Resources<'_>) -> Result<V, TapeError> {
+        Self::run_code(&self.0, resources, [[0.; 4]; REGISTERS])
+    }
+
+    fn fold(op: Op, imm: u16, n: usize, args: [V; 3]) -> V {
+        let mut registers = [[0.; 4]; REGISTERS];
+        registers[..3].copy_from_slice(&args);
+        let imm = if n == 3 { 2 } else { imm };
+        Self::run_code(
+            &[(op, 3, 0, 1, imm), (Op::Ret, 0, 3, 0, 0)],
+            &Resources {
+                constants: &[],
+                row: &[],
+                inputs: &[],
+                frame: &[],
+                lut: &[],
+                textures: &[],
+            },
+            registers,
+        )
+        .expect("pure constant arithmetic")
+    }
+
+    fn run_code(
+        code: &[(Op, u8, u8, u8, u16)],
+        resources: &Resources<'_>,
+        mut regs: [V; REGISTERS],
+    ) -> Result<V, TapeError> {
         use Op::*;
-        let mut regs = [[0.; 4]; REGISTERS];
         let mut pc = 0;
         let mut loops = Vec::new();
         loop {
-            let (op, dst, a, b, imm) = self.0[pc];
+            let (op, dst, a, b, imm) = code[pc];
             let [a, b, c] = [a, b, (imm & 31) as u8].map(|r| regs[r as usize]);
             let imm = usize::from(imm);
             let get = |data: &[V]| data.get(imm).copied().ok_or(TapeError::Resource(pc));

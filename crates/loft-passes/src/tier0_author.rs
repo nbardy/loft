@@ -1,5 +1,5 @@
-//! Checked render queries lower to the frozen tape, with a direct residual
-//! when the result is one certified sphere.
+//! Checked render queries lower to the frozen tape. Residuals stage certified
+//! combinations before the first position-dependent sample.
 use crate::{Compiled, Prog, check::Ck};
 use loft_abi::Tier0Opcode as Op;
 use loft_ir::{Code, Diag, Res, Span};
@@ -7,139 +7,17 @@ use loft_parse::ast::*;
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
+use super::plan::{HEADER, Plan, TREES};
 use super::{Instruction, MAX_WORDS, VM_OPERATIONS, allocate};
 
-const CONSTANTS: usize = 2048;
-const HEADER: usize = 6;
-pub const TAPE_BYTES: u64 = ((HEADER + MAX_WORDS + CONSTANTS * 4) * 4) as u64;
-
-#[derive(Clone, Copy, Debug)]
-pub(super) enum Operand {
-    Zero,
-    Constant(u16),
-    Row(u16),
-    Frame(u16),
-}
-
-impl Operand {
-    fn encode(self) -> [u32; 2] {
-        match self {
-            Self::Zero => [0, 0],
-            Self::Constant(i) => [1, u32::from(i)],
-            Self::Row(i) => [2, u32::from(i)],
-            Self::Frame(i) => [3, u32::from(i)],
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(super) enum Residual {
-    Tape,
-    Sphere { center: Operand, radius: Operand },
-    Box { center: Operand, half: Operand },
-}
-
-#[derive(Clone, Copy)]
-enum Value {
-    Unknown,
-    Uniform(Operand),
-    Point(Operand),
-    Distance(Residual),
-}
-
-impl Residual {
-    fn from_code(code: &[Instruction], constants: &mut Vec<[f32; 4]>) -> Self {
-        let mut values = vec![Value::Unknown; code.len()];
-        let mut loops = Vec::<(usize, u32)>::new();
-        let mut pc = 0;
-        // Only values proved independent of both the sample position and the
-        // row/frame data can be folded. The original tape still records loops.
-        while let Some(ins) = code.get(pc) {
-            let [a, b, _] = ins.args.map(|i| values[i as usize]);
-            let constant = |v| match v {
-                Value::Uniform(Operand::Constant(i)) => Some(constants[usize::from(i)]),
-                _ => None,
-            };
-            let value = match (ins.op, a, b) {
-                (Op::LoadConst, ..) => Value::Uniform(Operand::Constant(ins.imm)),
-                (Op::LoadRow, ..) => Value::Uniform(Operand::Row(ins.imm)),
-                (Op::LoadFrame, ..) => Value::Uniform(Operand::Frame(ins.imm)),
-                (Op::LoadInput, ..) => Value::Point(Operand::Zero),
-                (Op::Mov, a, _) => a,
-                (Op::Sub, Value::Point(Operand::Zero), Value::Uniform(center)) => {
-                    Value::Point(center)
-                }
-                (Op::SdSphere, Value::Point(center), Value::Uniform(radius)) => {
-                    Value::Distance(Self::Sphere { center, radius })
-                }
-                (Op::SdBox, Value::Point(center), Value::Uniform(half)) => {
-                    Value::Distance(Self::Box { center, half })
-                }
-                (Op::Ret, Value::Distance(residual), _) => return residual,
-                (Op::Ret, ..) => return Self::Tape,
-                (Op::LoopBegin, a, _) => {
-                    let Some(trips) = constant(a) else {
-                        return Self::Tape;
-                    };
-                    loops.push((pc, trips[0] as u32));
-                    Value::Unknown
-                }
-                (Op::LoopEnd, ..) => {
-                    let Some((start, trips)) = loops.last_mut() else {
-                        return Self::Tape;
-                    };
-                    *trips -= 1;
-                    if *trips != 0 {
-                        pc = *start + 1;
-                        continue;
-                    }
-                    loops.pop();
-                    Value::Unknown
-                }
-                (op @ (Op::Add | Op::Sub | Op::Mul | Op::Div), a, b) => {
-                    match (constant(a), constant(b)) {
-                        (Some(a), Some(b)) => {
-                            let v = std::array::from_fn(|i| match op {
-                                Op::Add => a[i] + b[i],
-                                Op::Sub => a[i] - b[i],
-                                Op::Mul => a[i] * b[i],
-                                Op::Div => a[i] / b[i],
-                                _ => unreachable!("classified arithmetic"),
-                            });
-                            if constants.len() == CONSTANTS || !v.into_iter().all(f32::is_finite) {
-                                return Self::Tape;
-                            }
-                            let slot = constants.len() as u16;
-                            constants.push(v);
-                            Value::Uniform(Operand::Constant(slot))
-                        }
-                        _ => Value::Unknown,
-                    }
-                }
-                _ => Value::Unknown,
-            };
-            values[ins.dst as usize] = value;
-            pc += 1;
-        }
-        Self::Tape
-    }
-
-    fn encode(self) -> [u32; 5] {
-        let (op, center, extent) = match self {
-            Self::Tape => return [0; 5],
-            Self::Sphere { center, radius } => (Op::SdSphere, center, radius),
-            Self::Box { center, half } => (Op::SdBox, center, half),
-        };
-        let [ck, cs] = center.encode();
-        let [ek, es] = extent.encode();
-        [op as u32, ck, cs, ek, es]
-    }
-}
+pub(super) const CONSTANTS: usize = 2048;
+pub const TAPE_BYTES: u64 = ((HEADER + MAX_WORDS * 3 + CONSTANTS * 4) * 4) as u64;
 
 pub struct TraceEdit {
     pub(super) words: Vec<u32>,
     pub(super) constants: Vec<[f32; 4]>,
-    pub(super) residual: Residual,
+    pub(super) proof_constants: Vec<Option<[f64; 4]>>,
+    pub(super) plan: Plan,
     pub(super) shader: String,
     pub(super) slots: Vec<usize>,
 }
@@ -150,20 +28,22 @@ pub(super) fn unsupported(span: Span, reason: &str) -> Diag {
 
 impl TraceEdit {
     pub fn bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(TAPE_BYTES as usize);
-        let header = std::iter::once(self.words.len() as u32).chain(self.residual.encode());
-        bytes.extend(
-            header
-                .chain(self.words.iter().copied())
-                .flat_map(u32::to_le_bytes),
-        );
-        bytes.resize((HEADER + MAX_WORDS) * 4, 0);
+        let mut header = [0; HEADER];
+        header[0] = self.words.len() as u32;
+        header[2] = (HEADER + self.words.len()) as u32;
+        header[3] = header[2] + self.constants.len() as u32 * 4;
+        let mut bytes = vec![0; HEADER * 4];
+        bytes.extend(self.words.iter().flat_map(|w| w.to_le_bytes()));
         bytes.extend(
             self.constants
                 .iter()
                 .flatten()
                 .flat_map(|v| v.to_le_bytes()),
         );
+        self.plan.encode(&mut header, &mut bytes);
+        for (out, word) in bytes.chunks_exact_mut(4).zip(header) {
+            out.copy_from_slice(&word.to_le_bytes());
+        }
         bytes
     }
 
@@ -172,20 +52,21 @@ impl TraceEdit {
     }
 
     pub fn describe(&self) -> String {
-        let registers = self
-            .words
-            .iter()
-            .filter_map(|&word| Op::unpack(word))
-            .filter(|(op, ..)| super::operands(*op).1)
-            .map(|(_, dst, ..)| usize::from(dst) + 1)
-            .max()
-            .unwrap_or(0);
+        let registers = live_registers(&self.words);
         let ids: Vec<_> = self.words.iter().map(|word| word >> 26).collect();
-        format!(
-            "{:?}, opcodes {ids:?}, live vec4 registers {registers}",
-            self.residual
-        )
+        let plan = self.plan.describe();
+        format!("{plan}, opcodes {ids:?}, live vec4 registers {registers}")
     }
+}
+
+pub(super) fn live_registers(words: &[u32]) -> usize {
+    words
+        .iter()
+        .map(|&word| Op::unpack(word).expect("validated tape"))
+        .filter(|(op, ..)| super::operands(*op).1)
+        .map(|(_, dst, ..)| usize::from(dst) + 1)
+        .max()
+        .unwrap_or(0)
 }
 
 /// A checked library closure, identified by its existing source certificate.
@@ -193,6 +74,10 @@ impl TraceEdit {
 pub(super) struct Certificates(BTreeMap<&'static str, Op>);
 
 impl Certificates {
+    pub(super) fn is_primitive(&self, name: &str) -> bool {
+        self.0.contains_key(name)
+    }
+
     pub(super) fn new(p: &Prog<'_>) -> Res<Self> {
         let mut ops = BTreeMap::new();
         for (name, op, hash) in [
@@ -275,13 +160,13 @@ pub(super) fn lower_trace(
         row: &row.name.name,
         code: vec![],
         constants: vec![],
+        proof_constants: vec![],
         depth: 0,
         certificates,
     };
     let point_reg = lower.push(Op::LoadInput, &[], 0, point.name.span)?;
     let out = lower.function(f, BTreeMap::from([(point.name.name.as_str(), point_reg)]))?;
     lower.push(Op::Ret, &[out], 0, f.name.span)?;
-    let residual = Residual::from_code(&lower.code, &mut lower.constants);
     let words = allocate(&lower.code).map_err(|err| {
         Diag::new(
             Code::E602,
@@ -290,27 +175,28 @@ pub(super) fn lower_trace(
             "simplify the query or use its Tier 1 shader",
         )
     })?;
+    let plan = Plan::new(
+        &lower.code,
+        &words,
+        &mut lower.constants,
+        &mut lower.proof_constants,
+    );
     Ok(TraceEdit {
         words,
+        proof_constants: lower.proof_constants,
         constants: lower.constants,
         slots,
-        residual,
+        plan,
         shader: String::new(),
     })
 }
 
 pub(super) fn shader_queries(prog: &Prog<'_>, kind: &KindDecl, tape: &TraceEdit) -> Res<String> {
     let mut out = format!(
-        "struct TierContext {{ base: u32, row: array<vec4f, {}>, clock: vec4f }}\n",
+        "struct TierContext {{ base: u32, constant: u32, plan: u32, end: u32, split: u32, row: array<vec4f, {}>, clock: vec4f }}\n",
         tape.slots.len().max(1),
     );
-    let const_base = HEADER + MAX_WORDS;
-    writeln!(
-        out,
-        "const TIER_CONST: u32 = {const_base}u; const TIER_HEADER: u32 = {HEADER}u;"
-    )
-    .unwrap();
-    out.push_str("fn tier_stage(row: Row, base: u32) -> TierContext {\n  var ctx: TierContext;\n  ctx.base = base;\n  ctx.clock = vec4f(frame.eye.w);\n");
+    out.push_str("fn tier_stage(row: Row, base: u32) -> TierContext {\n  var ctx: TierContext;\n  ctx.base = base;\n  ctx.constant = base + tier_meta(base, 2u);\n  ctx.plan = tier_meta(base, 3u);\n  ctx.end = tier_meta(base, 4u);\n  ctx.split = tier_meta(base, 5u);\n  ctx.clock = vec4f(frame.eye.w);\n");
     let mut types = vec![];
     let ck = Ck::new(prog, &mut types);
     for (slot, &field) in tape.slots.iter().enumerate() {
@@ -326,26 +212,170 @@ pub(super) fn shader_queries(prog: &Prog<'_>, kind: &KindDecl, tape: &TraceEdit)
     }
     out.push_str("  return ctx;\n}\n");
     out.push_str(VM_OPERATIONS);
+    let (_, runner) = VM_OPERATIONS.split_once("fn tier_run(").expect("shared VM");
+    out.push_str("fn tier_run_cached(");
+    out.push_str(&runner.replace("tier_decoded(ctx, pc)", "tier_decoded_cached(ctx, pc)"));
     out.push_str(include_str!("tier0/render.wgsl"));
-    for (suffix, arg, eval) in [
+
+    let mut evals = vec![
         (
-            "sphere",
-            "shape: TierShape",
-            "tier_sphere({point} - shape.center, shape.extent.x)",
+            "sphere".to_owned(),
+            "shape: TierField",
+            "tier_sphere({point} - shape.center, shape.extent.x)".to_owned(),
         ),
         (
-            "box",
-            "shape: TierShape",
-            "tier_box({point} - shape.center, shape.extent)",
+            "box".to_owned(),
+            "shape: TierField",
+            "tier_box({point} - shape.center, shape.extent)".to_owned(),
         ),
-        ("tape", "ctx: TierContext", "tier_eval(ctx, {point}).x"),
-    ] {
-        let march = eval.replace("{point}", "ro + rd * t");
-        let shade = eval.replace("{point}", "q");
-        write!(
+    ];
+    for (shape, code) in TREES.iter().enumerate() {
+        let mut leaves = 0;
+        let mut joins = 0;
+        let expr = tree_expression(&mut code.bytes(), &mut leaves, &mut joins);
+        writeln!(
             out,
-            r"
+            "struct TierTree{shape} {{ mask: u32, {} }}",
+            (0..leaves)
+                .map(|i| format!("f{i}: TierField"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+        .unwrap();
+        let fields = (0..leaves)
+            .map(|i| format!("tier_field(ctx, {}u)", 6 + i * 5))
+            .collect::<Vec<_>>()
+            .join(", ");
+        writeln!(out, "fn tier_tree_{shape}(ctx: TierContext) -> TierTree{shape} {{ return TierTree{shape}(tier_meta(ctx.base, 5u), {fields}); }}").unwrap();
+        writeln!(
+            out,
+            "fn tier_distance_{shape}(s: TierTree{shape}, p: vec3f) -> f32 {{ return {expr}; }}"
+        )
+        .unwrap();
+        evals.push((
+            format!("tree{shape}"),
+            "",
+            format!("tier_distance_{shape}(shape, {{point}})"),
+        ));
+    }
+    for (i, (suffix, arg, eval)) in evals.iter().enumerate() {
+        let arg = if i >= 2 {
+            format!("shape: TierTree{}", i - 2)
+        } else {
+            (*arg).to_owned()
+        };
+        emit_queries(&mut out, suffix, &arg, eval, eval, "", true);
+    }
+    let sample = "tier_eval(ctx, {point}, staged).x";
+    let shade = "tier_eval_cached(ctx, {point}, staged).x";
+    emit_queries(
+        &mut out,
+        "tape",
+        "ctx: TierContext",
+        sample,
+        shade,
+        "let staged = tier_prepare",
+        false,
+    );
+
+    for (name, args, ret) in [
+        (
+            "q_trace",
+            "point: vec3f",
+            "tier_eval(ctx, point, tier_prepare(ctx)).x",
+        ),
+        (
+            "loft_edit_march",
+            "ro: vec3f, rd: vec3f, span: vec2f",
+            "tier_march_tape(ctx, ro, rd, span, row.loft_lip)",
+        ),
+        (
+            "loft_edit_normal_ao",
+            "p: vec3f, t: f32",
+            "tier_shade_tape(ctx, p, t)",
+        ),
+    ] {
+        writeln!(out, "fn {name}(row: Row, {args}) -> {} {{ let ctx = tier_stage(row, kp.n_rows * STRIDE); switch tier_meta(ctx.base, 1u) {{",
+            if name == "loft_edit_normal_ao" { "vec4f" } else { "f32" }).unwrap();
+        writeln!(out, "case 0u: {{ return {ret}; }}").unwrap();
+        for (i, (suffix, _, eval)) in evals.iter().enumerate() {
+            let setup = if i < 2 {
+                "tier_field(ctx, 6u)".to_owned()
+            } else {
+                format!("tier_tree_{}(ctx)", i - 2)
+            };
+            let call = match name {
+                "q_trace" => eval.replace("{point}", "point"),
+                "loft_edit_march" => {
+                    format!("tier_march_{suffix}(shape, ro, rd, span, row.loft_lip)")
+                }
+                _ => format!("tier_shade_{suffix}(shape, p, t)"),
+            };
+            writeln!(
+                out,
+                "case {}u: {{ let shape = {setup}; return {call}; }}",
+                i + 1
+            )
+            .unwrap();
+        }
+        let invalid = if name == "loft_edit_normal_ao" {
+            "vec4f(bitcast<f32>(0x7fc00000u))"
+        } else {
+            "bitcast<f32>(0x7fc00000u)"
+        };
+        writeln!(out, "default: {{ return {invalid}; }} }} }}").unwrap();
+    }
+    Ok(out)
+}
+
+fn tree_expression(
+    chars: &mut impl Iterator<Item = u8>,
+    leaves: &mut usize,
+    joins: &mut usize,
+) -> String {
+    match chars.next().expect("prewarmed tree shape") {
+        b'x' => {
+            let field = *leaves;
+            *leaves += 1;
+            format!("tier_field_distance(s.f{field}, p)")
+        }
+        b'(' => {
+            let a = tree_expression(chars, leaves, joins);
+            let b = tree_expression(chars, leaves, joins);
+            assert_eq!(chars.next(), Some(b')'));
+            let join = *joins;
+            *joins += 1;
+            format!("tier_join({a}, {b}, (s.mask & {}u) != 0u)", 1 << join)
+        }
+        _ => unreachable!("prewarmed tree alphabet"),
+    }
+}
+
+fn emit_queries(
+    out: &mut String,
+    suffix: &str,
+    arg: &str,
+    march: &str,
+    shade: &str,
+    stage: &str,
+    fused: bool,
+) {
+    let march = march.replace("{point}", "ro + rd * t");
+    let setup = if stage.is_empty() {
+        String::new()
+    } else {
+        format!("{stage}(ctx);")
+    };
+    let setup_cached = if stage.is_empty() {
+        String::new()
+    } else {
+        format!("{stage}_cached(ctx);")
+    };
+    write!(
+        out,
+        r"
 fn tier_march_{suffix}({arg}, ro: vec3f, rd: vec3f, span: vec2f, lip: f32) -> f32 {{
+    {setup}
     var t = max(span.x, 0.0);
     let step = 1.0 / lip;
     for (var i = 0u; i < 192u; i++) {{
@@ -357,29 +387,58 @@ fn tier_march_{suffix}({arg}, ro: vec3f, rd: vec3f, span: vec2f, lip: f32) -> f3
     return -1.0;
 }}
 fn tier_shade_{suffix}({arg}, p: vec3f, t: f32) -> vec4f {{
+    {setup_cached}
     let e = 5e-4 * max(1.0, 0.25 * t);
     var g = vec3f(0.0);
-    var n = vec3f(0.0, 1.0, 0.0);
-    var occ = 0.0;
-    var w = 1.0;
-    for (var i = 0u; i < 9u; i++) {{
-        var q = p + LOFT_TETRA[min(i, 3u)] * e;
-        var h = 0.0;
-        if i >= 4u {{
-            if i == 4u {{ n = normalize(g); }}
-            h = 0.02 + 0.06 * f32(i - 4u);
-            q = p + n * h;
-        }}
-        let d = {shade};
-        if i < 4u {{ g += LOFT_TETRA[i] * d; }} else {{ occ += (h - d) * w; w *= 0.8; }}
-    }}
-    return vec4f(n, clamp(1.0 - 2.0 * occ, 0.0, 1.0));
-}}
 "
+    )
+    .unwrap();
+
+    // A fused field has no sample scratch bank. Issue its independent taps
+    // before the ordered reduction, then take the AO taps along that normal.
+    if fused {
+        for i in 0..4 {
+            let call = shade.replace("{point}", &format!("p + LOFT_TETRA[{i}] * e"));
+            writeln!(out, "    let d{i} = {call};").unwrap();
+        }
+        for i in 0..4 {
+            writeln!(out, "    g += LOFT_TETRA[{i}] * d{i};").unwrap();
+        }
+    } else {
+        let call = shade.replace("{point}", "p + LOFT_TETRA[i] * e");
+        writeln!(
+            out,
+            "    for (var i = 0u; i < 4u; i++) {{ g += LOFT_TETRA[i] * {call}; }}"
         )
         .unwrap();
     }
-    Ok(out)
+    out.push_str(
+        "    let n = normalize(g);
+    var occ = 0.0;
+    var w = 1.0;
+",
+    );
+    if fused {
+        for i in 0..5 {
+            let call = shade.replace("{point}", &format!("p + n * h{i}"));
+            writeln!(
+                out,
+                "    let h{i} = 0.02 + 0.06 * f32({i}u); let ao{i} = {call};"
+            )
+            .unwrap();
+        }
+        for i in 0..5 {
+            writeln!(out, "    occ += (h{i} - ao{i}) * w; w *= 0.8;").unwrap();
+        }
+    } else {
+        let call = shade.replace("{point}", "p + n * h");
+        writeln!(out, "    for (var i = 0u; i < 5u; i++) {{ let h = 0.02 + 0.06 * f32(i); occ += (h - {call}) * w; w *= 0.8; }}").unwrap();
+    }
+    out.push_str(
+        "    return vec4f(n, clamp(1.0 - 2.0 * occ, 0.0, 1.0));
+}
+",
+    );
 }
 
 struct Lower<'a, 'p> {
@@ -390,6 +449,7 @@ struct Lower<'a, 'p> {
     certificates: &'a Certificates,
     code: Vec<Instruction>,
     constants: Vec<[f32; 4]>,
+    proof_constants: Vec<Option<[f64; 4]>>,
     depth: usize,
 }
 
@@ -418,12 +478,14 @@ impl<'a> Lower<'a, '_> {
         Ok(())
     }
 
-    fn constant(&mut self, value: [f32; 4], span: Span) -> Res<u32> {
+    fn constant(&mut self, proof: [f64; 4], span: Span) -> Res<u32> {
+        let value = proof.map(|x| x as f32);
         if self.constants.len() == CONSTANTS || !value.into_iter().all(f32::is_finite) {
             return Err(unsupported(span, "trace tape constant limit"));
         }
         let i = self.constants.len() as u16;
         self.constants.push(value);
+        self.proof_constants.push(Some(proof));
         self.push(Op::LoadConst, &[], i, span)
     }
 
@@ -532,10 +594,10 @@ impl<'a> Lower<'a, '_> {
                     if trips == 0 {
                         continue;
                     }
-                    let start = self.constant([lo as f32; 4], *span)?;
+                    let start = self.constant([f64::from(lo); 4], *span)?;
                     let index = self.push(Op::Mov, &[start], 0, *span)?;
                     let one = self.constant([1.; 4], *span)?;
-                    let count = self.constant([trips as f32; 4], *span)?;
+                    let count = self.constant([f64::from(trips); 4], *span)?;
                     let entry = self.push(Op::LoopBegin, &[count], 0, *span)?;
                     let mut local = vars.clone();
                     local.insert(&var.name, index);
@@ -579,7 +641,7 @@ impl<'a> Lower<'a, '_> {
                 } else {
                     *value
                 };
-                self.constant([value as f32; 4], span)
+                self.constant([value; 4], span)
             }
             ExprKind::Unary(UnOp::Neg, x) => {
                 let x = self.expr(x, vars)?;
@@ -613,7 +675,7 @@ impl<'a> Lower<'a, '_> {
                 };
                 self.push(op, &args, 0, span)
             }
-            ExprKind::Bool(value) => self.constant([f32::from(*value); 4], span),
+            ExprKind::Bool(value) => self.constant([if *value { 1. } else { 0. }; 4], span),
             ExprKind::If {
                 condition,
                 then,
@@ -650,7 +712,8 @@ impl<'a> Lower<'a, '_> {
                 let mut regs = vec![];
                 for (i, arg) in args.iter().enumerate() {
                     let v = self.expr(&arg.value, vars)?;
-                    let mask = self.constant(std::array::from_fn(|j| f32::from(j == i)), span)?;
+                    let mask =
+                        self.constant(std::array::from_fn(|j| if j == i { 1. } else { 0. }), span)?;
                     regs.push(self.push(Op::Mul, &[v, mask], 0, span)?);
                 }
                 let mut out = regs[0];

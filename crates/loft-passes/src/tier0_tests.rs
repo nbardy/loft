@@ -245,7 +245,7 @@ fn l23a_vm_validates_and_dispatches_all_frozen_ids() {
     let vm = module
         .functions
         .iter()
-        .find(|(_, f)| f.name.as_deref() == Some("tier_eval"))
+        .find(|(_, f)| f.name.as_deref() == Some("tier_run"))
         .unwrap()
         .1;
     let mut cases = Vec::new();
@@ -376,4 +376,84 @@ build { emit K(pose: place([0, 0, 0]@World), radius: 0.5) }",
         let reference = twin.cpu_query(0, 0, [x, y, z], [1., 0., 0.]).unwrap();
         assert_close(value, [reference.trace; 4], "E+ trace");
     }
+}
+
+#[test]
+fn staged_point_arithmetic_preserves_row_frame_and_input_dependencies() {
+    use super::plan::Plan;
+    use Op::*;
+
+    let code = [
+        (LoadRow, [0, 0, 0]),
+        (LoadFrame, [0, 0, 0]),
+        (Add, [0, 1, 0]),
+        (LoadInput, [0, 0, 0]),
+        (Add, [2, 3, 0]),
+        (Ret, [4, 0, 0]),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(i, (op, args))| Instruction {
+        op,
+        args,
+        dst: i as u32,
+        imm: 0,
+    })
+    .collect::<Vec<_>>();
+    let wire = allocate(&code).unwrap();
+    let Plan::Run {
+        words,
+        prefix: 3,
+        staged: true,
+    } = Plan::new(&code, &wire, &mut Vec::new(), &mut Vec::new())
+    else {
+        panic!("a row/frame expression should precede all sample work");
+    };
+    let staged = Tape::new(&words).unwrap();
+    let original = Tape::new(&wire).unwrap();
+    for row in [[0.; 4], [3.; 4]] {
+        for frame in [[0.; 4], [-5.; 4]] {
+            for input in [[0.; 4], [2.; 4]] {
+                let resources = Resources {
+                    constants: &[],
+                    row: &[row],
+                    inputs: &[input],
+                    frame: &[frame],
+                    lut: &[],
+                    textures: &[],
+                };
+                assert_eq!(staged.run(&resources), original.run(&resources));
+            }
+        }
+    }
+}
+
+#[test]
+fn loop_targets_preserve_zero_and_maximum_author_trip_count() {
+    use Op::*;
+    let word = |op, dst, a, b, imm| Op::pack(op, dst, a, b, imm).unwrap();
+    let words = [
+        word(LoadConst, 0, 0, 0, 0),
+        word(LoadConst, 1, 0, 0, 1),
+        word(LoadConst, 2, 0, 0, 2),
+        word(LoopBegin, 0, 0, 0, 5),
+        word(Add, 1, 1, 2, 0),
+        word(LoopEnd, 0, 0, 0, 3),
+        word(Ret, 0, 1, 0, 0),
+    ];
+    let tape = Tape::new(&words).unwrap();
+    for trips in [0., 1., 2048.] {
+        let resources = Resources {
+            constants: &[[trips; 4], [2.; 4], [1.; 4]],
+            row: &[],
+            inputs: &[],
+            frame: &[],
+            lut: &[],
+            textures: &[],
+        };
+        assert_eq!(tape.run(&resources), Ok([2. + trips; 4]));
+    }
+    let mut bad = words;
+    bad[3] = word(LoopBegin, 0, 0, 0, 6);
+    assert!(matches!(Tape::new(&bad), Err(TapeError::Loop(5))));
 }

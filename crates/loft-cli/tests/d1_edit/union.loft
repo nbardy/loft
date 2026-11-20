@@ -1,0 +1,6 @@
+kind EditSphere @World (shift: p3@World) {
+  trace(p) = min(sphere(p - shift, 0.64), sphere(p - [0.43, 0, 0]@World, 0.27))
+  material(p, n) = ggx([0.38, 0.62, 0.8], 0.48, 0.12)
+}
+build { emit EditSphere(shift: [0.0, 0.0, 0.0]@World) }
+camera Main { at: [0, 0, 0]@World, radius: 3.6, height: 0.8, period: 24, fov: 40deg }
