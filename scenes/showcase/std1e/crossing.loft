@@ -1,0 +1,58 @@
+use stdlib::motion::body::{Walker, walker, planted}
+use stdlib::motion::gait::{step, present, support_cases}
+use stdlib::engines::act::{act_crouch, act_ballistic}
+use stdlib::styles::woodblock as ink
+use stdlib::post::display::{paper_grain}
+use stdlib::sky::environment::*
+use stdlib::lighting::emitters
+use stdlib::materials::bsdf::{ggx}
+use stdlib::sdf::solid::{box_sdf, sphere}
+
+const deck_speed = 0.29
+kind Ferry @World () {
+  trace(p) = box_sdf(p - [clamp(time, 0.0, 4.0) * deck_speed, -0.15, 0.0]@World, [1.55, 0.104, 1.02])
+  material(p, n) {
+    let seam = abs(fract(p.z * 6.0 + 0.5) - 0.5)
+    ggx(mix([0.16, 0.13, 0.092], [0.49, 0.35, 0.20], smoothstep(0.015, 0.04, seam)), 0.70, 0.0)
+  }
+}
+
+kind Signal @World (height: m = 0.24m) {
+  trace(p) = sphere(p - [clamp(time, 0.0, 4.0) * deck_speed + 1.28, height, -0.74]@World, 0.085)
+  material(p, n) = ggx([0.98, 0.72, 0.22], 0.38, 0.0)
+}
+
+law signal(s: Signal, dt) writes s.{height} {
+  let t = 1.4s * fract(time / 1.4s)
+  let height = if t < 0.5s { act_crouch(0.24m, 0.17m, 0.22s, 0.5s, t) }
+    else if t < 0.82s { act_ballistic(0.24m, 0.24m, 0.32s, t - 0.5s) }
+    else { 0.24m }
+  s.height = floor(height * 8192.0 + 0.5) / 8192.0
+}
+
+kind Water @World () {
+  trace(p) = box_sdf(p - [0.0, -0.36, 0.0]@World, [9.0, 0.10, 7.0])
+  material(p, n) = ggx([0.12, 0.37, 0.49], 0.62, 0.0)
+}
+
+camera Main { at: [0.52, 0.23, 0.0]@World, radius: 3.85m, height: 1.84m, period: 35s, fov: 39deg }
+build {
+  walker([0.0, 0.0, 0.0]@World, deck_speed, 0.38, 1.0, [0.81, 0.27, 0.088], 0.45m, 0.58m, 0.62m)
+  emit Ferry()
+  emit Signal()
+  emit Water()
+  emit Sun(dir: dir([0.6, 0.76, 0.27]@World), color: [2.8, 2.45, 2.05])
+  emit Sky(zenith: [0.31, 0.48, 0.65], horizon: [0.83, 0.75, 0.54])
+}
+schedule Main {
+  run_laws(step, present, signal)
+  check(planted, support_cases)
+  use_camera(Main)
+  cull_indirect(Walker, Ferry, Signal, Water)
+  render_bundle(Vis64) { draw_indirect(Walker, Ferry, Signal, Water) }
+  find_shadow_map(Walker, Ferry, Signal, size: 1024)
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: ink::woodblock_pigment, sun: [0.5, 0.75, 0.35])
+  outline_and_paper(ColorHdr)
+  tonemap_aces(ColorHdr, sky: sky_color)
+}
