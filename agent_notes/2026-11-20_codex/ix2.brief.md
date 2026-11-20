@@ -1,3 +1,5 @@
+Effort: high
+
 You are Loft's integrator. Repo ~/git/loft. You have no other context.
 
 Lanes x2a–x2e have pushed branches loft/x2a..x2e; their notes are in agent_notes/2026-11-20_v1/lanes/x2*.md.

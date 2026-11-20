@@ -20,5 +20,12 @@ The goal is Loft v1.2 fully implemented per docs/spec, every gate green on main,
    List the ids, one per line, in agent_notes/2026-11-20_codex/c__N__.lanes.
 4. **Integrator brief.** Write agent_notes/2026-11-20_codex/i__N__.brief.md, modelled on agent_notes/2026-11-20_codex/iw.brief.md: audit; merge the passing lanes onto origin/main; build once; ONE locked GPU gate; merge each lane that keeps Twin, Truth, references, mutants, wasm32 and grammar green and Speed not regressed; update OPEN.md; write out/meta/i__N__/MERGED and BLOCKED. Integrators run under the same model as you.
 5. **If nothing is left that is not owner-blocked:** write agent_notes/2026-11-20_codex/cook.DONE with a summary of what is complete and what waits on the owner, and write no lanes.
+6. **Effort.** Start every brief you write with one line, `Effort: <level>`, choosing the lowest level that fits:
+   - `low`: mechanical doc or config edits;
+   - `medium`: glue code, tools, measurement runs and demos;
+   - `high`: hard implementation such as numerics, refactors across crates, or GPU codegen;
+   - `xhigh`: design passes only.
+
+   Integrator briefs use `Effort: high`.
 
 Commit by path to main and push. Commit messages end with "Co-Authored-By: GPT (codex) <noreply@openai.com>". Final message ≤120 words: the lanes chosen and why.
