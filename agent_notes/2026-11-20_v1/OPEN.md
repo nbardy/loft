@@ -1,8 +1,31 @@
 # Open targets for v1.0-alpha
 
+## PF1 integration
+
+PF1a’s native sun-map reuse passed at `b0fdb44`. Hermit-20 used 13 commands on every timed frame and improved from 4.802 to 3.752 ms p95. All six scenes improved on the published del2 p95 measurements at `33cdcbf`. That revision and integration base `bca209d` have identical renderer, engine and fixture sources. [Gate report](../../out/meta/ipf/gate.json) · [18-frame contact sheet](../../out/meta/ipf/sheet.webp)
+
+| Scene | Main p95, ms | PF1a p95, ms | Cap, ms | Commands | Triangle p50, ms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Capsules-1 | 0.528 | 0.451 | 0.800 | 5 | 0.100 |
+| Capsules-20 | 0.961 | 0.663 | 1.100 | 5 | 0.100 |
+| Blobs-1 | 0.678 | 0.406 | 1.100 | 5 | 0.099 |
+| Blobs-20 | 1.629 | 1.079 | 2.400 | 5 | 0.099 |
+| Hermit-1 | 3.225 | 2.453 | 5.000 | 13 | 0.062 |
+| Hermit-20 | 4.802 | 3.752 | 5.600 | 13 | 0.053 |
+
+One locked Apple M4 Metal run at 1280 × 800, with 30 warmups and 300 timed frames per scene, held Twin **36/36**, Truth **34/34**, Speed **12/12** and Load **31/33**, with zero contended verdicts. Both Hermit counts created 14 pipelines against 13. Pictures held **0/18** against the frozen appearances already queued for owner review. All 18 rendered RGBA hashes matched main exactly. All nine bead frames passed their frozen comparison and matched main exactly. The before and after inventories verified 18 gate references, nine bead references and 1,510 historical beauty files. [Five-gate measurements](../../out/meta/ipf/five-gates.json) · [Bead comparisons](../../out/meta/ipf/bead/score.json)
+
+All six mutants fired. The wasm32 runner with `web-sys`, workspace doctests and both grammar recognizers passed. Earley and llguidance each classified 281/281 fixtures as expected, including the negative sentinel. The workspace build produced 25 native test executables. **153/154** tests passed. The existing runner Tier 0 promotion test measured **0.932 ms** p95 overhead against **0.500 ms**, with 0/140,000 pixels over 1/255. CLI grew from 5,357 to 5,616 physical Rust/WGSL source lines (+259). The other eight crates had zero line delta. [Native test log](../../out/meta/ipf/native.log) · [Per-crate counts](../../out/meta/ipf/lines.json)
+
+| Lane | Audit and disposition |
+| --- | --- |
+| PF1a · `e00e634` | Merged. The final paired run saved 0.709 ms median on Hermit and 0.442 ms on close Shrine. The slower candidate p95 was 4.425 and 3.211 ms respectively. Changing the sun redrew 219,448 shadow texels and produced the expected 13 → 17 → 13 command sequence. All 36 paired beauty, depth, ID and shadow comparisons matched at 0/4/9 s, including both fixed Shrine row orders. [Lane evidence](lanes/pf1a.md) |
+| PF1b · `3606613` | Held out. Two Shrine runs met both targets. The final allowed replay saved 0.236 ms Vis p50 against the 0.250 ms minimum and measured 3.826 ms frame p95 against the 3.800 ms cap. Hermit passed the absolute cap in every run and was 2.08–4.89% faster than control, outside the brief’s literal ±2% band. All 63 decoded comparisons and ten boundary cases matched. [Lane evidence](https://github.com/nbardy/loft/blob/360661374ee02b5045bff30e96cfbb8c87763c8f/agent_notes/2026-11-20_v1/lanes/pf1b.md) |
+| PF1c | Undelivered. The PF1 manifest lists only PF1a and PF1b. Origin supplied no PF1c ref, and the repository supplied no PF1c brief or lane note. [Lane manifest](../2026-11-20_codex/pf1.lanes) |
+
 ## Cook cycle 1 integration
 
-Main retains the del2 engine. C1b and C1d passed their focused promotion and replay measurements. The combined candidate `bb7e43c` missed the publication rule. Cargo discovered C1c’s integration-test target before the integrator removed that lane for a legal-loop regression. The production compiler built after removal. The stale test path stopped the single workspace build with exit 101. Its 11 emitted native test executables passed **81 tests** of 156 expected. 75 tests lack a combined result. [Build diagnostics](../../out/meta/i1/full.stderr) · [Cargo timeline](../../out/meta/i1/build-timeline.json) · [Excluded heads and metrics](../../out/meta/i1/BLOCKED)
+Cook cycle 1 retained the del2 engine. C1b and C1d passed their focused promotion and replay measurements. The combined candidate `bb7e43c` missed the publication rule. Cargo discovered C1c’s integration-test target before the integrator removed that lane for a legal-loop regression. The production compiler built after removal. The stale test path stopped the single workspace build with exit 101. Its 11 emitted native test executables passed **81 tests** of 156 expected. 75 tests lack a combined result. [Build diagnostics](../../out/meta/i1/full.stderr) · [Cargo timeline](../../out/meta/i1/build-timeline.json) · [Excluded heads and metrics](../../out/meta/i1/BLOCKED)
 
 The single Apple M4 Metal gate returned 3. Pictures held **0/18** against the approved frames. **18/18** actual RGBA hashes matched del2. Twin held **36/36**, Speed **9/12**, Load **31/33** and Truth **34/34**. All nine bead renders matched main, and the 18 gate pins, nine bead pins and 1,510 historical beauty hashes verified before and after. Both grammar recognizers passed all 280 original cases including the negative sentinel and all three additions. Doctests and wasm32 with web-sys passed. Five mutants fired in the combined binaries. The sixth, five inlined BSDF copies, fired separately in C1b’s compiler test binary with matching compiler sources. [Gate evidence](../../out/meta/i1/gate.json) · [Frame comparisons](../../out/meta/i1/pixels.json) · [Contact sheet](../../out/meta/i1/sheet.webp)
 
