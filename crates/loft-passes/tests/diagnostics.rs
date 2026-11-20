@@ -2,25 +2,14 @@
 //! these compiles, the class of bug it names (the draft's gaze-frame bug, an unproven march, a per-instance module
 //! explosion, a stage-0 leak into kind code) is silently back.
 
-use loft_ir::{Code, Sources};
+use loft_ir::Code;
 use std::path::Path;
 
 fn compile(scene: &str) -> Result<(), (Code, String)> {
-    let lib = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../lib");
-    let mut src = Sources::default();
-    let mut files: Vec<_> = std::fs::read_dir(&lib)
-        .expect("lib/")
-        .map(|e| e.expect("entry").path())
-        .filter(|p| p.extension().is_some_and(|ext| ext == "loft"))
-        .collect();
-    files.sort();
-    for f in files {
-        src.add(
-            f.display().to_string(),
-            std::fs::read_to_string(&f).expect("lib file"),
-        );
-    }
-    src.add("case.loft", scene);
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let src = loft_passes::source::Graph::text(&root, Path::new("case.loft"), &format!(
+        "{scene}\nuse stdlib::sdf::solid::*\nuse stdlib::materials::bsdf::*\nuse stdlib::geometry::analytic::*\nuse stdlib::frames::transport::*"
+    ));
     loft_passes::compile(&src, &[])
         .map(|_| ())
         .map_err(|d| (d.code, d.render(&src)))

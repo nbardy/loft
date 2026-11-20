@@ -1,7 +1,13 @@
+use stdlib::engines::spectral_caustic::{spectral_dielectric, spectral_sample}
+use stdlib::integrators::direct::{sun_sky}
+use stdlib::materials::bsdf::{ggx}
+use stdlib::sdf::solid::{sphere, box_sdf, round_box}
+use stdlib::sky::environment::{sky_color}
+
 # A still life using the reference path schedule with spectral transport and
 # light tracing for paths through transmissive objects onto the paper.
 space World
-use engines::spectral_caustic
+use stdlib::engines::spectral_caustic
 
 fn study_curve(a: v2, b: v2, c: v2, d: v2, t: f) -> v2 {
   mix(mix(mix(a, b, t), mix(b, c, t), t), mix(mix(b, c, t), mix(c, d, t), t), t)

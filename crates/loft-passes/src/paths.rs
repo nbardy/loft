@@ -1,5 +1,5 @@
 //! Shared world lowering for the authored path schedules.
-use super::{Aov, Emitter, LutRef, fn_symbol, reachable};
+use super::{Emitter, LutRef, fn_symbol, reachable};
 use crate::{Prog, program::{Draw, KindTable, abi}};
 use loft_ir::{Code, Diag, Res, Span};
 use loft_parse::ast::{QueryKind, Ty};
@@ -66,21 +66,34 @@ pub(crate) fn module(p: &Prog, types: &[Ty], kinds: &[KindTable], queries: &[(St
     em.header(abi::NONCE_PLACEHOLDER);
     let prefix_len = em.out.len();
     em.out.push_str(crate::bvh::WGSL);
-    em.out.push_str(WORLD);
+    let f = p.fns.get(entry).ok_or_else(|| Diag::new(Code::E011, Span::NONE, format!("missing path function {entry}"), "load the selected engine recipe"))?;
+    let mut world = WORLD.to_owned();
+    let mut helper = vec![p.linked(f.name.span, "sky_dome")?];
+    for name in ["reservoir_add", "reservoir_scale", "reservoir_reuse"] {
+        let key = p.linked(f.name.span, name)?;
+        helper.push(key);
+        world = world.replace(&fn_symbol(name), &fn_symbol(key));
+    }
+    em.out.push_str(&world);
     em.out.push_str(crate::bsdf::VOLUME_STEP_WGSL);
     // The authored medium arithmetic uses the arena accessors in WORLD.
     let (_, medium) = include_str!("world_medium.wgsl").split_once("struct WorldSigma")
         .expect("world medium math");
     em.out.push_str("struct WorldSigma");
     em.out.push_str(medium);
+    // The path template uses the checked ABI payloads from lighting/world.
+    let world_payload = |name| p.structs.get(name).ok_or_else(|| Diag::new(Code::E011, f.name.span,
+        format!("missing path payload `{name}`"), "import stdlib::lighting::world"));
     for name in ["Ray", "Hit", "Sigma", "Vol"] {
         let mut fields = Vec::new();
-        for field in p.structs[name].1 {
+        for field in world_payload(name)?.1 {
             fields.push(format!("  {}: {},", super::member_name(&field.name.name), super::wty(&em.resolve(&field.ty))));
         }
         let _ = writeln!(em.out, "struct loft_type_{name} {{\n{}\n}}", fields.join("\n"));
     }
-    let radiance = &p.structs["Vol"].1[0].ty;
+    let volume = world_payload("Vol")?;
+    let radiance = &volume.1.first().ok_or_else(|| Diag::new(Code::E003, volume.0.span,
+        "Vol has no radiance field", "use the Vol payload from stdlib::lighting::world"))?.ty;
     if em.resolve(radiance) == Ty::VecN(3) {
         em.out.push_str(r"
 fn loft_medium(world: u32, p: vec3<f32>) -> loft_type_Sigma {
@@ -181,19 +194,26 @@ fn world_optics(h: PathHit) -> Optics {{
   switch h.kind {{ {} default: {{ return Optics(0.0, 0.0, vec3<f32>(0.0)); }} }}
 }}", optics_cases.join("\n"));
     }
-    let f = p.fns.get(entry).ok_or_else(|| Diag::new(Code::E011, Span::NONE, format!("missing path function {entry}"), "load the selected engine recipe"))?;
-    let mut helper = vec!["sky_dome", "reservoir_add", "reservoir_scale", "reservoir_reuse"];
-    if spectral {
-        helper.extend(["spectral_path", "spectral_transition", "spectral_ior", "spectral_band", "spectral_xyz", "agx_display"]);
-        em.out.push_str(include_str!("spectral_path.wgsl"));
-        emit_deposit(&mut em)?;
-    }
+    let convert = if spectral {
+        let mut text = include_str!("spectral_path.wgsl").to_owned();
+        for name in ["spectral_path", "spectral_transition", "spectral_ior", "spectral_band", "spectral_xyz"] {
+            let key = p.linked(f.name.span, name)?;
+            helper.push(key);
+            text = text.replace(&fn_symbol(name), &fn_symbol(key));
+        }
+        em.out.push_str(&text);
+        emit_deposit(&mut em, p.linked(f.name.span, "deposit_caustic")?)?;
+        let display = p.linked(f.name.span, "agx_display")?;
+        helper.push(display);
+        format!("{}(sum / f32(samples))", fn_symbol(display))
+    } else {
+        "path_aces(sum / f32(samples))".to_owned()
+    };
     let (fns, consts) = reachable(p, &[f], &helper);
     em.luts = luts;
     em.library(&fns, &consts);
     em.func(f, &fn_symbol(entry));
     let bounces = path.bounces;
-    let convert = if spectral { "loft_user_agx_display(sum / f32(samples))" } else { "path_aces(sum / f32(samples))" };
     let _ = writeln!(em.out, r"
 @vertex fn vs_present(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {{
   let uv = vec2<f32>(f32((vi << 1u) & 2u), f32(vi & 2u));
@@ -215,8 +235,8 @@ fn world_optics(h: PathHit) -> Optics {{
     Ok(em.out)
 }
 
-fn emit_deposit(em: &mut Emitter<'_, '_>) -> Res<()> {
-    let kernel = em.p.kernels.get("deposit_caustic").ok_or_else(|| Diag::new(Code::E011, Span::NONE,
+fn emit_deposit(em: &mut Emitter<'_, '_>, key: &str) -> Res<()> {
+    let kernel = em.p.kernels.get(key).ok_or_else(|| Diag::new(Code::E011, Span::NONE,
         "missing caustic photon deposit kernel", "load the spectral_caustic engine"))?;
     let Some(table) = kernel.f.params.first() else { return Err(Diag::new(Code::E003, kernel.f.name.span, "deposit needs a table", "use deposit_caustic(bins, bin, flux)")); };
     if kernel.writes.get(&table.name.name) != Some(&loft_parse::ast::Determinism::Det) || kernel.writes.len() != 1 || table.name.name != "bins" {
@@ -226,8 +246,4 @@ fn emit_deposit(em: &mut Emitter<'_, '_>) -> Res<()> {
     f.params.remove(0);
     em.func(&f, "deposit_caustic");
     Ok(())
-}
-
-pub(crate) fn present(p: &Prog, types: &[Ty], sky: &str, aov: Aov, print: bool) -> String {
-    super::present_module(p, types, sky, aov, print)
 }

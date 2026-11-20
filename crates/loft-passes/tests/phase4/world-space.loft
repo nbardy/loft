@@ -1,2 +1,3 @@
+
 space Other
 fn shadow(a: p3@World, b: p3@Other) -> rgb = visible(a, b)

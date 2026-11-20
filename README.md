@@ -35,18 +35,18 @@ engines hold you back. Instead, Loft lets your LLM write specific GPU code that 
 
 ```sh
 tools/dev.sh build loft-cli --fast
-tools/gpu_lock.sh target/lab/loft still engines/capsules.loft out/capsules.png --t 4 --set count=20
+tools/gpu_lock.sh target/lab/loft still stdlib/engines/capsules.loft out/capsules.png --t 4 --set count=20
 ```
 
-`loft show <scene>` prints the generated WGSL. `loft build` produces a `.loftb` bundle for the runner.
+`loft show <scene>` prints the generated WGSL. `loft build` produces a `.loftb` bundle for the runner. [Module imports and engine copies](stdlib/README.md)
 
 ## Layout
 
 | Directory | Contents |
 | --- | --- |
 | `crates/` | Core: ABI, IR, parser, passes, plan evaluation, bundle format, std, runner, CLI |
-| `lib/` | Libs, in `.loft`: geometry, SDFs, BSDFs, light, ReSTIR, noise, post, motion |
-| `engines/` | Example engines (forkable): `reference`, `realtime`, `woodblock`, `spectral_caustic`, `hermit`, … |
+| `stdlib/` | Forkable `.loft` modules for geometry, materials, lighting, motion and engines |
+| `engines/` | Five-gate manifest and frozen image hash pins |
 | `scenes/` | Runnable scenes, including the motion scenes (`crab`, `heron`, `boss`) |
 | `grammar/`, `docs/spec/` | The normative grammar and spec |
 | `corpus/`, `tests/`, `examples/` | Phase 5 corpus, gate fixtures and mutants, read-only old sources |

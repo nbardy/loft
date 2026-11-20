@@ -118,7 +118,7 @@ pub(crate) fn motion_math(name: &str) -> MotionMath {
     }
 }
 
-fn fn_symbol(n: &str) -> String {
+pub(crate) fn fn_symbol(n: &str) -> String {
     match n.split_once('#') {
         Some(("", internal)) => format!("loft_internal_{internal}"),
         Some((kind, helper)) => format!("loft_kind_{}_{}_{}", kind.len(), kind, helper),
@@ -180,6 +180,7 @@ impl<'a> References<'a> {
         let mut refs = Self { proof_only, ..Self::default() };
         let mut locals = f.params.iter().map(|p| p.name.name.as_str()).collect();
         refs.block(&f.body, &mut locals);
+        if let Some(raw) = &f.raw { refs.calls.extend(&raw.references); }
         refs
     }
 
@@ -305,7 +306,12 @@ fn reachable_impl<'a>(p: &Prog<'a>, roots: &[&'a FnDecl], extra: &[&str], proof_
             }
         }
         for c in refs.calls {
-            if let Some(g) = p.fns.get(c.name.as_str())
+            let resolved = p.fns.get(c.name.as_str()).or_else(|| {
+                if c.name != "sky" { return None; }
+                let key = p.linked(c.span, "sky_dome").ok()?;
+                p.fns.get(key)
+            });
+            if let Some(g) = resolved
                 && !seen.iter().any(|s| std::ptr::eq(*s, *g))
                 && !roots.iter().any(|s| std::ptr::eq(*s, *g))
             {
@@ -666,7 +672,10 @@ impl<'p, 'a> Emitter<'p, 'a> {
                     match call.query {
                         Trace { ray } => return format!("loft_trace({world}, {ray})"),
                         Visible { a, b } => return format!("loft_visible({world}, {a}, {b})"),
-                        Sky { direction } => return format!("loft_user_sky_dome({direction})"),
+                        Sky { direction } => {
+                            let key = self.p.linked(callee.span, "sky_dome").expect("checked sky binding");
+                            return format!("{}({direction})", fn_symbol(key));
+                        }
                         Medium { point } => return format!("loft_medium({world}, {point})"),
                         Material { .. } | Light { .. } => {}
                     }
@@ -847,13 +856,15 @@ fn emit_kind_module(
     let mut roots: Vec<&FnDecl> = k.queries.iter().map(|(_, f)| f).collect();
     roots.extend(k.fns.iter());
     let mesh = matches!(draw, Draw::Mesh { .. });
-    let extra = [light, "ggx"];
-    let (lib, consts) = reachable(p, &roots, &extra[..if mesh { 2 } else { 1 }]);
+    let mesh_lobe = mesh.then(|| p.linked(k.name.span, "ggx")).transpose()?;
+    let mut extra = vec![light];
+    extra.extend(mesh_lobe);
+    let (lib, consts) = reachable(p, &roots, &extra);
     em.row_header(k);
     // The Bsdf struct: one field per bound lobe argument, in the material's lobe order.
     let layout = if mesh { Layout::default() } else { material_layout(p, k)? };
     let mut lobes: Vec<_> = layout.lobes.iter().map(|(name, args)| (*name, args.len())).collect();
-    if mesh { lobes.push(("ggx", 3)); }
+    if let Some(lobe) = mesh_lobe { lobes.push((lobe, 3)); }
     let invariants = lobes.iter().map(|(name, _)| {
         if light == "sun_sky" { lighting::invariant_lets(p, p.fns[name]) } else { Vec::new() }
     }).collect::<Vec<_>>();
@@ -1397,15 +1408,16 @@ var<workgroup> mask: atomic<u32>;
 }
 
 /// `sky` is the library fn named by the schedule's present pass.
-pub fn present_module(p: &Prog, types: &[Ty], sky: &str, aov: Aov, print: bool) -> String {
+pub fn present_module(p: &Prog, types: &[Ty], sky: &str, aov: Aov, paper: Option<&str>) -> String {
     let mut em = Emitter::new(p, types);
     em.header(abi::NONCE_PLACEHOLDER);
-    let roots = if print && aov == Aov::Beauty { vec![sky, "paper_grain"] } else { vec![sky] };
+    let mut roots = vec![sky];
+    if aov == Aov::Beauty { roots.extend(paper); }
     let (lib, consts) = reachable(p, &[], &roots);
     em.library(&lib, &consts);
     let sky=fn_symbol(sky);
-    let resolve = match aov {
-        Aov::Beauty if print => format!(r"
+    let resolve = match (aov, paper.map(fn_symbol)) {
+        (Aov::Beauty, Some(paper)) => format!(r"
   let center = textureLoad(vis_tex, px, 0).x;
   if center == LOFT_EMPTY {{ c = {sky}(loft_ray(pos.xy), normalize(frame.sun.xyz)); }}
   let size = vec2<i32>(textureDimensions(vis_tex));
@@ -1418,12 +1430,12 @@ pub fn present_module(p: &Prog, types: &[Ty], sky: &str, aov: Aov, print: bool) 
   }}
   let hatch = smoothstep(0.74,0.98,cos((pos.x+pos.y)*1.256637)) * (1.0-smoothstep(0.08,0.32,dot(c,vec3<f32>(0.2126,0.7152,0.0722))));
   c = mix(c, vec3<f32>(0.025,0.02,0.035), min(line + 0.42*hatch,1.0));
-  return vec4<f32>(loft_user_paper_grain(loft_aces(c),pos.xy,0.04,0.03),1.0);
+  return vec4<f32>({paper}(loft_aces(c),pos.xy,0.04,0.03),1.0);
 "),
-        Aov::Beauty => format!("if textureLoad(vis_tex, px, 0).x == LOFT_EMPTY {{ c = {sky}(loft_ray(pos.xy), normalize(frame.sun.xyz)); }} return vec4<f32>(loft_aces(c), 1.0);"),
-        Aov::Overdraw => "return vec4<f32>(c, 1.0);".into(),
-        Aov::Depth => "return vec4<f32>(select(c, vec3<f32>(1.0), textureLoad(vis_tex, px, 0).x == LOFT_EMPTY), 1.0);".into(),
-        Aov::Albedo | Aov::Normal | Aov::Id | Aov::SdfSteps | Aov::LipschitzRatio =>
+        (Aov::Beauty, None) => format!("if textureLoad(vis_tex, px, 0).x == LOFT_EMPTY {{ c = {sky}(loft_ray(pos.xy), normalize(frame.sun.xyz)); }} return vec4<f32>(loft_aces(c), 1.0);"),
+        (Aov::Overdraw, _) => "return vec4<f32>(c, 1.0);".into(),
+        (Aov::Depth, _) => "return vec4<f32>(select(c, vec3<f32>(1.0), textureLoad(vis_tex, px, 0).x == LOFT_EMPTY), 1.0);".into(),
+        (Aov::Albedo | Aov::Normal | Aov::Id | Aov::SdfSteps | Aov::LipschitzRatio, _) =>
             "return vec4<f32>(select(c, vec3<f32>(0.0), textureLoad(vis_tex, px, 0).x == LOFT_EMPTY), 1.0);".into(),
     };
     em.out += &format!(

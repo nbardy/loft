@@ -62,8 +62,7 @@ def main():
         view, time, size = ref.stem.split("@")
         frame = dst / ref.name
         cmd = [args.binary.resolve(), "--observe", "corpus/l5c/bead.loft", size, time, frame,
-               {"whole": "view=0", "through": "view=1"}[view],
-               "lib/migration/trace_coverage.loft", "lib/migration/bead_observation.loft"]
+               {"whole": "view=0", "through": "view=1"}[view]]
         render = subprocess.run(cmd, capture_output=True, text=True, check=False)
         (dst / f"{ref.stem}.log").write_text(render.stdout + render.stderr)
         if render.returncode:

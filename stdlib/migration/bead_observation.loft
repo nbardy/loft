@@ -1,0 +1,10 @@
+use stdlib::migration::trace_coverage::*
+
+# Observe the same coverage and distances used by the authored screen pass.
+# FNV-1a labels encode "sky", "ground" and "bead" from the frozen observation recipe.
+pub fn observe_bead(fragment: v4, ink: rgb) -> v4 {
+  let bg = select(flat_label(3442183990), flat_label(2627848062), fragment.w < 1e30)
+  let shaded = select(ink, flat_label(2689756917), fragment.y == 0.0)
+  let rgb = mix(rgba8_rgb(bg), rgba8_rgb(shaded), fragment.z)
+  v4(rgb.x, rgb.y, rgb.z, distance_code(min(fragment.x, fragment.w)))
+}

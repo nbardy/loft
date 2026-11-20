@@ -1,12 +1,8 @@
-use loft_ir::Sources;
+use loft_passes::source::Graph;
 use std::{collections::BTreeMap, fs, path::Path};
 
 #[test]
 fn emitted_sweep_positions_and_materials() {
-    let mut lib: Vec<_> = fs::read_dir("lib").unwrap().map(|e| e.unwrap().path()).collect();
-    lib.retain(|p| p.extension().is_some_and(|e| e == "loft"));
-    lib.sort();
-
     let probes = fs::read_to_string("out/meta/p5/l5e/cpu-probes.tsv").unwrap();
     let mut scenes = BTreeMap::<_, Vec<_>>::new();
     for line in probes.lines() {
@@ -20,11 +16,8 @@ fn emitted_sweep_positions_and_materials() {
     let mut max_error = 0.0_f32;
     let mut sample_count = 0;
     for (name, rows) in scenes {
-        let mut src = Sources::default();
         let scene = Path::new("corpus/l5e").join(format!("{name}.loft"));
-        for path in lib.iter().chain([&scene]) {
-            src.add(path.display().to_string(), fs::read_to_string(path).unwrap());
-        }
+        let src = Graph::file(&scene, "").unwrap();
         let (_, _, twin) = loft_passes::compile(&src, &[]).unwrap_or_else(|d| panic!("{}", d.render(&src)));
         for (kind, row, expected) in rows {
             let k = twin.drawn.iter().position(|(_, n)| n == kind).unwrap();

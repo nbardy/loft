@@ -1,4 +1,7 @@
-use std::geom::*
+use stdlib::materials::bsdf::{emit_lobe}
+use stdlib::noise::value::{hash3}
+use stdlib::sdf::solid::{capsule, box_sdf}
+
 
 space World Reed
 

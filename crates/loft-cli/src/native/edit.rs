@@ -167,7 +167,7 @@ impl TraceSession {
     pub fn edit(
         &mut self,
         g: &Gpu,
-        src: &loft_ir::Sources,
+        src: &loft_passes::source::Graph,
         overrides: &[(String, f64)],
         start: Instant,
     ) -> Result<EditReceipt, String> {

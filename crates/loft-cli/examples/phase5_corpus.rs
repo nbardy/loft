@@ -1,28 +1,10 @@
 //! Time the authored corpus or capture an authored RGBA8 observation.
 use loft_cli::native::{self, Gpu, Loaded};
-use loft_ir::Sources;
+use loft_passes::source::Graph;
 use std::{error::Error, fs, path::Path};
 
-fn sources(scene: &Path) -> Result<Sources, Box<dyn Error>> {
-    let mut libs = fs::read_dir("lib")?
-        .map(|e| e.map(|e| e.path()))
-        .collect::<Result<Vec<_>, _>>()?;
-    libs.retain(|p| p.extension().is_some_and(|e| e == "loft"));
-    libs.sort();
-    let mut src = Sources::default();
-    for p in libs.iter().map(AsRef::as_ref).chain([scene]) {
-        add_source(&mut src, p)?;
-    }
-    Ok(src)
-}
-
-fn add_source(sources: &mut Sources, file: &Path) -> Result<(), std::io::Error> {
-    sources.add(file.display().to_string(), fs::read_to_string(file)?);
-    Ok(())
-}
-
 fn time_clip(gpu: &Gpu, name: &str) -> Result<(), Box<dyn Error>> {
-    let src = sources(Path::new(name))?;
+    let src = Graph::file(Path::new(name), "")?;
     let (p, _, _) = loft_passes::compile(&src, &[]).map_err(|e| e.render(&src))?;
     let size = (512, 512);
     let control = gpu.triangle_control_ms(size)?;
@@ -78,8 +60,8 @@ fn write_rgba(gpu: &Gpu, tex: &wgpu::Texture, out: &Path) -> Result<(), Box<dyn 
 }
 
 fn observe(gpu: &Gpu, args: &[String]) -> Result<(), Box<dyn Error>> {
-    let [scene, size, time, output, set, recipes @ ..] = args else {
-        return Err("usage: phase5_corpus --observe SCENE WIDTHxHEIGHT SECONDS PNG NAME=VALUE RECIPE...".into());
+    let [scene, size, time, output, set] = args else {
+        return Err("usage: phase5_corpus --observe SCENE WIDTHxHEIGHT SECONDS PNG NAME=VALUE".into());
     };
     let (w, h) = size.split_once('x').ok_or("expected WIDTHxHEIGHT")?;
     let (w, h): (u32, u32) = (w.parse()?, h.parse()?);
@@ -88,14 +70,10 @@ fn observe(gpu: &Gpu, args: &[String]) -> Result<(), Box<dyn Error>> {
     if w == 0 || h == 0 || !seconds.is_finite() || seconds < 0.0 {
         return Err("observation requires a positive extent and a finite nonnegative time".into());
     }
-    let mut src = sources(Path::new(scene))?;
-    for file in recipes {
-        add_source(&mut src, Path::new(file))?;
-    }
-    src.add(
-        "<observation>",
-        format!("bake_tex Observation {w}x{h} rgba8unorm on load mips(false) (uv: v2) {{\n  observe(uv, v2({w}.0, {h}.0), {seconds:?})\n}}"),
-    );
+    let bake = format!("use stdlib::migration::bead_observation::{{observe_bead}}\n\
+fn observe(uv: v2, extent: v2, seconds: f) -> v4 = observe_bead(bead_fragment(uv, extent), bead_ink())\n\
+bake_tex Observation {w}x{h} rgba8unorm on load mips(false) (uv: v2) {{\n  observe(uv, v2({w}.0, {h}.0), {seconds:?})\n}}");
+    let src = Graph::file(Path::new(scene), &bake)?;
     let (program, _, _) = loft_passes::compile(&src, &[(name.into(), value.parse()?)])
         .map_err(|e| e.render(&src))?;
     let loaded = Loaded::new(gpu, &program, (w, h), None)?;

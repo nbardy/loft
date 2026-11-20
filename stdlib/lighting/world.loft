@@ -1,0 +1,11 @@
+# Query payloads (06 §6). Hit.t is -1 on a miss and -2 on an unresolved march. Lit.pdf <= 0 means no sample.
+pub struct World {}
+pub type RngKey = array[u, 4]
+pub struct Ray { o: p3@World, d: d3@World, t0: m, t1: m, w: v2 }
+pub struct Hit { t: m, p: p3@World, n: n3@World, uv: v2, local_p: p3@Local, kind_id: u, row_id: u, cell: v4 }
+pub struct Scatter { wi: d3@World, weight: Radiance, pdf: f, delta: bool }
+pub struct Lit { wi: d3@World, l: Radiance, pdf: f, p: p3@World, idx: u }
+pub struct Sigma { s: rgb, t: rgb, g: f, emit: Radiance }
+pub struct Vol { l: Radiance, t: rgb }
+
+pub kind FieldMedium @World (lo: p3@World, hi: p3@World, sigma_t: rgb, albedo: rgb, g: f = 0.0, emission: rgb = [0, 0, 0]) {}

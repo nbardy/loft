@@ -1,4 +1,6 @@
-use std::geom::*
+use stdlib::materials::bsdf::{ggx, coat}
+use stdlib::sdf::solid::{sphere, capsule, box_sdf, smin}
+
 space World Bird
 
 param side: f = 1 in -1..1

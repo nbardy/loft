@@ -23,7 +23,7 @@ impl Span {
     }
 }
 
-/// Every file of one program: the library prelude, then the scene.
+/// The diagnostic source map indexed by a span's file ID.
 #[derive(Default)]
 pub struct Sources {
     pub files: Vec<(String, String)>,

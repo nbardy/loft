@@ -1,3 +1,6 @@
+use stdlib::materials::bsdf::{ggx}
+use stdlib::sdf::solid::{sphere, box_sdf}
+
 kind EditSphere @World (shift: p3@World) {
   trace(p) = sphere(p - shift, 0.59)
   material(p, n) = ggx([0.38, 0.62, 0.8], 0.48, 0.12)

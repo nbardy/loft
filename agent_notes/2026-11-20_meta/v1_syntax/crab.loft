@@ -1,5 +1,8 @@
-use std::geom::*
-use std::light::*
+use stdlib::frames::transport::{frame, transport}
+use stdlib::materials::bsdf::{ggx, coat, sss}
+use stdlib::noise::value::{vnoise}
+use stdlib::sdf::solid::{sphere, capsule, box_sdf, smin, round_box}
+
 space World Shell Claw Leg Face
 
 fn spine(t: f) -> p3@Shell = {

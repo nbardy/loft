@@ -1,3 +1,6 @@
+use stdlib::materials::bsdf::{ggx}
+use stdlib::sky::environment::{DEFAULT_ZENITH, DEFAULT_HORIZON}
+
 # Source: examples/first/lantern_nothing.ts at corpus/manifest.json's examples_rev.
 # view 0 = three; view 1 = low.
 space World

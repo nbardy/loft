@@ -1,3 +1,6 @@
+use stdlib::materials::bsdf::{ggx}
+use stdlib::sdf::solid::{sphere}
+
 space World
 
 kind Bead @World () {

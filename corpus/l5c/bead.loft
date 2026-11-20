@@ -1,3 +1,12 @@
+use stdlib::lighting::world
+use stdlib::integrators::restir::{reservoir_add, reservoir_scale, reservoir_reuse}
+use stdlib::frames::transport::{frame}
+use stdlib::geometry::analytic::{ray_ground}
+use stdlib::integrators::direct::{sun_sky}
+use stdlib::materials::bsdf::{ggx}
+use stdlib::sdf::solid::{sphere, box_sdf}
+use stdlib::sky::environment::{sky_color, sky_dome}
+
 # Source: examples/bead.ts at corpus/manifest.json's examples_rev.
 # view 0 = whole; view 1 = through.
 space World

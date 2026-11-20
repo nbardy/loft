@@ -73,7 +73,7 @@ pub fn parse(file: u16, source: &str, next: &mut u32) -> Res<Module> {
         tokens,
         at: 0,
         next,
-        module: Module::default(),
+        module: Module { file: Some(file), ..Module::default() },
         generics: HashSet::new(),
         fields: HashSet::new(),
         locals: HashSet::new(),
@@ -86,7 +86,15 @@ pub fn parse(file: u16, source: &str, next: &mut u32) -> Res<Module> {
     };
     p.seps();
     while !p.is("") {
-        let item = p.item()?;
+        let public = p.eat("pub");
+        let item = p.item(public)?;
+        if public {
+            let names = item.declarations();
+            if names.is_empty() {
+                return p.err("a named declaration after pub");
+            }
+            p.module.public.extend(names.iter().map(|n| n.span));
+        }
         p.module.items.push(item);
         p.end()?;
     }
@@ -169,6 +177,16 @@ impl<'src> Parser<'src, '_> {
         let t = self.pop();
         Ok(named(t.text, t.span))
     }
+    fn reference(&mut self) -> Res<Ident> {
+        let mut name = self.ident()?;
+        if self.eat("::") {
+            let member = self.ident()?;
+            name.name.push_str("::");
+            name.name.push_str(&member.name);
+            name.span = name.span.to(member.span);
+        }
+        Ok(name)
+    }
     fn node(&mut self, span: Span, kind: ExprKind) -> Expr {
         let id = *self.next;
         *self.next += 1;
@@ -186,7 +204,7 @@ impl<'src> Parser<'src, '_> {
         )
     }
     fn space(&mut self) -> Res<SpaceRef> {
-        let n = self.ident()?;
+        let n = self.reference()?;
         Ok(SpaceRef {
             var: self.generics.contains(&n.name),
             name: n.name,
@@ -205,7 +223,7 @@ impl<'src> Parser<'src, '_> {
             return Ok(TyExpr::Array(Box::new(element), count, span));
         }
         if self.eat("[") {
-            let t = self.ident()?;
+            let t = self.reference()?;
             self.expect("]")?;
             return Ok(TyExpr::Table(t));
         }
@@ -231,7 +249,7 @@ impl<'src> Parser<'src, '_> {
             self.module.dimensions.push((span, dim));
             return Ok(ty("f32", span));
         }
-        let n = self.ident()?;
+        let n = self.reference()?;
         if matches!(n.name.as_str(),"Pt"|"Vec"|"Dir"|"Norm"|"Xform"|"Field"){
             return Err(Diag::new(Code::E001,n.span,"Syntax A type in E+ source","write p3@Space, v3@Space, d3@Space, n3@Space or xf@A>B"))
         }
@@ -508,8 +526,7 @@ impl<'src> Parser<'src, '_> {
         Ok(PlanDecl { name, params, ret, horizon, objective, holds })
     }
 
-    fn item(&mut self) -> Res<Item> {
-        let public = self.eat("pub");
+    fn item(&mut self, public: bool) -> Res<Item> {
         let build = self.eat("build");
         let start = self.cur().span;
         if build && self.is("{") {
@@ -627,7 +644,7 @@ impl<'src> Parser<'src, '_> {
                     continue;
                 }
                 let explicit = self.eat("pass");
-                let verb = self.ident()?;
+                let verb = self.reference()?;
                 let (mut args, mut body, mut resources) = (vec![], vec![], None);
                 if explicit {
                     let reads = self.resources("reads")?;
@@ -659,7 +676,7 @@ impl<'src> Parser<'src, '_> {
             self.seps();
             let mut things = Vec::new();
             while !self.eat("]") {
-                things.push(self.upper_ident()?);
+                things.push(self.reference()?);
                 if !self.eat(",") { self.expect("]")?; break; }
                 self.seps();
             }
@@ -805,13 +822,25 @@ impl<'src> Parser<'src, '_> {
         }
         if self.eat("use") {
             let mut path = vec![self.ident()?];
-            while self.eat("::") {
-                if self.eat("*") {
-                    break;
+            let binding = loop {
+                if !self.eat("::") {
+                    break ImportBinding::Module(self.eat("as").then(|| self.ident()).transpose()?);
                 }
-                path.push(self.ident()?)
-            }
-            return Ok(Item::Use(path));
+                if self.eat("*") {
+                    break ImportBinding::Wildcard;
+                }
+                if self.eat("{") {
+                    let mut names = vec![self.ident()?];
+                    while self.eat(",") && !self.is("}") {
+                        names.push(self.ident()?);
+                    }
+                    self.expect("}")?;
+                    break ImportBinding::Selected(names);
+                }
+                path.push(self.ident()?);
+            };
+            let span = start.to(self.tokens[self.at - 1].span);
+            return Ok(Item::Use(Import { path, binding, span }));
         }
         Err(Diag::new(
             if matches!(
@@ -1244,7 +1273,7 @@ impl<'src> Parser<'src, '_> {
         Ok(fs)
     }
     fn emit(&mut self, bind: Option<Ident>, span: Span) -> Res<Stmt> {
-        let kind = self.ident()?;
+        let kind = self.reference()?;
         self.expect("(")?;
         let fields = self.fields(")")?;
         Ok(Stmt::Emit {
@@ -1530,7 +1559,7 @@ impl<'src> Parser<'src, '_> {
             self.expect("->")?;let ret=self.ty()?;
             if self.cur().kind!=Kind::Raw{return self.err("a balanced WGSL block")}
             let island=self.pop();let end=island.span;
-            let raw=RawWgsl{body:island.text.into(),deterministic};
+            let raw=RawWgsl { body: island.text.into(), deterministic, references: vec![] };
             let name=named(&format!("#raw_{}_{}",span.file,span.lo),span);
             let args=params.iter().map(|prm|Arg{name:None,value:self.node(prm.name.span,ExprKind::Name(prm.name.name.clone()))}).collect();
             self.module.items.push(Item::Fn(FnDecl{name:name.clone(),params,ret:Some(ret),body:Block{stmts:vec![]},raw:Some(raw),attrs:vec![],comptime:false}));
@@ -1570,14 +1599,14 @@ impl<'src> Parser<'src, '_> {
             let s = self.pop().text.to_owned();
             return self.number(&s, span);
         }
-        let mut n = self.ident()?;
+        let mut n = self.reference()?;
         if n.name == "true" || n.name == "false" {
             return Ok(self.node(span, ExprKind::Bool(n.name == "true")));
         }
         if self.eat("'") || n.name == "diff" && self.is("(") {
             let (f, x) = if n.name == "diff" {
                 self.expect("(")?;
-                let f = self.ident()?;
+                let f = self.reference()?;
                 self.expect(",")?;
                 let x = self.ident()?;
                 self.expect(")")?;

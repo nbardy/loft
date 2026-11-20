@@ -1,34 +1,21 @@
 //! Integration measurements on the native device. Run under tools/gpu_lock.sh.
 use loft_cli::native::{self, Gpu, Loaded};
-use loft_ir::Sources;
+use loft_passes::source::Graph;
 use loft_passes::{Compiled, emit::Aov, program::Program};
 use serde_json::{Value, json};
 use std::{fs, path::Path};
 
-fn prelude() -> Sources {
-    let mut paths: Vec<_> = fs::read_dir("lib")
-        .unwrap()
-        .map(|x| x.unwrap().path())
-        .filter(|p| p.extension().is_some_and(|ext| ext == "loft"))
-        .collect();
-    paths.sort();
-    let mut src = Sources::default();
-    for p in paths {
-        src.add(p.display().to_string(), fs::read_to_string(p).unwrap());
-    }
-    src
-}
-
 fn compile(source: &str) -> Result<(Program, Compiled), String> {
-    let mut src = prelude();
-    src.add("observation.loft", source.to_owned());
-    loft_passes::compile(&src, &[])
-        .map(|(p, _, c)| (p, c))
-        .map_err(|e| e.render(&src))
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let src = Graph::text(&root, Path::new("observation.loft"), &format!(
+        "{source}\nuse stdlib::materials::bsdf::*\nuse stdlib::sdf::solid::*\nuse stdlib::sky::environment::*\nuse stdlib::integrators::direct::{{sun_sky}}\nuse stdlib::lighting::world::*\nuse stdlib::integrators::restir::*"
+    ));
+    loft_passes::compile(&src, &[]).map(|(p, _, c)| (p, c)).map_err(|e| e.render(&src))
 }
 
 fn scene(file: &str) -> Result<(Program, Compiled), String> {
-    compile(&fs::read_to_string(file).map_err(|e| e.to_string())?)
+    let src = Graph::file(Path::new(file), "")?;
+    loft_passes::compile(&src, &[]).map(|(p, _, c)| (p, c)).map_err(|e| e.render(&src))
 }
 
 fn bake(g: &Gpu) -> Result<Value, String> {
@@ -60,7 +47,7 @@ fn bake(g: &Gpu) -> Result<Value, String> {
 }
 
 fn shrine(g: &Gpu) -> Result<Value, String> {
-    let (p, _) = scene("engines/coral_shrine.loft")?;
+    let (p, _) = scene("stdlib/engines/coral_shrine.loft")?;
     let size = (1280, 800);
     let control = g.triangle_control_ms(size)?;
     let l = Loaded::new(g, &p, size, None)?;
@@ -78,9 +65,7 @@ fn shrine(g: &Gpu) -> Result<Value, String> {
 }
 
 fn hermit_grid(g: &Gpu, dir: &Path) -> Result<Value, String> {
-    let mut src = prelude();
-    let file = "engines/hermit.loft";
-    src.add(file, fs::read_to_string(file).map_err(|e| e.to_string())?);
+    let src = Graph::file(Path::new("stdlib/engines/hermit.loft"), "")?;
     let size = (1280, 800);
     let mut reports = Vec::new();
     for (label, aov) in [("beauty", Aov::Beauty), ("depth", Aov::Depth), ("id", Aov::Id)] {
@@ -162,7 +147,7 @@ fn observe(
 }
 
 const WALL: &str = "
-use engines::reference
+use stdlib::engines::reference
 space World
 kind Wall @World () {
   trace(p) = box_sdf(p - [0,0,0]@World, [1,1,1])
@@ -173,7 +158,7 @@ emit Sun(dir: dir([0,1,0]@World), color: [0,0,0])
 emit Sky(zenith: [0,0,0], horizon: [0,0,0]) }
 ";
 const SPHERE: &str = "
-use engines::reference
+use stdlib::engines::reference
 space World
 kind Ball @World () {
   visible(ro,rd) = ray_sphere(ro,rd,[0,0,0]@World,1)
@@ -188,23 +173,21 @@ emit Sky(zenith: [0.5,0.5,0.5], horizon: [0.5,0.5,0.5]) }
 fn quant(g: &Gpu) -> Result<Value, String> {
     use loft_ir::{DepthConvention, GpuFeatures, HostCaps, Span};
     use loft_passes::eval::{Eval, Val};
-    let mut src = prelude();
     let demo = "
-use std::quant::*
 fn sums(a:u,b:u) -> v2 = [f32(dot4_i8(a,b)),f32(dot4_u8(a,b))]
 fn bf(a:u) -> v2 = unpack_bf16x2(a)
 fn lo(a:u) -> v4 = unpack_u4_lo(a)
 fn hi(a:u) -> v4 = unpack_u4_hi(a)
 fn retain_all(a:u,b:u) -> rgb = [sums(a,b).x,bf(a).y,lo(a).x + hi(a).y]
 ";
-    src.add("quant.loft", demo.to_owned());
-    src.add(
-        "sphere.loft",
-        SPHERE.replace(
-            "ggx([1,1,1],1,1)",
-            "lambert(retain_all(0x7f00ff80,0x7f80fd02))",
-        ),
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let text = SPHERE.replace(
+        "ggx([1,1,1],1,1)",
+        "lambert(retain_all(0x7f00ff80,0x7f80fd02))",
     );
+    let src = Graph::text(&root, Path::new("quant.loft"), &format!(
+        "{demo}\n{text}\nuse stdlib::materials::bsdf::{{lambert}}\nuse stdlib::sdf::solid::{{sphere}}"
+    ));
     let probe = "
         let word = 0xfedcba98u;
         let s = f32(loft_quant_dot4_i8(0x7f00ff80u,0x7f80fd02u));

@@ -1,3 +1,7 @@
+use stdlib::geometry::analytic::{ray_sphere}
+use stdlib::materials::bsdf::{ggx}
+use stdlib::sdf::solid::{sphere}
+
 # Render with --aov lipschitz_ratio --live mutant_scale=2.
 # Visible solves the unchanged sphere exactly. The live edit doubles the field
 # gradient after the scale-one bound was derived, isolating the diagnostic.

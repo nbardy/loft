@@ -8,7 +8,11 @@ top_item: use_decl
                  | law_decl | solver_decl | plan_decl | check_decl
                  | retarget_decl | world_decl | build_fn | build_blk | sched_decl )
 
-use_decl: "use" mod_path ("::" ( "*" | "{" ident_list "}" ))? ("as" LIDENT)?
+use_decl: "use" mod_path ("::" ("*" | "{" import_names "}") | "as" LIDENT)?
+import_names: IDENT ("," IDENT)* ","?
+qualified: LIDENT "::" IDENT
+name_ref: IDENT | qualified
+kind_ref: UIDENT | qualified
 mod_path: LIDENT ("::" LIDENT)*
 
 space_decl:  "space" UIDENT+
@@ -32,7 +36,7 @@ fn_body:     "=" (expr | block) | block
 
 scan_decl:   "scan" LIDENT LIDENT "in" expr ".." expr "by" INT "on" LIDENT "{" _NL? "init" "=" expr _sep "step" LIDENT "=" expr _sep? "}"
 
-kind_decl:   "kind" UIDENT var_params? "@" UIDENT "(" col_list? ")" "{" (_NL? kind_item (_sep kind_item)* _sep?)? "}"
+kind_decl:   "kind" UIDENT var_params? "@" kind_ref "(" col_list? ")" "{" (_NL? kind_item (_sep kind_item)* _sep?)? "}"
 var_params:  "[" param ("," param)* ","? "]"
 col_list:    col ("," col)* ","?
 col:         LIDENT ":" type_expr range_ref? ("=" expr)?
@@ -80,12 +84,12 @@ resource_list: IDENT ("," IDENT)* ","?
 
 // --- Types (only after ':' or '->') ---
 type_expr:   unit_expr
-           | PRIM_TY ("@" IDENT)?
-           | "xf" "@" IDENT ">" IDENT
-           | ("attach" | "target" | "frame") "@" IDENT
-           | "[" UIDENT "]"
+           | PRIM_TY ("@" name_ref)?
+           | "xf" "@" name_ref ">" name_ref
+           | ("attach" | "target" | "frame") "@" name_ref
+           | "[" kind_ref "]"
            | "array" "[" type_expr "," INT "]"
-           | UIDENT
+           | kind_ref
 
 gen_params:  "[" UIDENT ("," UIDENT)* ","? "]"
 params:      param ("," param)* ","?
@@ -123,11 +127,11 @@ unary_expr:  ("-" | "!") unary_expr | postfix_expr
 
 postfix_expr: primary ( "." LIDENT | "(" call_args? ")" | "[" expr "]" | "'" )*
 
-primary:     unit_number | NUMBER | STRING | "true" | "false" | IDENT
+primary:     unit_number | NUMBER | STRING | "true" | "false" | name_ref
            | "(" expr ")"
-           | "[" expr_list? "]" ("@" IDENT)?
+           | "[" expr_list? "]" ("@" name_ref)?
            | "if" expr block ("else" "if" expr block)* ("else" block)?
-           | "emit" UIDENT ("[" expr_list "]")? "(" named_args? ")"
+           | "emit" kind_ref ("[" expr_list "]")? "(" named_args? ")"
            | "unproved" "(" ("step_scale" ":")? expr ")" block
            | "wgsl" "det"? "(" params? ")" "->" type_expr RAW_WGSL_BLOCK
 

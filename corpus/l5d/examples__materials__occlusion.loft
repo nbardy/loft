@@ -1,3 +1,8 @@
+use stdlib::integrators::direct::{sun_sky}
+use stdlib::materials::bsdf::{ggx}
+use stdlib::sdf::solid::{box_sdf}
+use stdlib::sky::environment::{sky_color}
+
 # R0 source: examples/materials/occlusion.ts. Camera: front.
 space World Local
 

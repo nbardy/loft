@@ -6,7 +6,7 @@ fn loft(args: &[&str], code: i32) {
     assert_eq!(out.status.code(), Some(code), "{}", String::from_utf8_lossy(&out.stderr));
 }
 
-const SCENE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../engines/capsules.loft");
+const SCENE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../stdlib/engines/capsules.loft");
 
 #[test]
 fn corpus_build_and_clip_input_failures() {

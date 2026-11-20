@@ -1,9 +1,0 @@
-# Observe the same coverage and distances used by the authored screen pass.
-fn observe(uv: v2, extent: v2, seconds: f) -> v4 {
-  let fragment = bead_fragment(uv, extent)
-  # FNV-1a of "sky", "ground" and "bead" from the frozen observation recipe.
-  let bg = select(flat_label(3442183990), flat_label(2627848062), fragment.w < 1e30)
-  let shaded = select(bead_ink(), flat_label(2689756917), fragment.y == 0.0)
-  let rgb = mix(rgba8_rgb(bg), rgba8_rgb(shaded), fragment.z)
-  v4(rgb.x, rgb.y, rgb.z, distance_code(min(fragment.x, fragment.w)))
-}

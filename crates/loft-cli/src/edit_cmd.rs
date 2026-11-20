@@ -223,7 +223,7 @@ mod tests {
         };
         let sources = crate::sources(&old).unwrap();
         let (program, _, checked) = loft_passes::compile(&sources, &[]).unwrap();
-        let (session, tape) = TraceSource::new(sources, checked, &program, "EditSphere").unwrap();
+        let (session, tape) = TraceSource::new(loft_ir::Sources { files: sources.files.clone() }, checked, &program, "EditSphere").unwrap();
         let edited = crate::sources(&new).unwrap();
         let literal = session
             .prepare(&edited, &[])

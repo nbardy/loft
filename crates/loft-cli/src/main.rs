@@ -7,7 +7,7 @@
 //!   loft diff REFERENCE.png FRAME.png          compare a Phase 5 frame with its reference
 //!   loft load SCENE --nonce N [--set ...]       one load in this process with driver nonce N (cache experiments)
 //!
-//! A scene loads every `lib/*.loft` first (the library prelude), then the scene file.
+//! A scene loads the core prelude and its reachable authored modules.
 
 mod diff;
 mod edit_cmd;
@@ -21,33 +21,12 @@ mod fork;
 mod budget;
 
 use loft_ir::{Diag, Sources};
+use loft_passes::source::Graph;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-/// The repository root: the nearest ancestor of the scene holding `lib/`.
-fn root_of(scene: &Path) -> Result<PathBuf, String> {
-    let abs = std::fs::canonicalize(scene).map_err(|e| format!("{}: {e}", scene.display()))?;
-    abs.ancestors()
-        .find(|d| d.join("lib").is_dir() && d.join("Cargo.toml").is_file())
-        .map(Path::to_path_buf)
-        .ok_or_else(|| format!("{}: no ancestor holds lib/ and Cargo.toml", scene.display()))
-}
-
-pub fn sources(scene: &Path) -> Result<Sources, String> {
-    let root = root_of(scene)?;
-    let mut lib: Vec<PathBuf> = std::fs::read_dir(root.join("lib"))
-        .map_err(|e| e.to_string())?
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.extension().is_some_and(|x| x == "loft"))
-        .collect();
-    lib.sort();
-    let mut src = Sources::default();
-    for p in lib.iter().chain([&scene.to_path_buf()]) {
-        let text = std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()))?;
-        let shown = p.strip_prefix(&root).unwrap_or(p).display().to_string();
-        src.add(shown, text);
-    }
-    Ok(src)
+pub fn sources(scene: &Path) -> Result<Graph, String> {
+    Graph::file(scene, "")
 }
 
 pub fn render(d: &Diag, src: &Sources) -> String {

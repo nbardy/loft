@@ -1,25 +1,16 @@
 //! These probes distinguish a correct image from two plausible mirrored-coordinate mistakes.
-use loft_ir::{Sources, Span};
+use loft_ir::Span;
 use loft_parse::ast::QueryKind;
 use loft_passes::{
     compile,
     eval::{Eval, Val},
 };
-use std::{fs, path::PathBuf};
-fn scene(name: &str) -> Sources {
+use loft_passes::source::Graph;
+use std::path::PathBuf;
+
+fn scene(name: &str) -> Graph {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let mut paths: Vec<_> = fs::read_dir(root.join("lib"))
-        .unwrap()
-        .map(|p| p.unwrap().path())
-        .filter(|p| p.extension().is_some_and(|ext| ext == "loft"))
-        .collect();
-    paths.sort();
-    paths.push(root.join(format!("agent_notes/2026-11-20_meta/v1_syntax/{name}.loft")));
-    let mut src = Sources::default();
-    for p in paths {
-        src.add(p.display().to_string(), fs::read_to_string(p).unwrap());
-    }
-    src
+    Graph::file(&root.join(format!("agent_notes/2026-11-20_meta/v1_syntax/{name}.loft")), "").unwrap()
 }
 fn delta(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     std::array::from_fn(|i| a[i] - b[i])
@@ -135,10 +126,10 @@ fn heron_checks_fail_for_reversed_pitch_and_a_displaced_landmark() {
         ("h.pitch = atan2", "h.pitch = -atan2", "lock"),
         ("const HIPS_Y = 0.65m", "const HIPS_Y = 1.2m", "posture"),
     ] {
-        let mut src = scene("heron");
-        let text = &mut src.files.last_mut().unwrap().1;
+        let stock = scene("heron");
+        let text = &stock.files[usize::from(stock.entry())].1;
         assert!(text.contains(from));
-        *text = text.replace(from, to);
+        let src = source(&text.replace(from, to));
         let (p, _, _) = compile(&src, &[]).unwrap();
         let samples = loft_cli::native::sample_motion(&g, &p, 1.1).unwrap();
         let v = samples[0].checks.iter().find(|(name, _)| name == check).unwrap().1[0];
@@ -179,11 +170,15 @@ fn sexp_rebuilds_the_crab_with_its_shader_origins_and_pixels() {
     );
 }
 
-fn source(text: &str) -> Sources {
-    let mut src = scene("heron");
-    src.files.pop();
-    src.add("review.loft", text);
-    src
+fn source(text: &str) -> Graph {
+    use std::path::Path;
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let text = if text.lines().any(|line| line.starts_with("use stdlib::")) {
+        text.to_owned()
+    } else {
+        format!("{text}\nuse stdlib::sdf::solid::*\nuse stdlib::materials::bsdf::*")
+    };
+    Graph::text(&root, Path::new("review.loft"), &text)
 }
 
 #[test]
@@ -237,9 +232,10 @@ build { emit Orb() }");
 #[test]
 fn overrides_change_data_and_pixels_without_changing_shader_text() {
     let g = loft_cli::native::gpu().unwrap();
-    let mut src = scene("heron");
-    let text = &mut src.files.last_mut().unwrap().1;
-    *text = text.replace("at: [0, 0.65m, 0]@World, radius: 3m", "at: [0, 0.2m, 0]@World, radius: 5m");
+    let stock = scene("heron");
+    let src = source(&stock.files[usize::from(stock.entry())].1.replace(
+        "at: [0, 0.65m, 0]@World, radius: 3m", "at: [0, 0.2m, 0]@World, radius: 5m",
+    ));
     let a = compile(&src, &[("side".into(), 1.)]).unwrap().0;
     let b = compile(&src, &[("side".into(), -1.)]).unwrap().0;
     assert!(a.modules.iter().map(|m| &m.wgsl).eq(b.modules.iter().map(|m| &m.wgsl)));
@@ -303,32 +299,46 @@ schedule Main { run_laws(apply) }");
 
 #[test]
 fn geometry_cache_follows_resolved_functions_and_only_used_scans() {
-    let mut src = scene("crab");
+    use loft_passes::source::Provider;
+    use std::{fs, io, path::Path};
+
+    struct Overlay<'a> { entry: &'a str, sdf: &'a str }
+    impl Provider for Overlay<'_> {
+        fn read(&self, path: &Path) -> io::Result<(PathBuf, String)> {
+            let text = if path.ends_with("cache-probe.loft") { self.entry.into() }
+                else if path.ends_with("stdlib/sdf/solid.loft") { self.sdf.into() }
+                else { fs::read_to_string(path)? };
+            Ok((path.into(), text))
+        }
+    }
+    let stock = scene("crab");
+    let original = &stock.files[usize::from(stock.entry())].1;
+    let sdf = &stock.files.iter().find(|(name, _)| name == "stdlib/sdf/solid.loft").unwrap().1;
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap();
     let cache = tempfile::TempDir::new().unwrap();
-    let run = |src: &Sources| loft_passes::compile_cached(src, &[], cache.path()).unwrap().1;
+    let run = |entry, sdf| {
+        let src = Graph::load(&root, Path::new("cache-probe.loft"), &Overlay { entry, sdf }, "");
+        loft_passes::compile_cached(&src, &[], cache.path()).unwrap_or_else(|d| panic!("{}", d.render(&src))).1
+    };
     let get = |r: &loft_passes::Report, kind| {
         let kind = r.kinds.iter().find(|k| k.name == kind).unwrap();
         (kind.cache_hits, kind.shapes)
     };
-    let first = run(&src);
+    let first = run(original, sdf);
     assert_eq!(get(&first, "Coil"), (0, 1));
-    let sdf = src.files.iter().position(|(name, _)| name.ends_with("/sdf.loft")).unwrap();
-    src.files[sdf].1.insert_str(0, "# Formatting does not change an analytic certificate.\n");
-    let text = &mut src.files.last_mut().unwrap().1;
-    let unused = text[text.find("scan coil").unwrap()..text.find("fn roughness").unwrap()]
+    let formatted_sdf = format!("# Formatting does not change an analytic certificate.\n{sdf}");
+    let unused = original[original.find("scan coil").unwrap()..original.find("fn roughness").unwrap()]
         .replace("scan coil", "scan unused")
         .replace("by 192", "by 12");
-    text.push_str(&unused);
-    let second = run(&src);
+    let text = format!("{original}{unused}");
+    let second = run(&text, &formatted_sdf);
     assert!(second.kinds.iter().all(|k| k.cache_hits == k.shapes));
-    let text = &mut src.files.last_mut().unwrap().1;
-    *text = text.replace("by 192", "by 193");
-    let third = run(&src);
+    let text = text.replace("by 192", "by 193");
+    let third = run(&text, &formatted_sdf);
     assert_eq!(get(&third, "Coil"), (0, 1));
     assert_eq!(get(&third, "Pincer"), get(&second, "Pincer"));
 
-    src.files[sdf].1 = src.files[sdf].1.replace("length(v) - r", "length(v) - (r + 0.002)");
-    let fourth = run(&src);
+    let fourth = run(&text, &formatted_sdf.replace("length(v) - r", "length(v) - (r + 0.002)"));
     assert_eq!(get(&fourth, "Eyes").0, 0, "a changed sphere must rederive the eye bound");
     assert_eq!(get(&fourth, "Coil"), (1, 1), "the coil does not call sphere");
 }
