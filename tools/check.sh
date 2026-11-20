@@ -65,6 +65,11 @@ wasm() {
   tools/dev.sh check loft-runner --target wasm32-unknown-unknown --features web-sys
 }
 
+parity() {
+  tools/dev.sh build loft-cli --fast --bin loft
+  tools/gpu_lock.sh "$CARGO_TARGET_DIR/lab/loft" controls "$@"
+}
+
 full_gate() {
   local out cli
   out="$(mktemp -d "$root/out/check.XXXXXX")"
@@ -80,6 +85,7 @@ full_gate() {
 case "${1:-}" in
   static) static_checks ;;
   plan) plan ;;
+  parity) shift; parity "$@" ;;
   quick)
     static_checks
     wasm
@@ -88,5 +94,5 @@ case "${1:-}" in
       tools/gpu_lock.sh tools/dev.sh test "$crate" --test-threads 1
     done ;;
   full) static_checks; mkdir -p "$root/out"; full_gate ;;
-  *) echo 'usage: tools/check.sh static|plan|quick|full' >&2; exit 2 ;;
+  *) echo 'usage: tools/check.sh static|plan|quick|full|parity [controls options]' >&2; exit 2 ;;
 esac
