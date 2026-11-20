@@ -10,11 +10,14 @@ use std::collections::BTreeMap;
 
 pub const REGISTERS: usize = 32;
 pub const MAX_WORDS: usize = 2048;
-pub const VM_WGSL: &str = concat!(
-    include_str!("tier0/compute.wgsl"),
-    include_str!("tier0.wgsl")
+#[macro_use]
+#[path = "tier0/shader.rs"]
+mod shader;
+pub use shader::VM_WGSL;
+const VM_OPERATIONS: &str = concat!(
+    include_str!("tier0.wgsl"),
+    tier0_eval!("tier_eval", 32, include_str!("tier0/eval.wgsl")),
 );
-const VM_OPERATIONS: &str = include_str!("tier0.wgsl");
 
 type V = [f32; 4];
 

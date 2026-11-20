@@ -3,6 +3,13 @@ use super::*;
 use crate::tests::{device_with_features, read};
 use loft_abi::Tier0Opcode as Op;
 
+#[path = "../../../loft-passes/src/tier0/compute_cases.rs"]
+mod compute_cases;
+#[path = "../../../loft-passes/src/tier0/shader.rs"]
+mod shader;
+use compute_cases::save_words;
+use shader::VM_WGSL;
+
 const PIXELS: u32 = 400 * 350;
 const ENTRY: &str = "loft_tier0_main";
 const PASS: PassId = PassId(0);
@@ -85,27 +92,7 @@ fn fixture(code: &str) -> Bundle {
     bundle
 }
 
-fn frame(r: &mut Runner, id: InstanceId, view: &wgpu::TextureView) {
-    let mut enc = r.device.create_command_encoder(&Default::default());
-    r.encode_into(id, &mut enc, view, None, 0., 0.).unwrap();
-    r.queue.submit([enc.finish()]);
-}
-
-#[test]
-fn time_edit_and_compare_native_promotion() {
-    use std::time::{Duration, Instant};
-    let (mut r, view) = device_with_features(wgpu::Features::TIMESTAMP_QUERY);
-    let code = concat!(include_str!("../../../loft-passes/src/tier0/compute.wgsl"), include_str!("../../../loft-passes/src/tier0.wgsl"));
-    let display = "vec4f(clamp(0.5 - 2.0 * DIST.x, 0.0, 1.0))";
-    let vm = code.replace(
-        "= loft_tier0(gid.x);",
-        &format!("= {};", display.replace("DIST", "loft_tier0(gid.x)")),
-    );
-    let specialized = vm.replace(
-        "loft_tier0(gid.x)",
-        "vec4f(length(tier_rows[gid.x].xyz) - tier_constants[1].x)",
-    );
-    let id = r.load_bundle(&fixture(&vm)).unwrap();
+fn bind_texture(r: &mut Runner, id: InstanceId) {
     let desc = wgpu::TextureDescriptor {
         label: None,
         size: wgpu::Extent3d {
@@ -124,11 +111,35 @@ fn time_edit_and_compare_native_promotion() {
     let tex = r.device.create_texture(&desc);
     r.bind_external_texture(id, TableId(5), Arc::new(tex))
         .unwrap();
+}
+
+fn frame(r: &mut Runner, id: InstanceId, view: &wgpu::TextureView) {
+    let mut enc = r.device.create_command_encoder(&Default::default());
+    r.encode_into(id, &mut enc, view, None, 0., 0.).unwrap();
+    r.queue.submit([enc.finish()]);
+}
+
+#[test]
+fn time_edit_and_compare_native_promotion() {
+    use std::time::{Duration, Instant};
+    let (mut r, view) = device_with_features(wgpu::Features::TIMESTAMP_QUERY);
+    let display = "vec4f(clamp(0.5 - 2.0 * DIST.x, 0.0, 1.0))";
+    let vm = VM_WGSL.replace(
+        "= loft_tier0(gid.x);",
+        &format!("= {};", display.replace("DIST", "loft_tier0(gid.x)")),
+    );
+    let specialized = vm.replace(
+        "loft_tier0(gid.x)",
+        "vec4f(length(tier_rows[gid.x].xyz) - tier_constants[1].x)",
+    );
+    let id = r.load_bundle(&fixture(&vm)).unwrap();
+    bind_texture(&mut r, id);
     r.register_tier0(id, KindId(0), PASS).unwrap();
     let out = r.export_buffer(id, TableId(4)).unwrap();
     r.hot_swap_tape(id, KindId(0), &words(0)).unwrap();
     frame(&mut r, id, &view);
     let before = read(&r, &out);
+    let vm_pipeline = r.instances[0].compute.pipeline(PASS).unwrap().clone();
     let edit = words(1);
     let start = Instant::now();
     r.hot_swap_tape(id, KindId(0), &edit).unwrap();
@@ -136,7 +147,7 @@ fn time_edit_and_compare_native_promotion() {
     frame(&mut r, id, &view);
     let interpreted = read(&r, &out);
     assert_ne!(before, interpreted);
-    let vm_pipeline = r.instances[0].compute.pipeline(PASS).unwrap().clone();
+    assert_eq!(*r.instances[0].compute.pipeline(PASS).unwrap(), vm_pipeline);
     r.hot_swap_module(id, ModuleId(0), &specialized).unwrap();
     let start = Instant::now();
     while *r.instances[0].compute.pipeline(PASS).unwrap() == vm_pipeline {
@@ -165,7 +176,10 @@ fn time_edit_and_compare_native_promotion() {
     });
     for i in 0..N {
         let mut enc = r.device.create_command_encoder(&Default::default());
-        for (j, pipeline) in [&vm_pipeline, cache.pipeline(PASS).unwrap()].into_iter().enumerate() {
+        for (j, pipeline) in [&vm_pipeline, cache.pipeline(PASS).unwrap()]
+            .into_iter()
+            .enumerate()
+        {
             let begin = 4 * i + 2 * j as u32;
             let mut cp = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: None,
@@ -206,5 +220,89 @@ fn time_edit_and_compare_native_promotion() {
         "Tier 0 bucket: hot upload {hot_ms:.6} ms, overhead p95 {:.6} ms, {over}/{PIXELS} pixels over 1/255",
         delta[94]
     );
+    println!("Tier 0 adapter: {:?}", r.device.adapter_info());
+    println!(
+        "Tier 0 timestamp period: {} ns",
+        r.queue.get_timestamp_period()
+    );
+    save_words("promotion-before.f32le", before);
+    save_words("promotion-vm.f32le", interpreted);
+    save_words("promotion-specialized.f32le", promoted);
+    save_words("promotion-timestamps.u32le", data);
     assert!(hot_ms <= 2. && delta[94] <= 0.5 && over <= PIXELS as usize / 1000);
+}
+
+#[test]
+fn compute_controls_on_first_frame() {
+    use compute_cases::{CONSTANTS, POINTS, cases};
+
+    let cases = cases();
+    let mut bundle = fixture(VM_WGSL);
+    // Use the old count-prefixed buffer directly before the first upload.
+    let (_, initial, initial_field) = &cases[0];
+    bundle.tables[0].capacity = 10;
+    bundle.tables[0].initial = std::iter::once(initial.len() as u32)
+        .chain(initial.iter().copied())
+        .flat_map(u32::to_le_bytes)
+        .collect::<Vec<_>>()
+        .into();
+    bundle.tables[1].initial = CONSTANTS
+        .into_iter()
+        .flatten()
+        .flat_map(f32::to_le_bytes)
+        .collect::<Vec<_>>()
+        .into();
+    bundle.tables[2].capacity = POINTS.len() as u32;
+    bundle.tables[2].initial = POINTS
+        .into_iter()
+        .flatten()
+        .flat_map(f32::to_le_bytes)
+        .collect::<Vec<_>>()
+        .into();
+    bundle.tables[4].capacity = POINTS.len() as u32;
+    let PassRun::Compute { dispatch, .. } = &mut bundle.passes[0].run else {
+        unreachable!();
+    };
+    *dispatch = DispatchExtent::Fixed([1, 1, 1]);
+
+    let (mut r, view) = device_with_features(wgpu::Features::empty());
+    let id = r.load_bundle(&bundle).unwrap();
+    bind_texture(&mut r, id);
+    r.register_tier0(id, KindId(0), PASS).unwrap();
+    let out = r.export_buffer(id, TableId(4)).unwrap();
+    let pipeline = r.instances[0].compute.pipeline(PASS).unwrap().clone();
+    let field_bits = |field: [[f32; 4]; 2]| {
+        field
+            .into_iter()
+            .flatten()
+            .map(f32::to_bits)
+            .collect::<Vec<_>>()
+    };
+
+    frame(&mut r, id, &view);
+    let legacy = read(&r, &out);
+    assert_eq!(legacy, field_bits(*initial_field));
+    save_words("legacy-buffer.gpu.f32le", legacy);
+
+    for (label, tape, expected) in cases {
+        r.hot_swap_tape(id, KindId(0), &tape).unwrap();
+        frame(&mut r, id, &view);
+        let actual = read(&r, &out);
+        assert_eq!(actual, field_bits(expected), "{label}");
+        assert_eq!(*r.instances[0].compute.pipeline(PASS).unwrap(), pipeline);
+        save_words(&format!("{label}.gpu.f32le"), actual);
+    }
+
+    let ret = Op::Ret.pack(0, 0, 0, 0).unwrap();
+    let begin = Op::LoopBegin.pack(0, 0, 0, 2).unwrap();
+    let end = Op::LoopEnd.pack(0, 0, 0, 0).unwrap();
+    for invalid in [&[][..], &[ret, ret], &[56 << 26, ret], &[begin, end, ret]] {
+        assert_eq!(
+            r.hot_swap_tape(id, KindId(0), invalid),
+            Err(RunnerError::AbiMismatch)
+        );
+    }
+    frame(&mut r, id, &view);
+    assert_eq!(read(&r, &out), field_bits([[-0.5; 4], [0.5; 4]]));
+    println!("Tier 0 controls adapter: {:?}", r.device.adapter_info());
 }
