@@ -171,3 +171,10 @@ and `tier0::tests::l23a_sphere_tape_matches_the_e_plus_twin`. The two other fail
 [Named cut failures](../../out/meta/fxcut/comparison.json) · [Cut test logs](../../out/meta/fxcut/tests/)
 
 All 18 layered frames exceeded frozen picture tolerance. Each independent still was within one pixel above 2/255 of its queued Phase 4 proposal, against an allowance of 1,024. The woodblock look and 187 corpus beauty pairs across 17 batches, including the revised bead proposal, remain queued for owner review. Texture bundle serialization still needs a format decision. [Release image comparisons](../../out/meta/rel/picture-diffs.json) · [Original appearance queue](../../out/meta/i6/approval_needed.md) · [Format request](../../out/meta/i4-r2/approval_needed.md)
+
+## Performance carry-overs from the 18 Nov cook (lead, 20 Nov)
+
+- **Pipeline cache plus warm-up during loading** (spec flag `PIPELINE_CACHE`). Metal compiles about 70 ms per pipeline. The old lane (agent_notes/2026-11-18_cook/pipecache.final.md) activated retained pipelines in 0.08–1.28 ms with byte-identical frames. Target: cold load of hermit-20 dominated by the cache import, and warm load unchanged.
+- **Solve cache:** keep the 128 most recently used verified `solve` results (agent_notes/2026-11-18_cook/small.final.md).
+- **Volume march budget** before real-time media: the old dust volume cost 20–61 ms with shadow marches (volume.final.md). Bound the step and shadow counts, and add them to the Speed budget.
+- **Not carried:** f16 gave no gain on M4 (f16.final.md); f32 stays the default.
