@@ -20,3 +20,6 @@ Task:
 5. Build every file through the normal loader; run tools/check_corpus.py, both grammar checks and the corpus/twin evidence. Match base vs candidate decoded RGBA over the supported camera/time set in corpus/sources.json (512² at 0, 0.5, 1.37, 2.9 s, all available pinned views, and the 1280×800 detail plate). If a port has fewer cameras than the legacy manifest, score every actual port camera and document the coverage explicitly. Include nine bead observations, between-key 0.125, 0.84, 1.1, 2.1 s on train-16/2 and authored motion checks. Report denominators, zero differing pixels and matched SHA per frame, with first-difference coordinates/data on failure. Missing pictures or failed parity stay open. Preserve original archive and approval files; place paired lossless hashes and a q95 contact sheet in out/meta/std1f/.
 
 Final message ≤120 words.
+
+
+Approach (lead, per docs/V1_5_GOALS.md R5): regenerate from the procedural seeds (`build for` plus row defaults). Move sampled data to binary `import_table` assets. Token caps go in lint only.

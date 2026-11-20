@@ -92,3 +92,19 @@ interval. Numbers taken under contention don't count.
 ## Deferred (lead, 20 Nov 14:50)
 - stdaot1 (std AOT and the pipeline cache): std parsing is a few ms. The pipeline cache comes back with the cold-load work.
 - std1f (corpus regeneration): after the stdlib port lands.
+
+## Round 1 decisions (chief scientist's answers, 20 Nov 15:01: agent_notes/2026-11-20_v1/scientist_round1_answers.md)
+
+These supersede the rows above where they differ.
+
+| ID | Decision / new target | Replaces |
+|---|---|---|
+| R1 | **P0 order:** (1) `shade_tiles` exposes (hit, px, world) plus optional 4× MSAA vis-buffer, AND `EXPERIMENTAL_RAY_QUERY` is wired into `World` (matched Table B 58 → < 15 ms uncontended, predicted); (2) finish the x2c sky bake (the Shade pipeline lacks a cube binding): Hermit-20 3.75 → ~2.5 ms; (3) Shrine CoralBranch cluster culling, −0.25 to −0.45 ms. **Do not tune BSDF ALU or march steps now.** | G1, G8.1 |
+| R2 | **Core ceilings:** wave 1 ≤ 18,000 scc lines (loft-std has 0 wgpu deps, loft-runner ≤ 2,200, loft-cli/native ≤ 450); wave 2 ~14,500–15,500 after schedules and BSDFs move to `.loft`. **Sequencing:** first ONE owner merges one execution path plus a wgpu-free loft-std (deleting ~4k lines); then a `tools/check.sh lines` ratchet. Never run 4 parallel lean lanes again. The compiler owns parse/check → typed HIR, AD and Lipschitz, Table+Kernel+Pass lowering, and bundles. The library owns all rendering, lighting, schedule and motion recipes. | G5.1, G5.2 |
+| R3 | **Variety:** 6–10 material-family uber-shaders (StandardPbr, LayeredCoat, StylizedInk, DielectricGlass, Emissive, Foliage) over a packed `MaterialTable` (64–128 B rows) plus bindless textures, at 0 ms compile per material; compiled kinds plus a pipeline cache stay for novel maths. **Cut** compiler auto-merge. **Reject** a material VM for shading: Tier 0 is for live geometry previews only. | G3 |
+| R4 | **Two style contracts:** `fn material(hit) -> Bsdf` (works under every physical integrator) and `fn shade_style(hit, light: LightSummary) -> rgb`. LightSummary carries key_dir, key_vis, key_radiance, indirect_irradiance, ao, footprint_m, depth_m and id. An integrator that doesn't provide LightSummary refuses a Style at compile time (for example woodblock with spectral_caustic). `footprint_m` replaces fragment-only dFdx/dFdy. | G6.4 |
+| R5 | **Bloat is a data-serialisation bug** (95.7% of corpus tokens are baked float arrays). (a) `import_table` for binary sampled data; (b) regenerate the corpus from its procedural seeds with `build for` and row defaults (median → ~1.5–4k tokens); (c) fix ad.rs row-constant parameters (−112k tokens); (d) token caps go in `loft lint` and corpus CI only, **not compile errors**. | G6.1, G6.2 |
+| R6 | **Native-first,** with a strict `HostCaps::WEB_BASELINE` tier and no parity promise between native-high and web. **A 3-rung wgpu bridge** (~600–900 LOC): (i) RAY_QUERY in World, (ii) PASSTHROUGH_SHADERS MSL for simdgroup_matrix/bfloat, (iii) MetalFX via HostCallback + wgpu_hal. No objc2-metal backend unless we commit to SBT RT pipelines, mesh shaders or multi-queue. | G8.4, G8.5 (decided) |
+| R7 | **x2b:** replace the 900-line u32 soft-float with a motion-only FMA contraction barrier; 1,000-crab dispatch ≤ 0.06 ms (predicted); shading stays in MTLMathModeFast. | G7.1 |
+| R8 | **The two-tier picture gate lives in code** (crates/loft-cli/src/gates.rs), as `Deterministic(tol)` and `Stochastic(PSNR/FLIP + temporal)`. | G4 (lane v15c) |
+| R9 | **One conductor:** a central concurrency pool plus a quiet-GPU timing lock that blocks builds and other lanes during Speed and Load scoring. | G4.3 |
