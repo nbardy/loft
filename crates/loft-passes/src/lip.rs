@@ -8,6 +8,7 @@
 use crate::eval::{Eval, Scalar, Un, Val};
 use loft_parse::ast::{BinOp, FnDecl};
 use loft_ir::{Code, Diag, Res, Span};
+use std::rc::Rc;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Iv {
@@ -189,6 +190,212 @@ fn sin_iv(lo: f64, hi: f64, l: f64) -> Iv {
     Iv::new(mn, mx, l)
 }
 
+// A row of a signed linear map on coordinates of one bounded vector. Each column
+// can apply a 1-Lipschitz scalar fold before the matrix.
+#[derive(Clone, Debug)]
+struct Form {
+    basis: Rc<f64>,
+    axes: [Option<Axis>; 4],
+}
+
+#[derive(Clone, Debug)]
+struct Axis {
+    weight: f64,
+    // An abs of a different expression is a different function of this coordinate.
+    fold: Option<Rc<()>>,
+}
+
+impl Form {
+    fn scaled(mut self, scale: f64) -> Option<Self> {
+        for axis in self.axes.iter_mut().flatten() {
+            let weight = axis.weight * scale;
+            // Keep signed coefficients exact. Rounded coefficients could cancel
+            // at assembly even though the real coefficients do not.
+            if !weight.is_finite() || weight.abs() < f64::MIN_POSITIVE / f64::EPSILON.powi(2)
+                || axis.weight.mul_add(scale, -weight) != 0.0
+            {
+                return None;
+            }
+            axis.weight = weight;
+        }
+        Some(self)
+    }
+
+    fn plus(mut self, other: &Self, sign: f64) -> Option<Self> {
+        if !Rc::ptr_eq(&self.basis, &other.basis) {
+            return None;
+        }
+        for (dest, src) in self.axes.iter_mut().zip(&other.axes) {
+            if let Some(axis) = src {
+                // Two terms on one coordinate may be distinct nonlinear folds.
+                if dest.is_some() {
+                    return None;
+                }
+                *dest = Some(Axis { weight: sign * axis.weight, fold: axis.fold.clone() });
+            }
+        }
+        Some(self)
+    }
+
+    fn abs(mut self) -> Option<Self> {
+        let mut axes = self.axes.iter_mut().flatten();
+        let axis = axes.next()?;
+        if axes.next().is_some() {
+            return None;
+        }
+        // |k h(x) + b| = |k| |h(x) + b/k|, so the new axis still contracts.
+        axis.weight = axis.weight.abs();
+        axis.fold = Some(Rc::new(()));
+        Some(self)
+    }
+}
+
+/// The ordinary interval evaluator also serves the solver. Only spatial trace
+/// derivation needs provenance for vector coordinate projections.
+#[derive(Clone, Debug)]
+struct TraceIv {
+    iv: Iv,
+    form: Option<Form>,
+}
+
+impl From<Iv> for TraceIv {
+    fn from(iv: Iv) -> Self { Self { iv, form: None } }
+}
+
+impl TraceIv {
+    fn sum(&self, o: &Self, iv: Iv, sign: f64) -> Self {
+        let form = match (&self.form, &o.form) {
+            (Some(a), _) if o.lip() == 0.0 => Some(a.clone()),
+            (_, Some(b)) if self.lip() == 0.0 => b.clone().scaled(sign),
+            (Some(a), Some(b)) => a.clone().plus(b, sign),
+            _ => None,
+        };
+        Self { iv, form }
+    }
+
+    fn scaled(&self, iv: Iv, scale: Option<f64>) -> Self {
+        let form = scale.filter(|s| s.is_finite() && *s != 0.0)
+            .and_then(|s| self.form.clone()?.scaled(s));
+        Self { iv, form }
+    }
+
+    fn constant(&self) -> Option<f64> {
+        self.iv.exact().filter(|_| self.lip() == 0.0)
+    }
+}
+
+impl Scalar for TraceIv {
+    fn c(x: f64) -> Self { Iv::c(x).into() }
+    fn frame_time() -> Self { Iv::frame_time().into() }
+    fn add(&self, o: &Self) -> Self { self.sum(o, self.iv.add(&o.iv), 1.0) }
+    fn sub(&self, o: &Self) -> Self { self.sum(o, self.iv.sub(&o.iv), -1.0) }
+    fn mul(&self, o: &Self) -> Self {
+        let iv = self.iv.mul(&o.iv);
+        if let Some(scale) = self.constant() {
+            o.scaled(iv, Some(scale))
+        } else {
+            self.scaled(iv, o.constant())
+        }
+    }
+    fn div(&self, o: &Self) -> Self {
+        let scale = o.constant().map(f64::recip)
+            .filter(|s| o.iv.lo.mul_add(*s, -1.0) == 0.0);
+        self.scaled(self.iv.div(&o.iv), scale)
+    }
+    fn neg(&self) -> Self { self.scaled(self.iv.neg(), Some(-1.0)) }
+    fn un(&self, f: Un) -> Self {
+        let iv = self.iv.un(f);
+        match f {
+            Un::Abs if self.iv.lo >= 0.0 => self.clone(),
+            Un::Abs if self.iv.hi <= 0.0 => self.neg(),
+            Un::Abs => Self { iv, form: self.form.clone().and_then(Form::abs) },
+            _ => iv.into(),
+        }
+    }
+    fn min(&self, o: &Self) -> Self { self.iv.min(&o.iv).into() }
+    fn max(&self, o: &Self) -> Self { self.iv.max(&o.iv).into() }
+    fn pow(&self, o: &Self) -> Self { self.iv.pow(&o.iv).into() }
+    fn cmp(&self, op: BinOp, o: &Self) -> Option<bool> { self.iv.cmp(op, &o.iv) }
+    fn mag(&self) -> f64 { self.iv.mag() }
+    fn mig(&self) -> f64 { self.iv.mig() }
+    fn lip(&self) -> f64 { self.iv.l }
+    fn with_lip(self, l: f64) -> Self { self.iv.with_lip(l).into() }
+    fn exact(&self) -> Option<f64> { self.iv.exact() }
+    fn range(&self) -> (f64, f64) { self.iv.range() }
+    fn join(&self, o: &Self) -> Self { self.iv.join(&o.iv).into() }
+
+    fn project(mut self, l: f64) -> Self {
+        self.iv.l = l;
+        self
+    }
+
+    fn vector_basis(components: &mut [Self], l: f64) {
+        let basis = (components.len() <= 4 && l.is_finite() && l > 0.0).then(|| Rc::new(l));
+        for (i, c) in components.iter_mut().enumerate() {
+            c.form = basis.as_ref().map(|basis| {
+                let mut axes = [const { None }; 4];
+                axes[i] = Some(Axis { weight: 1.0, fold: None });
+                Form { basis: basis.clone(), axes }
+            });
+        }
+    }
+
+    fn assembled_lip(components: &[Self], fallback: f64) -> f64 {
+        assembled_lip(components).map_or(fallback, |l| l.min(fallback))
+    }
+}
+
+fn assembled_lip(components: &[TraceIv]) -> Option<f64> {
+    if components.len() > 4 || components.iter().any(|c| !c.lip().is_finite()) {
+        return None;
+    }
+    let rows = components.iter().filter(|c| c.lip() != 0.0);
+    let basis = &rows.clone().next()?.form.as_ref()?.basis;
+    let mut matrix = [[0.0f64; 4]; 4];
+    let mut columns: [Option<&Axis>; 4] = [None; 4];
+    for (row, component) in matrix.iter_mut().zip(rows) {
+        let form = component.form.as_ref()?;
+        if !Rc::ptr_eq(basis, &form.basis) {
+            return None;
+        }
+        for (j, axis) in form.axes.iter().enumerate() {
+            let Some(axis) = axis else { continue };
+            if let Some(first) = columns[j] {
+                match (&first.fold, &axis.fold) {
+                    (None, None) => {}
+                    (Some(a), Some(b)) if Rc::ptr_eq(a, b) => {}
+                    _ => return None,
+                }
+            }
+            columns[j] = Some(axis);
+            row[j] = axis.weight;
+        }
+    }
+    // A diagonal map with optional permutations only needs its largest scale.
+    if matrix.iter().all(|row| row.iter().filter(|&&w| w != 0.0).count() <= 1)
+        && (0..4).all(|j| matrix.iter().filter(|row| row[j] != 0.0).count() <= 1)
+    {
+        let scale = matrix.iter().flatten().map(|w| w.abs()).fold(0.0, f64::max);
+        let l = scale * **basis;
+        return l.is_finite().then(|| if scale.mul_add(**basis, -l) > 0.0 { l.next_up() } else { l });
+    }
+    // Each coordinate fold contracts. Gershgorin on the signed MᵀM then
+    // bounds ||M||₂², including cancellation between Givens coefficients.
+    let gram = |i: usize, j: usize| {
+        let (mut lo, mut hi) = (0.0f64, 0.0f64);
+        for row in matrix.iter().filter(|row| row[i] != 0.0 && row[j] != 0.0) {
+            lo = row[i].mul_add(row[j], lo).next_down();
+            hi = row[i].mul_add(row[j], hi).next_up();
+        }
+        lo.abs().max(hi.abs())
+    };
+    let norm_sq = (0..4).map(|i| (0..4).map(|j| gram(i, j))
+        .filter(|x| *x > 0.0).fold(0.0, |sum, x| (sum + x).next_up()))
+        .fold(0.0, f64::max);
+    let l = (**basis * norm_sq.sqrt().next_up()).next_up();
+    l.is_finite().then_some(l)
+}
+
 /// The search region for a surface: a cube of half-size `REACH` m about the world origin.
 pub const REACH: f64 = 1024.0;
 /// Bisect until a cell is at most this many metres.
@@ -210,19 +417,32 @@ type Cell = ([f64; 3], [f64; 3]);
 
 /// Derives one row's bounds and L for a kind's `trace` query.
 pub fn derive<'a>(ev: &mut Eval<'_, 'a, Iv>, trace: &'a FnDecl, kind: usize, row: usize, span: Span) -> Res<Derived> {
+    let mut traced = Eval::new(ev.p, ev.types, std::mem::take(&mut ev.tables), ev.overrides);
+    traced.luts = ev.luts;
+    traced.time = ev.time.into();
+    traced.steps = ev.steps;
+    traced.cause = ev.cause.take();
+    let result = derive_trace(&mut traced, trace, kind, row, span);
+    ev.tables = traced.tables;
+    ev.steps = traced.steps;
+    ev.cause = traced.cause;
+    result
+}
+
+fn derive_trace<'a>(ev: &mut Eval<'_, 'a, TraceIv>, trace: &'a FnDecl, kind: usize, row: usize, span: Span) -> Res<Derived> {
     let evals = std::cell::Cell::new(0u32);
-    let once = |ev: &mut Eval<'_, 'a, Iv>, (lo, hi): Cell| -> Res<Iv> {
+    let once = |ev: &mut Eval<'_, 'a, TraceIv>, (lo, hi): Cell| -> Res<Iv> {
         evals.set(evals.get() + 1);
-        let p = Val::V((0..3).map(|i| Iv { lo: lo[i], hi: hi[i], l: 1.0 }).collect(), 1.0);
+        let p = Val::vector((0..3).map(|i| Iv { lo: lo[i], hi: hi[i], l: 1.0 }.into()).collect(), 1.0);
         match ev.call_fn(trace, vec![Val::Row(kind, row), p], span)? {
-            Val::S(s) => Ok(s),
+            Val::S(s) => Ok(s.iv),
             other @ Val::Void | other @ Val::V(..) | other @ Val::B(_) | other @ Val::U(_) | other @ Val::I(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) | other @ Val::Bsdf(_) => unreachable!("checked: trace returns f32, got {other:?}"),
         }
     };
     // The natural interval, tightened by the centred (mean value) form f(c) ± L·r with the cell's own derived L.
     // Both enclose f over the cell, so their intersection does; for a distance field it is near exact, where the
     // natural interval alone loses to the dependency problem (`pa` appears twice in `sd_capsule`).
-    let field = |ev: &mut Eval<'_, 'a, Iv>, c: Cell| -> Res<Iv> {
+    let field = |ev: &mut Eval<'_, 'a, TraceIv>, c: Cell| -> Res<Iv> {
         let iv = once(ev, c)?;
         // Decided already (or no finite L to centre with): skip the second evaluation.
         if iv.lo > 0.0 || iv.hi <= 0.0 || !iv.l.is_finite() {
@@ -337,6 +557,7 @@ pub fn derive<'a>(ev: &mut Eval<'_, 'a, Iv>, trace: &'a FnDecl, kind: usize, row
         hi[i] += pad;
     }
     ev.cause = None;
+    ev.vector_bound_changed = false;
     let l = field(ev, (lo, hi))?.l;
     if !l.is_finite() {
         let (at, why) = ev.cause.clone().unwrap_or((span, "unbounded".into()));
@@ -348,7 +569,15 @@ pub fn derive<'a>(ev: &mut Eval<'_, 'a, Iv>, trace: &'a FnDecl, kind: usize, row
         )
         .note(at, why));
     }
-    Ok(Derived { lo, hi, l: l.max(1e-6), evals: evals.get() })
+    let l = l.max(1e-6);
+    // The row table stores f32. Preserve a new vector proof through that conversion.
+    let nearest = l as f32;
+    let l = if ev.vector_bound_changed && f64::from(nearest) < l {
+        f64::from(nearest.next_up())
+    } else {
+        l
+    };
+    Ok(Derived { lo, hi, l, evals: evals.get() })
 }
 
 /// Cells per side of the (u, v) square when bounding a parametric surface.
