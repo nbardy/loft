@@ -1,3 +1,7 @@
+use stdlib::sky::environment
+use stdlib::lighting::emitters
+use stdlib::materials::bsdf::{ggx}
+
 # R0 source: examples/materials/moving_sun.ts. Camera: front.
 space World Local
 

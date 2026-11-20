@@ -1,16 +1,16 @@
-use loft_ir::{Code, Sources, Span};
+use loft_ir::{Code, Span};
 use loft_parse::ast::{Determinism, GeometryProof, UnprovedReason};
 use loft_passes::{Prog, front, world::{LightSelection, WorldCall, WorldQuery}};
 use std::path::Path;
 
-fn sources(scene: &str) -> Sources {
-    let mut src = Sources::default();
-    for (name, body) in [
-        ("world", include_str!("../../../lib/world.loft")),
-        ("bsdf", include_str!("../../../lib/bsdf.loft")),
-    ] { src.add(name, body); }
-    src.add("scene", scene);
-    src
+fn sources(scene: &str) -> loft_passes::source::Graph {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let text = if scene.lines().any(|line| line.starts_with("use stdlib::")) {
+        scene.to_owned()
+    } else {
+        format!("{scene}\nuse stdlib::lighting::world::*\nuse stdlib::materials::bsdf::*")
+    };
+    loft_passes::source::Graph::text(&root, Path::new("probe.loft"), &text)
 }
 
 #[test]
@@ -84,6 +84,6 @@ fn negative_fixtures_fail_at_the_author_site() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/phase4").join(file);
         let src = sources(&std::fs::read_to_string(path).unwrap());
         let d = front(&src).expect_err(file);
-        assert_eq!((d.code, d.span.file as usize), (code, src.files.len()-1), "{file}: {}", d.render(&src));
+        assert_eq!((d.code, d.span.file), (code, src.entry()), "{file}: {}", d.render(&src));
     }
 }

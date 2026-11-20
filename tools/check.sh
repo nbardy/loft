@@ -33,7 +33,7 @@ static_checks() {
 plan() {
   local base paths changed crate graph
   base="$(git merge-base HEAD "${LOFT_BASE:-origin/main}")"
-  paths=(Cargo.toml Cargo.lock rust-toolchain.toml .cargo .config crates corpus lib engines scenes
+  paths=(Cargo.toml Cargo.lock rust-toolchain.toml .cargo .config crates corpus stdlib engines scenes
          grammar docs/spec/loft.lark AGENT_CARD.md tests tools agent_notes/2026-11-20_meta/v1_syntax)
   changed="$(git diff --no-renames --name-only "$base" -- "${paths[@]}")"
   changed+=$'\n'"$(git ls-files --others --exclude-standard -- "${paths[@]}")"

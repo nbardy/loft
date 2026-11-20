@@ -1,21 +1,15 @@
-use loft_ir::{PassId, PassRun, Sources, TableId};
+use loft_ir::{PassId, PassRun, TableId};
+use loft_passes::source::Graph;
 use loft_passes::{compile_aov, emit::Aov};
-use std::{fs, path::Path};
+use std::path::Path;
 
-fn sources(scene: &str, engine: Option<&str>) -> Sources {
+fn sources(scene: &str, engine: Option<&str>) -> Graph {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let mut prelude: Vec<_> = fs::read_dir(root.join("lib")).unwrap().map(|x| x.unwrap().path())
-        .filter(|p| p.extension().is_some_and(|x| x == "loft")).collect();
-    prelude.sort();
-    let mut src = Sources::default();
-    for file in prelude.into_iter().chain([root.join("scenes").join(scene)]) {
-        src.add(file.display().to_string(), fs::read_to_string(&file).unwrap());
-    }
-    if let Some(engine) = engine { src.add("selection", format!("use engines::{engine}")); }
-    src
+    let suffix = engine.map_or_else(String::new, |name| format!("use stdlib::engines::{name}"));
+    Graph::file(&root.join("scenes").join(scene), &suffix).unwrap()
 }
 
-fn compile(src: &Sources, aov: Aov) -> (loft_passes::program::Program, loft_passes::Compiled) {
+fn compile(src: &Graph, aov: Aov) -> (loft_passes::program::Program, loft_passes::Compiled) {
     let (program, _, compiled) = compile_aov(src, &[], aov).unwrap_or_else(|d| panic!("{}", d.render(src)));
     for module in &program.modules {
         naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::default())
@@ -38,9 +32,11 @@ fn all_aovs_and_engines_validate() {
         assert_eq!(shader.entry_points.iter().any(|e| e.name == "photons"), name == "spectral_caustic");
     }
     // Exercise the packing path on the marched form as well as the analytic fixture.
-    let mut traced = sources("lipschitz_bound_mutant.loft", None);
-    traced.files.last_mut().unwrap().1 = traced.files.last().unwrap().1.lines()
+    let original = sources("lipschitz_bound_mutant.loft", None);
+    let text = original.files[usize::from(original.entry())].1.lines()
         .filter(|line| !line.trim_start().starts_with("visible(")).collect::<Vec<_>>().join("\n");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let traced = Graph::text(&root, Path::new("scenes/lipschitz_bound_mutant.loft"), &text);
     let (program, _) = compile(&traced, Aov::SdfSteps);
     assert!(program.modules[0].wgsl.contains("0xffffff00u"));
 }

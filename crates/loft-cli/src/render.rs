@@ -55,13 +55,14 @@ impl Options {
 pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure> {
     let opts = Options::read(args)?;
     let began = Instant::now();
-    let mut src = sources(&opts.scene).map_err(Failure::Usage)?;
-    if let Some(engine) = &opts.engine {
-        if !matches!(engine.as_str(), "realtime" | "reference" | "woodblock" | "spectral_caustic") {
-            return Err(Failure::Usage("unknown engine".into()));
+    let src = if let Some(engine) = &opts.engine {
+        if engine.is_empty() || !engine.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_') {
+            return Err(Failure::Usage("expected an engine module name".into()));
         }
-        src.add("<engine selection>", format!("use engines::{engine}"));
-    }
+        loft_passes::source::Graph::file(&opts.scene, &format!("use stdlib::engines::{engine}"))
+    } else {
+        sources(&opts.scene)
+    }.map_err(Failure::Usage)?;
     let (program, _, compiled) = loft_passes::compile_aov(&src, set, opts.aov)
         .map_err(|d| Failure::Compile(d.render(&src)))?;
     if let Some(limit) = opts.max_build {

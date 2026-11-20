@@ -1,3 +1,6 @@
+use stdlib::lighting::world::{World, RngKey, Ray, Hit, Lit}
+use stdlib::materials::bsdf::{ggx, coat}
+
 space World Local
 type Fixed = i
 struct Bin { fixed: Fixed, count: u, flux: f }

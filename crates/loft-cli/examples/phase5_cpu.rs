@@ -1,4 +1,4 @@
-use loft_ir::Sources;
+use loft_passes::source::Graph;
 use std::{collections::BTreeMap, error::Error, fs, path::{Path, PathBuf}};
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -11,18 +11,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             probes.entry(file.to_owned()).or_default().push((kind.to_owned(), row.parse()?, [x.parse()?, y.parse()?, z.parse()?]));
         }
     }
-    let mut lib: Vec<_> = fs::read_dir("lib")?.map(|e| e.map(|p| p.path())).collect::<Result<_, _>>()?;
-    lib.retain(|p| p.extension().is_some_and(|e| e == "loft"));
-    lib.sort();
     let manifest = args.next().ok_or("missing scene inventory")?;
     let scenes = fs::read_to_string(manifest)?;
     let mut failures = 0;
     for scene in scenes.lines().map(Path::new).map(PathBuf::from) {
         let result = (|| -> Result<_, Box<dyn Error>> {
-            let mut src = Sources::default();
-            for path in lib.iter().chain([&scene]) {
-                src.add(path.display().to_string(), fs::read_to_string(path)?);
-            }
+            let src = Graph::file(&scene, "")?;
             let (program, _, twin) = loft_passes::compile(&src, &[]).map_err(|e| e.render(&src))?;
             let (mut samples, mut error) = (0, 0_f32);
             if let Some(points) = probes.get(scene.file_stem().and_then(|n| n.to_str()).ok_or("invalid scene name")?) {

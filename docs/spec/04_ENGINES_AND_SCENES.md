@@ -1,6 +1,6 @@
 ## 1. Forkable Example Engines (Unified E+ v1.0)
 
-### 1.1 `engines/realtime.loft`
+### 1.1 `stdlib/engines/realtime.loft`
 
 ```loft
 use std::light::*
@@ -27,7 +27,7 @@ pub schedule realtime(w: World, cam: Camera, sun_cam: Option, shade_fn = direct_
 
 ```
 
-### 1.2 `engines/reference.loft`
+### 1.2 `stdlib/engines/reference.loft`
 
 ```loft
 use std::light::*
@@ -66,7 +66,7 @@ pub schedule reference(w: World, cam: Camera, bounces: u = 16) {
 
 ```
 
-### 1.3 `engines/woodblock.loft`
+### 1.3 `stdlib/engines/woodblock.loft`
 
 ```loft
 use std::light::*
@@ -95,10 +95,10 @@ pub schedule woodblock(w: World, shadow_w: World, cam: Camera) {
 
 ```
 
-### 1.4 `engines/roam.loft` & `engines/act.loft` (Motion Engines)
+### 1.4 `stdlib/engines/roam.loft` & `stdlib/engines/act.loft` (Motion Engines)
 
 ```loft
-# engines/roam.loft — Spore-like adaptive locomotion over slice-indexed BODY/STATE/POSE
+# stdlib/engines/roam.loft — Spore-like adaptive locomotion over slice-indexed BODY/STATE/POSE
 use std::motion::*
 
 pub fn default_turn(yaw: rad, lim: rad, tc: s, latch: bool) -> { rate: rad/s, latch: bool } {
@@ -126,7 +126,7 @@ pub law roam_step(c: CreatureState, dt, bodies: [BodyRow], chains: [ChainRow], s
   if support_margin(hull, cp) > 0m { c.trunk.composure = saturate(c.trunk.composure + 0.55 * (dt / 1s)) }
 }
 
-# engines/act.loft — Disney-principled performance (composes roam + compliance-coupled priors + squash)
+# stdlib/engines/act.loft — Disney-principled performance (composes roam + compliance-coupled priors + squash)
 pub law act_step(c: CreatureState, dt, bodies: [BodyRow], chains: [ChainRow], surfs: [SurfaceRow], score: BeatScore, inp: RoamInput)
   writes c.{trunk, feet, gaze, manips}
 {

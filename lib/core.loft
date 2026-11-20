@@ -1,6 +1,0 @@
-# The library prelude. Every file in lib/ is loaded before the scene; nothing here is privileged: a scene may
-# declare its own versions under other names and call those instead.
-
-const TAU = 6.2831853
-kind Sky @World (zenith: rgb, horizon: rgb) {}
-kind Sun @World (dir: d3@World, color: rgb) {}

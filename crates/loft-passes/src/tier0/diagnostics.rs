@@ -1,27 +1,14 @@
 //! Full rendered diagnostics for every implemented v1 code in E101–E503.
-use crate::{Code, Sources, compile};
+use crate::{Code, compile};
 use std::path::Path;
 
 #[test]
 fn authored_diagnostic_snapshots() {
-    let mut src = Sources::default();
-    let lib = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../lib");
-    let mut files: Vec<_> = std::fs::read_dir(lib)
-        .unwrap()
-        .map(|f| f.unwrap().path())
-        .filter(|p| p.extension().is_some_and(|e| e == "loft"))
-        .collect();
-    files.sort();
-    for file in files {
-        src.add(
-            file.file_name().unwrap().to_str().unwrap(),
-            std::fs::read_to_string(&file).unwrap(),
-        );
-    }
-    let file = src.files.len();
-    src.add("case.loft", String::new());
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     for &(code, source, expected) in CASES {
-        src.files[file].1 = source.into();
+        let src = crate::source::Graph::text(&root, Path::new("case.loft"), &format!(
+            "{source}\nuse stdlib::sdf::solid::*\nuse stdlib::materials::bsdf::*\nuse stdlib::frames::transport::*\nuse stdlib::geometry::analytic::*"
+        ));
         let error = compile(&src, &[]).err().expect("negative fixture compiled");
         assert_eq!(error.code, code);
         assert_eq!(error.render(&src), expected, "{code}");

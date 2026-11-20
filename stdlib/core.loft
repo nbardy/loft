@@ -1,0 +1,5 @@
+# The shared Loft prelude.
+
+pub const TAU = 6.2831853
+pub kind Sky @World (zenith: rgb, horizon: rgb) {}
+pub kind Sun @World (dir: d3@World, color: rgb) {}

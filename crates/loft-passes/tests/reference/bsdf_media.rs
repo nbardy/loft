@@ -1,5 +1,7 @@
+use loft_passes::source::Graph;
+use std::path::Path;
 use super::{check_rgb, coincident};
-use loft_ir::{Code, DepthConvention, GpuFeatures, HostCaps, Sources, Span};
+use loft_ir::{Code, DepthConvention, GpuFeatures, HostCaps, Span};
 use loft_passes::{
     Prog,
     bsdf::{Coefficients, INSCATTER_WGSL, inscatter_joint},
@@ -86,11 +88,9 @@ fn lanes(value: Val<f32>) -> Vec<f32> {
 
 #[test]
 fn layered_bsdf_and_white_furnace_twin() {
-    let mut src = Sources::default();
-    src.add("bsdf.loft", include_str!("../../../../lib/bsdf.loft"));
-    src.add(
-        "oracle.loft",
-        "
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let src = Graph::text(&root, Path::new("furnace.loft"), "
+        use stdlib::materials::bsdf::*
         fn white_metal() -> Bsdf = ggx(rgb(1), 1, 1)
         fn base() -> Bsdf = lambert([0.5, 0.25, 0])
         fn top() -> Bsdf = coat(1, 1)
@@ -152,32 +152,15 @@ fn layered_bsdf_and_white_furnace_twin() {
     );
 }
 
-fn quant_sources() -> Sources {
-    let mut src = Sources::default();
-    let lib_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../lib");
-    let mut paths: Vec<_> = std::fs::read_dir(lib_dir)
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .collect();
-    paths.sort();
-    for p in paths
-        .into_iter()
-        .filter(|p| p.extension().is_some_and(|ext| ext == "loft"))
-    {
-        src.add(
-            p.display().to_string(),
-            std::fs::read_to_string(&p).unwrap(),
-        );
-    }
-    let scene = include_str!("../../../../engines/capsules.loft").replace(
+fn quant_sources() -> Graph {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let scene = include_str!("../../../../stdlib/engines/capsules.loft").replace(
         "ggx(albedo, 0.55, 0)",
         "
         ggx(albedo, 0.55, 0) + lambert(demo(0x7f00ff80, 0x7f80fd02) * 1e-6)",
     );
-    src.add("capsules.loft", format!("use std::quant::*\n{scene}"));
-    src.add(
-        "quant.loft",
-        "
+    let quant = "
+use stdlib::materials::bsdf::{lambert}
         fn signed(a: u, b: u) -> i = dot4_i8(a, b)
         fn unsigned(a: u, b: u) -> u = dot4_u8(a, b)
         fn bf(a: u) -> v2 = unpack_bf16x2(a)
@@ -196,9 +179,8 @@ fn quant_sources() -> Sources {
             let e = e4(b & 0x7e7e7e7e) + e5(b & 0x7b7b7b7b)
             [dot_sum, bf_val.x + q.x, u2lane(a,1) + e.y]
         }
-    ",
-    );
-    src
+    ";
+    Graph::text(&root, Path::new("quant.loft"), &format!("{scene}\n{quant}"))
 }
 
 #[test]
@@ -292,19 +274,16 @@ fn quant_packed_and_portable_wgsl_and_twin() {
 
 #[test]
 fn quant_rejects_typed_signed_word() {
-    let mut src = Sources::default();
-    src.add(
-        "bad.loft",
-        "use std::quant::*\nfn bad(a: i) -> i = dot4_i8(a, 1)",
-    );
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let src = Graph::text(&root, Path::new("bad.loft"), "fn bad(a: i) -> i = dot4_i8(a, 1)");
     assert_eq!(front(&src).unwrap_err().code, Code::E003);
 }
 
 #[test]
 fn joint_media_surface_types() {
-    let mut src = Sources::default();
-    src.add("world.loft", include_str!("../../../../lib/world.loft"));
-    src.add("march.loft", "
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let src = Graph::text(&root, Path::new("march.loft"), "
+        use stdlib::lighting::world::*
         space World Local
         fn bounded(w: World, r: Ray, limit: m, rng: RngKey) -> Vol = inscatter_joint(w, r, limit, 64, rng)
         fn default_steps(w: World, r: Ray, limit: m, rng: RngKey) -> Vol = inscatter_joint(w, r, limit, rng)

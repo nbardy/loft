@@ -4,8 +4,8 @@ Each row is an instance. Give its kind a space, declare the columns and put per-
 
 ```loft
 space World Shell
-use std::geom::*
-use std::light::*
+use stdlib::sdf::solid::{sphere}
+use stdlib::materials::bsdf::{ggx}
 param rough: f = 0.35 in 0.05..1
 fn chitin(p, n) = ggx([0.7, 0.22, 0.08], rough, 0)
 

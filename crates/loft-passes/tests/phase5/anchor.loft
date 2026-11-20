@@ -1,3 +1,5 @@
+use stdlib::geometry::mesh::{Mesh}
+
 build {
   let glb = import_gltf("anchor.glb")
   build for i in 0..20 {

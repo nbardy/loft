@@ -1,3 +1,4 @@
+
 state Points { pos: array[p3@World, 64] }
 solver Broken over Points writes Points.{pos} config { strategy: colored_gs(2) } {
   constrain edge(i, i) in 0..15 { pos[i] = pos[0] }

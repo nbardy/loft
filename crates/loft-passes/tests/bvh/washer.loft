@@ -1,3 +1,6 @@
+use stdlib::materials::bsdf::{ggx}
+use stdlib::sdf::solid::{box_sdf}
+
 space World WasherLocal
 
 param washer_inner: f = 0.5 in 0..1

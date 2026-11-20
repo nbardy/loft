@@ -4,30 +4,19 @@ use loft_parse::ast::*;
 
 pub(crate) const ENV_DEFAULTS: [&str; 3] = ["DEFAULT_SUN_COLOR", "DEFAULT_ZENITH", "DEFAULT_HORIZON"];
 
-pub fn schedule(modules: &mut Vec<Module>, next: &mut u32) -> Res<()> {
+pub fn schedule(modules: &mut Vec<Module>, next: &mut u32, recipe: Option<ScheduleDecl>) -> Res<()> {
     let items = || modules.iter().flat_map(|m| &m.items);
     let mut cameras = items().filter_map(|i| if let Item::Camera(c) = i { Some(c) } else { None });
     let camera = cameras.next();
     if let Some(c) = cameras.next() {
         return Err(Diag::new(Code::E520, c.name.span, "multiple default cameras", "declare one camera"));
     }
-    let selection = items().filter_map(|item| match item {
-        Item::Use(path) if matches!(path.as_slice(), [a, _] if a.name == "engines") => path.get(1),
-        _ => None,
-    }).next_back();
     let authored = items().find_map(|i| if let Item::Schedule(s) = i { Some(s) } else { None });
     let woodblock = authored.and_then(|s| s.passes.iter().find(|p| p.verb.name == "woodblock"));
     let complete = authored.is_some_and(|s| s.passes.iter().any(|p| p.verb.name == "render_bundle"));
-    if complete && selection.is_none() { return Ok(()); }
-    let text = match selection.map(|n| n.name.as_str()).or(woodblock.map(|_| "woodblock")) {
-        Some("reference") => include_str!("../../../engines/reference.loft"),
-        Some("woodblock") => include_str!("../../../engines/woodblock.loft"),
-        Some("spectral_caustic") => include_str!("../../../engines/spectral_caustic.loft"),
-        _ => include_str!("../../../engines/realtime.loft"),
-    };
-    let mut recipe = crate::parse::parse(Span::NONE.file, text, next)?;
-    let index = recipe.items.iter().position(|i| matches!(i, Item::Schedule(_))).expect("one default schedule");
-    let Item::Schedule(mut schedule) = recipe.items.remove(index) else { unreachable!("found schedule") };
+    if complete { return Ok(()); }
+    let mut schedule = recipe.ok_or_else(|| Diag::new(Code::E520, Span::NONE,
+        "no render schedule was selected", "import an engine or write a complete schedule"))?;
     if let Some(call) = woodblock {
         let bad = || Diag::new(Code::E520, call.verb.span, "invalid two-world woodblock schedule",
             "write woodblock(PrimaryWorld, SolidShadow, MainCam) with declared worlds and camera");
@@ -55,10 +44,6 @@ pub fn schedule(modules: &mut Vec<Module>, next: &mut u32) -> Res<()> {
                 _ => {}
             }
         }
-    }
-    if complete {
-        modules.push(recipe);
-        return Ok(());
     }
     schedule.implicit = true;
     let mut before = vec![];
@@ -90,6 +75,5 @@ pub fn schedule(modules: &mut Vec<Module>, next: &mut u32) -> Res<()> {
     } else {
         modules.push(Module { items: vec![Item::Schedule(schedule)], ..Module::default() });
     }
-    modules.push(recipe);
     Ok(())
 }

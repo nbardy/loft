@@ -104,17 +104,19 @@ if [[ $matched == --matched ]]; then
   # Keep the capsule rows, count and orbit in the shipped fixture. Fork its
   # material and substitute the experimental library schedule in a scratch scene.
   mkdir -p "$out/fixture/engines"
-  ln -s "$root/lib" "$out/fixture/lib"
+  ln -s "$root/stdlib" "$out/fixture/stdlib"
   ln -s "$root/Cargo.toml" "$out/fixture/Cargo.toml"
-  cp "$root/engines/capsules.loft" "$out/fixture/engines/"
-  awk '/^schedule Main/{exit} {sub(/ggx\(albedo, 0.55, 0\)/,"lambert(albedo)"); sub(/ray_capsule\(/,"matched_capsule("); print}' \
-    "$root/engines/capsules.loft" >"$out/fixture/engines/capsules-matched.loft"
-  orbit=$(awk '/^  orbit\(/{print; exit}' "$root/engines/capsules.loft")
+  cp "$root/stdlib/engines/capsules.loft" "$out/fixture/engines/"
+  awk '/^schedule Main/{exit} /^use .*::geometry::analytic/ {next} /^use .*::materials::bsdf/ {$0="use stdlib::materials::bsdf::{lambert}"} {sub(/ggx\(albedo, 0.55, 0\)/,"lambert(albedo)"); sub(/ray_capsule\(/,"matched_capsule("); print}' \
+    "$root/stdlib/engines/capsules.loft" >"$out/fixture/engines/capsules-matched.loft"
+  orbit=$(awk '/^  orbit\(/{print; exit}' "$root/stdlib/engines/capsules.loft")
   [[ -n $orbit ]]
   awk -v orbit="$orbit" '
+    /^use .*::integrators::direct/ {next}
+    /^use .*::sky::environment/ {next}
     /^  orbit\(/ {print orbit; next}
     {gsub(/Drawables/, "Capsule"); print}
-  ' "$root/engines/realtime_matched.loft" >>"$out/fixture/engines/capsules-matched.loft"
+  ' "$root/stdlib/engines/realtime_matched.loft" >>"$out/fixture/engines/capsules-matched.loft"
   # Recenter closed-form hit arithmetic on both sides of the matched fixture.
   # From the far camera, the uncentered legacy quadratic can move the secondary
   # ray origin inside its own capsule, especially on the thin tails and legs.
@@ -178,7 +180,7 @@ out=$3
 matched=$4
 new="$root/target/lab/loft"
 old="$legacy/rust/target/lab/loft-draw"
-scene="$root/engines/capsules.loft"
+scene="$root/stdlib/engines/capsules.loft"
 ps -Ao pid,comm >"$out/processes-before.txt"
 date -u >"$out/gpu-start"
 if [[ $matched == --matched ]]; then
@@ -285,7 +287,7 @@ ffmpeg -v error -i "$out/legacy-1.png" -i "$out/new-1.png" \
   -filter_complex 'xstack=inputs=4:layout=0_0|w0_0|0_h0|w0_h0' -frames:v 1 \
   -threads 1 "$out/sheet.png"
 cwebp -quiet -q 95 "$out/sheet.png" -o "$out/sheet.webp"
-uv run --no-project --with tiktoken==0.13.0 python - "$out/capsules.ts" "$root/engines/capsules.loft" <<'PY' >"$out/source-tokens.tsv"
+uv run --no-project --with tiktoken==0.13.0 python - "$out/capsules.ts" "$root/stdlib/engines/capsules.loft" <<'PY' >"$out/source-tokens.tsv"
 from pathlib import Path
 import sys
 import tiktoken

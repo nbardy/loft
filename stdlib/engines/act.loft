@@ -1,0 +1,33 @@
+use stdlib::motion::solve::{quintic_plan}
+
+# Act adds anticipatory motion and impact recovery. Callers supply the
+# score, compliance, material friction and contact geometry.
+
+# Return the lifted score through a zero-velocity crouch and release.
+pub fn act_crouch(rest: m, bottom: m, reach: s, release: s, t: s) -> m {
+  if t < reach {
+    return rest + quintic_plan(bottom - rest, 0.0, reach, t).x
+  }
+  bottom + quintic_plan(rest - bottom, 0.0, release - reach, t - reach).x
+}
+
+# Return position on a ballistic arc whose boundary heights are y0 and y1.
+# Call during flight, between takeoff and landing.
+pub fn act_ballistic(y0: m, y1: m, duration: s, elapsed: s) -> m {
+  let g = 9.81
+  let launch = (y1 - y0) / duration + 0.5 * g * duration
+  y0 + elapsed * (launch - 0.5 * g * elapsed)
+}
+
+pub fn act_hit_due(beat: s, t: s, dt: s) -> bool = abs(t - beat) < 0.5 * dt
+
+# Advance Coulomb slip by integrating a linear loss of speed. The trapezoid
+# is truncated at zero speed, including when the stop falls inside this tick.
+pub fn act_slip(velocity: v2, mu: f, dt: s) -> v4 {
+  let speed = length(velocity)
+  if speed == 0.0 { return [0.0, 0.0, 0.0, 0.0] }
+  let friction = mu * 9.81
+  let used = if friction > 0.0 { min(dt, speed / friction) } else { dt }
+  let next = if friction * dt >= speed { 0.0 } else { 1.0 - friction * used / speed }
+  v4(velocity * (0.5 * (1.0 + next) * used), velocity * next)
+}

@@ -11,15 +11,20 @@ fn cli_distinguishes_missing_input_frames_and_failed_truth() {
     };
     assert_eq!(run(&["check", "absent.loft"]).0, Some(5));
     fs::copy(root.join("Cargo.toml"), scratch.path().join("Cargo.toml")).unwrap();
-    for folder in ["lib", "engines"] {
-        fs::create_dir(scratch.path().join(folder)).unwrap();
-        for file in fs::read_dir(root.join(folder)).unwrap() {
+    fn copy_tree(source: &Path, destination: &Path) {
+        fs::create_dir(destination).unwrap();
+        for file in fs::read_dir(source).unwrap() {
             let file = file.unwrap();
-            if file.path().extension().is_some_and(|e| e == "loft") {
-                fs::copy(file.path(), scratch.path().join(folder).join(file.file_name())).unwrap();
+            let path = destination.join(file.file_name());
+            if file.file_type().unwrap().is_dir() {
+                copy_tree(&file.path(), &path);
+            } else {
+                fs::copy(file.path(), path).unwrap();
             }
         }
     }
+    copy_tree(&root.join("stdlib"), &scratch.path().join("stdlib"));
+    fs::create_dir(scratch.path().join("engines")).unwrap();
     let manifest = fs::read_to_string(root.join("engines/gates.json")).unwrap()
         .replace("\"timing_frames\": 300", "\"timing_frames\": 8");
     fs::write(scratch.path().join("engines/gates.json"), manifest).unwrap();

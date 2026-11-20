@@ -22,7 +22,6 @@ impl GltfScene {
 }
 
 use crate::{bvh::{Bvh2, Ray}, program::Instance};
-use loft_ir::Sources;
 use loft_parse::ast::*;
 use serde::Deserialize;
 use std::{fs, path::{Path, PathBuf}};
@@ -308,7 +307,7 @@ fn load(path: &Path, out: &mut Vec<Mesh>) -> Result<GltfScene, String> {
     Ok(scene)
 }
 
-pub(crate) fn lower(src: &Sources, modules: &mut [Module]) -> Res<Vec<Mesh>> {
+pub(crate) fn lower(src: &crate::source::Graph, modules: &mut [Module]) -> Res<Vec<Mesh>> {
     fn error(span: Span, message: impl Into<String>) -> Diag {
         Diag::new(Code::E602, span, message, "use a supported static glTF triangle mesh")
     }
@@ -340,7 +339,7 @@ pub(crate) fn lower(src: &Sources, modules: &mut [Module]) -> Res<Vec<Mesh>> {
         }
         Ok(())
     }
-    fn block(src: &Sources, b: &mut Block, mut handles: BTreeMap<String, PathBuf>,
+    fn block(src: &crate::source::Graph, b: &mut Block, mut handles: BTreeMap<String, PathBuf>,
         scenes: &mut BTreeMap<PathBuf, GltfScene>, meshes: &mut Vec<Mesh>) -> Res<()> {
         let mut stmts = Vec::with_capacity(b.stmts.len());
         for mut stmt in std::mem::take(&mut b.stmts) {
@@ -349,7 +348,7 @@ pub(crate) fn lower(src: &Sources, modules: &mut [Module]) -> Res<Vec<Mesh>> {
                     kind: ExprKind::Call { callee, args }, span, ..
                 } } if callee.name == "import_gltf" => {
                     let [arg] = args.as_slice() else { return Err(error(*span, "import_gltf takes one path")); };
-                    let source = Path::new(&src.files[span.file as usize].0);
+                    let source = src.source_path(span.file);
                     let path = relative(source, &string(arg)?).map_err(|e| error(*span, e))?;
                     if !scenes.contains_key(&path) {
                         scenes.insert(path.clone(), load(&path, meshes).map_err(|e| error(*span, e))?);

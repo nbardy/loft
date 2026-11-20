@@ -1,16 +1,11 @@
-use loft_ir::Sources;
-use std::{fs, path::Path};
+use loft_passes::source::Graph;
+use std::path::Path;
 
-fn source(helpers: &str, trace: &str) -> Sources {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../lib");
-    let mut prelude: Vec<_> = fs::read_dir(root).unwrap().map(|x| x.unwrap().path())
-        .filter(|p| p.extension().is_some_and(|x| x == "loft")).collect();
-    prelude.sort();
-    let mut src = Sources::default();
-    for file in prelude {
-        src.add(file.display().to_string(), fs::read_to_string(&file).unwrap());
-    }
-    src.add("rotations.loft", format!(r#"
+fn source(helpers: &str, trace: &str) -> Graph {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    Graph::text(&root, Path::new("rotations.loft"), &format!(r#"
+use stdlib::materials::bsdf::{{emit_lobe}}
+use stdlib::sdf::solid::*
 space World
 {helpers}
 kind Probe @World () {{
@@ -21,8 +16,7 @@ kind Probe @World () {{
 }}
 build {{ emit Probe() }}
 camera Main {{ at: [0, 0, 0]@World, radius: 3, fov: 38deg }}
-"#));
-    src
+"#))
 }
 
 // Sample both ordinary and local secants inside each derived AABB. The minimum

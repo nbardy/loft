@@ -4,7 +4,7 @@
 
 ## 1. What runs for a shell pixel
 
-I compiled `engines/hermit.loft` at main `914df6c`, with its default 20 crabs. The shell's material calls `rib(uv.x, TAU * uv.y)` to set the ridge term in its BSDF. The surface also calls it to displace the shell. These are the complete authored function and the complete function in the generated `HermitShell` shader. [Hermit source](../../engines/hermit.loft) · [Expression emitter](../../crates/loft-passes/src/emit.rs)
+I compiled `stdlib/engines/hermit.loft` at main `914df6c`, with its default 20 crabs. The shell's material calls `rib(uv.x, TAU * uv.y)` to set the ridge term in its BSDF. The surface also calls it to displace the shell. These are the complete authored function and the complete function in the generated `HermitShell` shader. [Hermit source](../../stdlib/engines/hermit.loft) · [Expression emitter](../../crates/loft-passes/src/emit.rs)
 
 ```loft
 fn rib(u: f, a: f) {
@@ -32,9 +32,9 @@ fn hand_rib(u: f, a: f) -> f = wgsl(u: f, a: f) -> f {
 ```
 
 ```sh
-tools/dev.sh run loft-cli --bin loft -- show engines/hermit.loft --kind HermitShell --plan
-target/lab/loft ir engines/hermit.loft --sexp
-target/lab/loft check engines/hermit.loft
+tools/dev.sh run loft-cli --bin loft -- show stdlib/engines/hermit.loft --kind HermitShell --plan
+target/lab/loft ir stdlib/engines/hermit.loft --sexp
+target/lab/loft check stdlib/engines/hermit.loft
 ```
 
 **Measured outside the function.** The compiler staged 321 rows across five kinds (one ground, 20 shells, 20 faces, 40 claws and 240 legs). The author specified the shell’s 192×32 grid. Loft selected analytic hits for ground and legs, and sphere tracing for face and claws. Compiling at counts 1 and 20 gave eight byte-identical WGSL modules in the same order. The returned plan was Cull → Vis (5 kinds) → Shadow (4) → Classify → Shade (5) → Present. That accounts for 17 frame commands. The native path can bake the 193×33 unique grid positions once and draw indexed geometry. The bake added a fourteenth load pipeline against a budget of thirteen. A compile-time choice bought frame time and had a separately measurable load cost. [Grid bake](../../crates/loft-passes/src/emit/surface.rs) · [Measured Hermit trade-off](../../agent_notes/2026-11-20_v1/lanes/d1b.md) · [Gate budgets](../../engines/gates.json)
@@ -45,11 +45,11 @@ target/lab/loft check engines/hermit.loft
 
 | Author's change | What actually works |
 |---|---|
-| Write a raw WGSL function | **Yes.** A `wgsl(x: f) -> f { return abs(x); }` expression captures typed names in scope. The parser lifts it to a helper and the emitter copies its body into the surrounding module. A scratch Capsules material compiled with the raw body intact. The RGB reference integrator already writes its bounce loop this way. The island inherits the enclosing shader interface. [Parser](../../crates/loft-parse/src/parser.rs) · [Reference engine](../../engines/reference.loft) |
+| Write a raw WGSL function | **Yes.** A `wgsl(x: f) -> f { return abs(x); }` expression captures typed names in scope. The parser lifts it to a helper and the emitter copies its body into the surrounding module. A scratch Capsules material compiled with the raw body intact. The RGB reference integrator already writes its bounce loop this way. The island inherits the enclosing shader interface. [Parser](../../crates/loft-parse/src/parser.rs) · [Reference engine](../../stdlib/engines/reference.loft) |
 | Call it from a proof or motion law | The source CPU evaluator refuses a raw body (E405), symbolic AD refuses it (E307), and a raw dependency in the proven part of a trace has no Lipschitz certificate (E211). A motion law reaching unmarked raw WGSL gets E504. `wgsl det (...)` is the author's determinism assertion. A separate runner interpreter can execute a supported subset of row-local Naga compute. [Checker](../../crates/loft-passes/src/check.rs) · [Evaluator](../../crates/loft-passes/src/eval.rs) · [AD](../../crates/loft-passes/src/ad.rs) · [Compute twin](../../crates/loft-std/src/compute_twin.rs) |
 | Supply a whole WGSL compute or render pass with private resources from a scene | **No general source path.** I inserted each of `pass user_compute reads [ColorHdr] writes [Aux] { dispatch(1) }` and `pass overlay reads [ColorHdr] writes [Aux] { raster(verts: 3) }` after shading in Capsules. Both reached E405, “custom entry is outside this phase’s renderer”. Reading an unavailable input fails earlier with E505. A valid `kernel wave_step(n: u) { let x = n + 1 }` reached the E405 pending-lowering diagnostic. `kernel … allow(...)` checks typed Loft operations and effects. The spectral engine has a dedicated lowering for `deposit_caustic`. A `screen_pass` accepts an author function with signature `(v3, v3, u, u) -> rgb` inside a compiler-owned entry. [Lowering](../../crates/loft-passes/src/lib.rs) · [Spectral exception](../../crates/loft-passes/src/paths.rs) · [Language](../spec/01_LANGUAGE_V1.md) · [Kernel contract](../spec/PATCH_V1_2.md) |
 | Supply the same pass from a host | **Yes, within the bundle ABI.** Construct a WGSL `ModuleBlob`, tables and a `PassDecl`. `Compute` accepts fixed XYZ, row-count or indirect dispatch. `RenderBundle` accepts authored vertex/fragment entries, indirect/indexed draws and declared attachments. Choose sparse slots within the access-class groups. The runner reflects entry use and checks it against the declaration. Its tests bind writable storage at group 2 slot 5. Raster currently supports storage vertex pulling, restricted pipeline state and sample counts 1 or 4. A host can also encode its own wgpu work around `encode_into` and share resources. [Runner fixture](../../crates/loft-runner/src/tests.rs) · [Pass linker](../../crates/loft-std/src/schedule.rs) · [Render pipeline](../../crates/loft-runner/src/embed.rs) |
-| Replace the schedule | **Yes for the built-in vocabulary.** Capsules supplies its own complete schedule, names the kinds and omits the shadow pass. Default elaboration treats a schedule containing `render_bundle` as complete. For other schedules it adds the selected render recipe to the authored operations. Lowering checks resource availability and duplicate producers, accepts Vis64 for the draw bundle and rejects `tile: 16` with E405. The path recipe lowers its screen integrator into Present. At the bundle level the host owns the ordered pass list, can hot-swap a compatible bundle and can use bounded repeats. The runner refuses a conditional `PassLoop` and uses one queue across queue hints. [Capsules](../../engines/capsules.loft) · [Recipe elaboration](../../crates/loft-passes/src/defaults.rs) · [Schedule linker](../../crates/loft-std/src/schedule.rs) · [Hot swap](../../crates/loft-runner/src/lib.rs) |
+| Replace the schedule | **Yes for the built-in vocabulary.** Capsules supplies its own complete schedule, names the kinds and omits the shadow pass. Default elaboration treats a schedule containing `render_bundle` as complete. For other schedules it adds the selected render recipe to the authored operations. Lowering checks resource availability and duplicate producers, accepts Vis64 for the draw bundle and rejects `tile: 16` with E405. The path recipe lowers its screen integrator into Present. At the bundle level the host owns the ordered pass list, can hot-swap a compatible bundle and can use bounded repeats. The runner refuses a conditional `PassLoop` and uses one queue across queue hints. [Capsules](../../stdlib/engines/capsules.loft) · [Recipe elaboration](../../crates/loft-passes/src/defaults.rs) · [Schedule linker](../../crates/loft-std/src/schedule.rs) · [Hot swap](../../crates/loft-runner/src/lib.rs) |
 
 **First implementation.** Let a source `pass` name a complete WGSL module, its entries and dispatch or draw, and map its reflected bindings to declared tables and attachments. Lower it to the existing `PassDecl`. Allow a complete custom pass list with no default renderer injected. Use one resolved list for CLI profiling and embedded playback. Make the first acceptance case a scene that replaces Classify and Shade with one full-screen pass and a custom table, survives bundle export/reload, and reports both pass time and pixel differences. Today's exporter also refuses programs with path or texture-bake resources. Add those descriptors so the path engines can run through the same interface. [Pass ABI](../../crates/loft-ir/src/schema.rs) · [Export boundary](../../crates/loft-passes/src/bundle.rs)
 
@@ -147,7 +147,7 @@ Loft is a light transpiler for the measured shading expression, and a substantia
 
 ### 1. Where contraction is allowed
 
-**Shading retains Metal's fast math. Main also permits contraction in ordinary motion arithmetic.** The proposed D2 binary32 fix has not landed. On `fc7b5ed` I compiled Hermit-20 and added just the law below plus `schedule Main { run_laws(pulse) }` to a copy. The shell material already calls `wave`. All eight original WGSL modules compared byte-for-byte equal. The ninth, `CrabFace.advance`, dispatched the law over 20 rows with a 64-wide workgroup. In a separate control, an unmarked raw sine helper built in the material and raised E504 as soon as the law called it. [Hermit](../../engines/hermit.loft) · [Compiler module assembly](../../crates/loft-passes/src/lib.rs) · [E504 check](../../crates/loft-passes/src/check.rs)
+**Shading retains Metal's fast math. Main also permits contraction in ordinary motion arithmetic.** The proposed D2 binary32 fix has not landed. On `fc7b5ed` I compiled Hermit-20 and added just the law below plus `schedule Main { run_laws(pulse) }` to a copy. The shell material already calls `wave`. All eight original WGSL modules compared byte-for-byte equal. The ninth, `CrabFace.advance`, dispatched the law over 20 rows with a 64-wide workgroup. In a separate control, an unmarked raw sine helper built in the material and raised E504 as soon as the law called it. [Hermit](../../stdlib/engines/hermit.loft) · [Compiler module assembly](../../crates/loft-passes/src/lib.rs) · [E504 check](../../crates/loft-passes/src/check.rs)
 
 ```loft
 law pulse(h: CrabFace, dt) writes h.{aggro} { h.aggro = h.aggro + dt * wave(h.aggro) }
@@ -268,7 +268,7 @@ p=agent_notes/2026-11-20_v1/bk1
 mkdir -p out/bk1
 cp "$p/stamp.wgsl" out/bk1/
 awk '/tonemap_aces/ {print "  pass stamp reads [] writes [Answer] { dispatch(\"stamp.wgsl\", \"stamp\", 1) }"}
-     {print}' engines/capsules.loft > out/bk1/stamp.loft
+     {print}' stdlib/engines/capsules.loft > out/bk1/stamp.loft
 cp "$p/slots.rs" crates/loft-cli/examples/bk1_slots.rs
 cp "$p/runner.rs" crates/loft-cli/examples/bk1_runner.rs
 cp "$p/stamp.wgsl" crates/loft-cli/examples/
@@ -282,7 +282,7 @@ tools/gpu_lock.sh target/lab/examples/bk1_runner
 To inspect the shading pair independently, use Naga 30.0.1. This offline command reproduces the arithmetic. For the live capture, I applied the linked patch to a scratch copy of the registry's `wgpu-hal-30.0.1`, selected that copy with Cargo's `patch.crates-io`, and set `LOFT_PROBE_MSL` to an existing output directory. The patch records the source immediately before Metal compilation. Setting `LOFT_PROBE_SAFE=1` selects arm B.
 
 ```sh
-target/lab/loft show engines/hermit.loft --kind CrusherClaw --json |
+target/lab/loft show stdlib/engines/hermit.loft --kind CrusherClaw --json |
   jq -r '.modules[0].wgsl' > out/bk1/claw.wgsl
 for entry in fs shade; do
   naga --compact --entry-point "$entry" --metal-version 3.2 \
