@@ -8,8 +8,8 @@ LOFT is a 3D meta-engine designed natively for LLM generation. It has four core 
    and get a new model, but also composable and forkable for building your own engine, lighting and render styles.
 3. **LOFT Motion**: bodies, state, laws, solvers and constraints, written in the same language and run on the GPU
    next to rendering. Motion is deterministic and has a CPU twin, so it can be tested and trained.
-4. **LOFT Core**: a tiny Rust compiler and wgpu runner, native and in the browser, that you can embed in your own
-   engine. Every scene is checked by gates (pictures, speed, truth, CPU twin), so every change, whether a person's
+4. **LOFT Core**: a tiny Rust compiler and wgpu runner that compiles to native or to the web via WASM, and that you
+   can embed in your own engine. Every scene is checked by gates (pictures, speed, truth, CPU twin), so every change, whether a person's
    or a model's, is verified.
 
 A "meta-engine" is an engine designed to be the opposite of a traditional framework, which locks you into design
