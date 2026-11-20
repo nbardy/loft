@@ -3,6 +3,8 @@
 //! count are data in `KindParams`. The author's structure is kept: their fns stay fns, their loops stay loops.
 
 use crate::Prog;
+#[path = "det_check.rs"]
+pub(crate) mod det_check;
 #[path="motion.rs"]
 mod motion;
 #[path = "solver.rs"]
@@ -170,6 +172,7 @@ pub(crate) struct References<'a> {
     pub names: Vec<(&'a str, Span)>,
     pub calls: Vec<&'a Ident>,
     pub scans: BTreeSet<&'a str>,
+    pub loops: Vec<(&'a Expr, &'a Expr, Span)>,
 }
 impl<'a> References<'a> {
     pub fn function(f: &'a FnDecl) -> Self {
@@ -263,7 +266,8 @@ impl<'a> References<'a> {
                     self.block(body, locals);
                     locals.pop();
                 }
-                Stmt::For { var, lo, hi, body, .. } => {
+                Stmt::For { var, lo, hi, body, span, .. } => {
+                    self.loops.push((lo, hi, *span));
                     self.expr(lo, locals);
                     self.expr(hi, locals);
                     locals.push(&var.name);
@@ -335,6 +339,17 @@ impl<'p, 'a> Emitter<'p, 'a> {
     }
 
     fn func(&mut self, f: &FnDecl, name: &str) {
+        if self.motion {
+            let mut text = std::mem::take(&mut self.out);
+            self.func_body(f, name);
+            text += &crate::provenance::expression(f.name.span, std::mem::take(&mut self.out));
+            self.out = text;
+        } else {
+            self.func_body(f, name);
+        }
+    }
+
+    fn func_body(&mut self, f: &FnDecl, name: &str) {
         let mut params: Vec<String> = f
             .params
             .iter()

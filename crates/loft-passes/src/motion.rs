@@ -81,6 +81,7 @@ pub fn motion_module(
         return Ok(None);
     }
 
+    let fallback = laws.first().or_else(|| checks.first()).expect("motion roots").name.span;
     let (module, input) = output()?;
     let mut em = Emitter::new(p, types);
     em.header(abi::NONCE_PLACEHOLDER);
@@ -115,13 +116,18 @@ var<private> loft_tick: u32;
         em.out
             .push_str(&crate::fusion::event_wgsl(2, 2, "loft_tick"));
     }
+    let mut raw = std::collections::BTreeMap::new();
     em.constants(&constants);
     for f in lib {
-        em.func(f, &format!("motion_{}", fn_symbol(&f.name.name)));
+        let symbol = format!("motion_{}", fn_symbol(&f.name.name));
+        if f.raw.is_some() { raw.insert(symbol.clone(), f.name.span); }
+        em.func(f, &symbol);
     }
+    for f in &roots { det_check::source_function(f)?; }
     for f in &laws {
         em.locals = f.params.iter().map(|p| p.name.name.clone()).collect();
         let row = wgsl_name(&f.params[0].name.name);
+        let mut text = std::mem::take(&mut em.out);
         writeln!(
             em.out,
             "fn law_{}(initial: Row, loft_local_dt: f32) -> Row {{ var {row} = initial;",
@@ -130,8 +136,11 @@ var<private> loft_tick: u32;
         .unwrap();
         em.block_body(&f.body, 1);
         writeln!(em.out, "return {row}; }}").unwrap();
+        text += &crate::provenance::expression(f.name.span, std::mem::take(&mut em.out));
+        em.out = text;
     }
     for f in &checks {
+        let mut text = std::mem::take(&mut em.out);
         em.locals = f.params.iter().map(|p| p.name.name.clone()).collect();
         writeln!(
             em.out,
@@ -142,9 +151,11 @@ var<private> loft_tick: u32;
         .unwrap();
         em.block_body(&f.body, 1);
         em.out.push_str("}\n");
+        text += &crate::provenance::expression(f.name.span, std::mem::take(&mut em.out));
+        em.out = text;
     }
     let hash = u32::from_le_bytes(
-        blake3::hash(em.out.as_bytes()).as_bytes()[..4]
+        blake3::hash(crate::provenance::Map::new(em.out.clone()).shader.as_bytes()).as_bytes()[..4]
             .try_into()
             .unwrap(),
     );
@@ -239,7 +250,7 @@ var<private> loft_tick: u32;
         bindings.push((2, 2, DispatchResource::Outbox));
     }
     Ok(Some((
-        em.out,
+        det_check::lower(em.out, &raw, fallback)?,
         Dispatch {
             module,
             entry: AdvanceArgs::ENTRY.into(),

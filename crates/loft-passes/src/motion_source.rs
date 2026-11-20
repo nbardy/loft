@@ -400,6 +400,17 @@ pub(crate) fn scheduled<'a>(
             .as_ref()
             .is_some_and(|(_, fields)| fields.is_empty() || fields.iter().any(|f| f.name == name))
     };
+    // Solvers own their declared columns and can report effects on the
+    // same outbox as laws. Individual writes are checked against the locals below.
+    ck.ownership = Some((
+        table.name.name.clone(),
+        table
+            .fields
+            .iter()
+            .filter(|f| writes(&f.name.name))
+            .map(|f| f.name.name.clone())
+            .collect(),
+    ));
     for field in &table.fields {
         let ty = ck.resolve(&field.ty, true)?;
         ck.bind(
