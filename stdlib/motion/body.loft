@@ -1,0 +1,118 @@
+use stdlib::materials::bsdf::{ggx, coat}
+use stdlib::motion::solve::{solve_2bone_ik}
+use stdlib::sdf::solid::{capsule, round_box, sphere}
+
+space Body
+pub space Deck
+
+kind LegChain @Body (
+  actor: Walker, site: u in 0..3, previous: u in 0..3, next: u in 0..3,
+  socket: p3@Body, home: p3@Deck, upper: m > 0m, lower: m > 0m,
+  rest_reach_clearance: m > 0m
+) {}
+
+# Scalar pose columns keep the same authored endpoints available in native snapshots.
+pub kind Walker @World (
+  deck_pose: xf@Deck>World, deck_speed: f in 0..1, stick_scale: f in 0..1,
+  look_scale: f in 0..1, paint: rgb, rest_h: m in 0.3..0.65,
+  upper: m in 0.1..1.2, lower: m in 0.1..1.2,
+  socket_x: v4, socket_z: v4, home_x: v4, home_z: v4,
+  previous: v4, next: v4,
+  x: m = 0m, z: m = 0m, vx: f = 0.0, vz: f = 0.0,
+  lean: rad = 0rad, lean_rate: f = 0.0,
+  last_bearing: rad = 0rad, unwrapped: rad = 0rad, yaw: rad = 0rad,
+  neck: rad = 0rad, turn: f = 0.0,
+  ax0: m, ax1: m, ax2: m, ax3: m,
+  az0: m, az1: m, az2: m, az3: m,
+  foot: f in -1.0..3.0 = -1.0,
+  age0: s = 0.12s, age1: s = 0.12s, age2: s = 0.12s, age3: s = 0.12s,
+  swing: s = 0s, span: s > 0s = 0.2s,
+  aim_x: m = 0m, aim_z: m = 0m, lift: m = 0m, rest_time: s = 0.12s,
+  steps: f = 0.0, boundary: f in 0.0..624.0 = 242.0, support_kind: f = 3.0, cop_margin: m = 0m,
+  toe_x0: m, toe_x1: m, toe_x2: m, toe_x3: m,
+  toe_y0: m = 0m, toe_y1: m = 0m, toe_y2: m = 0m, toe_y3: m = 0m,
+  toe_z0: m, toe_z1: m, toe_z2: m, toe_z3: m
+) {
+  trace(p) {
+    let drift = [clamp(time, 0.0, 4.0) * deck_speed, 0.0, 0.0]@Deck - [0]@Deck
+    let here = inv(deck_pose) * p - drift
+    let trunk = [x, rest_h, z]@Deck
+    let c = cos(yaw)
+    let s = sin(yaw)
+    let d = here - trunk
+    let q = [c * d.x - s * d.z, d.y - lean * d.x, s * d.x + c * d.z]@Body
+    var field = round_box(q - [0]@Body, [0.37, 0.19, 0.33], 0.12)
+    for i in 0..4 {
+      let tip = posed_site(self, i)
+      let hip = trunk + [c * socket_x[i] + s * socket_z[i], lean * socket_x[i], -s * socket_x[i] + c * socket_z[i]]
+      let pole = dir([0.28 * (tip.x - hip.x), 1.0, 0.28 * (tip.z - hip.z)]@Deck)
+      let knee = solve_2bone_ik(hip, tip, upper, lower, pole)
+      field = min(field, min(capsule(here, hip, knee, 0.054), capsule(here, knee, tip, 0.036)))
+      field = min(field, sphere(here - tip, 0.047))
+    }
+    for i in 0..2 {
+      let side = select(-1.0, 1.0, i == 1)
+      let palm = [0.46, -0.07, side * 0.36]@Body
+      field = min(field, capsule(q, [0.25, -0.04, side * 0.20]@Body, palm, 0.075))
+      field = min(field, capsule(q, palm, [0.63, -0.09, side * 0.46]@Body, 0.078))
+      field = min(field, capsule(q, palm, [0.64, -0.06, side * 0.32]@Body, 0.066))
+      let eye_yaw = yaw + neck
+      let eye = trunk + [0.26 * cos(eye_yaw) + side * 0.15 * sin(eye_yaw), 0.28,
+                        -0.26 * sin(eye_yaw) + side * 0.15 * cos(eye_yaw)]
+      field = min(field, capsule(here, trunk + [0.18, 0.11, side * 0.12], eye, 0.032))
+      field = min(field, sphere(here - eye, 0.047))
+    }
+    field
+  }
+  material(p, n) {
+    let height = (inv(deck_pose) * p).y
+    let pigment = mix(paint * 0.36, paint, smoothstep(0.07, 0.63, height))
+    ggx(pigment, 0.39, 0.0) + coat(0.32, 0.13)
+  }
+}
+
+fn posed_site(w: Walker, i: u) -> p3@Deck {
+  let xs = [w.toe_x0, w.toe_x1, w.toe_x2, w.toe_x3]
+  let ys = [w.toe_y0, w.toe_y1, w.toe_y2, w.toe_y3]
+  let zs = [w.toe_z0, w.toe_z1, w.toe_z2, w.toe_z3]
+  [xs[i], ys[i], zs[i]]@Deck
+}
+
+pub check planted(w: Walker) -> m {
+  let xs = [w.ax0, w.ax1, w.ax2, w.ax3]
+  let zs = [w.az0, w.az1, w.az2, w.az3]
+  var drift = 0m
+  for i in 0..4 {
+    if f32(i) != w.foot {
+      drift = max(drift, dist(posed_site(w, i), [xs[i], 0.0, zs[i]]@Deck))
+    }
+  }
+  return if drift > 0.05mm { missed(drift) } else { held(0.05mm - drift) }
+}
+
+# Build the authored four-site plan in counterclockwise order. Each site's two
+# neighboring IDs travel with both the typed chain row and its owner's runtime row.
+pub build fn walker(origin: p3@World, deck_speed: f, stick_scale: f, look_scale: f,
+                    paint: rgb, rest_h: m, upper: m, lower: m) {
+  let rx = [-0.31, 0.31, 0.31, -0.31]
+  let rz = [-0.26, -0.26, 0.26, 0.26]
+  let hx = [-0.86, 0.86, 0.86, -0.86]
+  let hz = [-0.67, -0.67, 0.67, 0.67]
+  let prev = [3.0, 0.0, 1.0, 2.0]
+  let next = [1.0, 2.0, 3.0, 0.0]
+  let actor = emit Walker(deck_pose: place(origin), deck_speed: deck_speed, stick_scale: stick_scale, look_scale: look_scale,
+    paint: paint, rest_h: rest_h, upper: upper, lower: lower, socket_x: rx, socket_z: rz,
+    home_x: hx, home_z: hz, previous: prev, next: next,
+    ax0: hx.x, ax1: hx.y, ax2: hx.z, ax3: hx.w, az0: hz.x, az1: hz.y, az2: hz.z, az3: hz.w,
+    toe_x0: hx.x, toe_x1: hx.y, toe_x2: hx.z, toe_x3: hx.w,
+    toe_z0: hz.x, toe_z1: hz.y, toe_z2: hz.z, toe_z3: hz.w)
+  build for i in 0..4 {
+    let socket = [rx[i], 0.0, rz[i]]@Body
+    let rest = [socket.x, rest_h + socket.y, socket.z]@Deck
+    let home = [hx[i], 0.0, hz[i]]@Deck
+    let span = dist(rest, home)
+    emit LegChain(actor: actor, site: u32(i), previous: u32(prev[i]), next: u32(next[i]),
+      socket: socket, home: home, upper: upper, lower: lower,
+      rest_reach_clearance: min(upper + lower - span, span - abs(upper - lower)))
+  }
+}
