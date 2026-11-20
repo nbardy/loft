@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Compile and run members of the root Cargo workspace.
 #   tools/dev.sh check|lint|test|build|run CRATE|--workspace [--fast|--release|--dev] [cargo args] [-- program/test args]
+#   tools/dev.sh seed   warms the workspace check and lab CLI, then publishes their dependency artifacts to Cambium
 # Pinned toolchain (rust-toolchain.toml), --locked, checkout-local target, and a machine-wide compile lock shared with
 # Keel: check/lint/test take LIGHT (niced), build/run take HEAVY. Both default to two jobs.
 #   lint   Clippy with the workspace lint flags in tools/lib/gate_flags.sh
@@ -11,7 +12,34 @@
 set -euo pipefail
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}"
 root="$(cd "$(dirname "$0")/.." && pwd -P)"
-usage() { echo 'Usage: tools/dev.sh check|lint|test|build|run CRATE|--workspace [--fast|--release|--dev] [cargo args] [-- args]' >&2; exit 2; }
+usage() {
+  echo 'Usage: tools/dev.sh check|lint|test|build|run CRATE|--workspace [--fast|--release|--dev] [cargo args] [-- args]' >&2
+  echo '       tools/dev.sh seed' >&2
+  exit 2
+}
+toolchain="$(sed -n 's/^channel = "\([^"]*\)"/\1/p' "$root/rust-toolchain.toml")"
+if [[ "${1:-}" == seed ]]; then
+  [[ $# -eq 1 ]] || usage
+  cd "$root"
+  # Cambium reads the default target tree directly, including Cargo's intermediate artifacts.
+  export CARGO_TARGET_DIR="$root/target" CARGO_BUILD_BUILD_DIR="$root/target"
+  export RUSTUP_TOOLCHAIN="$toolchain"
+  source "$root/tools/lib/cache-env.sh"
+  tools/dev.sh check --workspace
+  tools/dev.sh build loft-cli --fast
+
+  # Cambium 0.10 checks .cargo-lock. Cargo 1.99 holds .cargo-build-lock while writing intermediates.
+  shopt -s nullglob
+  exec perl -MFcntl=:flock -e '
+    my @locks;
+    for my $path (@ARGV) {
+      open my $lock, "<", $path or die "dev.sh seed: $path: $!\n";
+      flock $lock, LOCK_SH | LOCK_NB or die "dev.sh seed: $path: $!\n";
+      push @locks, $lock;
+    }
+    exit(system("cambium", "seed", "refresh") == 0 ? 0 : 1);
+  ' target/{*,*/*}/.cargo-build-lock
+fi
 [[ $# -ge 2 ]] || usage
 command_name="$1" crate="$2"
 shift 2
@@ -48,7 +76,6 @@ source "$root/tools/lib/cache-env.sh"
 source "$root/tools/lib/gate_flags.sh"
 source "$root/tools/lib/build_gate.sh"
 cd "$root"
-toolchain="$(sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)"
 cargo=(rustup run "$toolchain" cargo)
 case "$command_name" in
   check|lint|test) keel_gate_acquire_light "loft dev.sh $command_name $crate ($root)" ;;

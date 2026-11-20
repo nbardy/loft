@@ -11,7 +11,11 @@ prune_merged_on_add = true
 path = "out"
 policy = "skip"
 
-# Cargo build outputs belong to this checkout. Seed only dependency artifacts.
+# New worktrees CoW-clone third-party Cargo artifacts into their own target.
+# Run tools/dev.sh seed from the primary checkout to publish or refresh the
+# seed for the pinned compiler after dependency, profile, or toolchain changes.
+# Put rustup first on PATH when creating a workspace so Cambium sees that compiler.
+# PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH" git cambium add ...
 [[path]]
 path = "target"
 policy = "seed"
