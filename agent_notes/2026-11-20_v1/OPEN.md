@@ -263,3 +263,16 @@ Command count is not the bottleneck: about 5 commands per frame, roughly 75 µs.
 3. **Apple tile memory:** keep the vis-buffer on-chip between raster and shade. wgpu cannot do this; it needs a native Metal backend. See the design question bk1.
 4. **Overlap:** QueueClass::AsyncCompute (the seam exists; wgpu support is limited).
 5. **Persistent megakernel dispatches,** only for chains of many tiny steps.
+
+## Performance playbook (chief scientist, 20 Nov), to be measured first
+
+The scientist's ranked playbook is in agent_notes/2026-11-20_v1/scientist_perf_playbook.md. Its impact figures are estimates, not Loft measurements. Measure before building (pf1):
+- **Tier 1 (portable):**
+  - trusted shader modules without runtime bounds checks (`ShaderRuntimeChecks::unchecked()`) on compiler-proved passes;
+  - per-kind tile lists with indirect dispatch;
+  - coarse-to-fine raymarch with over-relaxation and split Lipschitz;
+  - fuse shade with tonemap and post;
+  - hot/cold SoA table split and f16 shading. Note that f16 gave no gain on M4 in the 18 Nov test (f16.final.md), so re-measure per pass.
+  - bake noise, masks and IBL.
+- **Tier 2:** hardware RAY_QUERY, half-resolution secondary effects, a non-inlining policy for large helpers, FMA kept on in shading.
+- **Tier 3 (native Metal, after Tiers 1–2 are measured):** tile memory, async compute, ICBs and binary archives.
