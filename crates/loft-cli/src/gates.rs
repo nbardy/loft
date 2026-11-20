@@ -71,7 +71,30 @@ struct Scene {
     file: PathBuf,
     #[serde(deserialize_with = "unique_map")]
     set: BTreeMap<String, f64>,
-    budget: Budget,
+    #[serde(flatten)]
+    checks: SceneChecks,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum SceneChecks {
+    Budget(Budget),
+    PictureFrames(Vec<f32>),
+}
+
+impl Scene {
+    fn frames<'a>(&'a self, standard: &'a [f32]) -> &'a [f32] {
+        match &self.checks {
+            SceneChecks::Budget(_) => standard,
+            SceneChecks::PictureFrames(times) => times,
+        }
+    }
+    fn includes(&self, gate: Gate) -> bool {
+        match self.checks {
+            SceneChecks::Budget(_) => true,
+            SceneChecks::PictureFrames(_) => gate == Gate::Pictures,
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize)]
@@ -89,11 +112,14 @@ struct Budget {
 impl Manifest {
     fn select(&self, only: Option<&str>, approve: bool) -> Result<Vec<&Scene>, Failure> {
         let mut names = BTreeSet::new();
-        let mut times = BTreeSet::new();
+        let valid_frames = |frames: &[f32]| {
+            let mut times = BTreeSet::new();
+            !frames.is_empty() && frames.iter().all(|t| t.is_finite() && times.insert(if *t == 0.0 { 0 } else { t.to_bits() }))
+        };
         if self.size.0 == 0 || self.size.1 == 0 || self.timing_frames == 0
-            || self.scenes.is_empty() || self.frames.is_empty()
+            || self.scenes.is_empty() || !valid_frames(&self.frames)
             || self.scenes.iter().any(|s| s.name.is_empty() || !names.insert(s.name.as_str()))
-            || self.frames.iter().any(|t| !t.is_finite() || !times.insert(if *t == 0.0 { 0 } else { t.to_bits() }))
+            || self.scenes.iter().any(|s| !valid_frames(s.frames(&self.frames)))
         {
             return Err(Failure::Parity("gates.json: invalid size or empty, duplicate, or invalid scene/frame list".into()));
         }
@@ -106,7 +132,7 @@ impl Manifest {
             }
         }
         let scenes: Vec<_> = self.scenes.iter().filter(|s| selected.is_empty() || selected.contains(s.name.as_str())).collect();
-        let expected: BTreeSet<_> = scenes.iter().flat_map(|s| self.frames.iter().map(move |t| format!("{}@{t}", s.name))).collect();
+        let expected: BTreeSet<_> = scenes.iter().flat_map(|s| s.frames(&self.frames).iter().map(move |t| format!("{}@{t}", s.name))).collect();
         let actual: BTreeSet<_> = self.refs.keys().filter(|key| selected.is_empty() || key.split_once('@').is_some_and(|(s, _)| selected.contains(s))).cloned().collect();
         if !approve && expected != actual {
             return Err(Failure::Parity(format!("gates.json: approved frame keys differ. Missing {:?}, extra {:?}", expected.difference(&actual), actual.difference(&expected))));
@@ -286,11 +312,10 @@ struct Ctx<'a> {
 #[allow(clippy::too_many_arguments)]
 fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes: &[usize], out: &mut Vec<Check>, report: &mut Value) -> Result<(), String> {
     let mut push = |what: String, verdict: Verdict| out.push(Check { gate, scene: s.name.clone(), what, verdict, contended: false });
-    let b = &s.budget;
-    match gate {
-        Gate::Pictures => {
+    match (gate, &s.checks) {
+        (Gate::Pictures, _) => {
             let l = Loaded::new(c.g, p, c.size, None)?;
-            for &t in &c.frames {
+            for &t in s.frames(&c.frames) {
                 l.frame(c.g, t);
                 let px = l.pixels(c.g)?;
                 let key = format!("{}@{t}", s.name);
@@ -298,7 +323,7 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
                 if c.approve {
                     write_png(&path, c.size, &px)?;
                     c.refs.insert(key.clone(), format!("{:x}", Sha256::digest(&px)));
-                    if t == c.frames[0] {
+                    if t == s.frames(&c.frames)[0] {
                         let still = c.root.join(format!("agent_notes/2026-11-20_meta/phase1/{}.webp", s.name));
                         std::fs::create_dir_all(still.parent().expect("dir")).map_err(|e| e.to_string())?;
                         let st = std::process::Command::new("cwebp").args(["-quiet", "-q", "95"]).arg(&path).arg("-o").arg(&still).status();
@@ -331,7 +356,8 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
                 push(format!("frame t={t}"), verdict);
             }
         }
-        Gate::Twin => {
+        (_, SceneChecks::PictureFrames(_)) => return Err(format!("{} only declares picture frames", s.name)),
+        (Gate::Twin, _) => {
             let l = Loaded::new(c.g, p, c.size, None)?;
             for (k, kt) in p.kinds.iter().enumerate() {
                 let surface = matches!(kt.draw, Draw::Surface { .. });
@@ -382,7 +408,7 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
                 }
             }
         }
-        Gate::Speed => {
+        (Gate::Speed, SceneChecks::Budget(b)) => {
             let control = c.g.triangle_control_ms(c.size)?;
             let l = Loaded::new(c.g, p, c.size, None)?;
             let times = (0..30).map(|i| i as f32 / 30.0)
@@ -407,7 +433,7 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
                 verdict: held_if(b.p95_ms - p95, None),
             });
         }
-        Gate::Load => {
+        (Gate::Load, SceneChecks::Budget(b)) => {
             // Each pair starts with empty derivations and a fresh driver compilation key.
             let nonce = (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(7, |d| d.as_nanos()) as u32) & 0x7fff_ffff;
             let cache = tempfile::tempdir().map_err(|e| e.to_string())?;
@@ -451,7 +477,7 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
                 None => c.modules.push((s.file.clone(), s.name.clone(), texts)),
             }
         }
-        Gate::Truth => {
+        (Gate::Truth, _) => {
             for &t in &c.frames {
                 for (name, value) in authored_checks(c.g, p, t)? {
                     report[&s.name]["authored_checks"][format!("{t}")][&name] = json!(value.to_string());
@@ -591,7 +617,7 @@ fn run_selected(approve: bool, only: Option<&str>, selected: &[Gate]) -> Result<
     let mut checks = vec![];
     let mut report = json!({"adapter": g.adapter, "device_ms": device_ms});
     let mut compiled = vec![];
-    for s in scenes {
+    for s in scenes.into_iter().filter(|s| selected.iter().any(|g| s.includes(*g))) {
         let file = root.join(&s.file);
         let set: Vec<_> = s.set.iter().map(|(k, &v)| (k.clone(), v)).collect();
         let src = crate::sources(&file).map_err(Failure::Usage)?;
@@ -599,14 +625,14 @@ fn run_selected(approve: bool, only: Option<&str>, selected: &[Gate]) -> Result<
         report[&s.name]["compile_ms"] = json!(r.ms.iter().map(|(n, t)| json!([n, t])).collect::<Vec<_>>());
         report[&s.name]["rows"] = json!(r.kinds.iter().map(|k| json!([k.name, k.rows, k.shapes, k.l_max])).collect::<Vec<_>>());
         let shapes: Vec<usize> = r.kinds.iter().map(|k| k.shapes).collect();
-        if selected.contains(&Gate::Load) {
+        if s.includes(Gate::Load) && selected.contains(&Gate::Load) {
             gate(&mut c, Gate::Load, s, &p, &comp, &shapes, &mut checks, &mut report).map_err(Failure::Device)?;
         }
         compiled.push((s, p, comp, shapes));
     }
     // Measure all cold/warm loads before the long timestamped frame batches.
     for (s, p, comp, shapes) in compiled {
-        for gt in selected.iter().copied().filter(|g| *g != Gate::Load) {
+        for gt in selected.iter().copied().filter(|g| *g != Gate::Load && s.includes(*g)) {
             gate(&mut c, gt, s, &p, &comp, &shapes, &mut checks, &mut report).map_err(Failure::Device)?;
         }
     }
@@ -652,7 +678,7 @@ mod tests {
     fn required_frames_and_selections_are_strict() {
         let recorded = include_str!("../../../engines/gates.json");
         let manifest: Manifest = serde_json::from_str(recorded).unwrap();
-        assert_eq!(manifest.select(None, false).unwrap().len(), 6);
+        assert_eq!(manifest.select(None, false).unwrap().len(), manifest.scenes.len());
         for selection in ["capsule-1", "", "capsules-1,capsules-1"] {
             assert!(manifest.select(Some(selection), false).is_err());
         }
