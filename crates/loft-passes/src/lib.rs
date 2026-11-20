@@ -40,6 +40,7 @@ pub struct Prog<'a> {
     pub scans: BTreeMap<&'a str, &'a ScanDecl>,
     pub schedule: Option<&'a ScheduleDecl>,
     pub kernels: BTreeMap<&'a str, &'a KernelDecl>,
+    pub bakes: BTreeMap<&'a str, &'a BakeDecl>,
     pub bodies: BTreeMap<&'a str, (&'a Ident, &'a [BodyItem])>,
     pub states: BTreeMap<&'a str, &'a StateDecl>,
     pub solvers: BTreeMap<&'a str, &'a SolverDecl>,
@@ -63,6 +64,7 @@ impl<'a> Prog<'a> {
             units: HashSet::new(),
             scans: BTreeMap::new(),
             kernels: BTreeMap::new(),
+            bakes: BTreeMap::new(),
             bodies: BTreeMap::new(), states: BTreeMap::new(), solvers: BTreeMap::new(), plans: BTreeMap::new(),
             schedule: None,laws:BTreeMap::new(),checks:BTreeMap::new(),
         };
@@ -122,6 +124,7 @@ impl<'a> Prog<'a> {
                 Item::Bake(b) => {
                     name(&b.texel.name)?;
                     p.fns.insert(&b.texel.name.name, &b.texel);
+                    p.bakes.insert(&b.texel.name.name, b);
                 }
                 Item::Retarget { name: n, .. } => name(n)?,
                 Item::Kernel(k) => {
@@ -217,6 +220,10 @@ impl<'a> Prog<'a> {
 
 /// Parse every file, then generate the derivative fns `diff` asked for (one more module at the end).
 pub fn parse_all(src: &Sources) -> Res<Vec<Module>> {
+    Ok(parse_program(src)?.0)
+}
+
+fn parse_program(src: &Sources) -> Res<(Vec<Module>, bool)> {
     let mut next = 0;
     let mut modules = src.files.iter().enumerate().map(|(i, (_, text))| parse::parse(i as u16, text, &mut next)).collect::<Res<Vec<_>>>()?;
     // Certify the normalized function and the actual resolved call closure. A
@@ -260,10 +267,14 @@ pub fn parse_all(src: &Sources) -> Res<Vec<Module>> {
         };
         f.attrs.push(Attr { name: Ident { name: "lipschitz".into(), span: sp }, args: vec![ax] });
     }
+    let standalone_compute = modules.iter().flat_map(|m| &m.items).any(|item| {
+        matches!(item, Item::Schedule(s) if s.passes.iter().any(|p| p.resources.is_some())
+            && s.passes.iter().all(|p| p.resources.is_some() || p.verb.name == "table"))
+    });
     defaults::schedule(&mut modules,&mut next)?;
     infer::run(&mut modules)?;
     ad::run(&mut modules, &mut next)?;
-    Ok(modules)
+    Ok((modules, standalone_compute))
 }
 
 /// The space a kind's queries are asked in: the surface's point, or the first point parameter.
@@ -361,6 +372,7 @@ fn geometry_fields(k: &KindDecl) -> Vec<usize> {
 /// Per drawn kind: rows, distinct shapes (one bound derivation each) and the derived L range.
 pub struct KindReport {
     pub name: String,
+    pub proof: GeometryProof,
     pub rows: usize,
     pub shapes: usize,
     pub l_min: f64,
@@ -385,6 +397,17 @@ pub struct Compiled {
     /// Drawn kinds by kind id: (stage-0 table index, name).
     pub drawn: Vec<(usize, String)>,
     meshes: Vec<gltf::Mesh>,
+    pub compute: AuthoredCompute,
+}
+
+/// The standalone pass-derived representation of source-authored compute.
+#[derive(Default)]
+pub struct AuthoredCompute {
+    standalone: bool,
+    pub bundle: loft_ir::Bundle,
+    pub tables: BTreeMap<String, loft_ir::TableId>,
+    pub determinism: BTreeMap<loft_ir::TableId, Determinism>,
+    pub truth: BTreeMap<String, loft_ir::Verdict>,
 }
 
 /// One kind's queries on the CPU in f32 (the twin). Traced and analytic kinds take a world point and direction;
@@ -500,10 +523,22 @@ impl Compiled {
         let (pl, nl, nw, uv) = match k.query(QueryKind::Surface) {
             Some(surf) => {
                 let (u, v) = (Val::S(p[0]), Val::S(p[1]));
-                let jvp = k.fns.iter().find(|f| f.name.name == "surface__jvp").expect("generated");
                 let at = of_v3(ev.call_fn(surf, vec![me.clone(), u.clone(), v.clone()], sp)?);
-                let du = of_v3(ev.call_fn(jvp, vec![me.clone(), u.clone(), v.clone(), Val::S(1.0), Val::S(0.0)], sp)?);
-                let dv = of_v3(ev.call_fn(jvp, vec![me.clone(), u, v, Val::S(0.0), Val::S(1.0)], sp)?);
+                let (du, dv) = match k.proof {
+                    GeometryProof::Required => {
+                        let jvp = k.fns.iter().find(|f| f.name.name == "surface__jvp").expect("generated");
+                        let du = of_v3(ev.call_fn(jvp, vec![me.clone(), u.clone(), v.clone(), Val::S(1.0), Val::S(0.0)], sp)?);
+                        let dv = of_v3(ev.call_fn(jvp, vec![me.clone(), u, v, Val::S(0.0), Val::S(1.0)], sp)?);
+                        (du, dv)
+                    }
+                    GeometryProof::Unproved(_) => {
+                        let mut tap = |dx: f32, dy: f32| ev.call_fn(surf, vec![me.clone(),
+                            Val::S(p[0] + dx * FINITE_DIFF_STEP), Val::S(p[1] + dy * FINITE_DIFF_STEP)], sp).map(of_v3);
+                        let [a, b, c, d] = [tap(-1., -1.)?, tap(1., -1.)?, tap(-1., 1.)?, tap(1., 1.)?];
+                        (std::array::from_fn(|i| (b[i] - a[i]) + (d[i] - c[i])),
+                         std::array::from_fn(|i| (c[i] - a[i]) + (d[i] - b[i])))
+                    }
+                };
                 let n = unit([du[1] * dv[2] - du[2] * dv[1], du[2] * dv[0] - du[0] * dv[2], du[0] * dv[1] - du[1] * dv[0]]);
                 let pw = rot(&pose, at);
                 out.surf_p = [0, 1, 2].map(|i| pw[i] + pose.t[i]);
@@ -534,6 +569,14 @@ impl Compiled {
         Ok(out)
     }
 }
+
+/// Explicit finite differences inside an opted-out geometry expression.
+fn finite_diff_parameter(f: &FnDecl, parameter: &Ident) -> usize {
+    if parameter.name.is_empty() { return 0; }
+    f.params.iter().position(|p| p.name.name == parameter.name).expect("checked parameter")
+}
+
+const FINITE_DIFF_STEP: f32 = 1e-3;
 
 fn arg<'e>(pd: &'e PassDecl, name: &str) -> Res<&'e Expr> {
     pd.args.iter().find(|a| a.name.as_ref().is_some_and(|n| n.name == name)).map(|a| &a.value).ok_or_else(|| {
@@ -625,7 +668,9 @@ fn naga_module(name: &str, text: String, src: &Sources, features: loft_ir::GpuFe
     let map=provenance::Map::new(prelude);
     let diagnostic=|at:Option<Span>,message:String|Diag::new(Code::E701,at.unwrap_or(Span::NONE),format!("WGSL validation in {name}: {message}"),"correct the WGSL expression at this source location");
     let module=naga::front::wgsl::parse_str(&map.shader).map_err(|e|diagnostic(e.labels().find_map(|(s,_)|map.origin(s)),e.emit_to_string(&map.shader)))?;
-    naga::valid::Validator::new(naga::valid::ValidationFlags::all(),naga::valid::Capabilities::default()).validate(&module).map_err(|e|diagnostic(e.spans().find_map(|(s,_)|map.origin(*s)),e.emit_to_string(&map.shader)))?;
+    let mut caps = naga::valid::Capabilities::default();
+    caps.set(naga::valid::Capabilities::SUBGROUP, features.contains(loft_ir::GpuFeatures::SUBGROUPS));
+    naga::valid::Validator::new(naga::valid::ValidationFlags::all(), caps).validate(&module).map_err(|e|diagnostic(e.spans().find_map(|(s,_)|map.origin(*s)),e.emit_to_string(&map.shader)))?;
     let origins=map.expressions(&module,src);
     Ok(ShaderModule{name:name.into(),wgsl:map.shader,naga:module,span:None,origins})
 }
@@ -681,7 +726,7 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
         ms.push((name, clock.elapsed().as_secs_f64() * 1e3));
         clock = Instant::now();
     };
-    let mut modules = parse_all(src)?;
+    let (mut modules, standalone) = parse_program(src)?;
     let meshes = gltf::lower(src, &mut modules)?;
     for c in modules.iter_mut().flat_map(|m|&mut m.items).filter_map(|it|if let Item::Const(c)=it{Some(c)}else{None}){
         if c.comptime && let Some((_,v))=overrides.iter().find(|(n,_)|n==&c.name.name){
@@ -714,7 +759,7 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
         }
     }
     refine::check(&p,&types,overrides)?;
-    if let Some(span) = pending_lowering && !p.kernels.get("deposit_caustic").is_some_and(|k| k.f.name.span == span) {
+    if let Some(span) = pending_lowering {
         return Err(Diag::new(Code::E405, span, "Phase 4 lowering is pending for this checked program",
             "use the typed front end to inspect the Phase 4 contract"));
     }
@@ -734,20 +779,29 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
     let mut print = false;
     let has_shadow_pass = sched.passes.iter().any(|p| p.verb.name == "find_shadow_map");
     let mut emitted_passes = HashSet::new();
+    let mut compute = AuthoredCompute { standalone, ..AuthoredCompute::default() };
+    let mut compute_rows = BTreeMap::new();
     let mut available: HashSet<&str> = ["FrameUniform", "InputsBuf", "ParamsBuf", "RowTables", "LutTables", "BodyTables", "StateBuf", "PoseBuf"].into_iter().collect();
+    available.extend(p.bakes.keys().copied());
     for pd in &sched.passes {
         if let Some(resources) = &pd.resources {
             if let Some(read) = resources.reads.iter().find(|r| !available.contains(r.name.as_str())) {
                 return Err(Diag::new(Code::E505, read.span, format!("{} read before it was written", read.name), "schedule its producer before this pass"));
             }
-            // Generic compute/raster entry and bind-group lowering are Step 0 work.
-            return Err(Diag::new(Code::E405, pd.label.span, "custom entry is outside this phase’s renderer", "use a supported schedule operation"));
+            compute.lower(&p, &mut types, src, overrides, pd, resources, &compute_rows)?;
+            available.extend(resources.writes.iter().map(|r| r.name.as_str()));
+            continue;
         }
         let verb = pd.verb.name.as_str();
         if GPU_ORDER.contains(&verb) && !emitted_passes.insert(verb) {
             return Err(Diag::new(Code::E505, pd.verb.span, format!("duplicate render pass {verb}"), "schedule one producer per renderer resource"));
         }
         match verb {
+            "table" => {
+                let (name, row) = compute.declare_table(&p, &mut types, overrides, pd)?;
+                compute_rows.insert(name, row);
+                available.insert(name);
+            }
             v if p.fns.get(v).is_some_and(|f| f.comptime) => {
                 if !pd.args.is_empty() || !p.fns[v].params.is_empty() {
                     return Err(Diag::new(Code::E405, pd.verb.span, "a rows pass calls a `comptime fn` with no arguments", "read stage-0 constants inside the fn"));
@@ -1132,7 +1186,38 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
         }
         let surface = k.query(QueryKind::Surface);
         let trace = k.query(QueryKind::Trace);
-        let domain=cache::kind_key(&p,k,&luts)?;
+        let step_scale = if k.proof == GeometryProof::Required {
+            None
+        } else {
+            let mut scale: Option<f32> = None;
+            for query in [surface, trace].into_iter().flatten() {
+                for expr in emit::References::function(query).step_scales {
+                    let value = as_f32(stage0(&p, &mut types, expr, overrides)?, expr.span)?;
+                    if !value.is_finite() || value <= 0.0 || !value.recip().is_finite() {
+                        return Err(Diag::new(Code::E602, expr.span, "invalid unproved step scale", "choose a positive finite scale with a finite reciprocal"));
+                    }
+                    if scale.is_some_and(|old| old != value) {
+                        return Err(Diag::new(Code::E003, expr.span, "one geometry query has conflicting step scales", "use the same scale in each unproved block"));
+                    }
+                    scale = Some(value);
+                }
+            }
+            scale
+        };
+        let mut domain = cache::kind_key(&p, k, &luts)?;
+        if !p.bakes.is_empty() {
+            let geometry = [surface, trace].into_iter().flatten().collect::<Vec<_>>();
+            let (helpers, _) = emit::reachable(&p, &geometry, &[]);
+            let textures: std::collections::BTreeSet<_> = geometry.into_iter().chain(helpers)
+                .flat_map(|f| emit::References::function(f).texture_names).collect();
+            for name in textures {
+                if let Some(bake) = p.bakes.get(name) {
+                    // A sampled field's range depends on the texel source and its format.
+                    domain.update(&cache::fingerprint(bake, bake.texel.name.span)?);
+                    domain.update(cache::certificate(&p, &bake.texel)?.as_bytes());
+                }
+            }
+        }
         let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(shapes.len());
         let chunk = shapes.len().div_ceil(threads);
         let derived: Vec<lip::Derived> = if mesh_kind {
@@ -1154,6 +1239,7 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
                             .iter()
                             .map(|&r| cache::derive(cache, domain, &keys[shape_of[r]], k.name.span, || match (surface, trace) {
                                 (Some(s), _) => lip::derive_surface(&mut iv, s, t, r, k.name.span),
+                                (None, Some(f)) if step_scale.is_some() => iv.unproved_bounds(f, t, r, k.name.span),
                                 (None, Some(f)) => lip::derive(&mut iv, f, t, r, k.name.span),
                                 (None, None) => unreachable!("checked: trace or surface"),
                             }))
@@ -1187,7 +1273,8 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
             pack(row, &mut words);
             words.extend(lo);
             words.extend(hi);
-            words.push(d.l as f32);
+            // The marcher stores the reciprocal of its step multiplier in the row ABI.
+            words.push(step_scale.map_or(d.l as f32, f32::recip));
             lips.push(d.l as f32);
             instances.push(Instance { lo, hi, kind: id as u32, row: r as u32 });
         }
@@ -1213,6 +1300,7 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
         } };
         reports.push(KindReport {
             name: name.to_string(),
+            proof: k.proof,
             rows: rows.len(),
             shapes: shapes.len(),
             l_min: lips.iter().copied().fold(f32::INFINITY, f32::min).into(),
@@ -1341,7 +1429,7 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
     };
     let drawn_owned = drawn.iter().map(|d| (p.kind_index(d), d.to_string())).collect();
     drop(p);
-    Ok((program, Report { kinds: reports, ms }, Compiled { modules, types, tables, luts, drawn: drawn_owned, meshes }))
+    Ok((program, Report { kinds: reports, ms }, Compiled { modules, types, tables, luts, drawn: drawn_owned, meshes, compute }))
 }
 
 /// A name expression, copied (bundle bodies are re-read as kind lists).
@@ -1364,5 +1452,273 @@ pub mod bsdf;
 pub mod quant;
 pub mod bake_tex;
 pub mod gltf;
-pub mod bundle;
+#[path = "bundle.rs"]
+mod renderer_bundle;
+pub mod bundle {
+    use super::{Compiled, Program};
+    use loft_ir::Bundle;
+
+    pub use super::renderer_bundle::parameters;
+
+    pub fn lower(
+        program: &Program, compiled: &Compiled, size: (u32, u32),
+        frame: impl Fn(bool, Option<([f32; 3], [f32; 3], u32)>) -> Vec<u8>,
+    ) -> Result<Bundle, String> {
+        if compiled.compute.bundle.passes.is_empty() {
+            return super::renderer_bundle::lower(program, compiled, size, frame);
+        }
+        if !compiled.compute.standalone || program.path.is_some() || !program.dispatches.is_empty() {
+            return Err("the portable artifact needs a standalone authored compute schedule".into());
+        }
+        let mut bundle = compiled.compute.bundle.clone();
+        bundle.params = parameters(program, compiled)?;
+        Ok(bundle)
+    }
+}
 pub mod plan;
+
+fn schedule_name(expr: &Expr) -> Res<&str> {
+    match &expr.kind {
+        ExprKind::Name(name) => Ok(name),
+        _ => Err(Diag::new(Code::E003, expr.span, "expected a declared name", "supply the name without quotes")),
+    }
+}
+
+fn compute_extent(
+    p: &Prog<'_>, types: &mut Vec<Ty>, overrides: &[(String, f64)], value: &Expr,
+) -> Res<[u32; 3]> {
+    let row = stage0(p, types, value, overrides)?;
+    let extent = match row {
+        RowVal::U(x) if (1..=65535).contains(&x) => return Ok([x, 1, 1]),
+        RowVal::I(x) if (1..=65535).contains(&x) => return Ok([x as u32, 1, 1]),
+        RowVal::F(x) => [x, 1.0, 1.0],
+        RowVal::V(v) if v.len() == 3 => [v[0], v[1], v[2]],
+        _ => [0.0; 3],
+    };
+    if extent.iter().all(|v| v.fract() == 0.0 && (1.0..=65535.0).contains(v)) {
+        return Ok(extent.map(|n| n as u32));
+    }
+    Err(Diag::new(Code::E602, value.span, "invalid compute extent", "use one or three positive integer workgroup counts"))
+}
+
+impl AuthoredCompute {
+    fn declare_table<'a>(
+        &mut self, p: &Prog<'a>, types: &mut Vec<Ty>, overrides: &[(String, f64)], decl: &'a PassDecl,
+    ) -> Res<(&'a str, &'a str)> {
+        use loft_ir::{ElemFormat, TableDecl, TableId, TableLifetime};
+        let name = decl.args.first().filter(|a| a.name.is_none()).ok_or_else(|| Diag::new(
+            Code::E003, decl.verb.span, "table needs a name and capacity", "write table(Name, capacity: n)"))?;
+        let name = schedule_name(&name.value)?;
+        let mut options = HashSet::new();
+        for option in &decl.args[1..] {
+            if !option.name.as_ref().is_some_and(|n| matches!(n.name.as_str(), "capacity" | "row") && options.insert(n.name.as_str())) {
+                return Err(Diag::new(Code::E003, option.value.span, "invalid table option", "use capacity and optionally row once each"));
+            }
+        }
+        let row = decl.args.iter().find(|a| a.name.as_ref().is_some_and(|n| n.name == "row"))
+            .map_or(Ok(name), |a| schedule_name(&a.value))?;
+        if !p.structs.contains_key(row) && !p.kinds.contains_key(row) {
+            return Err(Diag::new(Code::E011, decl.verb.span, format!("unknown storage row {row}"), "declare a struct to define the row layout"));
+        }
+        if self.tables.contains_key(name) || p.bakes.contains_key(name) {
+            return Err(Diag::new(Code::E011, decl.verb.span, format!("duplicate table {name}"), "give the table a unique name"));
+        }
+        let expr = arg(decl, "capacity")?;
+        let capacity = match stage0(p, types, expr, overrides)? {
+            RowVal::U(n) => n,
+            RowVal::I(n) if n > 0 => n as u32,
+            _ => return Err(Diag::new(Code::E602, expr.span, "invalid table capacity", "use a positive integer row count")),
+        };
+        let layout = emit::table_layout(p, row, decl.verb.span)?;
+        let stride_bytes = layout.stride_bytes;
+        if capacity == 0 || stride_bytes.checked_mul(capacity).is_none() {
+            return Err(Diag::new(Code::E602, expr.span, "table byte size is out of range", "use a smaller positive capacity"));
+        }
+        let id = TableId(self.bundle.tables.len() as u32);
+        self.tables.insert(name.to_owned(), id);
+        let format = ElemFormat::Struct(self.bundle.struct_layouts.len() as u32);
+        self.bundle.struct_layouts.push(layout);
+        self.bundle.tables.push(TableDecl {
+            id, stride_bytes, capacity, format, lifetime: TableLifetime::Static, initial: Box::new([]),
+        });
+        Ok((name, row))
+    }
+
+    fn lower(
+        &mut self, p: &Prog<'_>, types: &mut Vec<Ty>, src: &Sources, overrides: &[(String, f64)],
+        decl: &PassDecl, resources: &PassResources, rows: &BTreeMap<&str, &str>,
+    ) -> Res<()> {
+        use loft_ir::{BindAccess, DispatchExtent, ModuleBlob, ModuleId, PassId, PassRun, QueueClass, ShaderTarget};
+        let err = |message: String| Diag::new(Code::E520, decl.label.span, message, "match the pass body, tables and declared resource effects");
+        if self.truth.contains_key(&decl.label.name) {
+            return Err(err(format!("duplicate compute pass {}", decl.label.name)));
+        }
+        let [Stmt::Expr(Expr { kind: ExprKind::Call { callee, args }, .. })] = resources.body.stmts.as_slice() else {
+            return Err(err("a compute pass needs one compute(...) or dispatch(...) call".into()));
+        };
+        let mut allowed = BTreeMap::new();
+        for (access, names) in [(BindAccess::ReadStorage, &resources.reads), (BindAccess::ReadWriteStorage, &resources.writes)] {
+            for name in names {
+                if p.bakes.contains_key(name.name.as_str()) {
+                    if access != BindAccess::ReadStorage {
+                        return Err(err(format!("{} is written by its texture bake", name.name)));
+                    }
+                    let id = *self.tables.entry(name.name.clone()).or_insert_with(|| {
+                        let id = loft_ir::TableId(self.bundle.tables.len() as u32);
+                        self.bundle.tables.push(loft_ir::TableDecl {
+                            id, format: loft_ir::ElemFormat::F32, lifetime: loft_ir::TableLifetime::External,
+                            stride_bytes: 4, capacity: 0, initial: Box::new([]),
+                        });
+                        id
+                    });
+                    allowed.insert(name.name.as_str(), (id, BindAccess::SampledTex));
+                } else {
+                    let table = self.tables.get(&name.name).ok_or_else(|| err(format!("{} is not a declared custom table", name.name)))?;
+                    allowed.insert(name.name.as_str(), (*table, access));
+                }
+            }
+        }
+        let (entry, extent, wgsl, mut bindings) = match (callee.name.as_str(), args.as_slice()) {
+            ("dispatch", [Arg { value: Expr { kind: ExprKind::String(file), .. }, .. },
+                          Arg { value: Expr { kind: ExprKind::String(entry), .. }, .. }, extent]) => {
+                let extent = compute_extent(p, types, overrides, &extent.value)?;
+                let file = serde_json::from_str::<String>(file).map_err(|e| err(format!("invalid WGSL file literal: {e}")))?;
+                let entry = serde_json::from_str::<String>(entry).map_err(|e| err(format!("invalid WGSL entry literal: {e}")))?;
+                let origin = &src.files[decl.label.span.file as usize].0;
+                let path = std::path::Path::new(origin).with_file_name(file);
+                let file = std::fs::read_to_string(&path).map_err(|e| err(format!("{}: {e}", path.display())))?;
+                let (wgsl, bindings) = link_raw_compute(&file, &entry, &allowed, &self.bundle.tables).map_err(err)?;
+                (entry, extent, wgsl, bindings)
+            }
+            ("compute", args) => {
+                let bad = || err("write compute(entry: kernel_name, extent: n, parameter: value, ...)".into());
+                let mut named = BTreeMap::new();
+                for arg in args {
+                    let name = &arg.name.as_ref().ok_or_else(bad)?.name;
+                    if named.insert(name.as_str(), &arg.value).is_some() { return Err(bad()); }
+                }
+                let entry = schedule_name(named.remove("entry").ok_or_else(bad)?)?;
+                let kernel = p.kernels.get(entry).ok_or_else(|| err(format!("unknown kernel {entry}")))?;
+                let extent = compute_extent(p, types, overrides, named.remove("extent").ok_or_else(bad)?)?;
+                let workgroup = named.remove("workgroup").map_or(Ok([1; 3]), |e| compute_extent(p, types, overrides, e))?;
+                if workgroup[0] > 256 || workgroup[1] > 256 || workgroup[2] > 64
+                    || workgroup.into_iter().product::<u32>() > 256
+                {
+                    return Err(err("workgroup size exceeds the portable device limits".into()));
+                }
+                let mut arguments = Vec::new();
+                let mut bindings = Vec::new();
+                let mut table_args = Vec::new();
+                let mut slots = [0; 4];
+                let mut used_tables = HashSet::new();
+                for param in &kernel.f.params {
+                    let name = param.name.name.as_str();
+                    let value = named.remove(name).ok_or_else(|| err(format!("kernel {entry} is missing {name}")))?;
+                    let ty = param.ty.as_ref().expect("checked kernel parameter");
+                    if let TyExpr::Table(row) = ty {
+                        let table = schedule_name(value)?;
+                        if rows.get(table) != Some(&row.name.as_str()) {
+                            return Err(err(format!("{name} needs a table of {}", row.name)));
+                        }
+                        let &(id, declared) = allowed.get(table).ok_or_else(|| err(format!("{table} is absent from reads and writes")))?;
+                        if !used_tables.insert(table) {
+                            return Err(err(format!("{table} is bound to more than one kernel parameter")));
+                        }
+                        let access = if let Some(&det) = kernel.writes.get(name) {
+                            self.determinism.entry(id).and_modify(|old| *old = (*old).max(det)).or_insert(det);
+                            BindAccess::ReadWriteStorage
+                        } else { BindAccess::ReadStorage };
+                        if access != declared {
+                            return Err(err(format!("declared access for {table} disagrees with kernel {entry}")));
+                        }
+                        let group = access.group();
+                        let slot = &mut slots[group as usize];
+                        let binding = loft_ir::PassBinding { group, slot: *slot, resource: id, access };
+                        *slot += 1;
+                        table_args.push((name, row.name.as_str(), binding));
+                        bindings.push(binding);
+                    } else {
+                        arguments.push(check::kernel_argument(p, types, kernel, value, ty, overrides)?);
+                    }
+                }
+                if !named.is_empty() { return Err(bad()); }
+                let wgsl = emit::kernel_module(p, types, kernel, &arguments, &table_args, workgroup);
+                let module = naga_module(entry, wgsl, src, loft_ir::GpuFeatures::SUBGROUPS)?;
+                for (_, global) in module.naga.global_variables.iter() {
+                    let Some(name) = global.name.as_deref() else { continue; };
+                    let Some(name) = name.strip_prefix(bake_tex::SAMPLE_TEXTURE_PREFIX) else { continue; };
+                    let &(resource, access) = allowed.get(name).filter(|(_, access)| *access == BindAccess::SampledTex)
+                        .ok_or_else(|| err(format!("{name} is absent from reads")))?;
+                    let binding = global.binding.as_ref().expect("generated texture binding");
+                    bindings.push(loft_ir::PassBinding { group: 3, slot: binding.binding, resource, access });
+                    used_tables.insert(name);
+                }
+                if used_tables.len() != allowed.len() { return Err(bad()); }
+                ("main".into(), extent, module.wgsl, bindings)
+            }
+            _ => return Err(err("write dispatch(\"module.wgsl\", \"entry\", extent) or compute(entry: kernel, extent: n, ...)".into())),
+        };
+        bindings.sort_by_key(|b| (b.group, b.slot));
+        let wave = self.bundle.passes.len().try_into().map_err(|_| err("too many compute passes".into()))?;
+        let module = ModuleId(self.bundle.modules.len() as u32);
+        self.bundle.modules.push(ModuleBlob {
+            id: module, hash: *blake3::hash(wgsl.as_bytes()).as_bytes(), target: ShaderTarget::Wgsl,
+            bytes: wgsl.into_bytes().into_boxed_slice(),
+        });
+        self.bundle.passes.push(loft_ir::PassDecl {
+            id: PassId(u32::from(wave)), wave, queue: QueueClass::Graphics, bindings: bindings.into_boxed_slice(),
+            run: PassRun::Compute { module, entry, dispatch: DispatchExtent::Fixed(extent) },
+        });
+        self.truth.insert(decl.label.name.clone(), loft_ir::Verdict::Unknown { reason: "NoCpuTwin".into() });
+        Ok(())
+    }
+}
+
+fn link_raw_compute(
+    source: &str, entry: &str, allowed: &BTreeMap<&str, (loft_ir::TableId, loft_ir::BindAccess)>,
+    tables: &[loft_ir::TableDecl],
+) -> Result<(String, Vec<loft_ir::PassBinding>), String> {
+    use naga::{AddressSpace, ShaderStage, StorageAccess, TypeInner, valid};
+    let mut ir = naga::front::wgsl::parse_str(source).map_err(|e| e.emit_to_string(source))?;
+    let validate = |ir: &naga::Module| valid::Validator::new(valid::ValidationFlags::all(), valid::Capabilities::default() | valid::Capabilities::SUBGROUP)
+        .validate(ir).map_err(|e| e.emit_to_string(source));
+    let entry_index = ir.entry_points.iter().position(|ep| ep.stage == ShaderStage::Compute && ep.name == entry)
+        .ok_or_else(|| format!("WGSL has no compute entry {entry}"))?;
+    let info = validate(&ir)?;
+    let usage = info.get_entry_point(entry_index);
+    let mut mapped = BTreeMap::new();
+    for (handle, global) in ir.global_variables.iter() {
+        if usage[handle].is_empty() || global.binding.is_none() { continue; }
+        let name = global.name.as_deref().ok_or("WGSL global has no resource name")?;
+        if global.binding.as_ref().is_some_and(|b| b.group == 0) { continue; }
+        let &(resource, access) = allowed.get(name).ok_or_else(|| format!("WGSL binding {name} is absent from reads and writes"))?;
+        use loft_ir::BindAccess::*;
+        let ty = &ir.types[global.ty].inner;
+        let expected = match (global.space, ty) {
+            (AddressSpace::Storage { access }, TypeInner::Array { stride, .. })
+                if *stride == tables[resource.0 as usize].stride_bytes =>
+                if access == StorageAccess::LOAD { ReadStorage } else { ReadWriteStorage },
+            (AddressSpace::Handle, TypeInner::Image { class: naga::ImageClass::Sampled { kind: naga::ScalarKind::Float, multi: false }, .. }) =>
+                SampledTex,
+            _ => return Err(format!("WGSL resource {name} does not match its declared table layout")),
+        };
+        if access != expected { return Err(format!("WGSL access for {name} disagrees with the pass")); }
+        mapped.insert(name.to_owned(), (handle, resource, access));
+    }
+    if mapped.len() != allowed.len() { return Err("pass declares resources unused by its selected WGSL entry".into()); }
+    // Keep the requested entry only. Other entry points may have unrelated interfaces.
+    ir.entry_points.retain(|ep| ep.stage == ShaderStage::Compute && ep.name == entry);
+    let mut slots = [0; 4];
+    let mut bindings = Vec::new();
+    for (_, (handle, resource, access)) in mapped {
+        let group = access.group();
+        let slot = &mut slots[group as usize];
+        ir.global_variables[handle].binding = Some(naga::ResourceBinding { group: u32::from(group), binding: *slot });
+        bindings.push(loft_ir::PassBinding { group, slot: *slot, resource, access });
+        *slot += 1;
+    }
+    let info = validate(&ir)?;
+    let wgsl = naga::back::wgsl::write_string(&ir, &info, naga::back::wgsl::WriterFlags::empty())
+        .map_err(|e| e.to_string())?;
+    Ok((wgsl, bindings))
+}
