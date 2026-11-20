@@ -248,7 +248,7 @@ pub fn authored_checks(g: &Gpu, p: &Program, t: f32) -> Result<Vec<(String, Verd
 
 pub fn still(scene: &Path, set: &[(String, f64)], t: f32, out: &Path, max_frame: Option<f64>) -> Result<(), Failure> {
     let src = crate::sources(scene).map_err(Failure::Usage)?;
-    let (mut p, _, _) = loft_passes::compile(&src, set).map_err(|d| Failure::Compile(d.render(&src)))?;
+    let (mut p, _, compiled) = loft_passes::compile(&src, set).map_err(|d| Failure::Compile(d.render(&src)))?;
     let g = loft_cli::native::gpu().map_err(Failure::Device)?;
     if max_frame.is_some() { budget::timestamps(g.timestamps)?; }
     if !p.dispatches.is_empty() {
@@ -258,6 +258,9 @@ pub fn still(scene: &Path, set: &[(String, f64)], t: f32, out: &Path, max_frame:
             for (n, values) in &kind.checks { println!("check {} {:?}", n, values); }
         }
         p = loft_passes::compile_snapshot(&src, set, &sampled).map_err(|d| Failure::Compile(d.render(&src)))?.0;
+    }
+    if let Some(camera) = compiled.camera_at(t, set).map_err(|d| Failure::Compile(d.render(&src)))? {
+        p.camera = camera;
     }
     let size = (1280, 800);
     let l = Loaded::new(&g, &p, size, None).map_err(Failure::Device)?;

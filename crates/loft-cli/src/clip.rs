@@ -170,7 +170,10 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
         } else if loaded.is_none() {
             loaded = Some(load(&p)?);
         }
-        let frame = loaded.as_ref().expect("loaded frame");
+        let frame = loaded.as_mut().expect("loaded frame");
+        if let Some(camera) = compiled.camera_at(t, set).map_err(|d| Failure::Compile(d.render(&src)))? {
+            frame.aim(camera);
+        }
         pipelines = frame.stats.render_pipelines + frame.stats.compute_pipelines + p.dispatches.len();
         commands = frame.frame(&g, t) as usize + p.dispatches.len();
         if let Some((render_ms, _)) = frame.gpu_ms(&g).map_err(Failure::Device)? {

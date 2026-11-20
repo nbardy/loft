@@ -921,6 +921,10 @@ impl Loaded {
         bytes
     }
 
+    pub fn aim(&mut self, camera: loft_passes::program::Orbit) {
+        self.camera = camera;
+    }
+
     pub fn set_param_word(&self, word: usize, value: f32) -> Result<(), String> {
         let mut params = self.param_values.lock().unwrap();
         let slot = params.0.get_mut(word).ok_or("unknown parameter word")?;

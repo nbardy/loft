@@ -402,6 +402,7 @@ pub struct Compiled {
     /// Drawn kinds by kind id: (stage-0 table index, name).
     pub drawn: Vec<(usize, String)>,
     meshes: Vec<gltf::Mesh>,
+    camera_clock: Option<(String, String)>,
 }
 
 /// One kind's queries on the CPU in f32 (the twin). Traced and analytic kinds take a world point and direction;
@@ -461,6 +462,18 @@ fn reflect_params(prog: &Prog<'_>, types: &[Ty], packed: &[f32]) -> Res<Vec<loft
 impl Compiled {
     pub fn prog(&self) -> Prog<'_> {
         Prog::index(&self.modules).expect("indexed once already")
+    }
+
+    /// Evaluate the selected camera's clock-bound expressions without rebuilding geometry.
+    pub fn camera_at(&self, seconds: f32, overrides: &[(String, f64)]) -> Res<Option<Orbit>> {
+        let Some((camera, clock)) = &self.camera_clock else { return Ok(None) };
+        let decl = find_camera(&self.modules, camera).expect("selected camera was checked");
+        let mut values = overrides.to_vec();
+        // An explicit override freezes the lens at a chosen instant.
+        if values.iter().any(|(name, _)| name == clock) { return Ok(None); }
+        values.push((clock.clone(), f64::from(seconds)));
+        let prog = self.prog();
+        camera_value(&prog, &mut self.types.clone(), decl, &values).map(Some)
     }
 
     /// Reflected slots follow the same ordering and offsets used by WGSL lowering.
@@ -669,6 +682,33 @@ fn check_modules(modules: &mut [Module], types: &mut Vec<Ty>) -> Res<Option<Span
     Ok(effects.pending_lowering)
 }
 
+fn find_camera<'a>(modules: &'a [Module], name: &str) -> Option<&'a CameraDecl> {
+    modules.iter().flat_map(|m| &m.items).find_map(|item| match item {
+        Item::Camera(c) if c.name.name == name => Some(c),
+        _ => None,
+    })
+}
+
+fn camera_value(p: &Prog, types: &mut Vec<Ty>, decl: &CameraDecl, overrides: &[(String, f64)]) -> Res<Orbit> {
+    let field = |names: &[&str]| decl.fields.iter()
+        .find(|(n, _)| names.contains(&n.name.as_str()))
+        .map(|(_, e)| e)
+        .ok_or_else(|| Diag::new(Code::E520, decl.name.span, format!("camera needs {}", names[0]), "supply the camera field"));
+    let scalar = |e: &Expr, types: &mut Vec<Ty>| as_f32(stage0(p, types, e, overrides)?, e.span);
+    let point = |e: &Expr, types: &mut Vec<Ty>| as_v3(stage0(p, types, e, overrides)?, e.span);
+    let at = point(field(&["at", "target"])?, types)?;
+    let fov = scalar(field(&["fov"])?, types)?;
+    Ok(match field(&["eye"]) {
+        Ok(e) => Orbit { at, fov, fixed_eye: Some(point(e, types)?), radius: 0.0, height: 0.0, period: 1.0 },
+        Err(_) => Orbit {
+            at, fov, fixed_eye: None,
+            radius: scalar(field(&["radius"])?, types)?,
+            height: field(&["height"]).map_or(Ok(0.5), |e| scalar(e, types))?,
+            period: field(&["period"]).map_or(Ok(24.0), |e| scalar(e, types))?,
+        },
+    })
+}
+
 pub fn compile(src: &Graph, overrides: &[(String, f64)]) -> Res<(Program, Report, Compiled)> {
     compile_cached(src, overrides, std::path::Path::new("target/loft_cache"))
 }
@@ -743,6 +783,7 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
     let sched = p.schedule.ok_or_else(|| Diag::new(Code::E520, Span::NONE, "the program has no `schedule`", "add `schedule Main { ... }` to the scene"))?;
     let mut rows_fns: Vec<&FnDecl> = modules.iter().flat_map(|m| &m.items).filter_map(|i| if let Item::Build(f)=i {Some(f)}else{None}).collect();
     let (mut camera, mut sun, mut light, mut sky) = (None, None, None, None);
+    let mut camera_clock = None;
     let mut passes = vec![];
     let mut drawn: Vec<&str> = vec![];
     let mut culled: Vec<&str> = vec![];
@@ -793,27 +834,19 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
                 let [Arg { value: Expr { kind: ExprKind::Name(name), .. }, .. }] = pd.args.as_slice() else {
                     return Err(Diag::new(Code::E520, pd.verb.span, "use_camera needs a declared camera", "write use_camera(CameraName)"));
                 };
-                let fields = &modules.iter().flat_map(|m| &m.items).find_map(|item| match item {
-                    Item::Camera(c) if c.name.name == *name => Some(c),
-                    _ => None,
-                }).ok_or_else(|| Diag::new(Code::E520, pd.verb.span, format!("unknown camera {name}"), "declare the camera at module scope"))?.fields;
-                let field = |names: &[&str]| fields.iter()
-                    .find(|(n, _)| names.contains(&n.name.as_str()))
-                    .map(|(_, e)| e)
-                    .ok_or_else(|| Diag::new(Code::E520, pd.verb.span, format!("camera needs {}", names[0]), "supply the camera field"));
-                let f = |e: &Expr, types: &mut Vec<Ty>| as_f32(stage0(&p, types, e, overrides)?, e.span);
-                let point = |e: &Expr, types: &mut Vec<Ty>| as_v3(stage0(&p, types, e, overrides)?, e.span);
-                let at = point(field(&["at", "target"])?, &mut types)?;
-                let fov = f(field(&["fov"])?, &mut types)?;
-                camera = Some(match field(&["eye"]) {
-                    Ok(e) => Orbit { at, fov, fixed_eye: Some(point(e, &mut types)?), radius: 0.0, height: 0.0, period: 1.0 },
-                    Err(_) => Orbit {
-                        at, fov, fixed_eye: None,
-                        radius: f(field(&["radius"])?, &mut types)?,
-                        height: field(&["height"]).map_or(Ok(0.5), |e| f(e, &mut types))?,
-                        period: field(&["period"]).map_or(Ok(24.0), |e| f(e, &mut types))?,
-                    },
-                });
+                let decl = find_camera(&modules, name).ok_or_else(|| {
+                    Diag::new(Code::E520, pd.verb.span, format!("unknown camera {name}"), "declare the camera at module scope")
+                })?;
+                if let Some((_, clock)) = decl.fields.iter().find(|(field, _)| field.name == "clock") {
+                    let ExprKind::Name(param) = &clock.kind else {
+                        return Err(Diag::new(Code::E520, clock.span, "camera clock needs a parameter name", "write clock: shot_time"));
+                    };
+                    if !p.consts.get(param.as_str()).is_some_and(|c| c.comptime) {
+                        return Err(Diag::new(Code::E520, clock.span, "camera clock needs a scene parameter", "declare a scalar param for scene seconds"));
+                    }
+                    camera_clock = Some((name.clone(), param.clone()));
+                }
+                camera = Some(camera_value(&p, &mut types, decl, overrides)?);
             }
             "cull_indirect" => {
                 culled = kind_args(&p, pd)?;
@@ -1360,7 +1393,7 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
     };
     let drawn_owned = drawn.iter().map(|d| (p.kind_index(d), d.to_string())).collect();
     drop(p);
-    Ok((program, Report { kinds: reports, ms }, Compiled { modules, types, tables, luts, drawn: drawn_owned, meshes }))
+    Ok((program, Report { kinds: reports, ms }, Compiled { modules, types, tables, luts, drawn: drawn_owned, meshes, camera_clock }))
 }
 
 /// A name expression, copied (bundle bodies are re-read as kind lists).

@@ -1,0 +1,213 @@
+use self::score::{dance_at}
+use stdlib::materials::bsdf::{ggx}
+use stdlib::noise::value::{fbm2}
+
+space World
+
+const CREAM = [0.92, 0.78, 0.53]
+const INK = [0.017, 0.014, 0.027]
+const ZERO: p3@World = [0]@World
+const SHELL_FRAME: frame@World = frame_axes([-1.55, 0.84, -6.67]@World, [0.078, 0.080, -0.994]@World - ZERO,
+  [0.997, -0.006, 0.078]@World - ZERO, [0, 0.997, 0.080]@World - ZERO)
+const SHELL_SIZE = [2.7, 4.6, 3.0, 0.75]
+
+# Local positions use +x forward. The score owns the group's heading and roll.
+fn on_stage(p: v3, home: v2, beat: frame@World) -> p3@World {
+  let yaw = beat.b.x
+  let roll = beat.b.y
+  let y = p.y * cos(roll) - p.z * sin(roll)
+  let z = p.y * sin(roll) + p.z * cos(roll)
+  [home.x + beat.o.x + p.x * cos(yaw) + z * sin(yaw),
+   y + beat.o.y,
+   home.y + beat.o.z + z * cos(yaw) - p.x * sin(yaw)]@World
+}
+
+fn pose_at(member: f, dancing: bool, t: s) -> frame@World {
+  if dancing { return dance_at(member, t) }
+  dance_at(member, 0.0)
+}
+
+fn globe(u: f, v: f) -> v3 {
+  let a = TAU * u
+  let b = 0.5 * TAU * (v - 0.5)
+  [cos(a) * cos(b), sin(b), -sin(a) * cos(b)]
+}
+
+# Shape roles: rigid globe, walking leg, great arm, small arm. Each limb's
+# subdivisions share one pose so joints stay joined through the performance.
+pub kind CastPart @World (home: v2, member: f, dancing: bool, dims: v4,
+                      a: v3, b: v3, r: v3, role: f, ink: rgb, tips: f) {
+  surface(u, v) grid 20x14 {
+    let beat = pose_at(member, dancing, time)
+    let g = globe(u, v)
+    if role == 0 {
+      return on_stage(a + r * g, home, beat)
+    }
+    let origin = limb_anchor(a, dims, role, beat)
+    let end = limb_anchor(b, dims, role, beat)
+    let stem = end - origin
+    let tang = stem / (length(stem) + 0.001)
+    let horizontal = [-tang.z, 0, tang.x]
+    let across = horizontal / (length(horizontal) + 0.015)
+    let above = cross(tang, across)
+    let shape = origin + stem * (0.5 + 0.5 * g.y) + tang * (0.85 * r.x * g.y) +
+      (above * (r.x * g.x) + across * (r.z * g.z)) * (1.0 - r.y * g.y)
+    on_stage(shape, home, beat)
+  }
+
+  material(p, n, uv) {
+    let crease = smoothstep(0.86, 0.93, abs(sin(TAU * (uv.x + 0.07))))
+    let joint = 1.0 - smoothstep(0.065, 0.16, min(uv.y, 1.0 - uv.y))
+    let tip = smoothstep(0.48, 0.57, uv.y) * tips
+    let shell_ink = ink * (0.89 + 0.16 * fbm2(p.xyz * 1.7))
+    let colour = mix(mix(shell_ink, INK, 0.19 * crease), CREAM, max(tip, joint * select(0.0, 0.8, role == 1.0)))
+    ggx(colour, 0.69, 0.0)
+  }
+}
+
+fn limb_anchor(site: v3, dims: v4, role: f, beat: frame@World) -> v3 {
+  if role == 1 {
+    # Cancel the trunk's height and roll at the toe. The intermediate
+    # sockets follow the body by their distance from its centerline.
+    let planted = smoothstep(0.85, 2.84, site.z * site.z / (dims.z * dims.z))
+    let floor = (site.y - beat.o.y + site.z * sin(beat.b.y)) / (cos(beat.b.y) + 0.001)
+    return [site.x, mix(site.y, floor, planted), site.z]
+  }
+  if role == 2 { return arm_anchor(site, dims, 1.0, dims.w, beat.t.xyz, beat.b.z) }
+  arm_anchor(site, dims, -1.0, 0.73 * dims.w, beat.n.xyz, beat.b.z)
+}
+
+fn arm_anchor(site: v3, dims: v4, side: f, scale: f, hand: v3, aperture: f) -> v3 {
+  let shoulder = [dims.x * 0.60, dims.y * 0.83, side * dims.z * 0.64]
+  if site.x < -8.0 { return shoulder }
+  let wrist = shoulder + [hand.x, hand.y, side * hand.z] * scale
+  let pitch = 0.24 + 1.22 * hand.y
+  let yaw = side * (0.24 + 0.48 * hand.z)
+  let forward = [cos(pitch) * cos(yaw), sin(pitch), cos(pitch) * sin(yaw)]
+  let up = [-sin(pitch) * cos(yaw), cos(pitch), -sin(pitch) * sin(yaw)]
+  let lateral = [-sin(yaw), 0, cos(yaw)]
+  let finger = site.z * (0.1 + 0.9 * aperture)
+  wrist + (site.x * forward + site.y * up + finger * lateral) * scale
+}
+
+# A no-navel Raup coil. The basis stores the tip, outward axis and coil plane.
+# The last 1/4 of the mesh rolls the lip over and recesses the closed throat.
+fn spiral_shell(u: f, v: f, basis: frame@World, size: v4) -> p3@World {
+  let along = smoothstep(0.0, 0.75, u)
+  let roll = smoothstep(0.75, 0.85, u)
+  let throat = smoothstep(0.85, 1.0, u)
+  let turns = size.z * (1.0 - along) - 0.014 * sin(0.5 * TAU * roll) + 0.20 * throat
+  let bearing = size.w + TAU * turns
+  let outward = basis.n * cos(bearing) + basis.b * sin(bearing)
+  let growth = exp(-1.0986123 * turns)
+  let flare = 0.11 * (1.0 - smoothstep(0.0, 0.08, turns))
+  let bead = 0.08 * (1.0 - cos(0.5 * TAU * roll))
+  let opening = (1.0 + flare - bead) * sin(0.25 * TAU * smoothstep(0.0, 0.055, along)) *
+    cos(0.25 * TAU * throat)
+  let phi = TAU * v
+  basis.o + growth * (outward * (size.x * (1.0 + opening * cos(phi))) +
+    basis.t * (size.y * (opening * sin(phi) - 1.0) - 0.7 * size.x))
+}
+
+pub kind CastSpiral @World (home: v2, member: f, dancing: bool) {
+  surface(u, v) grid 120x36 {
+    let p = spiral_shell(u, v, SHELL_FRAME, SHELL_SIZE)
+    on_stage(p.xyz, home, pose_at(member, dancing, time))
+  }
+
+  material(p, n, uv) {
+    let phi = uv.y
+    let strip = fract(6.0 * phi + 0.2)
+    let face = smoothstep(0.036, 0.058, phi) * (1.0 - smoothstep(0.32, 0.36, phi))
+    let band = mix(smoothstep(0.10, 0.13, strip) * (1.0 - smoothstep(0.40, 0.43, strip)),
+      smoothstep(0.174, 0.19, phi), face)
+    let edge = mix(1.0 - smoothstep(0.008, 0.025, min(abs(strip - 0.12), abs(strip - 0.42))),
+      1.0 - smoothstep(0.007, 0.026, abs(phi - 0.181)), face)
+    let brick = [0.51, 0.067, 0.036] * (0.82 + 0.22 * fbm2(p.xyz * 2.3))
+    let outer = mix(mix(brick, CREAM, band), INK, 0.92 * edge)
+    let lip = smoothstep(0.735, 0.757, uv.x) * (1.0 - smoothstep(0.83, 0.864, uv.x))
+    let throat = smoothstep(0.855, 0.891, uv.x)
+    ggx(mix(mix(outer, CREAM, lip), [0.038, 0.018, 0.023], throat), 0.79, 0)
+  }
+}
+
+# Each member supplies length, ride, half-width and arm span. A foot row holds
+# root x, reach in x, and reach in z. The two sides share the same family.
+pub build fn cast(member: f, home: v2, dims: v4, paint: rgb, great: f, dancing: bool, pairs: u) {
+  let bulk = [dims.x, 0.48 * dims.y, dims.z]
+  emit CastPart(home: home, member: member, dancing: dancing, dims: dims,
+    a: [0.45 * dims.x, dims.y, 0], b: [0, 0, 0], r: bulk, role: 0, ink: paint, tips: 0)
+  build for s in [-1.0, 1.0] {
+    let stalk = [dims.x * 1.13, dims.y * 1.36, s * dims.z * 0.40]
+    let eye = [dims.x * 1.33, dims.y * 1.96, s * dims.z * 0.51]
+    let radius = 0.18 * dims.z
+    emit CastPart(home: home, member: member, dancing: dancing, dims: dims,
+      a: (stalk + eye) * 0.5, b: [0, 0, 0], r: [0.18, 0.67, 0.20] * (0.6 + 0.23 * dims.y), role: 0, ink: CREAM, tips: 0)
+    emit CastPart(home: home, member: member, dancing: dancing, dims: dims,
+      a: eye, b: [0, 0, 0], r: [radius, radius, 0.85 * radius], role: 0, ink: CREAM, tips: 0)
+    emit CastPart(home: home, member: member, dancing: dancing, dims: dims,
+      a: eye + [0.70 * radius, -0.06, s * 0.43 * radius], b: [0, 0, 0],
+      r: [0.34, 0.48, 0.49] * radius, role: 0, ink: INK, tips: 0)
+    build for leg in 0..pairs {
+      let j = f32(leg)
+      let hip = [(0.75 - 0.35 * j) * dims.x, dims.y * 0.96, s * dims.z * 0.69]
+      let foot = [(1.76 - 0.71 * j) * dims.x, 0.17, s * (1.70 + 0.18 * j) * dims.z]
+      let knee = mix(hip, foot, 0.58) + [0.10 * dims.x, 0.91 * dims.y, 0.0]
+      let heel = mix(knee, foot, 0.80)
+      let width = 0.105 * dims.z
+      build for bone in [[0, 1, 1.0], [1, 2, 0.87], [2, 3, 0.56]] {
+        let start = if bone.x == 0 { hip } else if bone.x == 1 { knee } else { heel }
+        let end = if bone.y == 1 { knee } else if bone.y == 2 { heel } else { foot }
+        emit CastPart(home: home, member: member, dancing: dancing, dims: dims,
+          a: start, b: end, r: [width, 0.30, width] * bone.z,
+          role: 1, ink: paint, tips: 0)
+      }
+    }
+    let hand = select(3.0, 2.0, s > 0)
+    let k = select(0.85, great, s > 0)
+    # Arm, broad palm and the opposed fingers.
+    build for part in [
+      [-9, 0.01, 0, 0], [-0.17, 0.41, 0, 1],
+      [0.28, 0.88, -0.18, 2], [0.28, 1.02, 0.18, 2]
+    ] {
+      let spread = select(0.0, part.z * 2.3, part.w == 2)
+      let width = select(0.10, select(0.24, 0.11, part.w == 2), part.w > 0)
+      emit CastPart(home: home, member: member, dancing: dancing, dims: dims,
+        a: [select(part.x * k, -9.0, part.w == 0), 0, part.z * k], b: [part.y * k, 0.06, spread * k],
+        r: [width * 0.76 * dims.w, 0.32, width * dims.w] * k,
+        role: hand, ink: paint, tips: select(0.0, 1.0, part.w == 2))
+    }
+  }
+}
+
+pub build fn back(member: f, home: v2, dims: v4, paint: rgb, design: f, dancing: bool) {
+  if design == 2 {
+    emit CastSpiral(home: home, member: member, dancing: dancing)
+  }
+  # Local decorations are rows too. Alternate tiers distinguish lighthouse,
+  # pagoda, hermit’s light, garden and tall lantern.
+  let summit = spiral_shell(0.67, 0.027, SHELL_FRAME, SHELL_SIZE)
+  let deck = select([-0.14 * dims.x, 1.37 * dims.y, -0.16 * dims.z], summit.xyz - [0, 0.12, 0], design == 2)
+  let tower_width = select(1.0, 0.68, design == 0 || design == 2)
+  build for tier in [[0, 0.90, 0.25], [0.53, 0.57, 0.48], [1.11, 0.72, 0.15], [1.38, 0.32, 0.15]] {
+    let base = 0.29 * dims.z * tower_width
+    let tall = select(1.0, 1.55, design == 0 || design == 4)
+    emit CastPart(home: home, member: member, dancing: dancing, dims: dims,
+      a: deck + [0, (tier.x + 0.12) * tall, 0], b: [0, 0, 0],
+      r: [base * tier.y, tier.z * tall, base * tier.y], role: 0,
+      ink: select(select(paint, CREAM, tier.x == 0.0), INK, tier.x > 1.0), tips: 0)
+  }
+  if design == 2 || design == 3 {
+    build for grove in [[0.621, 0.037, 0.75], [0.65, 0.098, 0.82], [0.612, 0.050, 0.58]] {
+      let rooted = spiral_shell(grove.x, grove.y, SHELL_FRAME, SHELL_SIZE)
+      let site = select(deck + [grove.y * 18 - 1.8, -0.25, 1.5 * grove.z], rooted.xyz, design == 2)
+      let crown = site + [0.02, grove.z * 0.9, 0.03]
+      emit CastPart(home: home, member: member, dancing: dancing, dims: dims,
+        a: crown - [0, 0.35, 0], b: [0, 0, 0], r: [0.14, 0.55, 0.15], role: 0,
+        ink: [0.13, 0.082, 0.042], tips: 0)
+      emit CastPart(home: home, member: member, dancing: dancing, dims: dims,
+        a: crown + [0, 0.20, 0], b: [0, 0, 0], r: [0.69, 0.60, 0.74], role: 0,
+        ink: [0.075, 0.21, 0.08], tips: 0)
+    }
+  }
+}

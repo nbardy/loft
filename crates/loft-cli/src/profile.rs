@@ -83,7 +83,13 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
         loft_passes::sexp::read(&data).map_err(Failure::Compile)?
     } else {
         let src = sources(path).map_err(Failure::Usage)?;
-        loft_passes::compile(&src, set).map_err(|d| Failure::Compile(d.render(&src)))?.0
+        let (mut program, _, compiled) = loft_passes::compile(&src, set).map_err(|d| Failure::Compile(d.render(&src)))?;
+        if let Some(t) = time
+            && let Some(camera) = compiled.camera_at(t, set).map_err(|d| Failure::Compile(d.render(&src)))?
+        {
+            program.camera = camera;
+        }
+        program
     };
     let gpu = native::gpu().map_err(Failure::Device)?;
     crate::budget::timestamps(gpu.timestamps)?;

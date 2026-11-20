@@ -1,0 +1,146 @@
+space World
+
+pub const COUNTS = 64.0
+pub const BPM = 120.0
+pub const SLAM = 12.0
+pub const GRIP = 22.0
+pub const RELEASE = 24.0
+pub const LAND = 30.0
+
+const KEEP = -9.0
+const REST = 0.0
+const UP = 1.0
+const OUT = 2.0
+const LOW = 3.0
+const HIGH = 4.0
+const CROWN = 5.0
+
+# At, previous-to-next travel in counts, formation, soloist for solo rows.
+# 0 is V, 1 is the line, 2 is diagonal, 3 is diagonal left, 4 is solo.
+build fn travel_at(k: f, c: f) -> v2 {
+  let wing = k - 2.0
+  let vee = [-8.0 * abs(wing), -13.5 * wing + 1.5 * abs(wing)]
+  let line = [-2.0 * wing * wing, -13.0 * wing]
+  let diag = [-6.0 * k, 18.0 - 9.0 * k]
+  var pos = vee
+  build for key in [
+    [8, 4, 1, 0], [38, 4, 2, 0], [42, 1, 3, 0], [43, 1, 2, 0],
+    [48, 1, 4, 0], [50, 1, 4, 1], [52, 1, 4, 2], [54, 1, 4, 3], [56, 1, 4, 4],
+    [62, 4, 0, 0]
+  ] {
+    let to = if key.z == 0 { vee } else if key.z == 1 { line } else {
+      diag + [select(0.0, 8.0, key.z == 4 && k == key.w), select(0.0, 4.0, key.z == 3)]
+    }
+    pos = mix(pos, to, smootherstep(key.x - key.y, key.x, c))
+  }
+  pos - vee
+}
+
+# Wrist goals in arm spans, in shoulder axes (forward, up, out).
+build fn aim(pose: f) -> v3 {
+  var target = [0.54, -0.08, 0.42]
+  build for row in [
+    [UP, 0.20, 0.76, 0.12], [OUT, 0.20, 0.28, 0.76], [LOW, 0.45, 0.05, 0.60],
+    [HIGH, 0.10, 0.55, 0.85], [CROWN, 0.15, 0.72, 0.30]
+  ] {
+    if pose == row.x { target = row.yzw }
+  }
+  target
+}
+
+# A baked row holds a root position and three local channels: the large
+# wrist, small wrist, and facing/roll/finger aperture. Each of the five
+# tracks gets 1 count of padding either side of the loop for spline taps.
+build fn performance(sample: f) -> frame@World {
+  let k = min(floor(sample / 66.0), 4.0)
+  let t = sample - k * 66.0 - 1.0
+  let c = t - COUNTS * floor(t / COUNTS)
+  let move = travel_at(k, c)
+  var level = 1.0
+  var lean = 0.0
+  var great = aim(select(UP, CROWN, k == 2.0))
+  var small = aim(OUT)
+
+  # Count, body level, lean, great-claw aim. KEEP holds a channel.
+  build for key in [
+    [1, 0, KEEP, REST], [2, KEEP, 1, KEEP], [3, KEEP, -1, KEEP], [4, KEEP, 0, KEEP],
+    [8, -0.6, KEEP, KEEP], [13, 0, KEEP, KEEP],
+    [16, 1, 0, UP], [17, -0.5, 1, LOW], [18, 1, 0, UP], [19, -0.5, -1, LOW],
+    [26, 1, 0, UP], [27, -0.5, 1, LOW], [28, 1, 0, UP], [29, -0.5, -1, LOW],
+    [30, select(1.0, -1.0, fract(k * 0.5) > 0.0), 0, select(UP, LOW, fract(k * 0.5) > 0.0)],
+    [31, -1, KEEP, REST], [32, 0, KEEP, KEEP],
+    [38, 1, 0, UP], [39, -0.5, 1, LOW], [40, 1, 0, UP], [41, -0.5, -1, LOW],
+    [42, 0, 0, OUT], [43, -1, KEEP, REST], [44 + k * 0.5, 1, KEEP, UP],
+    [47, 0, sign(2.0 - k), OUT], [48, -0.3, 0, LOW],
+    [52, select(KEEP, 0.6, k == 2.0), select(KEEP, -0.6, k == 2.0), select(KEEP, HIGH, k == 2.0)],
+    [54, KEEP, select(KEEP, 0.0, k == 2.0), KEEP],
+    [58, 0, KEEP, REST], [62, 1, KEEP, select(UP, CROWN, k == 2.0)]
+  ] {
+    let u = smootherstep(key.x - 0.30, key.x, c)
+    if key.y != KEEP { level = mix(level, key.y, u) }
+    if key.z != KEEP { lean = mix(lean, key.z, u) }
+    if key.w != KEEP { great = mix(great, aim(key.w), u) }
+  }
+  build for key in [[1, REST], [42, OUT], [43, REST], [47, OUT], [48, REST], [62, OUT]] {
+    small = mix(small, aim(key.y), smootherstep(key.x - 0.30, key.x, c))
+  }
+
+  var heading = 0.0
+  build for key in [[40, 0.4], [42, 0], [52, select(0.0, 0.4, k == 2.0)], [54, 0]] {
+    heading = mix(heading, key.y, smootherstep(key.x - 1, key.x, c))
+  }
+
+  # The four improvised solos use the same accents with each member's reach.
+  let solo = 48.0 + 2.0 * k
+  let soloing = smoothstep(solo - 0.7, solo, c) * (1 - smoothstep(solo + 1.0, solo + 1.9, c))
+  if k != 2.0 {
+    let accent = 0.5 + 0.5 * cos(TAU * (c - solo))
+    great = mix(great, mix(aim(OUT), aim(UP), accent), soloing)
+    level = mix(level, 0.75 * accent, soloing)
+  }
+
+  var aperture = 0.42
+  # Count, number of snaps, member bitset (31 is everyone).
+  build for key in [
+    [1.5, 1, 31], [2.5, 1, 31], [3.5, 1, 31], [4.5, 1, 31], [5.5, 1, 31], [6.5, 1, 31], [7.5, 1, 31],
+    [10, 4, 31], [17, 2, 31], [19, 2, 31], [27, 2, 31], [29, 2, 31], [30, 2, 10],
+    [39, 2, 31], [41, 2, 31], [42, 2, 31], [48.5, 3, 1], [50, 1, 2], [51, 1, 2],
+    [52, 3, 4], [54, 2, 8], [55.5, 1, 8], [56, 4, 16], [58.5, 1, 31], [59.5, 1, 31], [60, 4, 31]
+  ] {
+    if bit_and(shr(u32(key.z), u32(k)), 1) != 0 {
+      for i in 0..u32(key.y) {
+        let d = c - key.x - 0.5 * f32(i)
+        let open = smoothstep(-0.38, -0.13, d) * (1 - smoothstep(-0.13, 0.0, d))
+        let close = smoothstep(-0.13, 0.0, d) * (1 - smoothstep(0.09, 0.22, d))
+        aperture = mix(mix(aperture, 1.0, open), 0.05, close)
+      }
+    }
+  }
+
+  # Attacks take over the wrist and body on their common counts.
+  let wind = smootherstep(SLAM - 3, SLAM - 0.6, c)
+  let strike = smootherstep(SLAM - 0.6, SLAM, c)
+  let slam = wind * (1 - smootherstep(SLAM + 0.15, 15.6, c))
+  great = mix(great, mix([0.30, 0.90, 0.15], [0.93, -0.35, 0.35], strike), slam)
+  level = mix(level, mix(0.35, -0.85, strike), slam)
+  let grab = smootherstep(19.6, GRIP, c) * (1 - smootherstep(24.0, 25.0, c))
+  let throw = smootherstep(RELEASE - 0.60, RELEASE, c)
+  great = mix(great, mix([0.92, -0.24, 0.40], [-0.55, 0.95, 0.28], throw), grab)
+  aperture = mix(aperture, mix(0.04, 0.95, throw), grab)
+  let groove = select(0.0, 0.175 * (cos(TAU * c) - 1.0), c > 0.5 && c < 62.0)
+  let zero = [0, 0, 0]@World
+  frame_axes([move.x, level + groove, move.y + 0.8 * lean]@World,
+    [great]@World - zero, [small]@World - zero, [heading, 0.14 * lean, aperture]@World - zero)
+}
+
+# 32 samples/count, with one count of padding at both ends of every member's track.
+scan dance s in 0..330 by 10561 on bake_lut {
+  init = performance(s)
+  step prev = performance(s)
+}
+
+pub fn count_at(seconds: s) -> f = COUNTS * fract(seconds / (COUNTS * 60.0 / BPM))
+
+pub fn dance_at(member: f, seconds: s) -> frame@World {
+  dance(member * 66.0 + 1.0 + count_at(seconds))
+}

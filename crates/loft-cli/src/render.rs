@@ -63,7 +63,7 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
     } else {
         sources(&opts.scene)
     }.map_err(Failure::Usage)?;
-    let (program, _, compiled) = loft_passes::compile_aov(&src, set, opts.aov)
+    let (mut program, _, compiled) = loft_passes::compile_aov(&src, set, opts.aov)
         .map_err(|d| Failure::Compile(d.render(&src)))?;
     if let Some(limit) = opts.max_build {
         let ms = began.elapsed().as_secs_f64() * 1000.0;
@@ -82,6 +82,9 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
     let live = opts.live.iter().map(|(name, value)| {
         Ok((prog.param_word(name).ok_or_else(|| Failure::Usage(format!("no live scalar param {name}")))?, *value))
     }).collect::<Result<Vec<_>, Failure>>()?;
+    if let Some(camera) = compiled.camera_at(opts.start, set).map_err(|d| Failure::Compile(d.render(&src)))? {
+        program.camera = camera;
+    }
     let g = native::gpu().map_err(Failure::Device)?;
     if opts.max_frame.is_some() { budget::timestamps(g.timestamps)?; }
     let loaded = Loaded::with_aov(&g, &program, opts.size, None, opts.aov).map_err(Failure::Device)?;
