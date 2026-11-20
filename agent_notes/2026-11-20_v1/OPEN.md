@@ -1,5 +1,48 @@
 # Open targets for v1.0-alpha
 
+## D2 integration on 20 November
+
+D2a, D2b and D2c remain on their branches. Each lane’s build exited 101. The single locked Apple M4 Metal gate scored retained main at `47ac462`. Its executable matched the archived main binary byte for byte. Twin held 36/36 and Truth 34/34. Speed fell from 12/12 to 10/12, missing the merge rule. The gate recorded zero contended verdicts. [Gate report](../../out/meta/i8/gate.json) · [Contact sheet](../../out/meta/i8/sheet.webp)
+
+| Lane | Evidence and reason for exclusion |
+| --- | --- |
+| D2a · authored motion · `71b0be0` | The verifier hit E0308 and E0502. Crab, Heron and Boss still call `run_laws`. The lane compared zero of 481 required candidate ticks per table and zero of three half-second pictures. [Lane note](https://github.com/nbardy/loft/blob/71b0be06235d4b1fc68e9782b75245a27009ca5a/agent_notes/2026-11-20_v1/lanes/d2a.md) |
+| D2b · Tier 0 edits · `8177a09` | The pushed head includes a type annotation for E0282 and has **0/3** required timing runs. Its authored trace shader has no bindings for LUT or texture samples. Archived 120-pair A/A controls measured **+0.109, +0.147 and +0.170 ms** against **+0.100 ms**. Upload, frame cost and parity on the pushed head remain unmeasured. [Lane note](https://github.com/nbardy/loft/blob/8177a09ea58bf6ffc6bfaec59b90acf975bc19d9/agent_notes/2026-11-20_v1/lanes/d2b.md) |
+| D2c · portable execution · `1d89966` | The pushed head corrects E0369. Native and archive parity, baked mip bytes and browser execution remain unverified. The execution ledger grew from **5,209 to 5,473 lines** against **2,500**. Runner accounts for 1,977, Std for 2,419 and native CLI for 1,077. [Lane note](https://github.com/nbardy/loft/blob/1d89966247a099dc2df656e54417e3b2dbb1a803/agent_notes/2026-11-20_v1/lanes/d2c.md) |
+
+All 18 beauty frames matched archived main RGBA. Pictures held 0/18 against frozen references. All 18 differences are in the existing layered-material owner queue, with at most 8 pixels per frame more than two codes from the proposal. Load held 25/33. All six scenes missed their cold-load caps, and both Hermit scenes created 14 pipelines against 13. The raw five-gate command exited 3. [Pixel comparisons](../../out/meta/i8/pixels.json) · [Owner queue](../../out/meta/i6/approval_needed.md)
+
+Frozen reference hashes matched before and after for 18 gate frames, 9 bead frames and 1,510 legacy beauty images. Bead passed 9/9 geometry checks and reproduced 9/9 archived RGBA frames. All 6 mutants fired. The wasm32 runner checked with web-sys. Earley and llguidance each returned 280 expected outcomes, including the negative fixture. The native suite passed 149/150. The Tier 0 promotion test measured **0.787 ms** p95 overhead against **0.500 ms**, with zero of 140,000 pixels over 1/255. Bun passed 315/315. [Run log](../../out/meta/i8/runs.jsonl)
+
+### Speed and cold load on retained main
+
+Each scene ran for 300 timed frames at 1280 × 800.
+
+| Scene | Prior main p95, ms | D2 integration p95, ms | Cap, ms | Commands | Cold load, s | Cold cap, s |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| capsules-1 | 0.443 | 0.522 | 0.8 | 5 | 0.629 | 0.5 |
+| capsules-20 | 0.749 | 1.322 | 1.1 | 5 | 0.793 | 0.6 |
+| blobs-1 | 0.520 | 1.451 | 1.1 | 5 | 0.617 | 0.5 |
+| blobs-20 | 1.498 | 1.716 | 2.4 | 5 | 0.823 | 0.5 |
+| hermit-1 | 3.814 | 3.880 | 5.0 | 17 | 1.964 | 1.5 |
+| hermit-20 | 5.271 | 5.531 | 5.6 | 17 | 2.038 | 1.5 |
+
+### Physical lines per crate
+
+Counts include tracked Rust and WGSL under each crate’s `src/`, including blank lines and inline tests.
+
+| Crate | Retained main | D2a | D2b | D2c |
+| --- | ---: | ---: | ---: | ---: |
+| loft-abi | 498 | 498 | 498 | 498 |
+| loft-cli | 5,066 | 5,066 | 5,315 | 4,183 |
+| loft-format | 815 | 815 | 815 | 815 |
+| loft-ir | 548 | 548 | 548 | 720 |
+| loft-parse | 2,723 | 2,723 | 2,723 | 2,723 |
+| loft-passes | 16,456 | 17,423 | 17,310 | 16,627 |
+| loft-plan | 949 | 949 | 949 | 949 |
+| loft-runner | 1,630 | 1,630 | 1,630 | 2,387 |
+| loft-std | 4,321 | 4,322 | 4,321 | 4,241 |
+
 ## v1–v3 integration on 20 November
 
 All three lane heads stay on their branches. The single locked Apple M4 Metal run scored the retained engine at `843adfe`. Its executable matched the SHA-256 of the archived main build at `9878c6e`. Twin held 36/36, Truth 34/34 and Speed 12/12, with zero contended verdicts. All six mutants fired, the wasm32 runner checked with web-sys, and Earley and llguidance each returned 280/280 expected results. Native passed 150/150 and Bun passed 315/315. [Gate report](../../out/meta/iv/gate.json) · [Contact sheet](../../out/meta/iv/sheet.webp)
