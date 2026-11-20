@@ -1218,6 +1218,9 @@ impl<'p,'a> Ck<'p,'a> {
             return Ok(result);
         }
         if let Some(world) = crate::world::WorldCall::resolve(&callee.name, &ts, span)? {
+            if matches!(world.query, crate::world::WorldQuery::Sky { .. }) {
+                self.p.linked(callee.span, "sky_dome")?;
+            }
             if !matches!(world.query, crate::world::WorldQuery::Trace { .. } | crate::world::WorldQuery::Visible { .. }
                 | crate::world::WorldQuery::Sky { .. } | crate::world::WorldQuery::Medium { .. }) {
                 self.pending_lowering.get_or_insert(span);

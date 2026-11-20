@@ -306,7 +306,12 @@ fn reachable_impl<'a>(p: &Prog<'a>, roots: &[&'a FnDecl], extra: &[&str], proof_
             }
         }
         for c in refs.calls {
-            if let Some(g) = p.fns.get(c.name.as_str())
+            let resolved = p.fns.get(c.name.as_str()).or_else(|| {
+                if c.name != "sky" { return None; }
+                let key = p.linked(c.span, "sky_dome").ok()?;
+                p.fns.get(key)
+            });
+            if let Some(g) = resolved
                 && !seen.iter().any(|s| std::ptr::eq(*s, *g))
                 && !roots.iter().any(|s| std::ptr::eq(*s, *g))
             {
@@ -667,7 +672,10 @@ impl<'p, 'a> Emitter<'p, 'a> {
                     match call.query {
                         Trace { ray } => return format!("loft_trace({world}, {ray})"),
                         Visible { a, b } => return format!("loft_visible({world}, {a}, {b})"),
-                        Sky { direction } => return format!("loft_user_sky_dome({direction})"),
+                        Sky { direction } => {
+                            let key = self.p.linked(callee.span, "sky_dome").expect("checked sky binding");
+                            return format!("{}({direction})", fn_symbol(key));
+                        }
                         Medium { point } => return format!("loft_medium({world}, {point})"),
                         Material { .. } | Light { .. } => {}
                     }
