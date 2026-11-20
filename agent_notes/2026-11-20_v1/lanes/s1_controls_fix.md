@@ -32,7 +32,7 @@ or contention returns exit 6. An output mismatch cannot earn a pass.
 
 ## Output comparison
 
-On Apple M4 Metal at 1280 × 800, Shrine's indexed-cull readback returned
+On Apple M4 Metal (macOS 15.5) at 1280 × 800, Shrine's indexed-cull readback returned
 zero differences in IDs, hit distances, mirrored D32, HDR, and RGBA in
 both launch orders. The inherited report had 20 differing IDs, 153,390
 differing hit distances, and 76,908 differing depths. This compares the
@@ -43,6 +43,19 @@ visibility payload, and depth matched in all three frames. HDR RG had
 248 / 227 / 242 pixels over one half ULP and HDR BA had 249 / 230 / 252,
 with a maximum of 73 half ULP. The display differed by one code value at
 183 / 158 / 162 pixels. The half-ULP and exact RGBA checks still apply.
+
+A diagnostic kept the RGB lighting computation and wrote the reconstructed
+world normal's x component into HDR alpha. The half-float normal differed at
+3,974 / 3,331 / 2,635 pixels. Of the 287 / 266 / 290 RGB pixels exceeding one
+half ULP in that capture, 9 / 6 / 6 had a differing stored normal x. Ground
+had no normal differences. The probe locates a source of drift in Shade's
+surface reconstruction despite exact visibility. Hermit uses spline
+derivatives for the shell and tetrahedral finite differences for the other
+surfaces. Small changes in those results feed the normal-biased shadow
+comparisons and the GGX lobes. The Metal contraction witness returned
+`a8800000`. The capture retains one normal component at half precision,
+so the individual rounding operations and the remaining HDR outliers
+are unresolved.
 
 ## Timing and mutant
 
@@ -62,7 +75,9 @@ The first Hermit mutant repeated the five Shade dispatches and measured
 2.074× pass p95, with a 95% interval of 1.947–2.137×. Its triangle medians
 were 0.377–0.703 ms, so the measured interval exceeded the limit and the
 process returned the contention exit 6. The historical uncontended mutant
-returned exit 7 at 1.748×.
+returned exit 7 at 1.748×. The one mutant retry started BAAB and measured
+1.637× (95% interval 1.573–1.844×). Its 0.865–1.482 ms triangle medians
+again gave exit 6. An uncontended GPU exit 7 remains unverified on this lane.
 
 ## Checks
 
@@ -75,3 +90,16 @@ contended, inconclusive, and attachment-mismatch paths.
 
 The shared build lock was occupied, so the CLI tests used the lane's
 source and pinned Rust toolchain with its optimized dependencies.
+The remaining 24 native test executables came from the primary checkout's
+completed workspace build against the same renderer and library sources.
+Across both sets, 154 of 156 tests passed. The retained CLI clip contract
+exceeded its 50 ms GPU p95 cap with one frame over budget. The retained runner edit test
+measured 0.572 ms promotion overhead against its 0.500 ms cap, with zero
+of 140,000 pixels over 1/255.
+
+The static check passed shell syntax, host pins and all 295 corpus
+identities. I stopped the grammar run after checking that its source,
+grammar, fixtures, author card and every tracked `.loft` file matched the
+prototype's 281/281 Earley and llguidance run.
+
+[Raw timing, attachment, diagnostic and test evidence](../../../out/meta/s1_controls_fix/)
