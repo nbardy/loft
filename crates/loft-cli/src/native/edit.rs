@@ -132,7 +132,7 @@ impl TraceSession {
         size: (u32, u32),
     ) -> Result<Self, String> {
         let kind = source.kind();
-        let loaded = Loaded::load(g, p, size, None, Some((kind, &tape)), Aov::Beauty)?;
+        let loaded = Loaded::load(g, p, size, None, Some((kind, &tape)), Aov::Beauty, false)?;
         let fallback = Pipelines::current(&loaded.kinds[kind]);
         let mut instance_slots = vec![usize::MAX; p.kinds[kind].n_rows as usize];
         for (i, inst) in p.instances.iter().enumerate() {

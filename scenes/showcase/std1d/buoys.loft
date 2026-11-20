@@ -1,0 +1,14 @@
+use stdlib::geometry::analytic::{ray_sphere}
+use stdlib::sdf::solid::{sphere, round_box}
+use stdlib::materials::bsdf::{lambert, ggx}
+
+pub kind Buoy @Local (pose: xf@Local>World, radius: m > 0, pigment: rgb) {
+  trace(p) = sphere(p - [0]@Local, radius)
+  visible(ro, rd) = ray_sphere(ro, rd, [0]@Local, radius)
+  material(p,n) = ggx(pigment, 0.55, 0.0)
+}
+
+pub kind Water @Local (pose: xf@Local>World) {
+  trace(p) = round_box(p - [0]@Local, [2.4, 0.04, 1.5], 0.025)
+  material(p,n) = lambert([0.13, 0.36, 0.43])
+}

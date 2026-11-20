@@ -1,0 +1,12 @@
+use stdlib::lighting::surface::{SurfaceHit, LightSummary}
+use stdlib::lighting::world::{RngKey}
+
+# At most four coverage sites. The estimator independently samples light at
+# those sites and the primary pass groups common IDs before applying style.
+pub schedule Path(estimate: fn(SurfaceHit, LightSummary, RngKey) -> LightSummary, style: fn(SurfaceHit, LightSummary) -> rgb, jitter: fn(u, u) -> v2) {
+  trace_primary(Drawables, estimate: estimate, style: style, jitter: jitter, bounces: 3, sun: [0.5, 0.75, 0.35])
+}
+
+pub schedule PathPhysical(sample: fn(v3, v3, u, u) -> rgb, jitter: fn(u, u) -> v2) {
+  trace_primary(Drawables, sample: sample, jitter: jitter, bounces: 3, sun: [0.5, 0.75, 0.35])
+}

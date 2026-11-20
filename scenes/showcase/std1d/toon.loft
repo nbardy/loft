@@ -1,0 +1,11 @@
+use stdlib::lighting::surface::{SurfaceHit, LightSummary}
+use stdlib::lighting::gloss::{gloss_sky}
+
+pub fn shade_style(hit: SurfaceHit, light: LightSummary) -> rgb {
+  let facing = max(dot(hit.n, light.key_dir), 0.0) * light.key_vis
+  let band = 0.19 + 0.40 * smoothstep(0.19, 0.23, facing) + 0.41 * smoothstep(0.63, 0.67, facing)
+  let rim = pow(1.0 - max(dot(hit.n, hit.view), 0.0), 3.0)
+  let fill = light.indirect_irradiance * (0.15 * light.ao)
+  let under = hit.pigment * (band + 0.27 * rim) + fill
+  gloss_sky(hit, under, 0.72, 0.0) + hit.emitted
+}

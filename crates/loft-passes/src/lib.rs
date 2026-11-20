@@ -587,6 +587,57 @@ fn fn_name_arg<'e>(p: &Prog, pd: &'e PassDecl, name: &str) -> Res<&'e str> {
     }
 }
 
+fn style_binding<'a>(p: &Prog<'a>, pd: &'a PassDecl, types: &mut Vec<Ty>) -> Res<emit::Style<'a>> {
+    let hit = p.linked(pd.verb.span, "SurfaceHit")?;
+    let summary = p.linked(pd.verb.span, "LightSummary")?;
+    let estimate = fn_name_arg(p, pd, "estimate")?;
+    let shade = fn_name_arg(p, pd, "style")?;
+    let hit_ty = Ty::Struct(hit.into());
+    let summary_ty = Ty::Struct(summary.into());
+    let ck = check::Ck::new(p, types);
+    for (arg_name, key, want, ret) in [
+        ("estimate", estimate, vec![hit_ty.clone(), summary_ty.clone(), Ty::Array(Box::new(Ty::U32), 4)], summary_ty.clone()),
+        ("style", shade, vec![hit_ty, summary_ty], Ty::VecN(3)),
+    ] {
+        let f = p.fns[key];
+        let actual = f.params.iter().map(|p| p.ty.as_ref().map(|t| ck.resolve(t, true)).transpose())
+            .collect::<Res<Option<Vec<_>>>>()?;
+        if f.comptime || actual.as_ref() != Some(&want)
+            || f.ret.as_ref().map(|t| ck.resolve(t, true)).transpose()? != Some(ret)
+        {
+            return Err(Diag::new(Code::E003, arg(pd, arg_name)?.span,
+                format!("invalid {arg_name} callback for LightSummary shading"),
+                "bind a stage-typed estimator or style from the selected schedule fragment")
+                .note(f.name.span, "function declared here"));
+        }
+    }
+    Ok(emit::Style { hit, summary, estimate, shade })
+}
+
+fn shading<'a>(p: &Prog<'a>, pd: &'a PassDecl, types: &mut Vec<Ty>) -> Res<emit::Shade<'a>> {
+    let named = |name| pd.args.iter().any(|arg| arg.name.as_ref().is_some_and(|key| key.name == name));
+    match (named("light"), named("style") || named("estimate")) {
+        (true, false) => Ok(emit::Shade::Legacy(fn_name_arg(p, pd, "light")?)),
+        (false, true) => Ok(emit::Shade::Style(style_binding(p, pd, types)?)),
+        _ => Err(Diag::new(Code::E520, pd.verb.span, "render pass needs one lighting contract",
+            "bind light, or bind both estimate and style")),
+    }
+}
+
+fn path_sample(p: &Prog, e: &Expr, types: &mut Vec<Ty>) -> Res<()> {
+    let f = match &e.kind {
+        ExprKind::Name(name) => p.fns.get(name.as_str()),
+        _ => None,
+    }.ok_or_else(|| Diag::new(Code::E011, e.span, "expected a path sample function", "name a declared fn"))?;
+    let ck = check::Ck::new(p, types);
+    let rgb = Ty::VecN(3);
+    if !ck.runtime_signature(f, &[rgb.clone(), rgb.clone(), Ty::U32, Ty::U32], &rgb)? {
+        return Err(Diag::new(Code::E003, e.span, "invalid path function signature",
+            "write fn sample(origin: v3, direction: v3, seed: u, bounces: u) -> rgb"));
+    }
+    Ok(())
+}
+
 /// Stage-0 value of a schedule argument.
 fn stage0(p: &Prog, types: &mut Vec<Ty>, e: &Expr, overrides: &[(String, f64)]) -> Res<RowVal> {
     check::check_stage0_expr(p, types, e)?;
@@ -751,6 +802,7 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
     let mut path = None;
     let mut path_entry = None;
     let mut paper = None;
+    let mut post_entries = vec![];
     let has_shadow_pass = sched.passes.iter().any(|p| p.verb.name == "find_shadow_map");
     let mut emitted_passes = HashSet::new();
     let mut available: HashSet<&str> = ["FrameUniform", "InputsBuf", "ParamsBuf", "RowTables", "LutTables", "BodyTables", "StateBuf", "PoseBuf"].into_iter().collect();
@@ -819,9 +871,12 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
                 culled = kind_args(&p, pd)?;
                 passes.push(Pass::Cull);
             }
-            "render_bundle" => {
-                if !matches!(pd.args.first().map(|a| &a.value.kind), Some(ExprKind::Name(n)) if n == "Vis64") {
-                    return Err(Diag::new(Code::E405, pd.verb.span, "the bundle draws into `Vis64` only", "write `render_bundle(Vis64) { draw_indirect(K); }`"));
+            "render_bundle" | "draw_forward" => {
+                let forward = verb == "draw_forward";
+                let target = if forward { "ColorHdr" } else { "Vis64" };
+                if !matches!(pd.args.first().map(|a| &a.value.kind), Some(ExprKind::Name(n)) if n == target) {
+                    return Err(Diag::new(Code::E405, pd.verb.span, format!("this bundle draws into `{target}`"),
+                        format!("write `{verb}({target}, ...) {{ draw_indirect(K); }}`")));
                 }
                 for (call, args) in &pd.body {
                     if call.name != "draw_indirect" {
@@ -835,7 +890,15 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
                         drawn.push(k);
                     }
                 }
-                passes.push(Pass::Vis((0..drawn.len() as u32).collect()));
+                let ids = (0..drawn.len() as u32).collect();
+                if forward {
+                    light = Some(shading(&p, pd, &mut types)?);
+                    let s = arg(pd, "sun")?;
+                    sun = Some(as_v3(stage0(&p, &mut types, s, overrides)?, s.span)?);
+                    passes.push(Pass::Forward(ids));
+                } else {
+                    passes.push(Pass::Vis(ids));
+                }
             }
             "find_shadow_map" => {
                 casters = kind_args(&p, pd)?;
@@ -854,33 +917,56 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
                 passes.push(Pass::Classify);
             }
             "shade_tiles" => {
-                light = Some(fn_name_arg(&p, pd, "light")?);
+                light = Some(shading(&p, pd, &mut types)?);
                 let s = arg(pd, "sun")?;
                 sun = Some(as_v3(stage0(&p, &mut types, s, overrides)?, s.span)?);
                 passes.push(Pass::Shade(vec![]));
             }
-            "screen_pass" => {
-                let Some(ExprKind::Name(entry)) = pd.args.first().map(|a| &a.value.kind) else {
-                    return Err(Diag::new(Code::E405, pd.verb.span, "screen pass needs a path function", "name a fn with signature (v3, v3, u, u) -> rgb"));
-                };
-                let f = p.fns.get(entry.as_str()).ok_or_else(|| Diag::new(Code::E011, pd.args[0].value.span,
-                    format!("unknown path function {entry}"), "name a declared fn"))?;
-                let checker = check::Ck::new(&p, &mut types);
-                let params = f.params.iter().map(|a| a.ty.as_ref().map(|t| checker.resolve(t, true)).transpose())
-                    .collect::<Res<Vec<_>>>()?;
-                let rgb = Some(Ty::VecN(3));
-                if params != [rgb.clone(), rgb.clone(), Some(Ty::U32), Some(Ty::U32)]
-                    || f.ret.as_ref().map(|t| checker.resolve(t, true)).transpose()? != rgb
-                {
-                    return Err(Diag::new(Code::E003, pd.args[0].value.span, "invalid path function signature",
-                        "write fn sample(origin: v3, direction: v3, seed: u, bounces: u) -> rgb"));
-                }
-                path_entry = Some(entry.as_str());
+            "screen_pass" | "trace_primary" => {
+                use emit::paths::{Entry, Primary};
+                let named = |name| pd.args.iter().any(|arg| arg.name.as_ref().is_some_and(|key| key.name == name));
+                let styled = named("style") || named("estimate");
+                let primary = verb == "trace_primary";
                 let integrator = match pd.args.iter().find(|a| a.name.as_ref().is_some_and(|key| key.name == "spectral")).map(|a| &a.value.kind) {
                     Some(ExprKind::Bool(true)) => emit::paths::Integrator::Spectral,
                     Some(ExprKind::Bool(false)) | None => emit::paths::Integrator::Reference,
                     Some(_) => return Err(Diag::new(Code::E003, pd.verb.span, "spectral requires a boolean", "use spectral: true or omit the option")),
                 };
+                if styled && (!primary || matches!(integrator, emit::paths::Integrator::Spectral)) {
+                    return Err(Diag::new(Code::E003, pd.verb.span, "this path pass does not produce LightSummary",
+                        "choose a physical material or use a path schedule with a LightSummary estimator"));
+                }
+                if primary && matches!(integrator, emit::paths::Integrator::Spectral) {
+                    return Err(Diag::new(Code::E405, pd.verb.span, "spectral transport uses its existing physical path",
+                        "select the SpectralCaustic schedule"));
+                }
+                path_entry = Some(if primary {
+                    drawn.extend(kind_args(&p, pd)?);
+                    let s = arg(pd, "sun")?;
+                    sun = Some(as_v3(stage0(&p, &mut types, s, overrides)?, s.span)?);
+                    let jitter = fn_name_arg(&p, pd, "jitter")?;
+                    if !check::Ck::new(&p, &mut types).runtime_signature(p.fns[jitter], &[Ty::U32, Ty::U32], &Ty::VecN(2))? {
+                        return Err(Diag::new(Code::E003, arg(pd, "jitter")?.span, "invalid primary jitter callback",
+                            "write fn jitter(seed: u, site: u) -> v2"));
+                    }
+                    let transport = match (styled, named("sample")) {
+                        (true, false) => Primary::Style(style_binding(&p, pd, &mut types)?),
+                        (false, true) => {
+                            path_sample(&p, arg(pd, "sample")?, &mut types)?;
+                            Primary::Physical(fn_name_arg(&p, pd, "sample")?)
+                        }
+                        _ => return Err(Diag::new(Code::E520, pd.verb.span, "trace_primary needs one transport contract",
+                            "bind sample, or bind both estimate and style")),
+                    };
+                    passes.push(Pass::PathPrimary(0));
+                    Entry::Primary { transport, jitter }
+                } else {
+                    let e = pd.args.first().map(|a| &a.value).ok_or_else(|| Diag::new(Code::E003, pd.verb.span,
+                        "screen pass needs a path function", "name a fn with signature (v3, v3, u, u) -> rgb"))?;
+                    path_sample(&p, e, &mut types)?;
+                    let ExprKind::Name(entry) = &e.kind else { unreachable!("checked path callback") };
+                    Entry::Legacy(entry)
+                });
                 let e = arg(pd, "bounces")?;
                 let bounces = as_f32(stage0(&p, &mut types, e, overrides)?, e.span)?;
                 if bounces.fract() != 0.0 || !(0.0..=64.0).contains(&bounces) {
@@ -897,11 +983,22 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
                     return Err(Diag::new(Code::E602, pd.verb.span, "invalid thin lens", "use a nonnegative lens radius and positive focus distance"));
                 }
                 let lens = [radius, focus];
-                if path.replace(emit::paths::PathTrace { integrator, bounces: bounces as u32, lens, lamps: vec![], worlds: vec![], media: vec![] }).is_some() {
+                if path.replace(emit::paths::PathTrace { integrator, bounces: bounces as u32, lens, lamps: vec![], worlds: vec![], media: vec![], area_kind: None }).is_some() {
                     return Err(Diag::new(Code::E505, pd.verb.span, "duplicate path pass", "schedule one path integrator"));
                 }
             }
             "outline_and_paper" => { paper = Some(p.linked(pd.verb.span, "paper_grain")?); }
+            "post_process" => {
+                let effect = fn_name_arg(&p, pd, "effect")?;
+                if !check::Ck::new(&p, &mut types).runtime_signature(p.fns[effect], &[Ty::VecN(2)], &Ty::VecN(3))? {
+                    return Err(Diag::new(Code::E003, arg(pd, "effect")?.span, "invalid post effect signature",
+                        "write fn effect(pixel: v2) -> rgb"));
+                }
+                if aov == emit::Aov::Beauty {
+                    passes.push(Pass::Post(post_entries.len()));
+                    post_entries.push(effect);
+                }
+            }
             "tonemap_aces" => {
                 sky = Some(fn_name_arg(&p, pd, "sky")?);
                 passes.push(Pass::Present);
@@ -921,12 +1018,16 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
             "check" => (&["RowTables", "PoseBuf"], &["VerdictBuf"]),
             "cull_indirect" => (&["CameraSlot"], &["IndirectBuf"]),
             "render_bundle" => (&["IndirectBuf"], &["Vis64", "DepthBuf"]),
+            "draw_forward" if has_shadow_pass => (&["IndirectBuf", "ShadowMap"], &["Vis64", "DepthBuf", "ColorHdr"]),
+            "draw_forward" => (&["IndirectBuf"], &["Vis64", "DepthBuf", "ColorHdr"]),
             "find_shadow_map" => (&["IndirectBuf"], &["ShadowMap"]),
             "tile_classify" => (&["Vis64"], &["TileLists"]),
             "shade_tiles" if has_shadow_pass => (&["Vis64", "DepthBuf", "TileLists", "ShadowMap"], &["ColorHdr"]),
             "shade_tiles" => (&["Vis64", "DepthBuf", "TileLists"], &["ColorHdr"]),
             "outline_and_paper" => (&["ColorHdr", "Vis64"], &["ColorHdr"]),
+            "post_process" => (&["ColorHdr", "Vis64", "DepthBuf"], &["ColorHdr"]),
             "screen_pass" => (&["CameraSlot"], &["ColorHdr"]),
+            "trace_primary" => (&["CameraSlot"], &["Vis64", "DepthBuf", "ColorHdr"]),
             "tonemap_aces" => (&["ColorHdr"], &["Swapchain"]),
             _ => (&[], &[]),
         };
@@ -936,7 +1037,16 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
         available.extend(writes);
     }
     let camera = camera.ok_or_else(|| Diag::new(Code::E520, sched.name.span, "no camera", "add `pass camera: orbit(at: ..., radius: ..., height: ..., period: ..., fov: ...);`"))?;
-    let (light, sky, sun) = (light.expect("checked order"), sky.expect("checked order"), sun.expect("checked order"));
+    let missing = |what: &str| Diag::new(Code::E520, sched.name.span, format!("missing {what}"),
+        "schedule a primary pass, shading and presentation");
+    let path_primary = matches!(path_entry, Some(emit::paths::Entry::Primary { .. }));
+    if !post_entries.is_empty() && matches!(path_entry, Some(emit::paths::Entry::Legacy(_))) {
+        return Err(Diag::new(Code::E505, sched.name.span, "post needs a linear HDR primary pass",
+            "use trace_primary, draw_forward or shade_tiles"));
+    }
+    let light = if path_primary { emit::Shade::None } else { light.ok_or_else(|| missing("shading"))? };
+    let (sky, sun) = (sky.ok_or_else(|| missing("presentation"))?,
+        sun.ok_or_else(|| missing("sun direction"))?);
     lap("schedule", &mut ms);
 
     // Scans, baked in declaration order (a scan may sample one declared before it).
@@ -1010,7 +1120,7 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
             _=>Err(Diag::new(Code::E602,k.name.span,format!("expected one {} environment row",kind),"emit one environment for this view")),
         }
     };
-    if aov != emit::Aov::Beauty { path = None; }
+    if aov != emit::Aov::Beauty && !path_primary { path = None; }
     if let Some(path) = &mut path {
         if let Some(medium) = p.kinds.get("FieldMedium") {
             for row in &tables[p.kind_index("FieldMedium")] {
@@ -1084,7 +1194,7 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
     let mut b = drawn.clone();
     a.sort_unstable();
     b.sort_unstable();
-    if a != b || b.windows(2).any(|pair| pair[0] == pair[1]) || drawn.len() > abi::MAX_KINDS {
+    if (!path_primary && a != b) || b.windows(2).any(|pair| pair[0] == pair[1]) || drawn.len() > abi::MAX_KINDS {
         return Err(Diag::new(Code::E520, sched.name.span, format!("cull lists {culled:?} but the bundle draws {drawn:?}"), "cull each drawable kind once (up to 32)"));
     }
     let ids: Vec<u32> = (0..drawn.len() as u32).collect();
@@ -1096,6 +1206,26 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
         return Err(Diag::new(Code::E520, sched.name.span, "too many primary and shadow kinds", "use up to 32 kinds"));
     }
     if let Some(path) = &mut path {
+        if let Some((id, name)) = drawn.iter().enumerate().find(|(_, name)| {
+            let decl = p.kinds[**name];
+            p.linked(decl.name.span, "SphereLamp").is_ok_and(|key| key == **name)
+                && p.linked(decl.name.span, "sample_sphere").is_ok()
+        }) {
+            let decl = p.kinds[*name];
+            path.area_kind = Some(id as u32);
+            for row in &tables[p.kind_index(name)] {
+                let [center, radius, color] = row.as_slice() else {
+                    return Err(Diag::new(Code::E003, decl.name.span, "invalid sphere emitter layout", "use SphereLamp from stdlib::lighting::area"));
+                };
+                let [x, y, z] = as_v3(center.clone(), decl.name.span)?;
+                let radius = as_f32(radius.clone(), decl.name.span)?;
+                let [r, g, b] = as_v3(color.clone(), decl.name.span)?;
+                if [r, g, b].into_iter().any(|x| !x.is_finite() || x < 0.0) {
+                    return Err(Diag::new(Code::E602, decl.name.span, "invalid sphere emitter radiance", "supply nonnegative finite radiance"));
+                }
+                path.lamps.push([[x, y, z, -radius], [r, g, b, 0.0]]);
+            }
+        }
         path.worlds.push(emit::paths::WorldResources { kinds: (0..drawn.len() as u32).collect(), media: true });
         for members in p.worlds.values() {
             path.worlds.push(emit::paths::WorldResources {
@@ -1109,9 +1239,9 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
     }).collect::<Res<Vec<_>>>()?;
     for pass in &mut passes {
         match pass {
-            Pass::Vis(k) | Pass::Shade(k) => *k = ids.clone(),
+            Pass::Vis(k) | Pass::Shade(k) | Pass::Forward(k) => *k = ids.clone(),
             Pass::Shadow(k) => *k = caster_ids.clone(),
-            Pass::Cull | Pass::Classify | Pass::Present => {}
+            Pass::Cull | Pass::Classify | Pass::Present | Pass::PathPrimary(_) | Pass::Post(_) => {}
         }
     }
 
@@ -1262,8 +1392,9 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
         }
     }
     let mut texts = Vec::new();
+    let forward = passes.iter().any(|p| matches!(p, Pass::Forward(_)));
     for (name, kt) in drawn.iter().zip(&kinds) {
-        let shader = emit::kind_module(&p, &types, p.kinds[*name], light, &lut_refs, kt.draw, aov)?;
+        let shader = emit::emit_kind_module(&p, &types, p.kinds[*name], light, &lut_refs, kt.draw, aov, None, forward)?;
         texts.push((name.to_string(), shader));
     }
     let mut dispatches = vec![];
@@ -1308,17 +1439,36 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
             dispatches.push(dispatch);
         }
     }
+    let has_post = !post_entries.is_empty();
     let present = if let Some(path) = &path {
-        passes.retain(|pass| matches!(pass, Pass::Present));
         shadow_size = 0;
-        emit::paths::module(&p, &types, &kinds, &texts, &lut_refs, path, path_entry.expect("checked path entry"))?
+        let shader = emit::paths::module(&p, &types, &kinds, &texts, &lut_refs, path, path_entry.expect("checked path entry"))?;
+        if path_primary {
+            let index = texts.len();
+            texts.push(("path primary".into(), shader));
+            for pass in &mut passes {
+                if let Pass::PathPrimary(module) = pass { *module = index; }
+            }
+            emit::present_module_hdr(&p, &types, sky, aov, paper, true)
+        } else {
+            passes.retain(|pass| matches!(pass, Pass::Present));
+            shader
+        }
     } else {
-        emit::present_module(&p, &types, sky, aov, paper)
+        emit::present_module_hdr(&p, &types, sky, aov, paper, has_post)
     };
     let shared = texts.len();
     texts.push(("cull".into(), emit::cull_module(ids.len() == 1)));
     texts.push(("classify".into(), emit::classify_module()));
     texts.push(("present".into(), present));
+    for pass in &mut passes {
+        if let Pass::Post(module) = pass {
+            let ordinal = *module;
+            let effect = post_entries[ordinal];
+            *module = texts.len();
+            texts.push((format!("post: {effect}"), emit::post_module(&p, &types, effect, sky, path_primary || ordinal != 0)));
+        }
+    }
     let mut bakes = Vec::new();
     for item in modules.iter().flat_map(|m| &m.items) {
         if let Item::Bake(decl) = item {

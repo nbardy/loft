@@ -1,0 +1,61 @@
+use stdlib::integrators::restir::{reservoir_add, reservoir_scale, reservoir_reuse}
+use stdlib::lighting::world
+use stdlib::lighting::emitters
+
+use stdlib::sky::environment::*
+
+# Finite-depth RGB transport. Continuous emitters and the environment are
+# sampled by the BSDF proposal. Delta lights use a separate direct estimator.
+pub fn reference_sample(origin: v3, direction: v3, seed: u, bounces: u) -> rgb =
+  wgsl(origin: v3, direction: v3, seed: u, bounces: u) -> rgb {
+    var ray_o = origin;
+    var ray_d = direction;
+    var energy = vec3<f32>(1.0);
+    var radiance = vec3<f32>(0.0);
+    for (var bounce = 0u; bounce <= bounces; bounce++) {
+      let hit = world_trace(ray_o, ray_d, 1e6);
+      if hit.t < -1.0 { break; }
+      let volume = world_volume(0u, LoftRay(ray_o, ray_d, 0.0001, select(1e6, hit.t, hit.t >= 0.0)), 24u, true);
+      radiance += energy * volume.l;
+      energy *= volume.t;
+      if hit.t == -1.0 {
+        radiance += energy * loft_user_sky_dome(ray_d);
+        break;
+      }
+      let wo = -ray_d;
+      let emitted = world_eval(hit, wo, vec3<f32>(0.0));
+      let unregistered = bounce == 0u || hit.kind != LOFT_AREA_KIND;
+      radiance += energy * (select(vec3f(0.0), emitted, unregistered) + world_direct(hit, wo, seed, bounce));
+      if bounce == bounces { break; }
+      let xi = vec2<f32>(path_random(seed, bounce * 16u), path_random(seed, bounce * 16u + 1u));
+      ray_d = path_cosine(hit.n, xi);
+      let pdf = max(dot(hit.n, ray_d), 0.0) * 0.318309886;
+      if pdf <= 0.0 { break; }
+      // The staged material's eval returns f*cos. The proposal needs support
+      // over the whole upper hemisphere, including rough specular lobes.
+      energy *= world_eval(hit, wo, ray_d) / pdf;
+      if max(energy.x, max(energy.y, energy.z)) <= 0.0 { break; }
+      ray_o = hit.p + hit.n * 0.0002;
+    }
+    return radiance;
+  }
+
+use stdlib::lighting::surface::{SurfaceHit, LightSummary}
+use stdlib::lighting::world::{RngKey}
+
+# A cosine proposal at the primary hit estimates incident irradiance.
+# Key visibility is provided by the primary pass as a separate RT query.
+pub fn estimate(hit: SurfaceHit, light: LightSummary, rng: RngKey) -> LightSummary =
+  wgsl(hit: SurfaceHit, light: LightSummary, rng: RngKey) -> LightSummary {
+    var result = light;
+    if rng[3] == 0u { return result; }
+    let key = path_hash(rng[2] ^ 0xf74b75a7u);
+    let xi = vec2f(path_random(key, 0u), path_random(key, 1u));
+    let direction = path_cosine(hit.n, xi);
+    let origin = hit.p + hit.n * 0.0002;
+    // The key carries only the sun. Other incident light, including an
+    // emissive surface visible from here, belongs to this irradiance sample.
+    result.indirect_irradiance +=
+      loft_user_reference_sample(origin, direction, key, rng[3] - 1u) * 3.14159265;
+    return result;
+  }

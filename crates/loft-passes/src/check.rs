@@ -205,6 +205,14 @@ impl<'p,'a> Ck<'p,'a> {
         self.resolve_type(t, sig, &mut vec![])
     }
 
+    pub(crate) fn runtime_signature(&self, f: &FnDecl, params: &[Ty], ret: &Ty) -> Res<bool> {
+        let actual = f.params.iter().map(|p| p.ty.as_ref().map(|t| self.resolve(t, true)).transpose())
+            .collect::<Res<Option<Vec<_>>>>()?;
+        Ok(!f.comptime && !f.attrs.iter().any(|attr| attr.name.name == "lobe")
+            && actual.as_deref() == Some(params)
+            && f.ret.as_ref().map(|t| self.resolve(t, true)).transpose()?.as_ref() == Some(ret))
+    }
+
     fn resolve_named(&self, name: &Ident, sig: bool, stack: &mut Vec<String>) -> Res<Ty> {
         if stack.contains(&name.name) {
             return Err(Diag::new(Code::E011, name.span, "cyclic type declaration", "use a finite, nonrecursive payload type"));

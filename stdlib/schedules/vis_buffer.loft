@@ -1,0 +1,10 @@
+use stdlib::lighting::surface::{SurfaceHit, LightSummary}
+use stdlib::lighting::world::{RngKey}
+
+pub schedule VisBuffer(estimate: fn(SurfaceHit, LightSummary, RngKey) -> LightSummary, style: fn(SurfaceHit, LightSummary) -> rgb) {
+  cull_indirect(Drawables)
+  render_bundle(Vis64) { draw_indirect(Drawables) }
+  find_shadow_map(Casters, size: 1024)
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, estimate: estimate, style: style, sun: [0.5, 0.75, 0.35])
+}

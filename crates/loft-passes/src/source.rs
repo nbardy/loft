@@ -154,13 +154,13 @@ struct Loader<'a> {
 
 fn schedule(module: &Module) -> Option<&ScheduleDecl> {
     module.items.iter().find_map(|item| match item {
-        Item::Schedule(s) => Some(s),
+        Item::Schedule(s) if s.callbacks.is_none() => Some(s),
         _ => None,
     })
 }
 
-fn complete(s: &ScheduleDecl) -> bool {
-    s.passes.iter().any(|p| p.verb.name == "render_bundle")
+pub(super) fn complete(s: &ScheduleDecl) -> bool {
+    s.passes.iter().any(|p| matches!(p.verb.name.as_str(), "render_bundle" | "draw_forward" | "trace_primary"))
 }
 
 impl Loader<'_> {
@@ -180,7 +180,7 @@ impl Loader<'_> {
             for id in ids {
                 let node = &self.graph.nodes[usize::from(*id)];
                 let mut exported = node.module.items.iter().filter_map(|item| match item {
-                    Item::Schedule(s) if node.module.public.contains(&s.name.span) => Some(s),
+                    Item::Schedule(s) if s.callbacks.is_none() && node.module.public.contains(&s.name.span) => Some(s),
                     _ => None,
                 });
                 if let Some(first) = exported.next()

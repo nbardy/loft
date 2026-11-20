@@ -1,0 +1,10 @@
+use stdlib::schedules::vis_buffer
+use stdlib::integrators::direct as transport
+use self::toon as ink
+use stdlib::post::display
+
+pub schedule WoodblockRealtime {
+  orbit(at: [0, 0, 0], radius: 4, height: 0.5, fov: 40deg)
+  vis_buffer::VisBuffer(transport::estimate, ink::shade_style)
+  display::PrintPost()
+}

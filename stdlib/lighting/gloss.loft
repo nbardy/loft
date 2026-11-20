@@ -1,0 +1,20 @@
+use stdlib::lighting::surface::{SurfaceHit}
+use stdlib::sky::environment::{sky_dome}
+
+pub fn gloss_sky(hit: SurfaceHit, under: rgb, gloss: f, metal: f) -> rgb =
+  wgsl(hit: SurfaceHit, under: rgb, gloss: f, metal: f) -> rgb {
+    if gloss <= 0.0 && metal <= 0.0 { return under; }
+    let nv = clamp(dot(hit.n, hit.view), 0.0, 1.0);
+    let r = reflect(-hit.view, hit.n);
+    let side = select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(r.y) > 0.9);
+    let u = normalize(cross(r, side));
+    let v = cross(r, u);
+    let spread = 0.02 + 0.5 * max(0.02, (1.0 - gloss) * (1.0 - gloss));
+    let reflected = (loft_user_sky_dome(normalize(r + spread * u))
+                   + loft_user_sky_dome(normalize(r - spread * u))
+                   + loft_user_sky_dome(normalize(r + spread * v))
+                   + loft_user_sky_dome(normalize(r - spread * v))) * 0.25;
+    let f0 = mix(0.04, 1.0, metal);
+    let fresnel = f0 + (1.0 - f0) * pow(1.0 - nv, 5.0);
+    return mix(under, reflected * mix(vec3f(1.0), hit.pigment, metal), mix(gloss, 1.0, metal) * fresnel);
+  }

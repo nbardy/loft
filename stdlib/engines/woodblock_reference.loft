@@ -1,0 +1,11 @@
+use stdlib::schedules::path
+use stdlib::integrators::reference as transport
+use stdlib::integrators::sampling::{primary_jitter}
+use stdlib::lighting::print as ink
+use stdlib::post::display
+
+pub schedule WoodblockReference {
+  orbit(at: [0, 0, 0], radius: 4, height: 0.5, fov: 40deg)
+  path::Path(transport::estimate, ink::shade_style, primary_jitter)
+  display::PrintPost()
+}

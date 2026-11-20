@@ -227,7 +227,7 @@ impl Builder {
         module: usize,
         entries: (&str, &str),
         args: (TableId, u32),
-        targets: (TableId, Option<TableId>),
+        targets: (&[TableId], Option<TableId>),
         resources: &Resources<'_>,
     ) -> Result<()> {
         let module = ModuleId(module as u32);
@@ -243,7 +243,7 @@ impl Builder {
                     vertex: None,
                     index: None,
                 }]),
-                color_targets: Box::new([TargetDesc { table: targets.0 }]),
+                color_targets: targets.0.iter().map(|&table| TargetDesc { table }).collect(),
                 depth: targets.1.map(|table| DepthDesc { table, write: true }),
                 msaa: 1,
             },
@@ -444,6 +444,9 @@ pub fn lower(
     let sampler = b.external();
     b.bundle.resources.comparison_samplers.push(sampler);
     let hdr = b.texture(ImageFormat::Rgba16Float, size, None);
+    let scratch = program.passes.iter().any(|pass| matches!(pass, Pass::Post(_)))
+        .then(|| b.texture(ImageFormat::Rgba16Float, size, None));
+    let mut resolved = hdr;
     let target = b.external();
     let alternate = program.passes.iter().find_map(|pass| match pass {
         Pass::Shadow(ids) => {
@@ -493,13 +496,13 @@ pub fn lower(
                     ("tiles", tiles),
                 ]),
             )?,
-            Pass::Vis(ids) | Pass::Shadow(ids) | Pass::Shade(ids) => {
+            Pass::Vis(ids) | Pass::Shadow(ids) | Pass::Shade(ids) | Pass::Forward(ids) => {
                 for &id in ids {
                     let k = id as usize;
                     let (rows, kp) = kinds[k];
                     let mut resources =
                         Resources::from([("rows", rows), ("kp", kp), ("luts", luts)]);
-                    if matches!(pass, Pass::Vis(_) | Pass::Shadow(_))
+                    if matches!(pass, Pass::Vis(_) | Pass::Shadow(_) | Pass::Forward(_))
                         && matches!(program.kinds[k].draw, Draw::Analytic | Draw::Traced)
                     {
                         b.bundle
@@ -514,7 +517,7 @@ pub fn lower(
                                 program.kinds[k].module,
                                 ("vs", "fs"),
                                 (draw_args, id * 16),
-                                (vis, Some(depth)),
+                                (&[vis], Some(depth)),
                                 &resources,
                             )?;
                         }
@@ -528,7 +531,7 @@ pub fn lower(
                                 program.kinds[k].module,
                                 ("vs", "fs"),
                                 (shadow_args, id * 16),
-                                (shadow_vis, Some(shadow)),
+                                (&[shadow_vis], Some(shadow)),
                                 &resources,
                             )?;
                         }
@@ -551,7 +554,12 @@ pub fn lower(
                                 &resources,
                             )?;
                         }
-                        Pass::Cull | Pass::Classify | Pass::Present => unreachable!(),
+                        Pass::Forward(_) => {
+                            resources.extend([("visible", visible), ("shadow_tex", shadow), ("shadow_smp", sampler)]);
+                            b.draw(program.kinds[k].module, ("vs", "fs_forward"), (draw_args, id * 16),
+                                (&[vis, hdr], Some(depth)), &resources)?;
+                        }
+                        Pass::Cull | Pass::Classify | Pass::Present | Pass::PathPrimary(_) | Pass::Post(_) => unreachable!(),
                     }
                 }
             }
@@ -559,9 +567,16 @@ pub fn lower(
                 program.present,
                 ("vs_present", "fs_present"),
                 (present_args, 0),
-                (target, None),
-                &Resources::from([("hdr_tex", hdr), ("vis_tex", vis)]),
+                (&[target], None),
+                &Resources::from([("hdr_tex", resolved), ("vis_tex", vis)]),
             )?,
+            Pass::PathPrimary(_) => return Err("portable bundles require typed World resources for path primary".into()),
+            Pass::Post(module) => {
+                let dst = if resolved == hdr { scratch.expect("built HDR scratch") } else { hdr };
+                b.draw(*module, ("vs_post", "fs_post"), (present_args, 0), (&[dst], None),
+                    &Resources::from([("hdr_tex", resolved), ("vis_tex", vis), ("post_depth_tex", depth)]))?;
+                resolved = dst;
+            }
         }
     }
     b.bundle.resources.frame = Some(FrameData {

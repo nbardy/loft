@@ -11,6 +11,7 @@ struct Options {
     samples: u32,
     start: f32,
     aov: Aov,
+    attachments: Option<PathBuf>,
     engine: Option<String>,
     live: Vec<(String, f32)>,
     view: Option<String>,
@@ -32,6 +33,10 @@ impl Options {
             .ok_or_else(|| Failure::Usage(format!("{option} requires a nonnegative finite number")));
         let samples = flag(&mut args, "--samples")?.map_or(Ok(1), |s| positive(&s).ok_or_else(|| Failure::Usage("--samples requires a positive count".into())))?;
         let aov = flag(&mut args, "--aov")?.map_or(Ok(Aov::Beauty), |value| value.parse().map_err(|e: &str| Failure::Usage(e.into())))?;
+        let attachments = flag(&mut args, "--attachments")?.map(PathBuf::from);
+        if attachments.is_some() && aov != Aov::Beauty {
+            return Err(Failure::Usage("attachment capture requires the beauty render".into()));
+        }
         let engine = flag(&mut args, "--engine")?;
         let view = flag(&mut args, "--views")?;
         let mut live = Vec::new();
@@ -48,7 +53,7 @@ impl Options {
         if scene.starts_with('-') || !start.is_finite() {
             return Err(Failure::Usage("expected a scene path and finite frame times".into()));
         }
-        Ok(Self { scene: scene.into(), out, size, samples, start, aov, engine, live, view, max_build, max_frame })
+        Ok(Self { scene: scene.into(), out, size, samples, start, aov, attachments, engine, live, view, max_build, max_frame })
     }
 }
 
@@ -84,7 +89,11 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
     }).collect::<Result<Vec<_>, Failure>>()?;
     let g = native::gpu().map_err(Failure::Device)?;
     if opts.max_frame.is_some() { budget::timestamps(g.timestamps)?; }
-    let loaded = Loaded::with_aov(&g, &program, opts.size, None, opts.aov).map_err(Failure::Device)?;
+    let loaded = if opts.attachments.is_some() {
+        Loaded::with_attachments(&g, &program, opts.size)
+    } else {
+        Loaded::with_aov(&g, &program, opts.size, None, opts.aov)
+    }.map_err(Failure::Device)?;
     for (word, value) in live { loaded.set_param_word(word, value).map_err(Failure::Usage)?; }
     if let Some(ms) = loaded.stats.load_bake_gpu_ms {
         println!("load bake and mips {ms:.3} ms GPU, {} dispatches", loaded.stats.load_bake_commands);
@@ -103,6 +112,13 @@ fn frame(g: &Gpu, loaded: &Loaded, opts: &Options, t: f32) -> Result<(Vec<u8>, O
 fn still(g: &Gpu, loaded: &Loaded, opts: &Options) -> Result<(), Failure> {
     let (pixels, ms) = frame(g, loaded, opts, opts.start)?;
     if let Some((ms, limit)) = ms.zip(opts.max_frame) { budget::measured(ms, limit)?; }
+    if let Some(folder) = &opts.attachments {
+        std::fs::create_dir_all(folder).map_err(|e| Failure::Usage(e.to_string()))?;
+        let buffers = loaded.attachment_bytes(g).map_err(Failure::Device)?;
+        for (name, bytes) in ["vis.rg32u", "depth.f32", "hdr.rgba16f"].into_iter().zip(buffers) {
+            std::fs::write(folder.join(name), bytes).map_err(|e| Failure::Usage(e.to_string()))?;
+        }
+    }
     match opts.out.extension().and_then(|x| x.to_str()) {
         Some("png") => write_png(&opts.out, opts.size, &pixels).map_err(Failure::Usage),
         Some("webp") => {

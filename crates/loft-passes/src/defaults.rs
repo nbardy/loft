@@ -13,7 +13,7 @@ pub fn schedule(modules: &mut Vec<Module>, next: &mut u32, recipe: Option<Schedu
     }
     let authored = items().find_map(|i| if let Item::Schedule(s) = i { Some(s) } else { None });
     let woodblock = authored.and_then(|s| s.passes.iter().find(|p| p.verb.name == "woodblock"));
-    let complete = authored.is_some_and(|s| s.passes.iter().any(|p| p.verb.name == "render_bundle"));
+    let complete = authored.is_some_and(crate::source::complete);
     if complete { return Ok(()); }
     let mut schedule = recipe.ok_or_else(|| Diag::new(Code::E520, Span::NONE,
         "no render schedule was selected", "import an engine or write a complete schedule"))?;

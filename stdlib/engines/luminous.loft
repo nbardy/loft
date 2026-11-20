@@ -1,0 +1,14 @@
+use stdlib::integrators::direct::{sun_sky}
+use stdlib::sky::environment::{sky_color}
+use stdlib::post::optics
+
+pub schedule Luminous {
+  orbit(at: [0, 0, 0], radius: 4, height: 0.5, fov: 40deg)
+  cull_indirect(Drawables)
+  find_shadow_map(Casters, size: 1024)
+  draw_forward(ColorHdr, light: sun_sky, sun: [0.5, 0.75, 0.35]) {
+    draw_indirect(Drawables)
+  }
+  optics::LuminousPost()
+  tonemap_aces(ColorHdr, sky: sky_color)
+}

@@ -618,6 +618,7 @@ impl<'src> Parser<'src, '_> {
         }
         if self.eat("schedule") {
             let name = self.ident()?;
+            let callbacks = self.eat("(").then(|| self.schedule_callbacks()).transpose()?;
             self.expect("{")?;
             self.seps();
             let mut radiance = None;
@@ -664,7 +665,7 @@ impl<'src> Parser<'src, '_> {
                 passes.push(PassDecl { label: verb.clone(), verb, args, body, resources });
                 self.end()?
             }
-            return Ok(Item::Schedule(ScheduleDecl { implicit: false, name, passes, waivers, radiance }));
+            return Ok(Item::Schedule(ScheduleDecl { implicit: false, name, callbacks, passes, waivers, radiance }));
         }
         if self.eat("world") {
             let name = self.upper_ident()?;
@@ -902,6 +903,35 @@ impl<'src> Parser<'src, '_> {
         self.locals.clear();
         let texel = FnDecl { comptime: false, attrs: vec![], ret: Some(ty(ret, format.span)), name, params, body, raw: None };
         Ok(BakeDecl { texel, dim, format, clock, mips })
+    }
+
+    fn schedule_callbacks(&mut self) -> Res<Vec<ScheduleCallback>> {
+        let mut callbacks: Vec<ScheduleCallback> = vec![];
+        while !self.eat(")") {
+            let name = self.ident()?;
+            if let Some(first) = callbacks.iter().find(|p| p.name.name == name.name) {
+                return Err(Diag::new(Code::E011, name.span, "duplicate schedule callback", "give each callback a distinct name")
+                    .note(first.name.span, "first callback declared here"));
+            }
+            self.expect(":")?;
+            self.expect("fn")?;
+            self.expect("(")?;
+            let mut params = vec![];
+            while !self.eat(")") {
+                params.push(self.ty()?);
+                if !self.eat(",") {
+                    self.expect(")")?;
+                    break;
+                }
+            }
+            self.expect("->")?;
+            callbacks.push(ScheduleCallback { name, params, ret: self.ty()? });
+            if !self.eat(",") {
+                self.expect(")")?;
+                break;
+            }
+        }
+        Ok(callbacks)
     }
 
     fn params(&mut self) -> Res<Vec<Param>> {

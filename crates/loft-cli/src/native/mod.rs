@@ -104,11 +104,15 @@ pub struct Loaded {
     classify: (wgpu::ComputePipeline, wgpu::BindGroup),
     present: command::Raster,
     bundle: command::Raster,
+    forward: Option<(command::Raster, wgpu::TextureView)>,
+    path_primary: Option<(command::Raster, wgpu::TextureView)>,
+    post: std::collections::BTreeMap<usize, (command::Raster, wgpu::TextureView)>,
     /// The sun's view: its uniform, bundle, targets, and the texel size in metres; `None` without a shadow pass.
     shadow: Option<Shadow>,
     vis: wgpu::TextureView,
     depth: wgpu::TextureView,
     color: wgpu::Texture,
+    attachments: Option<[wgpu::Texture; 3]>,
     color_view: wgpu::TextureView,
     clock: Option<Clock>,
     bake_textures: Mutex<Vec<TextureBake>>,
@@ -269,6 +273,22 @@ fn render_blended(
     cache: Option<&wgpu::PipelineCache>,
     blend: Option<wgpu::BlendState>,
 ) -> wgpu::RenderPipeline {
+    let targets = [Some(wgpu::ColorTargetState { format: target, blend, write_mask: wgpu::ColorWrites::ALL })];
+    render_targets(device, label, layouts, module, entries, &targets, depth, cull, cache)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_targets(
+    device: &wgpu::Device,
+    label: &str,
+    layouts: &[&wgpu::BindGroupLayout],
+    module: &wgpu::ShaderModule,
+    entries: (&str, &str),
+    targets: &[Option<wgpu::ColorTargetState>],
+    depth: bool,
+    cull: Option<wgpu::Face>,
+    cache: Option<&wgpu::PipelineCache>,
+) -> wgpu::RenderPipeline {
     let layouts: Vec<Option<&wgpu::BindGroupLayout>> = layouts.iter().map(|l| Some(*l)).collect();
     let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &layouts, immediate_size: 0 });
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -279,7 +299,7 @@ fn render_blended(
             module,
             entry_point: Some(entries.1),
             compilation_options: Default::default(),
-            targets: &[Some(wgpu::ColorTargetState { format: target, blend, write_mask: wgpu::ColorWrites::ALL })],
+            targets,
         }),
         primitive: wgpu::PrimitiveState { cull_mode: cull, front_face: wgpu::FrontFace::Ccw, ..Default::default() },
         depth_stencil: depth.then(|| wgpu::DepthStencilState {
@@ -491,16 +511,23 @@ fn caster_bounds(p: &Program, casters: &[u32]) -> ([f32; 3], [f32; 3]) {
 impl Loaded {
     /// Builds every GPU object for `p` at `size`. `nonce` (any value but `u32::MAX`) forces a cold driver compile.
     pub fn new(g: &Gpu, p: &Program, size: (u32, u32), nonce: Option<u32>) -> Result<Loaded, String> {
-        Self::load(g, p, size, nonce, None, Aov::Beauty)
+        Self::load(g, p, size, nonce, None, Aov::Beauty, false)
     }
 
     pub fn with_aov(g: &Gpu, p: &Program, size: (u32, u32), nonce: Option<u32>, aov: Aov) -> Result<Loaded, String> {
-        Self::load(g, p, size, nonce, None, aov)
+        Self::load(g, p, size, nonce, None, aov, false)
+    }
+
+    pub fn with_attachments(g: &Gpu, p: &Program, size: (u32, u32)) -> Result<Loaded, String> {
+        if p.path.is_some() && !p.passes.iter().any(|pass| matches!(pass, Pass::PathPrimary(_))) {
+            return Err("the legacy path renderer writes display output directly".into());
+        }
+        Self::load(g, p, size, None, None, Aov::Beauty, true)
     }
 
     fn load(
         g: &Gpu, p: &Program, size: (u32, u32), nonce: Option<u32>,
-        edit: Option<(usize, &loft_passes::tier0::TraceEdit)>, aov: Aov,
+        edit: Option<(usize, &loft_passes::tier0::TraceEdit)>, aov: Aov, capture: bool,
     ) -> Result<Loaded, String> {
         let d = &g.device;
         let color_format = if aov == Aov::Beauty { COLOR } else { wgpu::TextureFormat::Rgba8Unorm };
@@ -546,8 +573,25 @@ impl Loaded {
         let bgl_classify = layout(d, "classify", &[(CS, texture(wgpu::TextureSampleType::Uint)), (CS, storage(false)), (CS, storage(false))]);
         let bgl_present =
             layout(d, "present", &[(FS, texture(wgpu::TextureSampleType::Float { filterable: false })), (FS, texture(wgpu::TextureSampleType::Uint))]);
-        let path_layout = p.path.as_ref().map(|path| PathGpu::layout(d, path, &p.modules[p.present].naga)).transpose()?;
-        let present_layouts = [&bgl0, &bgl_present].into_iter().chain(path_layout.iter()).collect::<Vec<_>>();
+        let forward_ids = p.passes.iter().find_map(|pass| match pass {
+            Pass::Forward(ids) => Some(ids.as_slice()),
+            _ => None,
+        });
+        let forward_layout = forward_ids.map(|_| d.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("forward"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry { binding: 3, visibility: FS, ty: texture(wgpu::TextureSampleType::Depth), count: None },
+                wgpu::BindGroupLayoutEntry { binding: 4, visibility: FS, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison), count: None },
+            ],
+        }));
+        let primary_module = p.passes.iter().find_map(|pass| match pass {
+            Pass::PathPrimary(index) => Some(*index),
+            _ => None,
+        });
+        let world_module = primary_module.unwrap_or(p.present);
+        let path_layout = p.path.as_ref().map(|path| PathGpu::layout(d, path, &p.modules[world_module].naga)).transpose()?;
+        let present_layouts = [&bgl0, &bgl_present].into_iter().chain(path_layout.as_ref()
+            .filter(|_| primary_module.is_none())).collect::<Vec<_>>();
         let indexed = |kt: &loft_passes::program::KindTable| {
             aov != Aov::Overdraw && p.modules[kt.module].naga.entry_points.iter().any(|e| e.name == "vs_indexed")
         };
@@ -657,9 +701,12 @@ impl Loaded {
         let tile_cap = tiles.0 * tiles.1;
         let tile_lists = buffer(d, "tiles", u64::from(tile_cap) * 4 * k_n as u64, U::STORAGE);
         use wgpu::TextureUsages as T;
-        let vis_tex = tex(d, "vis64", size, VIS, T::RENDER_ATTACHMENT | T::TEXTURE_BINDING);
-        let depth_tex = tex(d, "depth", size, DEPTH, T::RENDER_ATTACHMENT);
-        let hdr_tex = tex(d, "hdr", size, HDR, T::STORAGE_BINDING | T::TEXTURE_BINDING | T::RENDER_ATTACHMENT);
+        let copy_src = if capture { T::COPY_SRC } else { T::empty() };
+        let vis_tex = tex(d, "vis64", size, VIS, T::RENDER_ATTACHMENT | T::TEXTURE_BINDING | copy_src);
+        let has_post = p.passes.iter().any(|pass| matches!(pass, Pass::Post(_)));
+        let depth_usage = T::RENDER_ATTACHMENT | if has_post { T::TEXTURE_BINDING } else { T::empty() };
+        let depth_tex = tex(d, "depth", size, DEPTH, depth_usage | copy_src);
+        let hdr_tex = tex(d, "hdr", size, HDR, T::STORAGE_BINDING | T::TEXTURE_BINDING | T::RENDER_ATTACHMENT | copy_src);
         let color = tex(d, "color", size, color_format, T::RENDER_ATTACHMENT | T::COPY_SRC);
         let view = |t: &wgpu::Texture| t.create_view(&Default::default());
         let (vis, depth, hdr, color_view) = (view(&vis_tex), view(&depth_tex), view(&hdr_tex), view(&color));
@@ -753,11 +800,83 @@ impl Loaded {
         let cull_bg = bind(d, &bgl_cull, &[insts.as_entire_binding(), draw_args.as_entire_binding(), visible.as_entire_binding(), bases_buf.as_entire_binding()]);
         let classify_bg =
             bind(d, &bgl_classify, &[wgpu::BindingResource::TextureView(&vis), shade_args.as_entire_binding(), tile_lists.as_entire_binding()]);
-        let present_bg = bind(d, &bgl_present, &[wgpu::BindingResource::TextureView(&hdr), wgpu::BindingResource::TextureView(&vis)]);
+        let mut post = std::collections::BTreeMap::new();
+        let mut resolved = &hdr;
+        let scratch_tex = has_post.then(|| tex(d, "post hdr", size, HDR, T::TEXTURE_BINDING | T::RENDER_ATTACHMENT | copy_src));
+        let scratch = scratch_tex.as_ref().map(view);
+        if let Some(scratch) = &scratch {
+            let bgl = layout(d, "post", &[
+                (FS, texture(wgpu::TextureSampleType::Float { filterable: false })),
+                (FS, texture(wgpu::TextureSampleType::Uint)),
+                (FS, texture(wgpu::TextureSampleType::Depth)),
+            ]);
+            for (ordinal, module) in p.passes.iter().filter_map(|pass| match pass {
+                Pass::Post(module) => Some(*module),
+                _ => None,
+            }).enumerate() {
+                let dst = if ordinal % 2 == 0 { scratch } else { &hdr };
+                let bg = bind(d, &bgl, &[
+                    wgpu::BindingResource::TextureView(resolved),
+                    wgpu::BindingResource::TextureView(&vis),
+                    wgpu::BindingResource::TextureView(&depth),
+                ]);
+                let (pipeline, ms) = timed(|| render(d, "HDR post", &[&bgl0, &bgl], &modules[module],
+                    ("vs_post", "fs_post"), HDR, false, None, cache));
+                stats.pipeline_ms.push((p.modules[module].name.clone(), ms));
+                stats.render_pipelines += 1;
+                let raster = command::Raster::prepare(d, &wgpu::RenderBundleEncoderDescriptor {
+                    label: Some("HDR post"), color_formats: &[Some(HDR)],
+                    depth_stencil: None, sample_count: 1, multiview: None,
+                }, &[&g0, &bg], [command::Draw {
+                    pipeline: &pipeline, groups: vec![],
+                    source: command::DrawSource::Direct { vertices: 0..3, instances: 0..1 },
+                }]);
+                post.insert(module, (raster, dst.clone()));
+                resolved = dst;
+            }
+        }
+        let present_bg = bind(d, &bgl_present, &[wgpu::BindingResource::TextureView(resolved), wgpu::BindingResource::TextureView(&vis)]);
+        let attachments = capture.then(|| {
+            let hdr = if post.len() % 2 == 0 { hdr_tex } else { scratch_tex.expect("post scratch") };
+            [vis_tex, depth_tex, hdr]
+        });
 
         // The bundle: recorded once, replayed every frame. Per kind: set pipeline, bind, one drawIndirect.
         let vis_kinds: Vec<u32> = p.passes.iter().find_map(|x| if let Pass::Vis(k) = x { Some(k.clone()) } else { None }).unwrap_or_default();
         let bundle = draw_bundle(d, &g0, &kinds, &vis_kinds, &draw_args, None);
+        let forward = forward_ids.zip(forward_layout.as_ref()).map(|(ids, layout)| {
+            stats.render_pipelines += ids.len();
+            let group = d.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("forward"), layout,
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&shadow_view) },
+                    wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::Sampler(&smp) },
+                ],
+            });
+            let targets = [VIS, HDR].map(|format| Some(wgpu::ColorTargetState {
+                format, blend: None, write_mask: wgpu::ColorWrites::ALL,
+            }));
+            let pipes = ids.iter().map(|&id| {
+                let kt = &p.kinds[id as usize];
+                let face = matches!(kt.draw, Draw::Analytic | Draw::Traced).then_some(wgpu::Face::Front);
+                let (pipeline, ms) = timed(|| render_targets(d, &kt.name, &[&bgl0, &bgl_kind, layout],
+                    &modules[kt.module], ("vs", "fs_forward"), &targets, true, face, cache));
+                stats.pipeline_ms.push((format!("{} forward", kt.name), ms));
+                pipeline
+            }).collect::<Vec<_>>();
+            let draws = ids.iter().zip(&pipes).map(|(&id, pipeline)| command::Draw {
+                pipeline, groups: vec![&kinds[id as usize].g1, &group],
+                source: command::DrawSource::Indirect { args: &draw_args, offset: u64::from(id) * (u64::from(arg_words) * 4) },
+            });
+            let raster = command::Raster::prepare(d, &wgpu::RenderBundleEncoderDescriptor {
+                label: Some("forward"), color_formats: &[Some(VIS), Some(HDR)],
+                depth_stencil: Some(wgpu::RenderBundleDepthStencil {
+                    format: DEPTH, depth_read_only: false, stencil_read_only: true,
+                }),
+                sample_count: 1, multiview: None,
+            }, &[&g0], draws);
+            (raster, hdr.clone())
+        });
         let overdraw = (aov == Aov::Overdraw).then(|| {
             let component = wgpu::BlendComponent { src_factor: wgpu::BlendFactor::One, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add };
             let pipelines: Vec<_> = vis_kinds.iter().map(|&k| {
@@ -774,7 +893,7 @@ impl Loaded {
                 label: Some("overdraw"), color_formats: &[Some(HDR)], depth_stencil: None,
                 sample_count: 1, multiview: None,
             }, &[&g0], draws);
-            (raster, hdr)
+            (raster, hdr.clone())
         });
         let shadow = (p.shadow_size > 0).then(|| {
             let frame_buf = buffer(d, "sun frame", abi::FRAME_BYTES, U::UNIFORM | U::COPY_DST);
@@ -824,8 +943,30 @@ impl Loaded {
                 stats.load_bake_ticks = times;
             }
         }
-        let path = path_layout.as_ref().map(|layout| PathGpu::prepare(g, p, &bgl0, &bgl_present, layout, &modules[p.present], &g0, &present_bg)).transpose()?;
-        let present_groups = [&g0, &present_bg].into_iter().chain(path.iter().map(|p| &p.group)).collect::<Vec<_>>();
+        let empty_layout = primary_module.map(|_| layout(d, "unused path group", &[]));
+        let empty_group = empty_layout.as_ref().map(|layout| bind(d, layout, &[]));
+        let path = path_layout.as_ref().map(|layout|
+            PathGpu::prepare(g, p, &bgl0, empty_layout.as_ref().unwrap_or(&bgl_present), layout,
+                &modules[world_module], &g0, empty_group.as_ref().unwrap_or(&present_bg))).transpose()?;
+        let path_primary = primary_module.zip(path_layout.as_ref()).zip(path.as_ref()).map(|((module, layout), path)| {
+            stats.render_pipelines += 1;
+            let middle = empty_layout.as_ref().expect("prepared path layout");
+            let groups = [&g0, empty_group.as_ref().expect("prepared path group"), &path.group];
+            let targets = [VIS, HDR].map(|format| Some(wgpu::ColorTargetState { format, blend: None, write_mask: wgpu::ColorWrites::ALL }));
+            let (pipeline, ms) = timed(|| render_targets(d, "path primary", &[&bgl0, middle, layout], &modules[module],
+                ("vs_primary", "fs_path_primary"), &targets, true, None, cache));
+            stats.pipeline_ms.push(("path primary".into(), ms));
+            let raster = command::Raster::prepare(d, &wgpu::RenderBundleEncoderDescriptor {
+                label: Some("path primary"), color_formats: &[Some(VIS), Some(HDR)],
+                depth_stencil: Some(wgpu::RenderBundleDepthStencil {
+                    format: DEPTH, depth_read_only: false, stencil_read_only: true,
+                }),
+                sample_count: 1, multiview: None,
+            }, &groups, [command::Draw { pipeline: &pipeline, groups: vec![], source: command::DrawSource::Direct { vertices: 0..3, instances: 0..1 } }]);
+            (raster, hdr.clone())
+        });
+        let present_groups = [&g0, &present_bg].into_iter().chain(path.iter()
+            .filter(|_| primary_module.is_none()).map(|p| &p.group)).collect::<Vec<_>>();
         let present_bundle = command::Raster::prepare(d, &wgpu::RenderBundleEncoderDescriptor {
             color_formats: &[Some(color_format)], sample_count: 1, ..Default::default()
         }, &present_groups, [command::Draw {
@@ -859,10 +1000,14 @@ impl Loaded {
             classify: (classify_pl, classify_bg),
             present: present_bundle,
             bundle,
+            forward,
+            path_primary,
+            post,
             shadow,
             vis,
             depth,
             color,
+            attachments,
             color_view,
             clock,
             bake_textures: Mutex::new(bake_textures),
@@ -882,7 +1027,19 @@ impl Loaded {
         self.commands = self.passes.iter().map(|pass| match pass {
             Pass::Cull => self.direct(&self.cull, [self.n_inst.div_ceil(64), 1, 1]),
             Pass::Vis(_) => visibility(&self.bundle, &self.vis, &self.depth,
-                wgpu::StoreOp::Store, wgpu::StoreOp::Discard),
+                wgpu::StoreOp::Store, if self.post.is_empty() && self.attachments.is_none() { wgpu::StoreOp::Discard } else { wgpu::StoreOp::Store }),
+            Pass::Forward(_) => {
+                let (raster, hdr) = self.forward.as_ref().expect("prepared forward pass");
+                primary_pass(raster, &self.vis, hdr, &self.depth)
+            },
+            Pass::PathPrimary(_) => {
+                let (raster, hdr) = self.path_primary.as_ref().expect("prepared path primary pass");
+                primary_pass(raster, &self.vis, hdr, &self.depth)
+            },
+            Pass::Post(module) => {
+                let (raster, dst) = &self.post[module];
+                color_pass(dst, wgpu::Color::TRANSPARENT, raster)
+            },
             Pass::Shadow(_) => {
                 let sun = self.shadow.as_ref().expect("validated caster pass");
                 visibility(&sun.bundle, &sun.vis, &sun.depth, wgpu::StoreOp::Discard, wgpu::StoreOp::Store)
@@ -1063,12 +1220,25 @@ impl Loaded {
 
     /// The presented picture, tightly packed RGBA8 (sRGB), top row first.
     pub fn pixels(&self, g: &Gpu) -> Result<Vec<u8>, String> {
+        self.read_texture(g, &self.color, wgpu::TextureAspect::All, 4)
+    }
+
+    pub fn attachment_bytes(&self, g: &Gpu) -> Result<[Vec<u8>; 3], String> {
+        let [vis, depth, hdr] = self.attachments.as_ref().ok_or("attachment capture was not enabled")?;
+        Ok([
+            self.read_texture(g, vis, wgpu::TextureAspect::All, 8)?,
+            self.read_texture(g, depth, wgpu::TextureAspect::DepthOnly, 4)?,
+            self.read_texture(g, hdr, wgpu::TextureAspect::All, 8)?,
+        ])
+    }
+
+    fn read_texture(&self, g: &Gpu, texture: &wgpu::Texture, aspect: wgpu::TextureAspect, pixel_bytes: u32) -> Result<Vec<u8>, String> {
         let (w, h) = self.size;
-        let row = (w * 4).next_multiple_of(256);
+        let row = (w * pixel_bytes).next_multiple_of(256);
         let buf = buffer(&g.device, "readback", u64::from(row * h), wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST);
         let mut enc = g.device.create_command_encoder(&Default::default());
         enc.copy_texture_to_buffer(
-            self.color.as_image_copy(),
+            wgpu::TexelCopyTextureInfo { aspect, ..texture.as_image_copy() },
             wgpu::TexelCopyBufferInfo { buffer: &buf, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: Some(h) } },
             wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
         );
@@ -1076,7 +1246,7 @@ impl Loaded {
         buf.map_async(wgpu::MapMode::Read, .., |r| r.expect("readback map"));
         g.device.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| e.to_string())?;
         let view = buf.get_mapped_range(..).map_err(|e| e.to_string())?;
-        Ok(view.chunks_exact(row as usize).flat_map(|r| r[..(w * 4) as usize].to_vec()).collect())
+        Ok(view.chunks_exact(row as usize).flat_map(|r| r[..(w * pixel_bytes) as usize].iter().copied()).collect())
     }
 
     /// The twin: runs kind `k`'s queries on the GPU at samples of 8 floats each (p.xyz or (u, v, 0), row as bits,
@@ -1116,6 +1286,17 @@ fn visibility(raster: &command::Raster, color: &wgpu::TextureView, depth: &wgpu:
         vec![command::Color { view: color.clone(), ops: wgpu::Operations { load: wgpu::LoadOp::Clear(clear), store } }],
         Some(command::Depth { view: depth.clone(), ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.), store: depth_store }) }),
     )
+}
+
+fn primary_pass(raster: &command::Raster, vis: &wgpu::TextureView, hdr: &wgpu::TextureView, depth: &wgpu::TextureView) -> command::Pass {
+    let clear_vis = wgpu::Color { r: f64::from(abi::EMPTY), g: 0., b: 0., a: 0. };
+    let color = |view: &wgpu::TextureView, clear| command::Color {
+        view: view.clone(), ops: wgpu::Operations { load: wgpu::LoadOp::Clear(clear), store: wgpu::StoreOp::Store },
+    };
+    raster.attach(vec![color(vis, clear_vis), color(hdr, wgpu::Color::TRANSPARENT)],
+        Some(command::Depth { view: depth.clone(), ops: Some(wgpu::Operations {
+            load: wgpu::LoadOp::Clear(1.), store: wgpu::StoreOp::Store,
+        }) }))
 }
 
 fn color_pass(view: &wgpu::TextureView, clear: wgpu::Color, raster: &command::Raster) -> command::Pass {

@@ -32,7 +32,7 @@ impl PathGpu {
         }
         for entry in loft_passes::telemetry::storage_entries(shader)? {
             let stage = match (entry.entry.as_str(), entry.stage) {
-                ("fs_present", naga::ShaderStage::Fragment) => FS,
+                ("fs_present" | "fs_path_primary", naga::ShaderStage::Fragment) => FS,
                 ("photons", naga::ShaderStage::Compute) if spectral => CS,
                 _ => continue,
             };

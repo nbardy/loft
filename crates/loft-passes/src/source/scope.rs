@@ -85,6 +85,11 @@ fn shared_space(n: &str) -> bool {
     matches!(n, "World" | "Local")
 }
 
+fn historic_decl(path: &str, name: &str) -> bool {
+    stock(path) && !matches!((path, name),
+        ("stdlib/integrators/direct.loft" | "stdlib/integrators/restir.loft", "estimate"))
+}
+
 fn key(path: &str, name: &str) -> String {
     // Encode the portable lexical path, independently of DFS order or source text.
     let path = path
@@ -109,8 +114,8 @@ impl<'a> Linker<'a> {
             .nodes
             .iter()
             .enumerate()
-            .filter(|(id, _)| graph.stock(*id as u16).is_some_and(stock))
-            .flat_map(|(_, node)| node.module.items.iter().flat_map(Item::declarations))
+            .flat_map(|(id, node)| node.module.items.iter().flat_map(Item::declarations)
+                .filter(move |n| graph.stock(id as u16).is_some_and(|path| historic_decl(path, &n.name))))
             .map(|n| n.name.as_str())
             .collect::<HashSet<_>>();
         let mut bare = HashSet::new();
@@ -118,10 +123,9 @@ impl<'a> Linker<'a> {
         for (id, node) in graph.nodes.iter().enumerate() {
             let mut scope = Names::default();
             let path = &graph.sources.files[id].0;
-            let stock = stock(path);
             for item in &node.module.items {
                 if matches!(item, Item::Camera(_))
-                    || matches!(item, Item::Schedule(_)) && id == usize::from(graph.entry)
+                    || matches!(item, Item::Schedule(s) if s.callbacks.is_none()) && id == usize::from(graph.entry)
                 {
                     continue;
                 }
@@ -132,7 +136,7 @@ impl<'a> Linker<'a> {
                     }
                     let internal = n.name.starts_with('#');
                     let root = id == usize::from(graph.entry);
-                    let keep = stock || internal || root && !stock_names.contains(n.name.as_str());
+                    let keep = historic_decl(path, &n.name) || internal || root && !stock_names.contains(n.name.as_str());
                     let key = if keep {
                         n.name.clone()
                     } else {
@@ -771,15 +775,22 @@ impl Scope<'_> {
                 self.fields(fields, &[])?;
             }
             Item::Schedule(s) => {
+                let mut locals = vec![];
+                for c in s.callbacks.iter_mut().flatten() {
+                    for ty in c.params.iter_mut().chain([&mut c.ret]) {
+                        self.ty(ty, &[])?;
+                    }
+                    locals.push(c.name.name.clone());
+                }
                 if let Some((_, ty)) = &mut s.radiance {
                     self.ty(ty, &[])?;
                 }
                 for pass in &mut s.passes {
                     self.ident(&mut pass.verb)?;
-                    self.args(&mut pass.args, &[])?;
+                    self.args(&mut pass.args, &locals)?;
                     for (name, args) in &mut pass.body {
                         self.ident(name)?;
-                        self.args(args, &[])?;
+                        self.args(args, &locals)?;
                     }
                     if let Some(resources) = &mut pass.resources {
                         self.block(&mut resources.body, &mut vec![])?;
@@ -853,11 +864,19 @@ pub(super) fn edited(graph: &Graph, id: u16, mut module: Module) -> Res<Module> 
 pub(super) fn link(graph: &Graph) -> Res<(Vec<Module>, u32)> {
     let linker = Linker::new(graph)?;
     let mut recipe = None;
+    let mut fragments = HashMap::new();
     let mut modules = Vec::with_capacity(graph.nodes.len());
     for &id in &graph.order {
         let node = &graph.nodes[usize::from(id)];
         let mut module = node.module.clone();
         linker.scope(id)?.rewrite(&mut module)?;
+        module.items.retain(|item| {
+            if let Item::Schedule(s) = item && s.callbacks.is_some() {
+                fragments.insert(s.name.name.clone(), s.clone());
+                return false;
+            }
+            true
+        });
         if id == graph.entry {
             for item in &mut module.items {
                 if let Item::Schedule(s) = item
@@ -894,8 +913,82 @@ pub(super) fn link(graph: &Graph) -> Res<(Vec<Module>, u32)> {
         modules.push((rank, module));
     }
     modules.sort_by_key(|(rank, _)| *rank);
-    let mut modules = modules.into_iter().map(|(_, module)| module).collect();
+    let mut modules: Vec<_> = modules.into_iter().map(|(_, module)| module).collect();
+    let mut callbacks = vec![];
+    for s in modules.iter_mut().flat_map(|m| &mut m.items).filter_map(|item| match item {
+        Item::Schedule(s) => Some(s),
+        _ => None,
+    }).chain(recipe.iter_mut()) {
+        let passes = std::mem::take(&mut s.passes);
+        s.passes = expand_passes(passes, &fragments, &mut vec![], &mut callbacks)?;
+    }
     let mut next = graph.next;
     crate::defaults::schedule(&mut modules, &mut next, recipe)?;
+    if !callbacks.is_empty() {
+        let p = crate::Prog::index(&modules)?;
+        let mut types = vec![];
+        let ck = crate::check::Ck::new(&p, &mut types);
+        for (name, site, formal) in callbacks {
+            let f = p.fns.get(name.as_str()).ok_or_else(|| error(site, &name))?;
+            let params = formal.params.iter().map(|t| ck.resolve(t, true)).collect::<Res<Vec<_>>>()?;
+            let ret = ck.resolve(&formal.ret, true)?;
+            if !ck.runtime_signature(f, &params, &ret)? {
+                return Err(Diag::new(Code::E003, site, format!("callback `{}` has the wrong stage or signature", formal.name.name),
+                    "supply a runtime fn with the fragment's declared parameter and return types")
+                    .note(formal.name.span, "callback contract here")
+                    .note(f.name.span, "function declared here"));
+            }
+        }
+    }
     Ok((modules, next))
+}
+
+fn expand_passes<'a>(
+    passes: Vec<PassDecl>, fragments: &'a HashMap<String, ScheduleDecl>,
+    active: &mut Vec<&'a str>, callbacks: &mut Vec<(String, Span, &'a ScheduleCallback)>,
+) -> Res<Vec<PassDecl>> {
+    let mut result = vec![];
+    for call in passes {
+        let Some(s) = fragments.get(&call.verb.name) else {
+            result.push(call);
+            continue;
+        };
+        if active.contains(&s.name.name.as_str()) {
+            return Err(Diag::new(Code::E520, call.verb.span, "recursive schedule fragment", "remove the recursive call"));
+        }
+        if s.radiance.is_some() || !s.waivers.is_empty() {
+            return Err(Diag::new(Code::E520, s.name.span, "a schedule fragment cannot bind Radiance or waive invariants",
+                "declare these on the entry schedule"));
+        }
+        let formals = s.callbacks.as_deref().expect("collected fragments");
+        if call.args.len() != formals.len() || !call.body.is_empty() || call.resources.is_some() {
+            return Err(Diag::new(Code::E520, call.verb.span, "invalid schedule fragment call",
+                format!("supply {} callback arguments", formals.len())));
+        }
+        let mut bindings = HashMap::new();
+        for (arg, formal) in call.args.iter().zip(formals) {
+            let ExprKind::Name(name) = &arg.value.kind else {
+                return Err(Diag::new(Code::E003, arg.value.span, "expected a callback name", "name a declared fn"));
+            };
+            if arg.name.as_ref().is_some_and(|n| n.name != formal.name.name) {
+                return Err(Diag::new(Code::E003, arg.value.span, "callback argument is out of order",
+                    format!("bind `{}` here", formal.name.name)));
+            }
+            bindings.insert(formal.name.name.as_str(), &arg.value);
+            callbacks.push((name.clone(), arg.value.span, formal));
+        }
+        let mut passes = s.passes.clone();
+        for pass in &mut passes {
+            for arg in pass.args.iter_mut().chain(pass.body.iter_mut().flat_map(|(_, args)| args)) {
+                if let ExprKind::Name(name) = &arg.value.kind && let Some(value) = bindings.get(name.as_str()) {
+                    // Keep the caller's span and its already-resolved lexical identity.
+                    arg.value = (*value).clone();
+                }
+            }
+        }
+        active.push(&s.name.name);
+        result.extend(expand_passes(passes, fragments, active, callbacks)?);
+        active.pop();
+    }
+    Ok(result)
 }

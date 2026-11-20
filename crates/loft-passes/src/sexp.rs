@@ -45,12 +45,21 @@ pub fn read(text: &str) -> Result<Program, String> {
     for pass in &p.passes {
         use crate::program::Pass;
         match pass {
-            Pass::Vis(k) | Pass::Shadow(k) | Pass::Shade(k)
+            Pass::PathPrimary(module) if !valid_module(*module) || p.path.is_none() => {
+                return Err("invalid primary path module or missing World resources".into());
+            }
+            Pass::Post(module) if !valid_module(*module) => {
+                return Err("invalid HDR post module".into());
+            }
+            Pass::Vis(k) | Pass::Shadow(k) | Pass::Shade(k) | Pass::Forward(k)
                 if k.iter().any(|id| *id as usize >= p.kinds.len()) =>
             {
                 return Err("invalid pass kind index; name a kind in the bundle".into());
             }
             Pass::Vis(_)
+            | Pass::Forward(_)
+            | Pass::PathPrimary(_)
+            | Pass::Post(_)
             | Pass::Shadow(_)
             | Pass::Shade(_)
             | Pass::Cull
