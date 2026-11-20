@@ -54,7 +54,7 @@ impl Edits {
         }
         #[cfg(target_arch = "wasm32")]
         return Err(RunnerError::Unsupported(
-            "asynchronous pipeline creation on this backend",
+            "use WebGpu::attach with the browser GPUDevice for asynchronous pipeline promotion",
         ));
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -125,36 +125,9 @@ impl Edits {
         kind: KindId,
         pass: PassId,
     ) -> Result<()> {
-        let row = bundle.rows.get(&kind).ok_or(RunnerError::UnknownResource)?;
-        let decl = bundle
-            .passes
-            .iter()
-            .find(|p| p.id == pass)
-            .ok_or(RunnerError::UnknownResource)?;
-        let PassRun::Compute { module, entry, .. } = &decl.run else {
-            return Err(RunnerError::AbiMismatch);
-        };
-        if entry != "loft_tier0_main"
-            || self.routes.contains_key(&kind)
-            || self
-                .routes
-                .values()
-                .any(|route| route.pass == pass || route.module == *module)
-            || !decl
-                .bindings
-                .iter()
-                .any(|b| b.group == 1 && b.slot == 2 && b.resource == *row)
-        {
-            return Err(RunnerError::AbiMismatch);
-        }
-        let table = decl
-            .bindings
-            .iter()
-            .find(|b| b.group == 1 && b.slot == 0)
-            .ok_or(RunnerError::AbiMismatch)?
-            .resource;
-        if self.routes.values().any(|route| route.table == table) || bundle.rows.values().any(|&row| row == table)
-        {
+        let (module, table) = tape_route(bundle, kind, pass)?;
+        if self.routes.contains_key(&kind) || self.routes.values().any(|route|
+            route.pass == pass || route.module == module || route.table == table) {
             return Err(RunnerError::AbiMismatch);
         }
         let fallback = pipelines.pipeline(pass)?.clone();
@@ -162,7 +135,7 @@ impl Edits {
             kind,
             Route {
                 pass,
-                module: *module,
+                module,
                 table,
                 fallback,
             },
@@ -196,7 +169,25 @@ impl Edits {
     }
 }
 
-fn upload_words(words: &[u32]) -> Result<Vec<u8>> {
+pub(crate) fn tape_route(bundle: &Bundle, kind: KindId, pass: PassId) -> Result<(ModuleId, TableId)> {
+    let row = *bundle.rows.get(&kind).ok_or(RunnerError::UnknownResource)?;
+    let decl = bundle.passes.iter().find(|p| p.id == pass).ok_or(RunnerError::UnknownResource)?;
+    let PassRun::Compute { module, entry, .. } = &decl.run else {
+        return Err(RunnerError::AbiMismatch);
+    };
+    let slot = |index| decl.bindings.iter()
+        .find(|b| b.group == 1 && b.slot == index && b.access == BindAccess::ReadStorage)
+        .map(|b| b.resource);
+    let tape = slot(0).ok_or(RunnerError::AbiMismatch)?;
+    if entry != "loft_tier0_main" || slot(2) != Some(row) || bundle.rows.values().any(|r| *r == tape)
+        || bundle.passes.iter().any(|p| p.id != pass && p.bindings.iter().any(|b| b.resource == tape))
+    {
+        return Err(RunnerError::AbiMismatch);
+    }
+    Ok((*module, tape))
+}
+
+pub(crate) fn upload_words(words: &[u32]) -> Result<Vec<u8>> {
     if words.is_empty() || words.len() > MAX_WORDS {
         return Err(RunnerError::AbiMismatch);
     }
