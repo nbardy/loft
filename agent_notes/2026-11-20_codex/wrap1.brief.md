@@ -9,11 +9,11 @@ You are the final integrator for 20 Nov 2026. The owner says: wrap up, merge, co
    - merge into master. Another session may have uncommitted edits in the main checkout: do the merge in the worktree, or with `git -C` without touching the working tree, and never overwrite uncommitted files;
    - push origin master;
    - remove the worktree with `git worktree remove` only if it is clean and merged.
-2. **cambium** (~/git/_wt/cambium-v010, branch release/v0.10; commits fb755e9 (installed), d5b56b9 (cam1 seeds) and cam2 (no lsof); notes in lanes/cam1.md and cam2.md):
+2. **cambium** (cam2 is on branch `nolsof` in ~/git/_wt/cambium-nolsof; merge it into release/v0.10 WITHOUT touching ~/git/_wt/cambium-v010's uncommitted files (another session is editing there); installed already: 0.10.1 = d2a41cf; commits fb755e9 (installed), d5b56b9 (cam1 seeds) and cam2 (no lsof); notes in lanes/cam1.md and cam2.md):
    - review;
    - run `agent-build go test ./...` and check the exit code;
    - push branch release/v0.10 to origin. Do not touch ~/git/cambium main or its uncommitted edits. Do not tag a release.
-   - Leave the install command for the owner: `go build -o ~/.local/bin/cambium ./cmd/cambium` with a backup of the old binary.
+   - Then install it: build from a clean `git archive` export of the merged head, copy the old ~/.local/bin/cambium to a backup, and replace the binary ATOMICALLY (write a temp file next to it, then os.replace). Never overwrite the existing file in place.
 3. **loft** (~/git/loft):
    - confirm ix4's result (out/meta/ix4/MERGED and BLOCKED);
    - update docs/V1_5_GOALS.md statuses and agent_notes/2026-11-20_v1/HANDOFF.md to the final state (what merged today, what is still open);
