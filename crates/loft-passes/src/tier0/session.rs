@@ -1,6 +1,8 @@
 //! Source admission, affected checking and conservative bounds for one dirty kind.
 use super::TraceEdit;
-use super::author::{Certificates, Operand, Residual, lower_trace, shader_queries, unsupported};
+use super::author::{
+    Certificates, Field, Join, Operand, Residual, lower_trace, shader_queries, unsupported,
+};
 use crate::{
     Compiled, Eval, Prog, RowVal, emit, lip,
     program::{Draw, Instance, Program},
@@ -248,10 +250,8 @@ impl TraceSource {
             }
         }
         let trace = kind.query(QueryKind::Trace).expect("replacement trace");
-        if let Some(raw) = emit::proof_dependencies(&p, trace)
-            .into_iter()
-            .find(|f| f.raw.is_some())
-        {
+        let dependencies = emit::proof_dependencies(&p, trace);
+        if let Some(raw) = dependencies.iter().find(|f| f.raw.is_some()) {
             return Err(Diag::new(
                 Code::E211,
                 raw.name.span,
@@ -259,6 +259,10 @@ impl TraceSource {
                 "write the trace term in Loft or move it to the material",
             ));
         }
+        let inferred_lip = dependencies.iter().chain([&trace]).all(|f| {
+            self.certificates.is_primitive(&f.name.name)
+                || f.attrs.iter().all(|a| a.name.name != "lipschitz")
+        });
         let mut types = self.compiled.types.clone();
         let mut checker = crate::check::Ck::new(&p, &mut types);
         for f in &replacements {
@@ -271,7 +275,8 @@ impl TraceSource {
         let parse_check = start.elapsed();
         let mark = Instant::now();
         let tape = lower_trace(&p, &types, &kind, &self.certificates)?;
-        let (bounds, local_bounds, lips) = self.bounds(&p, &types, &kind, &tape, overrides)?;
+        let (bounds, local_bounds, lips) =
+            self.bounds(&p, &types, &kind, &tape, overrides, inferred_lip)?;
         let (light, luts) = render_inputs(&self.compiled, &p)?;
         let shader = device_shader(emit::kind_module(
             &p,
@@ -300,6 +305,7 @@ impl TraceSource {
         kind: &KindDecl,
         tape: &TraceEdit,
         overrides: &[(String, f64)],
+        inferred_lip: bool,
     ) -> Res<(Vec<Instance>, Vec<[[f32; 3]; 2]>, Vec<f32>)> {
         let (table, _) = &self.compiled.drawn[self.kind];
         let rows = &self.compiled.tables[*table];
@@ -313,7 +319,7 @@ impl TraceSource {
         let mut local_bounds = Vec::with_capacity(rows.len());
         for (r, row) in rows.iter().enumerate() {
             let key = fields.iter().map(|&field| &row[field]).collect::<Vec<_>>();
-            let primitive = primitive_bound(tape, row);
+            let primitive = residual_bound(tape, row, inferred_lip);
             let d = if let Some(d) = &primitive {
                 d
             } else if let Some(i) = derived.iter().position(|(k, _)| *k == key) {
@@ -362,7 +368,18 @@ impl TraceSource {
     }
 }
 
-fn primitive_bound(tape: &TraceEdit, row: &[RowVal]) -> Option<lip::Derived> {
+fn residual_bound(tape: &TraceEdit, row: &[RowVal], inferred_lip: bool) -> Option<lip::Derived> {
+    if !inferred_lip {
+        return None;
+    }
+    let (field, clip) = match tape.residual {
+        Residual::Field(field) => (field, None),
+        Residual::Pair(Join::Max, field, Field::Plane { axis, offset })
+        | Residual::Pair(Join::Max, Field::Plane { axis, offset }, field) => {
+            (field, Some((usize::from(axis), offset)))
+        }
+        Residual::Pair(..) | Residual::Tape | Residual::CompactTape => return None,
+    };
     let load = |op| match op {
         Operand::Zero => Some([0.; 4]),
         Operand::Constant(i) => Some(tape.constants[usize::from(i)]),
@@ -375,22 +392,52 @@ fn primitive_bound(tape: &TraceEdit, row: &[RowVal]) -> Option<lip::Derived> {
         },
         Operand::Frame(_) => None,
     };
-    let (c, half) = match tape.residual {
-        Residual::Tape => return None,
-        Residual::Sphere { center, radius } => (load(center)?, [load(radius)?[0]; 3]),
-        Residual::Box { center, half } => {
+    let (center, extent, half) = match field {
+        Field::Sphere { center, radius } => (center, radius, [load(radius)?[0]; 3]),
+        Field::Box { center, half } => {
             let [x, y, z, _] = load(half)?;
-            (load(center)?, [x, y, z])
+            (center, half, [x, y, z])
         }
+        Field::Plane { .. } => return None,
     };
+    let c = load(center)?.map(f64::from);
+    let half = half.map(f64::from);
     if !half.iter().all(|r| (0.0..=1.25).contains(r) && *r != 0.0) {
         return None;
     }
-    // Use the interval prover's leaf grid, including cells that touch a
-    // zero exactly on their face. Small certified primitives have L=1.
+    let mut lo = std::array::from_fn(|i| c[i] - half[i]);
+    let mut hi = std::array::from_fn(|i| c[i] + half[i]);
+    if let Some((axis, offset)) = clip {
+        let literal = |op| match op {
+            Operand::Constant(i) => usize::from(i) < tape.unfolded,
+            Operand::Zero | Operand::Row(_) => true,
+            Operand::Frame(_) => false,
+        };
+        let cut = f64::from(load(offset)?[0]);
+        let scale = c
+            .into_iter()
+            .map(f64::abs)
+            .fold(cut.abs().max(1.25), f64::max);
+        let guard = 4.0 * f64::from(f32::EPSILON) * scale;
+        // The center slice witnesses every orthogonal extremum. Along the
+        // clipped axis the centerline witnesses min(old extent, cut). Every
+        // leaf at these extrema is decided by the same natural intervals as
+        // the octree. Leave grid ties and folded f32 expressions to the prover.
+        if cut - c[axis] <= guard || ![center, extent, offset].into_iter().all(literal) {
+            return None;
+        }
+        hi[axis] = hi[axis].min(cut);
+        if lo.into_iter().chain(hi).any(|x| {
+            let cell = x / lip::CELL;
+            (cell - cell.round()).abs() * lip::CELL <= guard
+        }) {
+            return None;
+        }
+    }
+    // Include both cells when a surface touches their shared face.
     let round = |x: f64| ((x / lip::CELL).floor() + 1.0) * lip::CELL;
-    let mut lo = std::array::from_fn(|i| -round(f64::from(half[i]) - f64::from(c[i])));
-    let mut hi = std::array::from_fn(|i| round(f64::from(c[i]) + f64::from(half[i])));
+    lo = lo.map(|x| -round(-x));
+    hi = hi.map(round);
     for (lo, hi) in lo.iter_mut().zip(&mut hi) {
         if lo.abs().max(hi.abs()) >= lip::REACH {
             return None;
@@ -457,14 +504,16 @@ pub(super) fn render_shader(
 }
 
 fn device_shader(wgsl: String) -> String {
+    // Both the initial edit module and promoted modules bypass naga_module.
+    // Remove author-span markers before passing their WGSL to the device.
+    let wgsl = crate::provenance::Map::new(wgsl).shader;
     let mut text = crate::quant::wgsl_prelude(&wgsl, loft_ir::GpuFeatures::empty());
     if wgsl.contains("loft_ggx_energy(") {
         let table = wgsl.contains("var<storage, read> luts:").then_some("luts");
         text.push_str(&crate::bsdf::energy_wgsl(table));
     }
     text.push_str(&wgsl);
-    // These paths go straight to wgpu, bypassing compile's provenance map.
-    crate::provenance::Map::new(text).shader
+    text
 }
 
 fn body_range(nodes: &[Node], text: &str, name: Span) -> Option<Range<usize>> {

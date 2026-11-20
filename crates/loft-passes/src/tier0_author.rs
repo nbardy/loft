@@ -1,5 +1,5 @@
-//! Checked render queries lower to the frozen tape, with a direct residual
-//! when the result is one certified sphere.
+//! Checked render queries lower to the frozen tape. Residuals stage certified
+//! combinations before the first position-dependent sample.
 use crate::{Compiled, Prog, check::Ck};
 use loft_abi::Tier0Opcode as Op;
 use loft_ir::{Code, Diag, Res, Span};
@@ -10,7 +10,7 @@ use std::fmt::Write;
 use super::{Instruction, MAX_WORDS, VM_OPERATIONS, allocate};
 
 const CONSTANTS: usize = 2048;
-const HEADER: usize = 6;
+const HEADER: usize = 12;
 pub const TAPE_BYTES: u64 = ((HEADER + MAX_WORDS + CONSTANTS * 4) * 4) as u64;
 
 #[derive(Clone, Copy, Debug)]
@@ -33,10 +33,37 @@ impl Operand {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(super) enum Residual {
-    Tape,
+pub(super) enum Field {
     Sphere { center: Operand, radius: Operand },
     Box { center: Operand, half: Operand },
+    Plane { axis: u16, offset: Operand },
+}
+
+impl Field {
+    fn encode(self) -> [u32; 5] {
+        let (op, center, extent) = match self {
+            Self::Sphere { center, radius } => (Op::SdSphere as u32, center, radius),
+            Self::Box { center, half } => (Op::SdBox as u32, center, half),
+            Self::Plane { axis, offset } => (7 + u32::from(axis), Operand::Zero, offset),
+        };
+        let [ck, cs] = center.encode();
+        let [ek, es] = extent.encode();
+        [op, ck, cs, ek, es]
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) enum Join {
+    Min,
+    Max,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) enum Residual {
+    Tape,
+    CompactTape,
+    Field(Field),
+    Pair(Join, Field, Field),
 }
 
 #[derive(Clone, Copy)]
@@ -44,7 +71,9 @@ enum Value {
     Unknown,
     Uniform(Operand),
     Point(Operand),
-    Distance(Residual),
+    Coordinate(u16),
+    Distance(Field),
+    Pair(Join, Field, Field),
 }
 
 impl Residual {
@@ -70,12 +99,21 @@ impl Residual {
                     Value::Point(center)
                 }
                 (Op::SdSphere, Value::Point(center), Value::Uniform(radius)) => {
-                    Value::Distance(Self::Sphere { center, radius })
+                    Value::Distance(Field::Sphere { center, radius })
                 }
                 (Op::SdBox, Value::Point(center), Value::Uniform(half)) => {
-                    Value::Distance(Self::Box { center, half })
+                    Value::Distance(Field::Box { center, half })
                 }
-                (Op::Ret, Value::Distance(residual), _) => return residual,
+                (Op::Splat, Value::Point(Operand::Zero), _) if ins.imm < 3 => {
+                    Value::Coordinate(ins.imm)
+                }
+                (Op::Sub, Value::Coordinate(axis), Value::Uniform(offset)) => {
+                    Value::Distance(Field::Plane { axis, offset })
+                }
+                (Op::Min, Value::Distance(a), Value::Distance(b)) => Value::Pair(Join::Min, a, b),
+                (Op::Max, Value::Distance(a), Value::Distance(b)) => Value::Pair(Join::Max, a, b),
+                (Op::Ret, Value::Distance(field), _) => return Self::Field(field),
+                (Op::Ret, Value::Pair(join, a, b), _) => return Self::Pair(join, a, b),
                 (Op::Ret, ..) => return Self::Tape,
                 (Op::LoopBegin, a, _) => {
                     let Some(trips) = constant(a) else {
@@ -124,21 +162,33 @@ impl Residual {
         Self::Tape
     }
 
-    fn encode(self) -> [u32; 5] {
-        let (op, center, extent) = match self {
-            Self::Tape => return [0; 5],
-            Self::Sphere { center, radius } => (Op::SdSphere, center, radius),
-            Self::Box { center, half } => (Op::SdBox, center, half),
+    fn encode(self) -> [u32; HEADER - 1] {
+        let (mode, a, b) = match self {
+            Self::Tape => (0, [0; 5], [0; 5]),
+            Self::CompactTape => (3, [0; 5], [0; 5]),
+            Self::Field(field) => {
+                let field = field.encode();
+                (field[0], field, [0; 5])
+            }
+            Self::Pair(join, a, b) => (
+                match join {
+                    Join::Min => Op::Min as u32,
+                    Join::Max => Op::Max as u32,
+                },
+                a.encode(),
+                b.encode(),
+            ),
         };
-        let [ck, cs] = center.encode();
-        let [ek, es] = extent.encode();
-        [op as u32, ck, cs, ek, es]
+        let [a0, a1, a2, a3, a4] = a;
+        let [b0, b1, b2, b3, b4] = b;
+        [mode, a0, a1, a2, a3, a4, b0, b1, b2, b3, b4]
     }
 }
 
 pub struct TraceEdit {
     pub(super) words: Vec<u32>,
     pub(super) constants: Vec<[f32; 4]>,
+    pub(super) unfolded: usize,
     pub(super) residual: Residual,
     pub(super) shader: String,
     pub(super) slots: Vec<usize>,
@@ -172,20 +222,26 @@ impl TraceEdit {
     }
 
     pub fn describe(&self) -> String {
-        let registers = self
-            .words
-            .iter()
-            .filter_map(|&word| Op::unpack(word))
-            .filter(|(op, ..)| super::operands(*op).1)
-            .map(|(_, dst, ..)| usize::from(dst) + 1)
-            .max()
-            .unwrap_or(0);
+        let registers = live_registers(&self.words);
         let ids: Vec<_> = self.words.iter().map(|word| word >> 26).collect();
-        format!(
-            "{:?}, opcodes {ids:?}, live vec4 registers {registers}",
-            self.residual
-        )
+        let residual = match self.residual {
+            Residual::Field(field) => format!("{field:?}"),
+            residual @ (Residual::Pair(..) | Residual::CompactTape | Residual::Tape) => {
+                format!("{residual:?}")
+            }
+        };
+        format!("{residual}, opcodes {ids:?}, live vec4 registers {registers}")
     }
+}
+
+fn live_registers(words: &[u32]) -> usize {
+    words
+        .iter()
+        .map(|&word| Op::unpack(word).expect("validated tape"))
+        .filter(|(op, ..)| super::operands(*op).1)
+        .map(|(_, dst, ..)| usize::from(dst) + 1)
+        .max()
+        .unwrap_or(0)
 }
 
 /// A checked library closure, identified by its existing source certificate.
@@ -193,6 +249,10 @@ impl TraceEdit {
 pub(super) struct Certificates(BTreeMap<&'static str, Op>);
 
 impl Certificates {
+    pub(super) fn is_primitive(&self, name: &str) -> bool {
+        self.0.contains_key(name)
+    }
+
     pub(super) fn new(p: &Prog<'_>) -> Res<Self> {
         let mut ops = BTreeMap::new();
         for (name, op, hash) in [
@@ -281,6 +341,7 @@ pub(super) fn lower_trace(
     let point_reg = lower.push(Op::LoadInput, &[], 0, point.name.span)?;
     let out = lower.function(f, BTreeMap::from([(point.name.name.as_str(), point_reg)]))?;
     lower.push(Op::Ret, &[out], 0, f.name.span)?;
+    let unfolded = lower.constants.len();
     let residual = Residual::from_code(&lower.code, &mut lower.constants);
     let words = allocate(&lower.code).map_err(|err| {
         Diag::new(
@@ -290,8 +351,18 @@ pub(super) fn lower_trace(
             "simplify the query or use its Tier 1 shader",
         )
     })?;
+    let residual = match residual {
+        Residual::Tape
+            if live_registers(&words) <= 4
+                && !lower.code.iter().any(|ins| ins.op == Op::LoopBegin) =>
+        {
+            Residual::CompactTape
+        }
+        residual => residual,
+    };
     Ok(TraceEdit {
         words,
+        unfolded,
         constants: lower.constants,
         slots,
         residual,
@@ -326,17 +397,33 @@ pub(super) fn shader_queries(prog: &Prog<'_>, kind: &KindDecl, tape: &TraceEdit)
     }
     out.push_str("  return ctx;\n}\n");
     out.push_str(VM_OPERATIONS);
+    out.push_str(super::shader::SMALL_EVAL);
     out.push_str(include_str!("tier0/render.wgsl"));
     for (suffix, arg, eval) in [
         (
             "sphere",
-            "shape: TierShape",
+            "shape: TierField",
             "tier_sphere({point} - shape.center, shape.extent.x)",
         ),
         (
             "box",
-            "shape: TierShape",
+            "shape: TierField",
             "tier_box({point} - shape.center, shape.extent)",
+        ),
+        (
+            "pair",
+            "pair: TierPair",
+            "tier_pair_distance(pair, {point})",
+        ),
+        (
+            "plane",
+            "shape: TierField",
+            "({point})[shape.op - 7u] - shape.extent.x",
+        ),
+        (
+            "compact",
+            "ctx: TierContext",
+            "tier_eval_small(ctx, {point}).x",
         ),
         ("tape", "ctx: TierContext", "tier_eval(ctx, {point}).x"),
     ] {

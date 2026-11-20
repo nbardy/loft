@@ -36,7 +36,20 @@ fn tier_tex_sample(ctx: TierContext, slot: u32, uv: vec2f) -> vec4f {
     return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 fn loft_tier0(row: u32) -> vec4f {
-    return tier_eval(TierContext(row), vec3f(0.));
+    let ctx = TierContext(row);
+    let count = tier_count(ctx);
+    if count <= 8u {
+        // Every invocation sees the same tape. Include the immediate's low
+        // register field because the evaluator eagerly reads all three sources.
+        var fields = 0u;
+        for (var i = 0u; i < count; i++) {
+            fields |= tier_word(ctx, i);
+        }
+        if (fields & ((28u << 21u) | (28u << 16u) | (28u << 11u) | 28u)) == 0u {
+            return tier_eval_small(ctx, vec3f(0.));
+        }
+    }
+    return tier_eval(ctx, vec3f(0.));
 }
 @compute @workgroup_size(32) fn loft_tier0_main(@builtin(global_invocation_id) gid: vec3u) {
     if gid.x < arrayLength(&tier_out) {

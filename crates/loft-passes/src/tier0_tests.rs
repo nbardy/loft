@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "tier0/compute_cases.rs"]
+mod compute_cases;
+
 fn word(op: Op, dst: u8, a: u8, b: u8, i: u16) -> u32 {
     op.pack(dst, a, b, i).unwrap()
 }
@@ -242,32 +245,69 @@ fn l23a_vm_validates_and_dispatches_all_frozen_ids() {
     )
     .validate(&module)
     .unwrap_or_else(|e| panic!("{}", e.emit_to_string(VM_WGSL)));
-    let vm = module
-        .functions
-        .iter()
-        .find(|(_, f)| f.name.as_deref() == Some("tier_eval"))
-        .unwrap()
-        .1;
-    let mut cases = Vec::new();
-    let mut pending = vec![&vm.body];
-    while let Some(body) = pending.pop() {
-        for stmt in body {
-            match stmt {
-                naga::Statement::Switch { cases: arms, .. } => {
-                    cases.extend(arms.iter().filter_map(|a| match a.value {
-                        naga::SwitchValue::U32(id) => Some(id),
-                        naga::SwitchValue::I32(_) | naga::SwitchValue::Default => None,
-                    }));
+    for (name, registers) in [("tier_eval", 32), ("tier_eval_small", 4)] {
+        let vm = module
+            .functions
+            .iter()
+            .find(|(_, f)| f.name.as_deref() == Some(name))
+            .unwrap()
+            .1;
+        let (_, reg) = vm
+            .local_variables
+            .iter()
+            .find(|(_, v)| v.name.as_deref() == Some("reg"))
+            .unwrap();
+        assert!(matches!(
+            module.types[reg.ty].inner,
+            naga::TypeInner::Array { size: naga::ArraySize::Constant(n), .. } if n.get() == registers
+        ));
+        let mut cases = Vec::new();
+        let mut pending = vec![&vm.body];
+        while let Some(body) = pending.pop() {
+            for stmt in body {
+                match stmt {
+                    naga::Statement::Switch { cases: arms, .. } => {
+                        cases.extend(arms.iter().filter_map(|a| match a.value {
+                            naga::SwitchValue::U32(id) => Some(id),
+                            naga::SwitchValue::I32(_) | naga::SwitchValue::Default => None,
+                        }));
+                    }
+                    naga::Statement::Loop { body, .. } | naga::Statement::Block(body) => {
+                        pending.push(body)
+                    }
+                    _ => {}
                 }
-                naga::Statement::Loop { body, .. } | naga::Statement::Block(body) => {
-                    pending.push(body)
-                }
-                _ => {}
             }
         }
+        assert_eq!(cases, (0..56).collect::<Vec<_>>());
     }
-    assert_eq!(cases, (0..56).collect::<Vec<_>>());
     assert_eq!(module.entry_points[0].workgroup_size, [32, 1, 1]);
+}
+
+#[test]
+fn compute_controls_against_cpu_tape() {
+    use compute_cases::{CONSTANTS, POINTS, cases, save_words};
+
+    for (label, words, expected) in cases() {
+        let tape = Tape::new(&words).unwrap();
+        let actual = POINTS.map(|point| {
+            tape.run(&Resources {
+                constants: &CONSTANTS,
+                row: &[point],
+                inputs: &[],
+                frame: &[],
+                lut: &[],
+                textures: &[],
+            })
+            .unwrap()
+        });
+        assert_eq!(actual, expected, "{label}");
+        save_words(&format!("{label}.tape.u32le"), words);
+        save_words(
+            &format!("{label}.cpu.f32le"),
+            actual.into_iter().flatten().map(f32::to_bits),
+        );
+    }
 }
 
 #[test]
