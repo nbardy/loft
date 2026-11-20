@@ -77,7 +77,7 @@ struct KindGpu {
     _params: wgpu::Buffer,
     g1: wgpu::BindGroup,
     g2: wgpu::BindGroup,
-    grid: Option<(wgpu::Buffer, wgpu::BindGroup)>,
+    indices: Option<wgpu::Buffer>,
 }
 
 pub struct Loaded {
@@ -404,18 +404,18 @@ fn draw_bundle(
     d: &wgpu::Device, main: &wgpu::BindGroup, kinds: &[KindGpu], pass: &[u32],
     args: &wgpu::Buffer, overrides: Option<&[wgpu::BindGroup]>,
 ) -> command::Raster {
-    let arg_stride = if kinds.iter().any(|kind| kind.grid.is_some()) { 20 } else { 16 };
+    let arg_stride = if kinds.iter().any(|kind| kind.indices.is_some()) { 20 } else { 16 };
     let draws = pass.iter().map(|&k| {
         let kg = &kinds[k as usize];
         let group = overrides.map_or(&kg.g1, |groups| &groups[k as usize]);
         let offset = u64::from(k) * arg_stride;
-        let (groups, source) = match &kg.grid {
-            Some((indices, grid)) => (vec![group, grid], command::DrawSource::Indexed {
+        let source = match &kg.indices {
+            Some(indices) => command::DrawSource::Indexed {
                 args, offset, indices, format: wgpu::IndexFormat::Uint32,
-            }),
-            None => (vec![group], command::DrawSource::Indirect { args, offset }),
+            },
+            None => command::DrawSource::Indirect { args, offset },
         };
-        command::Draw { pipeline: &kg.render, groups, source }
+        command::Draw { pipeline: &kg.render, groups: vec![group], source }
     });
     command::Raster::prepare(d, &wgpu::RenderBundleEncoderDescriptor {
         label: Some("visibility"),
@@ -425,26 +425,6 @@ fn draw_bundle(
         }),
         sample_count: 1, multiview: None,
     }, &[main], draws)
-}
-
-fn grid_layout(device: &wgpu::Device, write: bool) -> wgpu::BindGroupLayout {
-    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("parametric grid"),
-        entries: &[wgpu::BindGroupLayoutEntry {
-            binding: if write { 6 } else { 5 },
-            visibility: if write { CS } else { wgpu::ShaderStages::VERTEX },
-            ty: storage(!write),
-            count: None,
-        }],
-    })
-}
-
-fn grid_group(device: &wgpu::Device, bind_layout: &wgpu::BindGroupLayout, binding: u32, grid: &wgpu::Buffer) -> wgpu::BindGroup {
-    device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("parametric grid"),
-        layout: bind_layout,
-        entries: &[wgpu::BindGroupEntry { binding, resource: grid.as_entire_binding() }],
-    })
 }
 
 fn instance_bytes(p: &Program) -> Vec<u8> {
@@ -489,6 +469,21 @@ impl Loaded {
         if size.0 == 0 || size.1 == 0 || size.0.max(size.1) > limits.max_texture_dimension_2d {
             return Err("frame dimensions exceed device limits".into());
         }
+        let grids = p.kinds.iter().map(|kt| {
+            let Draw::Surface { nu, nv } = kt.draw else { return Ok(None); };
+            // Archived modules' vs_indexed reads baked points. Their corner entry uses the same bindings as vs_grid.
+            if aov == Aov::Overdraw || !p.modules[kt.module].naga.entry_points.iter()
+                .any(|e| e.stage == naga::ShaderStage::Vertex && e.name == "vs_grid")
+            {
+                return Ok(None);
+            }
+            let cells = u64::from(nu) * u64::from(nv);
+            if cells == 0 || cells > u64::from(u32::MAX / 6) || cells > limits.max_buffer_size / (6 * 4) {
+                return Err(format!("{}: surface index count exceeds the draw or device buffer limit", kt.name));
+            }
+            Ok(Some((nu, nv)))
+        }).collect::<Result<Vec<_>, _>>()?;
+        let arg_words = if grids.iter().any(Option::is_some) { 5u32 } else { 4 };
         let nonce = nonce.unwrap_or(u32::MAX);
         let k_n = p.kinds.len();
         let tiles = (size.0.div_ceil(abi::TILE), size.1.div_ceil(abi::TILE));
@@ -529,11 +524,6 @@ impl Loaded {
             layout(d, "present", &[(FS, texture(wgpu::TextureSampleType::Float { filterable: false })), (FS, texture(wgpu::TextureSampleType::Uint))]);
         let path_layout = p.path.as_ref().map(|path| PathGpu::layout(d, path, &p.modules[p.present].naga)).transpose()?;
         let present_layouts = [&bgl0, &bgl_present].into_iter().chain(path_layout.iter()).collect::<Vec<_>>();
-        let indexed = |kt: &loft_passes::program::KindTable| {
-            aov != Aov::Overdraw && p.modules[kt.module].naga.entry_points.iter().any(|e| e.name == "vs_indexed")
-        };
-        let arg_words = if p.kinds.iter().any(indexed) { 5u32 } else { 4 };
-        let bgl_grid = (arg_words == 5).then(|| grid_layout(d, false));
         // The disk pipeline cache, where the backend has one (see `gpu`).
         let cache_path = g.cache_key.as_ref().map(|k| std::path::Path::new("out/meta/pipeline_cache").join(k).with_extension(format!("{nonce}.bin")));
         let cache_data = cache_path.as_ref().and_then(|p| std::fs::read(p).ok());
@@ -553,19 +543,18 @@ impl Loaded {
             let kinds: Vec<_> = p
                 .kinds
                 .iter()
-                .map(|kt| {
+                .zip(&grids)
+                .map(|(kt, grid)| {
                     let (m, bgl0, bgl_kind, bgl_shade) = (&modules[kt.module], &bgl0, &bgl_kind, &bgl_shade);
                     // A proxy draws its box's back faces (the camera may be inside); a surface draws both sides.
                     let face = match kt.draw {
                         Draw::Analytic | Draw::Traced => Some(wgpu::Face::Front),
                         Draw::Surface { .. } | Draw::Mesh { .. } => None,
                     };
-                    let grid = bgl_grid.as_ref().filter(|_| indexed(kt));
-                    let r = sc.spawn(move || timed(|| {
-                        let layouts = [bgl0, bgl_kind].into_iter().chain(grid).collect::<Vec<_>>();
-                        let entry = if grid.is_some() { "vs_indexed" } else { "vs" };
-                        render(d, &kt.name, &layouts, m, (entry, "fs"), VIS, true, face, cache)
-                    }));
+                    let entry = if grid.is_some() { "vs_grid" } else { "vs" };
+                    let r = sc.spawn(move || timed(|| render(
+                        d, &kt.name, &[bgl0, bgl_kind], m, (entry, "fs"), VIS, true, face, cache,
+                    )));
                     let s = sc.spawn(move || timed(|| compute(d, &kt.name, &[bgl0, bgl_kind, bgl_shade], m, "shade", cache)));
                     (r, s)
                 })
@@ -673,8 +662,6 @@ impl Loaded {
         let shadow_args = init("shadow args", &args(true), U::INDIRECT);
         let mut kinds = vec![];
         let mut g1_sun = vec![];
-        let mut grid_encoder = bgl_grid.as_ref().map(|_| d.create_command_encoder(&Default::default()));
-        let bgl_grid_out = bgl_grid.as_ref().map(|_| grid_layout(d, true));
         for (k, render, shade) in kinds_pl {
             let kt = &p.kinds[k];
             let bytes = f32_bytes(&kt.rows);
@@ -694,39 +681,16 @@ impl Loaded {
             let params = init("kind params", &bytes_of(&[k as u32, bases[k], kt.n_rows, 0]), U::UNIFORM);
             let g1 = bind(d, &bgl_kind, &[rows.as_entire_binding(), visible.as_entire_binding(), params.as_entire_binding(), luts.as_entire_binding()]);
             g1_sun.push(bind(d, &bgl_kind, &[rows.as_entire_binding(), all_rows.as_entire_binding(), params.as_entire_binding(), luts.as_entire_binding()]));
-            let grid = match kt.draw {
-                Draw::Surface { nu, nv } if indexed(kt) => {
-                    let grid_size = u64::from(nu + 1) * u64::from(nv + 1);
-                    if grid_size * 16 > d.limits().max_storage_buffer_binding_size {
-                        return Err(format!("{}: surface grid exceeds the device storage limit", kt.name));
-                    }
-                    let points = buffer(d, "surface grid", grid_size * 16, U::STORAGE);
-                    let write = bgl_grid_out.as_ref().expect("indexed surface layout");
-                    let out = grid_group(d, write, 6, &points);
-                    let (pipeline, ms) = timed(|| compute(
-                        d, "bake surface", &[&bgl0, &bgl_kind, write], &modules[kt.module], "bake_surface", cache,
-                    ));
-                    stats.compute_pipelines += 1;
-                    stats.pipeline_ms.push((format!("{} bake surface", kt.name), ms));
-                    command::Pass::Compute(vec![Dispatch { pipeline, groups: vec![g0.clone(), g1.clone(), out],
-                        work: Work::Direct([(grid_size as u32).div_ceil(64),1,1]) }])
-                        .record(grid_encoder.as_mut().expect("indexed surface encoder"),None);
-                    // Keep the original vertex order and both sides of the UV seam.
-                    let indices = (0..nu * nv).flat_map(|cell| (0..6).map(move |corner| {
-                        let u = cell % nu + ((0x16u32 >> corner) & 1);
-                        let v = cell / nu + ((0x34u32 >> corner) & 1);
-                        v * (nu + 1) + u
-                    })).collect::<Vec<_>>();
-                    let index = init("surface indices", &bytes_of(&indices), U::INDEX);
-                    let group = grid_group(d, bgl_grid.as_ref().expect("indexed surface layout"), 5, &points);
-                    Some((index, group))
-                }
-                _ => None,
-            };
-            kinds.push(KindGpu { render, shade, module: modules[kt.module].clone(), rows, _params: params, g1, g2: g2.clone(), grid });
-        }
-        if let Some(encoder) = grid_encoder {
-            wait_for(g, Some(g.queue.submit([encoder.finish()])))?;
+            let indices = grids[k].map(|(nu, nv)| {
+                // Keep the original vertex order and both sides of the UV seam.
+                let indices = (0..nu * nv).flat_map(|cell| (0..6).map(move |corner| {
+                    let u = cell % nu + ((0x16u32 >> corner) & 1);
+                    let v = cell / nu + ((0x34u32 >> corner) & 1);
+                    v * (nu + 1) + u
+                })).collect::<Vec<_>>();
+                init("surface indices", &bytes_of(&indices), U::INDEX)
+            });
+            kinds.push(KindGpu { render, shade, module: modules[kt.module].clone(), rows, _params: params, g1, g2: g2.clone(), indices });
         }
         let cull_bg = bind(d, &bgl_cull, &[insts.as_entire_binding(), draw_args.as_entire_binding(), visible.as_entire_binding(), bases_buf.as_entire_binding()]);
         let classify_bg =

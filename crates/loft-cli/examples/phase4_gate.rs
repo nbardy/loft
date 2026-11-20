@@ -1,12 +1,16 @@
 //! Integration measurements on the native device. Run under tools/gpu_lock.sh.
 use loft_cli::native::{self, Gpu, Loaded};
 use loft_ir::Sources;
-use loft_passes::{Compiled, emit::Aov, program::Program};
+use loft_passes::{Compiled, emit::Aov, program::{Draw, Program}};
 use serde_json::{Value, json};
 use std::{fs, path::Path};
 
+fn root() -> &'static Path {
+    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
+}
+
 fn prelude() -> Sources {
-    let mut paths: Vec<_> = fs::read_dir("lib")
+    let mut paths: Vec<_> = fs::read_dir(root().join("lib"))
         .unwrap()
         .map(|x| x.unwrap().path())
         .filter(|p| p.extension().is_some_and(|ext| ext == "loft"))
@@ -14,7 +18,8 @@ fn prelude() -> Sources {
     paths.sort();
     let mut src = Sources::default();
     for p in paths {
-        src.add(p.display().to_string(), fs::read_to_string(p).unwrap());
+        let name = p.strip_prefix(root()).expect("library path under the workspace");
+        src.add(name.display().to_string(), fs::read_to_string(p).unwrap());
     }
     src
 }
@@ -28,7 +33,7 @@ fn compile(source: &str) -> Result<(Program, Compiled), String> {
 }
 
 fn scene(file: &str) -> Result<(Program, Compiled), String> {
-    compile(&fs::read_to_string(file).map_err(|e| e.to_string())?)
+    compile(&fs::read_to_string(root().join(file)).map_err(|e| e.to_string())?)
 }
 
 fn bake(g: &Gpu) -> Result<Value, String> {
@@ -77,43 +82,97 @@ fn shrine(g: &Gpu) -> Result<Value, String> {
     )
 }
 
-fn hermit_grid(g: &Gpu, dir: &Path) -> Result<Value, String> {
+fn hermit_source() -> Result<Sources, String> {
     let mut src = prelude();
     let file = "engines/hermit.loft";
-    src.add(file, fs::read_to_string(file).map_err(|e| e.to_string())?);
-    let size = (1280, 800);
-    let mut reports = Vec::new();
-    for (label, aov) in [("beauty", Aov::Beauty), ("depth", Aov::Depth), ("id", Aov::Id)] {
-        let (mut program, _, _) = loft_passes::compile_aov(&src, &[], aov).map_err(|e| e.render(&src))?;
-        let shell = program.kinds.iter().find(|k| k.name == "HermitShell").ok_or("missing Hermit shell")?.module;
-        if !program.modules[shell].naga.entry_points.iter().any(|e| e.name == "vs_indexed") {
-            return Err("Hermit shell failed the grid dependency analysis".into());
-        }
-        let candidate = Loaded::with_aov(g, &program, size, None, aov)?;
-        candidate.frame(g, 0.0);
-        let now = candidate.pixels(g)?;
-        program.modules[shell].naga.entry_points.retain(|e| e.name != "vs_indexed");
-        let original = Loaded::with_aov(g, &program, size, None, aov)?;
-        original.frame(g, 0.0);
-        let old = original.pixels(g)?;
-        for (variant, data) in [("indexed", &now), ("original", &old)] {
-            let file = fs::File::create(dir.join(format!("hermit-grid-{label}-{variant}.png")))
-                .map_err(|e| e.to_string())?;
-            let mut png = png::Encoder::new(file, size.0, size.1);
-            png.set_color(png::ColorType::Rgba);
-            png.set_depth(png::BitDepth::Eight);
-            png.write_header().and_then(|mut writer| writer.write_image_data(data)).map_err(|e| e.to_string())?;
-        }
-        let diff = now.chunks_exact(4).zip(old.chunks_exact(4))
-            .map(|(now, old)| now.iter().zip(old).map(|(a, b)| a.abs_diff(*b)).max().unwrap()).collect::<Vec<_>>();
-        reports.push(json!({
-            "mode": label,
-            "different_pixels": diff.iter().filter(|&&v| v != 0).count(),
-            "pixels_over_2": diff.iter().filter(|&&v| v > 2).count(),
-            "max_channel_difference": diff.iter().max(),
+    src.add(file, fs::read_to_string(root().join(file)).map_err(|e| e.to_string())?);
+    Ok(src)
+}
+
+fn hermit_load(g: &Gpu, count: u32, nonce: u32) -> Result<Value, String> {
+    let cache = tempfile::tempdir().map_err(|e| e.to_string())?;
+    let overrides = [("count".into(), f64::from(count))];
+    let mut runs = Vec::new();
+    // Match the Load gate's derivation cache and stop the clock before drawing a frame.
+    for temperature in ["cold", "warm"] {
+        let start = std::time::Instant::now();
+        let src = hermit_source()?;
+        let (program, report, _) = loft_passes::compile_cached(&src, &overrides, cache.path())
+            .map_err(|e| e.render(&src))?;
+        let front = start.elapsed().as_secs_f64();
+        let loaded = Loaded::new(g, &program, (1280, 800), Some(nonce))?;
+        let total = start.elapsed().as_secs_f64();
+        let stats = &loaded.stats;
+        runs.push(json!({
+            "temperature": temperature, "seconds": total, "front_seconds": front,
+            "pipeline_ms": stats.pipelines_ms, "resources_ms": stats.resources_ms,
+            "modules": stats.modules, "creates": stats.pipeline_ms,
+            "load_bake_dispatches": stats.load_bake_commands,
+            "derivation_hits": report.kinds.iter().map(|k| k.cache_hits).sum::<usize>(),
         }));
     }
-    Ok(json!({"count":20,"frames":[0],"vertices":193 * 33,"indices":192 * 32 * 6,"frames_compared":reports}))
+    Ok(json!({"adapter": g.adapter, "count": count, "nonce": nonce, "loads": runs}))
+}
+
+fn hermit_grid(g: &Gpu, dir: &Path, archive: Option<&Path>) -> Result<Value, String> {
+    let src = hermit_source()?;
+    let size = (1280, 800);
+    let archive = archive.map(|path| {
+        let text = fs::read_to_string(path).map_err(|e| e.to_string())?;
+        loft_passes::sexp::read(&text)
+    }).transpose()?;
+    let mut reports = Vec::new();
+    for count in [1, 20] {
+        for (label, aov) in [("beauty", Aov::Beauty), ("depth", Aov::Depth), ("id", Aov::Id)] {
+            let (mut program, _, _) = loft_passes::compile_aov(&src, &[("count".into(), f64::from(count))], aov)
+                .map_err(|e| e.render(&src))?;
+            let surface = program.kinds.iter().find(|k| matches!(k.draw, Draw::Surface { .. }))
+                .ok_or("missing Hermit surface")?.module;
+            let entries = &program.modules[surface].naga.entry_points;
+            if !entries.iter().any(|e| e.name == "vs_grid") || entries.iter().any(|e| e.name == "bake_surface") {
+                return Err("expected a bake-free indexed Hermit surface".into());
+            }
+            let indexed = Loaded::with_aov(g, &program, size, None, aov)?;
+            // Remove only the index-only entry to exercise the original procedural corners.
+            program.modules[surface].naga.entry_points.retain(|e| e.name != "vs_grid");
+            let corners = Loaded::with_aov(g, &program, size, None, aov)?;
+            let mut variants = vec![("indexed", indexed), ("corners", corners)];
+            if let Some(archive) = archive.as_ref().filter(|_| count == 20 && aov == Aov::Beauty) {
+                if !archive.modules.iter().any(|m| m.naga.entry_points.iter().any(|e| e.name == "bake_surface")) {
+                    return Err("expected an archived count-20 program with the baked surface entry".into());
+                }
+                variants.push(("archive", Loaded::new(g, archive, size, None)?));
+            }
+            let mut frames = Vec::new();
+            for (variant, loaded) in variants {
+                let commands = loaded.frame(g, 0.0);
+                let pixels = loaded.pixels(g)?;
+                let file = fs::File::create(dir.join(format!("hermit-grid-{count}-{label}-{variant}.png")))
+                    .map_err(|e| e.to_string())?;
+                let mut png = png::Encoder::new(file, size.0, size.1);
+                png.set_color(png::ColorType::Rgba);
+                png.set_depth(png::BitDepth::Eight);
+                png.write_header().and_then(|mut writer| writer.write_image_data(&pixels))
+                    .map_err(|e| e.to_string())?;
+                let stats = &loaded.stats;
+                frames.push((pixels, json!({
+                    "variant": variant, "commands": commands, "modules": stats.modules,
+                    "creates": stats.pipeline_ms, "load_bake_dispatches": stats.load_bake_commands,
+                })));
+            }
+            let indexed = &frames[0].0;
+            let comparisons: Vec<_> = frames[1..].iter().map(|(pixels, stats)| json!({
+                "variant": stats["variant"],
+                "different_pixels": indexed.chunks_exact(4).zip(pixels.chunks_exact(4))
+                    .filter(|(a, b)| a != b).count(),
+            })).collect();
+            reports.push(json!({
+                "count": count, "mode": label, "time": 0, "comparisons": comparisons,
+                "runs": frames.into_iter().map(|(_, stats)| stats).collect::<Vec<_>>(),
+            }));
+        }
+    }
+    Ok(json!({"adapter": g.adapter, "frames_compared": reports}))
 }
 
 fn observe(
@@ -368,7 +427,20 @@ fn main() -> Result<(), String> {
     let dir = std::env::args().nth(2).unwrap_or_else(|| "out/meta/i4".into());
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let gpu = native::gpu()?;
-    let result = if gate == "hermit-grid" { hermit_grid(&gpu, Path::new(&dir))? } else { measure(&gpu, &gate)? };
+    let result = match gate.as_str() {
+        "hermit-grid" => {
+            let archive = std::env::args_os().nth(3);
+            hermit_grid(&gpu, Path::new(&dir), archive.as_deref().map(Path::new))?
+        }
+        "hermit-load" => {
+            let count = std::env::args().nth(3).and_then(|s| s.parse().ok())
+                .ok_or("expected Hermit count")?;
+            let nonce = std::env::args().nth(4).and_then(|s| s.parse().ok())
+                .filter(|n| !matches!(*n, 0 | u32::MAX)).ok_or("expected cold-load nonce")?;
+            hermit_load(&gpu, count, nonce)?
+        }
+        _ => measure(&gpu, &gate)?,
+    };
     fs::write(
         Path::new(&dir).join(format!("{gate}.json")),
         result.to_string(),
