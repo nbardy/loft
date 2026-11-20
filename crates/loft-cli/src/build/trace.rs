@@ -182,7 +182,7 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)], render: bool) -> Resul
         return Err(usage("trace rendering requires a distinct .png output"));
     }
     let src = sources(Path::new(scene)).map_err(usage)?;
-    let (mut program, _, mut compiled) =
+    let (program, _, mut compiled) =
         loft_passes::compile(&src, set).map_err(|d| Failure::Compile(d.render(&src)))?;
     let hash = bundle_hash(&program, &compiled)?;
     let mut log = if let Some(path) = replay {
@@ -224,7 +224,7 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)], render: bool) -> Resul
         execute_native(
             gpu.as_ref().expect("replay device"),
             &compiled,
-            &mut program,
+            &program,
             &log,
             hash,
             !render,
@@ -309,7 +309,9 @@ fn execute(
     let mut samples = Vec::new();
     let mut missed = None;
     for (tick, events) in ticks {
-        apply_inputs(&schema, &mut params, events)?;
+        apply_inputs(events, |name, value| {
+            update(&schema, &mut params, name, value).map(|_| ())
+        })?;
         let overrides: Vec<_> = params
             .iter()
             .map(|(name, value)| (name.clone(), f64::from(*value)))
@@ -364,7 +366,7 @@ fn state_bytes(tables: loft_passes::eval::Tables) -> Vec<u8> {
 fn execute_native(
     gpu: &native::Gpu,
     compiled: &Compiled,
-    program: &mut Program,
+    program: &Program,
     log: &LoftLog,
     hash: [u8; 32],
     check_trace: bool,
@@ -376,10 +378,10 @@ fn execute_native(
     }
     if log.dt_s.to_bits() != DT.to_bits() || log.initial_seed != 0 || log.checkpoints_every != 0 {
         return Err(device(
-            "native snapshots require 120 Hz, seed zero and no checkpoints",
+            "native replay requires 120 Hz, seed zero and no checkpoints",
         ));
     }
-    let mut ticks = log.ticks(hash).map_err(usage)?;
+    let ticks = log.ticks(hash).map_err(usage)?;
     let end = log.validate().map_err(usage)?;
     let schema = super::artifact::parameters(program, compiled).map_err(Failure::Compile)?;
     let prog = compiled.prog();
@@ -392,38 +394,45 @@ fn execute_native(
     for (name, value) in &log.params {
         update(&schema, &mut params, name, *value)?;
     }
-    apply_inputs(
-        &schema,
-        &mut params,
-        ticks.next().expect("validated tick zero").1,
-    )?;
-    // A snapshot starts from the initial rows. A later update needs a resumable motion dispatch.
-    if log
-        .inputs
-        .iter()
-        .any(|e| e.tick != 0 && e.input != Input::End)
-    {
-        return Err(device(
-            "native snapshot cannot apply an input after tick zero",
-        ));
-    }
-    for (i, name) in live_names(&prog).enumerate() {
-        program.params[(3 + i) * 4] = params[name];
+
+    let mut session = gpu.motion_session(program).map_err(device)?;
+    for (name, value) in &params {
+        session.set_param(name, *value).map_err(device)?;
     }
     let mut missed = None;
     let mut samples = Vec::new();
-    for tick in (if check_trace { 0 } else { end })..=end {
-        let seconds = tick as f32 * DT;
-        if (f64::from(seconds) * 120.).round() != f64::from(tick) {
-            return Err(device("native snapshot time cannot represent this tick"));
+    let mut advanced = 0;
+    for (tick, events) in ticks {
+        let previous = tick.saturating_sub(1);
+        if !events.is_empty() && previous > advanced {
+            // The edit belongs to this tick. Submit the preceding span with the old value first.
+            session.advance_to(previous).map_err(device)?;
+            advanced = previous;
         }
-        samples = native::sample_motion(gpu, program, seconds).map_err(device)?;
-        for (name, verdict) in gates::check_records(program, &samples) {
-            if !matches!(verdict, Verdict::Held { .. }) && missed.is_none() {
-                missed = Some(format!("tick {tick} {name}: {verdict}"));
+        apply_inputs(events, |name, value| {
+            let value = update(&schema, &mut params, name, value)?;
+            session.set_param(name, value).map_err(device)
+        })?;
+        if check_trace || tick == end {
+            session.advance_to(tick).map_err(device)?;
+            advanced = tick;
+            samples = session.samples().map_err(device)?;
+            if check_trace {
+                for (name, verdict) in gates::check_records(program, &samples) {
+                    if !matches!(verdict, Verdict::Held { .. }) && missed.is_none() {
+                        missed = Some(format!("tick {tick} {name}: {verdict}"));
+                        break;
+                    }
+                }
             }
         }
     }
+    #[cfg(test)]
+    println!(
+        "native motion: {} loads across {} dispatches, {advanced} steps per active row",
+        samples.len(),
+        program.dispatches.len(),
+    );
     let mut tables = compiled.tables.clone();
     for sample in &samples {
         let rows = &mut tables[prog.kind_index(&sample.kind)];
@@ -450,7 +459,7 @@ fn update(
     params: &mut BTreeMap<String, f32>,
     name: &str,
     value: [f32; 4],
-) -> Result<()> {
+) -> Result<f32> {
     if value[1..].iter().any(|&x| x != 0.) {
         return Err(usage("this scene backend accepts scalar parameter values"));
     }
@@ -464,18 +473,17 @@ fn update(
     *slot = meta
         .range
         .map_or(value[0], |(lo, hi)| value[0].clamp(lo[0], hi[0]));
-    Ok(())
+    Ok(*slot)
 }
 
 fn apply_inputs(
-    schema: &[ParamMeta],
-    params: &mut BTreeMap<String, f32>,
     events: &[LoggedInput],
+    mut apply: impl FnMut(&str, [f32; 4]) -> Result<()>,
 ) -> Result<()> {
     for e in events {
         match &e.input {
             Input::Level { name, value } | Input::Param { name, value } => {
-                update(schema, params, name, *value)?
+                apply(name, *value)?
             }
             Input::Event { .. } | Input::PosePacket { .. } => {
                 return Err(device(
@@ -707,9 +715,40 @@ mod tests {
     const SCENE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/l5g/scramble.loft");
 
     #[test]
+    fn native_scalar_updates_resume_before_the_recorded_tick() {
+        let scene = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/c1_replay/accumulate.loft");
+        let src = sources(Path::new(scene)).unwrap();
+        let (program, _, code) = loft_passes::compile(&src, &[]).unwrap();
+        let hash = bundle_hash(&program, &code).unwrap();
+        let gpu = native::gpu().unwrap();
+        for (tick, expected) in [(0, 8_f32), (2, 7_f32)] {
+            let mut log = initial_log(hash, &code.prog(), &program);
+            log.device_signature = gpu.device_signature.clone();
+            log.record(
+                tick,
+                Input::Param {
+                    name: "drive".into(),
+                    value: [2., 0., 0., 0.],
+                },
+            )
+            .unwrap();
+            log.record(4, Input::End).unwrap();
+            log.expected_final_identity = Some(identity(&expected.to_le_bytes()));
+            let log = LoftLog::decode(&log.encode().unwrap()).unwrap();
+
+            for check_trace in [false, true] {
+                let outcome = execute_native(&gpu, &code, &program, &log, hash, check_trace).unwrap();
+                assert_eq!(outcome.samples.len(), 1);
+                assert_eq!(outcome.bytes, expected.to_le_bytes());
+                log.verify_identity(&outcome.bytes).unwrap();
+            }
+        }
+    }
+
+    #[test]
     fn native_scramble_record_replays_every_state_bit() {
         let src = sources(Path::new(SCENE)).unwrap();
-        let (mut program, _, code) =
+        let (program, _, code) =
             loft_passes::compile(&src, &[]).unwrap_or_else(|e| panic!("{}", e.render(&src)));
         let hash = bundle_hash(&program, &code).unwrap();
         let gpu = native::gpu().unwrap();
@@ -724,14 +763,14 @@ mod tests {
         )
         .unwrap();
         log.record(481, Input::End).unwrap();
-        let original = execute_native(&gpu, &code, &mut program, &log, hash, false)
+        let original = execute_native(&gpu, &code, &program, &log, hash, false)
             .unwrap()
             .bytes;
         assert_eq!(original.len(), 32);
         log.expected_final_identity = Some(identity(&original));
         let loaded = LoftLog::decode(&log.encode().unwrap()).unwrap();
-        let (mut fresh, _, code) = loft_passes::compile(&src, &[]).unwrap();
-        let replay = execute_native(&gpu, &code, &mut fresh, &loaded, hash, false).unwrap();
+        let (fresh, _, code) = loft_passes::compile(&src, &[]).unwrap();
+        let replay = execute_native(&gpu, &code, &fresh, &loaded, hash, false).unwrap();
         assert_eq!(original, replay.bytes);
         loaded.verify_identity(&replay.bytes).unwrap();
         let mut other = loaded.clone();
@@ -739,7 +778,7 @@ mod tests {
             name: "scramble_speed".into(),
             value: [0.3, 0., 0., 0.],
         };
-        let changed = execute_native(&gpu, &code, &mut fresh, &other, hash, false).unwrap();
+        let changed = execute_native(&gpu, &code, &fresh, &other, hash, false).unwrap();
         assert_ne!(
             original, changed.bytes,
             "logged input must drive the device state"

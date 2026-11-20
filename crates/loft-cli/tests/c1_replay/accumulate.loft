@@ -1,0 +1,9 @@
+space World
+param drive: f = 1.0 in 0.0..4.0
+kind Accum @World (x: f = 0.0) {
+  trace(p) = sphere(p - [0.0, 0.0, 0.0]@World, 0.25)
+  material(p,n) = ggx([0.5,0.5,0.5], 0.4, 0.0)
+}
+law add_drive(h: Accum, dt) writes h.{x} { h.x = h.x + drive }
+build { emit Accum() }
+schedule Main { run_laws(add_drive) }
