@@ -107,7 +107,7 @@ if [[ $matched == --matched ]]; then
   ln -s "$root/stdlib" "$out/fixture/stdlib"
   ln -s "$root/Cargo.toml" "$out/fixture/Cargo.toml"
   cp "$root/stdlib/engines/capsules.loft" "$out/fixture/engines/"
-  awk '/^schedule Main/{exit} /^use .*::geometry::analytic/ {next} /^use .*::materials::bsdf/ {$0="use stdlib::materials::bsdf::{lambert}"} {sub(/ggx\(albedo, 0.55, 0\)/,"lambert(albedo)"); sub(/ray_capsule\(/,"matched_capsule("); print}' \
+  awk '/^schedule Main/{exit} /^use .*::geometry::analytic/ {next} /^use .*::materials::bsdf/ {$0="use stdlib::materials::bsdf::{lambert}"} /^use .*::sky::environment/ {$0="use stdlib::sky::environment::{sky_color, sky_dome}"} {sub(/ggx\(albedo, 0.55, 0\)/,"lambert(albedo)"); sub(/ray_capsule\(/,"matched_capsule("); print}' \
     "$root/stdlib/engines/capsules.loft" >"$out/fixture/engines/capsules-matched.loft"
   orbit=$(awk '/^  orbit\(/{print; exit}' "$root/stdlib/engines/capsules.loft")
   [[ -n $orbit ]]

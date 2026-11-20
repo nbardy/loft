@@ -166,6 +166,9 @@ fn complete(s: &ScheduleDecl) -> bool {
 impl Loader<'_> {
     fn load(&mut self, entry: &Path, suffix: &str) -> Res<()> {
         self.graph.core = self.visit(&self.graph.root.join(CORE), Span::NONE, "")?;
+        // The entry's parse can fail before visit returns its ID. Its source
+        // map slot still belongs to the entry and must survive that error.
+        self.graph.entry = u16::try_from(self.graph.sources.files.len()).expect("source IDs");
         self.graph.entry = self.visit(entry, Span::NONE, suffix)?;
         let root = &self.graph.nodes[usize::from(self.graph.entry)];
         let authored = schedule(&root.module);
