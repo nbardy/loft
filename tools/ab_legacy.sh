@@ -377,6 +377,10 @@ for split in ("a", "b"):
 (out / "results.json").write_text(json.dumps(results, indent=2) + "\n")
 PYTHON
   printf 'Evidence: %s\n' "$out"
+  if ! jq -e '.uncontended' "$out/results.json" >/dev/null; then
+    echo 'Benchmark requires both triangle controls under 0.15 ms p95.' >&2
+    exit 6
+  fi
   exit
 fi
 
