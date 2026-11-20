@@ -180,6 +180,18 @@ fn compile(
 mod tests {
     use super::*;
     #[test]
+    fn revisiting_a_shader_retains_it_across_lru_eviction() {
+        let mut pending = Pending::default();
+        for id in 0..8 {
+            pending.complete(0, id.to_string(), Ok::<_, ()>(id)).unwrap();
+        }
+        assert_eq!(pending.cached(0, "0"), Some(0));
+        pending.complete(0, "8".into(), Ok::<_, ()>(8)).unwrap();
+        assert_eq!(pending.cached(0, "1"), None);
+        assert_eq!(pending.cached(0, "0"), Some(0));
+    }
+
+    #[test]
     fn l23a_debounces_and_discards_stale_pipeline() {
         let t = Duration::ZERO;
         let mut p = Pending::<u32>::default();

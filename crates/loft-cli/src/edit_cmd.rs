@@ -2,7 +2,7 @@ use crate::{
     budget::{self, Failure},
     gates::{quantile, write_png},
 };
-use loft_cli::native::{Gpu, Loaded, TraceSession};
+use loft_cli::native::{Loaded, TraceSession};
 use loft_passes::tier0::TraceSource;
 use std::{
     path::Path,
@@ -47,27 +47,27 @@ pub fn edited_still(
 
     let edited = crate::sources(edit).map_err(Failure::Usage)?;
     let received = Instant::now();
-    let edit = session
+    let receipt = session
         .edit(&gpu, &edited, set, received)
         .map_err(Failure::Compile)?;
     let ms = |d: Duration| d.as_secs_f64() * 1000.;
     println!(
         "{:?} generation {}: {}",
-        edit.class,
-        edit.generation,
+        receipt.class,
+        receipt.generation,
         session.describe()
     );
     println!(
         "dirtied rows {:?}, tape byte ranges {:?}, caster bound changed {}",
-        edit.dirtied_rows, edit.tape_writes, edit.caster_changed
+        receipt.dirtied_rows, receipt.tape_writes, receipt.caster_changed
     );
     println!(
         "source-to-upload {:.6} ms, parse/check {:.6} ms, bounds/lowering {:.6} ms, queue upload {:.6} ms, foreground pipeline creations {}",
-        ms(edit.elapsed),
-        ms(edit.parse_check),
-        ms(edit.bounds_lowering),
-        ms(edit.upload),
-        edit.foreground_creates
+        ms(receipt.elapsed),
+        ms(receipt.parse_check),
+        ms(receipt.bounds_lowering),
+        ms(receipt.upload),
+        receipt.foreground_creates
     );
 
     session.loaded.frame(&gpu, t);
@@ -75,7 +75,7 @@ pub fn edited_still(
     if let Some(max) = max_frame {
         budget::check(&gpu, &session.loaded, max)?;
     }
-    let timing = timed_frames(&session.loaded, &gpu, t)?;
+
     let inputs = field_inputs();
     let field0 = session
         .loaded
@@ -90,7 +90,7 @@ pub fn edited_still(
     }
     session.loaded.frame(&gpu, t);
     let tier1 = session.loaded.pixels(&gpu).map_err(Failure::Device)?;
-    let promoted = timed_frames(&session.loaded, &gpu, t)?;
+
     let field1 = session
         .loaded
         .twin(&gpu, session.kind(), &inputs)
@@ -123,18 +123,13 @@ pub fn edited_still(
     println!(
         "promotion created {creates} pipelines, stale completions discarded {stale}, clean-kind pipeline pairs changed {clean_changed}"
     );
-    if !timing.is_empty() && !promoted.is_empty() {
-        let a = quantile(&timing, 0.95);
-        let b = quantile(&promoted, 0.95);
-        println!(
-            "GPU p95 Tier 0 {a:.6} ms, Tier 1 {b:.6} ms, overhead {:.6} ms",
-            a - b
-        );
+    if gpu.timestamps {
         let paired = session
-            .measure_paired(&gpu, t, TIMING_FRAMES)
+            .measure_paired(&gpu, t, WARMUP_FRAMES + TIMING_FRAMES)
             .map_err(Failure::Device)?;
         let paired: Vec<_> = paired
             .into_iter()
+            .skip(WARMUP_FRAMES)
             .filter_map(|[a, b]| Some([a?, b?]))
             .collect();
         let delta: Vec<_> = paired.iter().map(|[a, b]| a - b).collect();
@@ -146,26 +141,22 @@ pub fn edited_still(
             );
         }
     }
+    let (fresh, _, _) = loft_passes::compile(&edited, set)
+        .map_err(|d| Failure::Compile(d.render(&edited)))?;
+    let independent = Loaded::new(&gpu, &fresh, SIZE, None).map_err(Failure::Device)?;
+    independent.frame(&gpu, t);
+    let expected = independent.pixels(&gpu).map_err(Failure::Device)?;
+    let fresh_over = pixel_count(&tier0, &expected, 1);
+    let promoted_over = pixel_count(&tier1, &expected, 1);
+    println!("pixels over 1/255 vs fresh compile: preview {fresh_over}, promoted {promoted_over}");
     write_png(out, SIZE, &tier0).map_err(Failure::Usage)?;
-    if over * 1000 > tier0.len() / 4 || error > 1e-5 || clean_changed != 0 {
+    if over.max(fresh_over).max(promoted_over) * 1000 > tier0.len() / 4
+        || error > 1e-5 || clean_changed != 0 || receipt.foreground_creates != 0 {
         return Err(Failure::Truth(
             "trace tape differs from the specialized render or changed a clean pipeline".into(),
         ));
     }
     Ok(())
-}
-
-fn timed_frames(loaded: &Loaded, gpu: &Gpu, t: f32) -> Result<Vec<f64>, Failure> {
-    let mut samples = Vec::new();
-    for i in 0..WARMUP_FRAMES + TIMING_FRAMES {
-        loaded.frame(gpu, t);
-        if let Some((ms, _)) = loaded.gpu_ms(gpu).map_err(Failure::Device)?
-            && i >= WARMUP_FRAMES
-        {
-            samples.push(ms);
-        }
-    }
-    Ok(samples)
 }
 
 fn field_inputs() -> Vec<f32> {
@@ -193,9 +184,8 @@ fn pixel_count(a: &[u8], b: &[u8], limit: u8) -> usize {
     a.chunks_exact(4)
         .zip(b.chunks_exact(4))
         .filter(|(a, b)| {
-            a[..3]
-                .iter()
-                .zip(&b[..3])
+            a.iter()
+                .zip(b.iter())
                 .any(|(x, y)| x.abs_diff(*y) > limit)
         })
         .count()

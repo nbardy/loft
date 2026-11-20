@@ -381,23 +381,36 @@ impl TraceSession {
         t: f32,
         count: usize,
     ) -> Result<Vec<[Option<f64>; 2]>, String> {
+        let Some(clock) = &self.loaded.clock else {
+            return Err("GPU timestamps are unavailable".into());
+        };
+        let clocks = [Clock::new(g, clock.n), Clock::new(g, clock.n)];
         let current = Pipelines::current(&self.loaded.kinds[self.source.kind()]);
-        let mut observations = Vec::with_capacity(count);
-        let result = (|| {
-            for i in 0..count {
-                let mut pair = [None; 2];
-                for tier in [i % 2, 1 - i % 2] {
-                    let target = if tier == 0 { &self.fallback } else { &current };
-                    self.install(&g.device, target.clone());
-                    self.loaded.frame(g, t);
-                    pair[tier] = self.loaded.gpu_ms(g)?.map(|(ms, _)| ms);
-                }
-                observations.push(pair);
-            }
-            Ok(observations)
-        })();
+        self.install(&g.device, self.fallback.clone());
+        let mut preview = std::mem::take(&mut self.loaded.commands);
         self.install(&g.device, current);
-        result
+
+        let mut observations = Vec::with_capacity(count);
+        for i in 0..count {
+            for tier in [i % 2, 1 - i % 2] {
+                // Queue both normal frame command lists before waiting on either
+                // clock. Each submission gets its own indirect resets and timestamps.
+                if tier == 0 {
+                    std::mem::swap(&mut self.loaded.commands, &mut preview);
+                    self.loaded.submit_frame(g, t, 1, Some(&clocks[0]));
+                    std::mem::swap(&mut self.loaded.commands, &mut preview);
+                } else {
+                    self.loaded.submit_frame(g, t, 1, Some(&clocks[1]));
+                }
+            }
+            let mut pair = [None; 2];
+            for (tier, clock) in clocks.iter().enumerate() {
+                let ticks = read_clock(g, clock)?;
+                pair[tier] = Some(clock.timing(i, 0, ticks)?.gpu_ms);
+            }
+            observations.push(pair);
+        }
+        Ok(observations)
     }
 
     pub fn clean_pipelines(&self) -> Vec<(wgpu::RenderPipeline, wgpu::ComputePipeline)> {
