@@ -374,3 +374,17 @@ Items 1 and 2 come first.
 - x2d: old engine vs new A/B (legacy/2026-11-19 tag)
 - x2e: Three.js end-to-end demo (INTEGRATION_TODO.md §1)
 - x2f: lean-down audit and per-crate line budgets (Astra, docs only)
+
+## Chief scientist's handoff (20 Nov, scientist_handoff_2.md): routing
+- loft/s1-lip: Lipschitz fix, Shrine Vis 0.94 ms faster. **Owner approval needed** for out/meta/s1_lip/shrine-review.webp (the old picture was a truncated march). Merged by ix3 once approved.
+- loft/s1-controls: parity gate prototype; polished by s1_controls_fix (wave x3).
+- s1_escapes: the four front-end v1.2 stubs (bake_tex sampling, kernel allow, whole-pass `pass`, unproved). Runs in wave x3.
+- Lean audit (x2f) and lean lanes must also cover:
+  - loft-std is wgpu-free (~2,429 lines of device/encoder code; a duplicate 1,938-line renderer in loft-cli/src/native/);
+  - per-frame create_buffer_init in encode.rs:228–235 and outbox.rs:66–70;
+  - U::VERTEX on LUTs (lib.rs:47);
+  - .loftb export refused for bakes and paths (bundle.rs:325).
+- x2b: keep FMA ON in shading (Fast mode). A shading contraction ban costs +0.18 ms p50 and +0.86 ms p95; global Safe mode costs +4.68 ms. Prefer a scoped motion-only barrier over a soft-float emulator. Add an automated MSL leak check.
+- Browser web.rs is a 93-line allocator with no pipelines or encode (x2e / s1_web).
+- Deferred: the native MetalBackend (predicted 0.09–0.19 ms for 2.3–3.8k lines), HDR+Present fusion, f16 shading, ground fBM bake, and consumer Wasm passes until check.rs (86.5 KB) is split.
+- Superseded briefs: s1_exec, s1_motion_fma, s1_web, is1 and sci_chain.sh, which are covered by x2a, x2b and x2e.
