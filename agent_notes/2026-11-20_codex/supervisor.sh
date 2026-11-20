@@ -8,7 +8,7 @@ LOG="$DIR/supervisor.log"
 log_status() {
   local ts active free_pct
   ts="$(date '+%Y-%m-%d %H:%M:%S')"
-  active="$(pgrep -fl "^codex exec.*-C ($HOME/git/loft|$HOME/git/_wt/)" 2>/dev/null | cut -c1-180 || true)"
+  active="$(pgrep -f "codex exec.*-C ($HOME/git/loft|$HOME/git/_wt/)" 2>/dev/null | while read -r p; do ps -o pid=,etime=,comm= -p "$p" 2>/dev/null; done || true)"
   free_pct="$(memory_pressure 2>/dev/null | awk '/System-wide memory free percentage:/ {gsub(/%/,"",$5); print $5}' || echo "?")"
   {
     echo "=== [$ts] free_mem=${free_pct}% ==="

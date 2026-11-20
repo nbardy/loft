@@ -10,7 +10,7 @@ export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
 # Resource guard (lead, 20 Nov): scale cargo jobs with free memory, and hold new steps while the machine is short.
 freepct() { memory_pressure 2>/dev/null | awk -F": " '/free percentage/{gsub("%","",$2); print int($2)}'; }
 # One pool (R9, 20 Nov): at most LOFT_MAX_STEPS codex steps run at once across every conductor.
-while [ "$(pgrep -fc "^codex exec.*-C ($HOME/git/loft|$HOME/git/_wt/)" 2>/dev/null || echo 0)" -ge "${LOFT_MAX_STEPS:-2}" ]; do sleep 60; done
+while [ "$(pgrep -f "codex exec.*-C ($HOME/git/loft|$HOME/git/_wt/)" 2>/dev/null | wc -l | tr -d " ")" -ge "${LOFT_MAX_STEPS:-2}" ]; do sleep 60; done
 while [ "$(freepct)" -lt 15 ] 2>/dev/null; do sleep 60; done
 f=$(freepct); if [ "${f:-0}" -ge 45 ]; then export CARGO_BUILD_JOBS=3; else export CARGO_BUILD_JOBS=2; fi
 for try in 1 2; do
