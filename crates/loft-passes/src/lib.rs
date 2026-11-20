@@ -989,6 +989,10 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
             }
             "outline_and_paper" => { paper = Some(p.linked(pd.verb.span, "paper_grain")?); }
             "post_process" => {
+                if emitted_passes.contains("tonemap_aces") {
+                    return Err(Diag::new(Code::E505, pd.verb.span, "HDR effect is after presentation",
+                        "put post_process before tonemap_aces"));
+                }
                 let effect = fn_name_arg(&p, pd, "effect")?;
                 if !check::Ck::new(&p, &mut types).runtime_signature(p.fns[effect], &[Ty::VecN(2)], &Ty::VecN(3))? {
                     return Err(Diag::new(Code::E003, arg(pd, "effect")?.span, "invalid post effect signature",
@@ -1040,6 +1044,14 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
     let missing = |what: &str| Diag::new(Code::E520, sched.name.span, format!("missing {what}"),
         "schedule a primary pass, shading and presentation");
     let path_primary = matches!(path_entry, Some(emit::paths::Entry::Primary { .. }));
+    if path_primary && !matches!(aov, emit::Aov::Beauty | emit::Aov::Id | emit::Aov::Depth) {
+        return Err(Diag::new(Code::E405, sched.name.span, "path primary supports beauty, ID and depth outputs",
+            "select one of those outputs or use a raster schedule"));
+    }
+    if path_primary && light.is_some() {
+        return Err(Diag::new(Code::E505, sched.name.span, "multiple primary producers",
+            "choose one primary schedule"));
+    }
     if !post_entries.is_empty() && matches!(path_entry, Some(emit::paths::Entry::Legacy(_))) {
         return Err(Diag::new(Code::E505, sched.name.span, "post needs a linear HDR primary pass",
             "use trace_primary, draw_forward or shade_tiles"));
@@ -1442,7 +1454,7 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
     let has_post = !post_entries.is_empty();
     let present = if let Some(path) = &path {
         shadow_size = 0;
-        let shader = emit::paths::module(&p, &types, &kinds, &texts, &lut_refs, path, path_entry.expect("checked path entry"))?;
+        let shader = emit::paths::module(&p, &types, &kinds, &texts, &lut_refs, path, path_entry.expect("checked path entry"), sky)?;
         if path_primary {
             let index = texts.len();
             texts.push(("path primary".into(), shader));

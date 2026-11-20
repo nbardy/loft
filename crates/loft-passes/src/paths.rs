@@ -42,7 +42,7 @@ pub struct PathTrace {
     pub worlds: Vec<WorldResources>,
     #[serde(default)]
     pub media: Vec<[[f32; 4]; 5]>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub area_kind: Option<u32>,
 }
 
@@ -75,7 +75,7 @@ fn row_arena_source(text: &str) -> String {
         .replace("luts[", "world_luts[")
 }
 
-pub(crate) fn module(p: &Prog, types: &[Ty], kinds: &[KindTable], queries: &[(String, String)], luts: &[LutRef], path: &PathTrace, entry: Entry<'_>) -> Res<String> {
+pub(crate) fn module(p: &Prog, types: &[Ty], kinds: &[KindTable], queries: &[(String, String)], luts: &[LutRef], path: &PathTrace, entry: Entry<'_>, sky: &str) -> Res<String> {
     let mut em = Emitter::new(p, types);
     em.header(abi::NONCE_PLACEHOLDER);
     let prefix_len = em.out.len();
@@ -226,13 +226,13 @@ fn world_optics(h: PathHit) -> Optics {{
         helper.push(jitter);
         if let Primary::Style(style) = transport {
             style.types(&mut em);
-            helper.push(style.shade);
+            helper.extend([style.shade, sky]);
         }
         helper.push(key);
         let (fns, consts) = reachable(p, &[], &helper);
         em.luts = luts;
         em.library(&fns, &consts);
-        primary(&mut em.out, transport, jitter, helper[0], path.bounces);
+        primary(&mut em.out, transport, jitter, sky, path.bounces);
         return Ok(em.out);
     }
     let convert = if spectral {
@@ -290,14 +290,14 @@ struct InkGroup {{
 "),
             format!(r"
       if h.t < 0.0 {{
-        if h.t == -1.0 {{ sum += {}(ray.d); }}
+        if h.t == -1.0 {{ sum += {}(ray.d, normalize(frame.sun.xyz)); }}
         continue;
       }}
       let wo = -ray.d;
       let hit = loft_type_{hit}(h.p, world_local(h.kind, h.at, h.p), h.n, wo, vec2f(0.0),
         world_eval(h, wo, h.n) * 3.14159265, world_eval(h, wo, vec3f(0.0)));
-      let dx = length(loft_ray(pixel + vec2f(1.0, 0.0)) - ray.d);
-      let dy = length(loft_ray(pixel + vec2f(0.0, 1.0)) - ray.d);
+      let dx = length(path_camera(pixel + vec2f(1.0, 0.0), primary_key).d - ray.d);
+      let dy = length(path_camera(pixel + vec2f(0.0, 1.0), primary_key).d - ray.d);
       let footprint = h.t * max(dx, dy) / max(abs(dot(h.n, ray.d)), 0.1);
       let sun = normalize(frame.sun.xyz);
       let visibility = world_visibility(0u, LoftRay(h.p + h.n * 0.0002, sun, 0.0001, 1e6));
@@ -354,7 +354,8 @@ struct PathPrimaryOut {{
   {bins}
   for (var site = 0u; site < sites; site++) {{
     let pixel = pos.xy + {}(key, site);
-    let ray = path_camera(pixel, key ^ path_hash(site));
+    let primary_key = key ^ path_hash(site);
+    let ray = path_camera(pixel, primary_key);
     let h = world_trace(ray.o, ray.d, 1e6);
     let packed = (h.kind << 24u) | h.row;
     if h.t >= 0.0 && h.t < nearest {{

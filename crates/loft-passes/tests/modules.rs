@@ -122,3 +122,58 @@ fn import_failures_retain_the_offending_source() {
         }
     }
 }
+
+#[test]
+fn stage_typed_fragments_keep_derivatives_in_fragments() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let source = r#"
+use stdlib::lighting::surface::{SurfaceHit, LightSummary}
+use stdlib::integrators::direct as transport
+use stdlib::schedules::forward
+use stdlib::post::display
+use self::buoys::{Buoy}
+
+fn shade_style(hit: SurfaceHit, light: LightSummary) -> rgb =
+  wgsl(hit: SurfaceHit, light: LightSummary) -> rgb {
+    return vec3f(dpdx(hit.p.x));
+  }
+
+pub schedule Test {
+  orbit(at: [0, 0, 0], radius: 4, fov: 35deg)
+  forward::Forward(transport::estimate, shade_style)
+  display::PrintPost()
+}
+build { emit Buoy(pose: place([0]@World), radius: 0.5m, pigment: [1, 0.5, 0]) }
+"#;
+    let path = Path::new("scenes/showcase/std1d/derivative_probe.loft");
+    let graph = Graph::text(&root, path, source);
+    let (program, _, _) = loft_passes::compile(&graph, &[])
+        .unwrap_or_else(|d| panic!("{}", d.render(&graph)));
+    assert!(program.passes.iter().any(|pass| matches!(pass, loft_passes::program::Pass::Forward(_))));
+    let tiled = source.replace("::forward", "::vis_buffer").replace("forward::Forward", "vis_buffer::VisBuffer");
+    let graph = Graph::text(&root, path, &tiled);
+    let Err(diag) = loft_passes::compile(&graph, &[]) else { panic!("tile shader accepted a derivative") };
+    assert_eq!(diag.code, Code::E701);
+    assert!(diag.msg.contains("forbidden") || diag.msg.contains("stage"), "{}", diag.render(&graph));
+}
+
+#[test]
+fn spectral_rgb_cannot_bind_a_light_summary_estimator() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let graph = Graph::text(&root, Path::new("scenes/showcase/std1d/contract_probe.loft"), r#"
+use stdlib::engines::spectral_caustic::{spectral_sample}
+use stdlib::integrators::sampling::{primary_jitter}
+use stdlib::lighting::print::{shade_style}
+use stdlib::schedules::path
+use stdlib::post::display
+schedule Test {
+  orbit(at: [0, 0, 0], radius: 4, fov: 35deg)
+  path::Path(spectral_sample, shade_style, primary_jitter)
+  display::PrintPost()
+}
+"#);
+    let Err(diag) = front(&graph) else { panic!("spectral RGB accepted as LightSummary") };
+    assert_eq!(diag.code, Code::E003);
+    assert!(diag.msg.contains("callback `estimate`"));
+    assert_eq!(graph.locate(diag.span).0, "scenes/showcase/std1d/contract_probe.loft");
+}

@@ -274,7 +274,7 @@ fn render_blended(
     blend: Option<wgpu::BlendState>,
 ) -> wgpu::RenderPipeline {
     let targets = [Some(wgpu::ColorTargetState { format: target, blend, write_mask: wgpu::ColorWrites::ALL })];
-    render_targets(device, label, layouts, module, entries, &targets, depth, cull, cache)
+    render_targets(device, label, layouts, module, entries, &targets, depth.then_some(wgpu::CompareFunction::Less), cull, cache)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -285,7 +285,7 @@ fn render_targets(
     module: &wgpu::ShaderModule,
     entries: (&str, &str),
     targets: &[Option<wgpu::ColorTargetState>],
-    depth: bool,
+    depth: Option<wgpu::CompareFunction>,
     cull: Option<wgpu::Face>,
     cache: Option<&wgpu::PipelineCache>,
 ) -> wgpu::RenderPipeline {
@@ -302,10 +302,10 @@ fn render_targets(
             targets,
         }),
         primitive: wgpu::PrimitiveState { cull_mode: cull, front_face: wgpu::FrontFace::Ccw, ..Default::default() },
-        depth_stencil: depth.then(|| wgpu::DepthStencilState {
+        depth_stencil: depth.map(|depth_compare| wgpu::DepthStencilState {
             format: DEPTH,
             depth_write_enabled: Some(true),
-            depth_compare: Some(wgpu::CompareFunction::Less),
+            depth_compare: Some(depth_compare),
             stencil: Default::default(),
             bias: Default::default(),
         }),
@@ -860,7 +860,7 @@ impl Loaded {
                 let kt = &p.kinds[id as usize];
                 let face = matches!(kt.draw, Draw::Analytic | Draw::Traced).then_some(wgpu::Face::Front);
                 let (pipeline, ms) = timed(|| render_targets(d, &kt.name, &[&bgl0, &bgl_kind, layout],
-                    &modules[kt.module], ("vs", "fs_forward"), &targets, true, face, cache));
+                    &modules[kt.module], ("vs", "fs_forward"), &targets, Some(wgpu::CompareFunction::Less), face, cache));
                 stats.pipeline_ms.push((format!("{} forward", kt.name), ms));
                 pipeline
             }).collect::<Vec<_>>();
@@ -953,8 +953,10 @@ impl Loaded {
             let middle = empty_layout.as_ref().expect("prepared path layout");
             let groups = [&g0, empty_group.as_ref().expect("prepared path group"), &path.group];
             let targets = [VIS, HDR].map(|format| Some(wgpu::ColorTargetState { format, blend: None, write_mask: wgpu::ColorWrites::ALL }));
+            // The shader owns the closest hit. Miss fragments write depth 1
+            // and must still write sky HDR against an attachment cleared to 1.
             let (pipeline, ms) = timed(|| render_targets(d, "path primary", &[&bgl0, middle, layout], &modules[module],
-                ("vs_primary", "fs_path_primary"), &targets, true, None, cache));
+                ("vs_primary", "fs_path_primary"), &targets, Some(wgpu::CompareFunction::Always), None, cache));
             stats.pipeline_ms.push(("path primary".into(), ms));
             let raster = command::Raster::prepare(d, &wgpu::RenderBundleEncoderDescriptor {
                 label: Some("path primary"), color_formats: &[Some(VIS), Some(HDR)],
