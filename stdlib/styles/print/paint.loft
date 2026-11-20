@@ -1,0 +1,13 @@
+use stdlib::styles::surface::{Surface}
+use stdlib::noise::value::{fbm2}
+
+pub fn print_paint(h: Surface, warm: f, mottle: f) -> rgb {
+  let c = h.pigment
+  let red = smoothstep(0.14, 0.36, c.x - max(c.y, c.z))
+  let heated = mix(c, min(c * [1.27, 1.18, 1.0], rgb(1.0)), warm * red)
+  let grain = fbm2(coords(h.anchor) / 0.42)
+  let blot = smoothstep(0.49, 0.66, grain)
+  let pixel = max(h.footprint.x, h.footprint.y)
+  let filtered = mix(blot, 0.32, smoothstep(0.05, 0.21, pixel))
+  heated * (1.0 - mottle * red * filtered)
+}

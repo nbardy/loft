@@ -1,0 +1,57 @@
+use stdlib::noise::value::{hash3, noise2}
+
+# Four neighboring cells across each of two staggered rows. The signed
+# slope biases the water mass toward the front of each curling head.
+pub fn rolling_foam(xz: v2, mass: f, slope: v2, head: m, pixel: m) -> v2 {
+  if mass <= 0.0 || head <= 0.0 { return [0.0, 0.0] }
+  let q = xz / (2.25 * head)
+  let cell = floor(q - [0.5, 0.5])
+  let lean = slope / max(length(slope), 0.001)
+  let fw = clamp(pixel / head, 0.025, 0.42)
+  var fill = smoothstep(0.64 - fw, 0.64 + fw, mass + noise2(q * 1.7) * 0.14)
+  var rim = smoothstep(0.57 - fw, 0.57 + fw, mass)
+  for j in 0..2 {
+    for i in 0..2 {
+      let c = cell + [f32(i), f32(j)]
+      let jitter = [hash3(i32(c.x), i32(c.y), 17), hash3(i32(c.x), i32(c.y), 51)]
+      let center = (c + [0.22, 0.22] + 0.56 * jitter - q) * 2.25
+      let local_mass = mass + dot(center, slope) * head
+      let live = smoothstep(0.19, 0.60, local_mass)
+      let across = dot(-center, [-lean.y, lean.x])
+      let along = dot(-center, lean)
+      let hook = length(center + lean * 0.23) - (0.46 + 0.27 * jitter.x)
+      let cut = length([across * 1.15, along - 0.19]) - 0.34
+      let curl = max(hook, -cut * smoothstep(-0.35, 0.33, across))
+      let drop = length(center + lean * 1.02) - 0.11 - 0.055 * jitter.y
+      let ink = min(curl, drop)
+      fill = max(fill, live * (1.0 - smoothstep(-fw, fw, ink)))
+      rim = max(rim, live * (1.0 - smoothstep(0.09 - fw, 0.09 + fw, ink)))
+    }
+  }
+  [fill, rim * (1.0 - fill)]
+}
+
+# Age is seconds after the splash, and the authored event lasts one second.
+# Radius sets reach, with a hard coverage cap beyond the early crown.
+pub fn impact_foam(offset: v2, age: s, radius: m, pixel: m) -> v2 {
+  if age < 0.0 || age >= 1.0 || radius <= 0.0 { return [0.0, 0.0] }
+  let d = length(offset)
+  if d >= 1.55 * radius { return [0.0, 0.0] }
+  let out = offset / max(d, 0.001)
+  let front = radius * mix(0.2, 1.0, sqrt(age))
+  let width = radius * mix(0.45, 0.12, age)
+  let band = 1.0 - smoothstep(0.0, width, abs(d - front))
+  let boil = (1.0 - smoothstep(0.1, 0.35, age)) * (1.0 - smoothstep(0.5 * front, front, d))
+  let live = 1.0 - smoothstep(0.7, 1.0, age)
+  let gradient = -sign(d - front) * out / width
+  let ring = rolling_foam(offset, max(boil, band) * live, gradient, radius * 0.125, pixel)
+  let height = radius * 0.38 * smoothstep(0.0, 0.10, age) * (1.0 - smoothstep(0.14, 0.34, age))
+  let finger = pow(0.5 + 0.5 * cos(13.0 * atan2(out.y, out.x)), 3.0)
+  let crown = height * finger
+  let rim = front + 0.45 * width
+  let aa = max(pixel, 0.001)
+  let spike = smoothstep(rim - aa, rim + aa, d) *
+    (1.0 - smoothstep(rim + crown - aa, rim + crown + aa, d)) * smoothstep(aa, 3.0 * aa, crown)
+  let fill = max(ring.x, spike * (1.0 - ring.y))
+  [fill, ring.y]
+}

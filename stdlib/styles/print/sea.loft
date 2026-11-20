@@ -1,0 +1,16 @@
+use stdlib::noise::value::{noise2}
+
+# Coverage, offset from the nearest line, crest gate, noisily lifted swell.
+# rate is the bent phase's change per pixel; cycles is already scaled.
+pub fn swell_lines(xz: v2, cycles: f, crest: f, rate: f, widths: v2, calm: bool) -> v4 {
+  let h = crest + 0.08 * noise2(0.6 * xz)
+  let live = smoothstep(-0.6, -0.1, h)
+  if calm { return [0.0, 0.5, live, h] }
+  let phase = cycles + 0.7 * h
+  let fw = max(rate, 0.0001)
+  let off = abs(fract(phase + 0.5) - 0.5)
+  let width = mix(widths.x, widths.y, clamp(0.6 * crest + 0.5, 0.0, 1.0))
+  let crowd = smoothstep(0.03, 0.1, fw)
+  let drawn = 1.0 - smoothstep(width - fw, width + fw, off)
+  [mix(drawn, 2.0 * width, crowd) * live, off, live, h]
+}

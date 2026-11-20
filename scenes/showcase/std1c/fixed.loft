@@ -1,0 +1,27 @@
+use self::fixed_records::{fixed_ink}
+use stdlib::sdf::solid::{sphere}
+use stdlib::materials::bsdf::{lambert}
+use stdlib::lighting::emitters
+use stdlib::sky::environment::{sky_color}
+
+param look: u = 0 in 0..8
+param emission: f = 1 in 0..1
+
+pub kind Probe @Local (pose: xf@Local>World) {
+  trace(p) = sphere(p - [0]@Local, 1.4m)
+  material(p,n) = lambert([0.2, 0.2, 0.2])
+}
+
+fn fixed_light(b: Bsdf, n: rgb, v: rgb, sun: rgb, shadow: f, ao: f) -> rgb = fixed_ink(look, emission)
+
+camera View { eye: [0, 0, 3.5], at: [0, 0, 0], fov: 36deg }
+schedule Fixed {
+  use_camera(View)
+  cull_indirect(Probe)
+  render_bundle(Vis64) { draw_indirect(Probe) }
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: fixed_light, sun: [0.5, 0.75, 0.35])
+  tonemap_aces(ColorHdr, sky: sky_color)
+}
+
+build { emit Probe(pose: place([0]@World)) }

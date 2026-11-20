@@ -1,0 +1,36 @@
+use stdlib::styles::surface::{Surface, Lighting}
+use stdlib::styles::woodblock
+use stdlib::styles::toon
+use stdlib::styles::sketch
+use stdlib::styles::papercraft
+use stdlib::styles::neon
+use stdlib::styles::biolume
+use stdlib::styles::pbr
+
+fn fixed_surface() -> Surface =
+  wgsl() -> Surface {
+    return loft_type_Surface(vec3f(0.0), vec3f(0.34, -0.19, 0.21), vec3f(0.0, 1.0, 0.0),
+      vec3f(0.0, 0.8, 0.6), vec2f(0.3, 0.4), vec2f(0.009, 0.015), vec3f(0.27, 0.23, 0.41),
+      0.38, 3u, 2u);
+  }
+
+fn fixed_lighting(gain: f, ao: f) -> Lighting =
+  wgsl(gain: f, ao: f) -> Lighting {
+    return loft_type_Lighting(vec3f(0.0, 0.6, 0.8), 0.5, ao, vec3f(0.31, 0.13, 0.09),
+      vec3f(0.14, 0.10, 0.06), vec3f(0.25, 0.21, 0.16), vec3f(0.012, 0.030, 0.050) * gain);
+  }
+
+pub fn fixed_ink(look: u, emission: f) -> rgb {
+  let h = fixed_surface()
+  let l = fixed_lighting(emission, 0.55)
+  if look == 0 { return woodblock::shade(h, l) }
+  if look == 1 { return toon::shade(h, l) }
+  if look == 2 { return sketch::shade(h, l) }
+  if look == 3 { return papercraft::shade(papercraft::fold_surface(h), l) }
+  if look == 4 { return neon::shade(h, l) }
+  if look == 5 { return biolume::shade(h, l) }
+  if look == 6 { return pbr::shade(h, l) }
+  if look == 7 { return pbr::shade(h, fixed_lighting(emission, 1.0)) }
+  let facet = papercraft::fold_surface(h)
+  rgb(0.5) + 0.5 * coords(facet.n)
+}

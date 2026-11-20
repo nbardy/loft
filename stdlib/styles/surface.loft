@@ -1,0 +1,12 @@
+# The std1 primary-hit contract. Coordinates in the row space keep ink attached
+# to the model. The two footprint components are local metres per pixel.
+pub struct Surface {
+  p: p3@World, anchor: p3@Local, n: n3@World, view: d3@World,
+  uv: v2, footprint: v2, pigment: rgb, rough: f, kind_id: u, row_id: u
+}
+
+# Linear outgoing radiance by contribution. Direct already includes visibility.
+pub struct Lighting {
+  key: d3@World, key_visibility: f, ao: f,
+  direct: rgb, indirect_diffuse: rgb, indirect_gloss: rgb, emitted: rgb
+}

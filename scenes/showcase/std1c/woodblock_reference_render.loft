@@ -1,0 +1,17 @@
+use stdlib::styles::woodblock as ink
+use stdlib::integrators::reference as transport
+use stdlib::lighting::surface::{SurfaceHit, LightSummary}
+use self::bridge::{surface_from, lighting_from}
+use stdlib::schedules::path
+use stdlib::integrators::sampling::{primary_jitter}
+use stdlib::post::display
+
+fn shade_hit(h: SurfaceHit, l: LightSummary) -> rgb {
+  let s = surface_from(h, l)
+  ink::shade(s, lighting_from(s, h, l))
+}
+
+pub schedule Harbor {
+  path::Path(transport::estimate, shade_hit, primary_jitter)
+  display::PrintPost()
+}

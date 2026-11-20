@@ -1,0 +1,18 @@
+use stdlib::styles::surface::{Surface, Lighting}
+
+pub fn shade(h: Surface, l: Lighting) -> rgb {
+  let c = h.pigment
+  let hi = max(max(c.x, c.y), c.z)
+  let lo = min(min(c.x, c.y), c.z)
+  let chroma = hi - lo
+  let hue = (c - rgb(lo)) / max(chroma, 0.001)
+  let led = mix([0.54, 0.71, 0.94], hue, smoothstep(0.04, 0.18, chroma))
+  let facing = clamp(dot(h.n, h.view), 0.0, 1.0)
+  let rolloff = min(0.095, 2.0 * max(h.footprint.x, h.footprint.y))
+  let tube = 1.0 - smoothstep(0.23 - rolloff, 0.36 + rolloff, facing)
+  let aura = pow(1.0 - facing, 3.0)
+  let glass = [0.011, 0.008, 0.024] + c * 0.035 +
+    (l.direct * 0.16 + l.indirect_gloss * 0.27) * l.ao
+  # Graphic rim radiance remains separate from the authored emitter.
+  glass + led * smoothstep(0.04, 0.32, hi) * (1.24 * tube + 0.26 * aura) + l.emitted
+}

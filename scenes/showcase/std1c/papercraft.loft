@@ -1,0 +1,8 @@
+use self::papercraft_render
+use self::harbor::{harbor, Sail}
+
+camera View { eye: [2.15, 1.95, 5.0], at: [0, 0.24, 0], fov: 34deg }
+build {
+  harbor([2.2, 1.88, 1.55], [0.64, 0.74, 0.83], [0.79, 0.80, 0.74])
+  emit Sail(pose: place([0.90, 0.18, -0.38]@World))
+}
