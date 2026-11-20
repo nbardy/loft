@@ -2,10 +2,10 @@ use self::toon_engine
 use self::buoys::{Buoy, Water}
 use stdlib::geometry::layout::{grid_spot}
 
-param BuoyCount: u = 1 in 1..20
+param buoy_count: u = 1 in 1..20
 camera View { eye: [0, 1.7, 5.8], at: [0, -0.1, 0], fov: 39deg }
 build {
-  for i in 0..BuoyCount {
+  for i in 0..buoy_count {
     let spot = grid_spot(i, 5, 0.64)
     let pigment = [0.75, 0.19 + 0.035 * f32(i), 0.09]
     emit Buoy(pose: place([spot]@World), radius: 0.31m, pigment: pigment)

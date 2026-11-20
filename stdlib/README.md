@@ -41,6 +41,42 @@ The engine's import chooses its ink. Another scene can continue to select the st
 
 The loader maps `std::geom` to geometry, frames and solid SDF exports, `std::light` to the world, emitters, sky, direct lighting and BSDF exports, and `std::noise` to value noise. `std::math`, `std::color` and `std::quant` retain their intrinsic spellings. For new source, call language intrinsics such as `dot4_i8` directly. The old `engines::realtime`, `engines::woodblock`, `engines::reference` and `engines::spectral_caustic` imports resolve to their named recipes under `stdlib/engines/`.
 
-## Contract for lane D
+## Physical materials and styles
 
-Lane D supplies the typed `Surface` and `Lighting` inputs, statically selected transport, style and preparation callbacks, and compiled schedule fragments for visibility, path, forward and post. The current Woodblock example uses the existing six-argument pigment function and pass list. See the proposed signatures and shared field layout. [Standard library design](../agent_notes/2026-11-20_v1/design/std1.md#module-interfaces) · [Tagged legacy source index](REFERENCE.md)
+Physical transport evaluates the kind's `Bsdf` through realtime, RGB reference or spectral caustic transport. The existing `material(p, n)` kind query supplies that BSDF today. The physical `material(hit: SurfaceHit) -> Bsdf` kind-query spelling remains open.
+
+A style has signature `fn shade_style(hit: SurfaceHit, light: LightSummary) -> rgb`. The hit carries World position, normal and view, a local anchor, UV, pigment and emission. `LightSummary` carries `key_dir`, `key_vis`, `key_radiance`, `indirect_irradiance`, `ao`, `footprint_m`, `depth_m` and packed primary `id`. Use `footprint_m` to filter print marks on both tiled and path schedules. Fragment derivatives are available when the style runs in the forward fragment stage.
+
+The realtime woodblock uses shadow-map visibility and cosine-convolved sky coefficients. Reference woodblock uses traced sun visibility and an irradiance estimate from continued paths. The path groups up to four primary coverage sites by row and averages incident light before applying ink. Spectral caustic transport supplies physical radiance and refuses a `LightSummary` style binding.
+
+An entry schedule calls ordinary fragments with lexically bound functions. Parentheses mark a fragment, including a parameterless post fragment.
+
+```loft
+use stdlib::schedules::vis_buffer
+use stdlib::integrators::direct as transport
+use stdlib::lighting::print as ink
+use stdlib::post::display
+
+pub schedule WoodblockRealtime {
+  orbit(at: [0, 0, 0], radius: 4, height: 0.5, fov: 40deg)
+  vis_buffer::VisBuffer(transport::estimate, ink::shade_style)
+  display::PrintPost()
+}
+```
+
+The style and transport imports are independent. The `toon_engine.loft` example changes the ink import and the `restir_engine.loft` example changes the transport import. Forward and RGB reference woodblock use the same `lighting/print.loft` source. The legacy `Woodblock` and `Realtime` schedules retain their six-argument shade call and pass order.
+
+### Run the examples
+
+```sh
+tools/dev.sh build loft-cli --fast
+tools/gpu_lock.sh target/lab/loft render scenes/showcase/std1d/woodblock_realtime.loft --out out/woodblock.png --size 256x160 --set buoy_count=20
+tools/gpu_lock.sh target/lab/loft render scenes/showcase/std1d/woodblock_forward.loft --out out/forward.png --size 256x160 --set buoy_count=20
+tools/gpu_lock.sh target/lab/loft render scenes/showcase/std1d/woodblock_reference.loft --out out/reference.png --size 256x160 --set buoy_count=20 --samples 16
+tools/gpu_lock.sh target/lab/loft render scenes/showcase/std1d/luminous.loft --out out/luminous.png --size 256x160 --set buoy_count=20
+uv run python scenes/showcase/std1d/controls.py
+```
+
+Use `loft show SCENE --plan` to inspect the bound stage code. Add `--attachments out/control` to a beauty render to capture tightly packed little-endian `vis.rg32u`, `depth.f32` and `hdr.rgba16f`. Use `furnace.loft --engine reference_primary` for the physical white furnace and `area_control.loft` for the spherical light control.
+
+Optics are scheduled in source. The luminous example draws forward and runs reflection and bloom before ACES. `StudioAO()` and `DepthOfField()` are selectable fragments in `post/optics.loft`. The optics use clamped gathers and share one extra HDR attachment. [Standard library design](../agent_notes/2026-11-20_v1/design/std1.md#module-interfaces) · [Tagged legacy source index](REFERENCE.md)
