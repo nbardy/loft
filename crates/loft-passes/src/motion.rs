@@ -96,6 +96,9 @@ pub fn motion_module(
     em.motion_tier = tier;
     if tier.is_det() {
         em.out.push_str(loft_abi::DET_WGSL);
+    } else {
+        // Both tiers expose tick time; the Det math prelude declares it for Det.
+        em.out.push_str("var<private> loft_tick_time: f32;\n");
     }
     em.out.push_str(AdvanceArgs::WGSL);
     em.out.push_str(

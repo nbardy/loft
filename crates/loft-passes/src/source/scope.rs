@@ -782,6 +782,9 @@ impl Scope<'_> {
                         self.args(args, &[])?;
                     }
                     if let Some(resources) = &mut pass.resources {
+                        for texture in &mut resources.reads {
+                            self.ident(texture)?;
+                        }
                         self.block(&mut resources.body, &mut vec![])?;
                     }
                 }

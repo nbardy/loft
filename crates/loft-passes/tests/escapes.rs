@@ -1,30 +1,12 @@
-use loft_ir::{BindAccess, PassRun, Sources, Verdict};
+use loft_ir::{BindAccess, PassRun, Verdict};
 use loft_parse::ast::{Determinism, GeometryProof, UnprovedReason};
-use std::{fs, path::Path};
+use loft_passes::source::Graph;
+use std::path::Path;
 
-fn sources(scene: &str, body: &str) -> Sources {
+fn sources(scene: &str, body: &str) -> Graph {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let mut files = fs::read_dir(root.join("lib"))
-        .unwrap()
-        .map(|f| f.unwrap().path())
-        .filter(|p| p.extension().is_some_and(|ext| ext == "loft"))
-        .collect::<Vec<_>>();
-    files.sort();
-    let mut src = Sources::default();
-    for path in files {
-        src.add(
-            path.display().to_string(),
-            fs::read_to_string(&path).unwrap(),
-        );
-    }
-    src.add(
-        root.join("crates/loft-passes/tests/escapes")
-            .join(scene)
-            .display()
-            .to_string(),
-        body,
-    );
-    src
+    let path = Path::new("crates/loft-passes/tests/escapes").join(scene);
+    Graph::text(&root, &path, body)
 }
 
 #[test]
@@ -111,6 +93,8 @@ fn baked_texture_sampling_emits_dimensioned_wgsl() {
     let src = sources(
         "bake.loft",
         r"
+        use stdlib::materials::bsdf::{ggx}
+        use stdlib::sdf::solid::{sphere}
         space World
         bake_tex Mask 8x8 r16float on load mips(true) (uv: v2) { uv.x }
         fn mask(uv: v2) -> f = sample_lod(Mask, uv, 1.0)
@@ -174,6 +158,8 @@ fn det_kernel_refuses_nondet_data_and_untagged_float_atomics() {
 #[test]
 fn nondet_law_keeps_gpu_math_and_refuses_mixed_tiers() {
     let scene = r"
+        use stdlib::materials::bsdf::{ggx}
+        use stdlib::sdf::solid::{sphere}
         space World
         fn raw_sine(x: f) -> f = wgsl (x: f) -> f { return sin(x); }
         kind Body @World (x: f, y: f) {

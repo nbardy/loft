@@ -3,25 +3,9 @@ use loft_passes::emit::Aov;
 use loft_runner::Runner;
 use std::{fs, path::Path, sync::Arc};
 
-fn sources(scene: &str) -> loft_ir::Sources {
+fn sources(scene: &str) -> loft_passes::source::Graph {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let mut files = fs::read_dir(root.join("lib"))
-        .unwrap()
-        .map(|f| f.unwrap().path())
-        .filter(|p| p.extension().is_some_and(|ext| ext == "loft"))
-        .collect::<Vec<_>>();
-    files.sort();
-    let mut src = loft_ir::Sources::default();
-    for path in files
-        .into_iter()
-        .chain([root.join(scene)])
-    {
-        src.add(
-            path.display().to_string(),
-            fs::read_to_string(&path).unwrap(),
-        );
-    }
-    src
+    loft_passes::source::Graph::file(&root.join(scene), "").unwrap()
 }
 
 #[test]
@@ -225,9 +209,9 @@ fn particle_scatter_statistical_twin() {
             let span = if seed % 2 == 0 { 16 } else { 2 };
             let reverse = seed & 2 != 0;
             let args = [
-                ("SEED".into(), f64::from(seed)),
-                ("SPAN".into(), f64::from(span)),
-                ("REVERSE".into(), f64::from(u8::from(reverse))),
+                ("seed".into(), f64::from(seed)),
+                ("bins".into(), f64::from(span)),
+                ("reverse".into(), f64::from(u8::from(reverse))),
             ];
             let (_, _, compiled) = loft_passes::compile_for_device(&src, &args, Aov::Beauty, features)
                 .unwrap_or_else(|d| panic!("{}", d.render(&src)));

@@ -1,11 +1,5 @@
 space World
 bake_tex Probe 8x8 r16float on load mips(true) (uv: v2) { uv.x }
-kind Marker @World () {
-  trace(p) = sphere(p - [0, 0, 0]@World, 0.5)
-  material(p,n) = ggx(rgb(0.4), 0.8, 0)
-}
-build { emit Marker() }
-
 # The signed cell stores multiples of 1/256.
 struct SignedCell { value: i }
 struct FloatCell { value: f }

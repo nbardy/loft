@@ -38,8 +38,8 @@ Wherever this spec says bit-identical or bit-exact (for example decision 15, the
   `atomic_add`, supply `fixed_scale` on the scheduled `compute` call. The linker uses
   float atomics when enabled on the device and signed fixed-point accumulation
   otherwise. Each completed pass publishes f32 values. The scale is a positive
-  power of two up to 2²⁴. Keep each cell's scaled initial magnitude plus the sum
-  of absolute scaled contributions below 2³¹. Nonfinite or overflowing fixed
+  power of two up to 2²⁴. Keep the sum of the absolute initial value and contributions below 2³¹
+  per cell after scaling and rounding each term. Nonfinite or overflowing fixed
   cells publish NaN. The caller checks finiteness.
 - NonDet updates run outside the exact CPU twin and exact replay. Check them
   against an independent statistical twin with named seeds, initial states,
