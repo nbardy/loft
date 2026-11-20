@@ -19,3 +19,5 @@ Facts (lead, 20 Nov):
    Pick the option that stays correct with 5 concurrent lanes.
 3. **Apply it** in tools/dev.sh and .cambium.toml. If run.sh needs it, add at most one export line to agent_notes/2026-11-20_codex/run.sh, replacing the file atomically (write a temp file, then os.replace in Python), because running conductors call it. Re-measure on a second fresh workspace. Target: dependency rebuilds take ≤20% of the baseline wall time.
 4. **Write agent_notes/2026-11-20_v1/lanes/build1.md** (≤30 lines, with the numbers). This is tooling only: merge it into main yourself if the workspace still builds and its tests pass. Commit messages end with "Co-Authored-By: GPT (codex) <noreply@openai.com>". Final message ≤100 words.
+
+**Resume note (after 15:36 restart):** Branches `loft/build1-measured`, `loft/build1-seeded`, `loft/build1-verified` and existing build1 worktrees are already on disk from the interrupted run. Inspect them and continue from what's already proved instead of redoing baseline work.

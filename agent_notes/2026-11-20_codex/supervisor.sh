@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Lightweight supervisor: logs wave/step/memory status every 15 minutes until all waves finish.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+DIR="$ROOT/agent_notes/2026-11-20_codex"
+LOG="$DIR/supervisor.log"
+
+log_status() {
+  local ts active free_pct
+  ts="$(date '+%Y-%m-%d %H:%M:%S')"
+  active="$(ps -eo pid,args | grep -E "[c]odex exec.*-C ($HOME/git/loft|$HOME/git/_wt/)" || true)"
+  free_pct="$(memory_pressure 2>/dev/null | awk '/System-wide memory free percentage:/ {gsub(/%/,"",$5); print $5}' || echo "?")"
+  {
+    echo "=== [$ts] free_mem=${free_pct}% ==="
+    for w in wave15 wave4 wave15_2; do
+      [ -f "$DIR/${w}.finished" ] && echo "  $w: FINISHED" || echo "  $w: running/waiting"
+    done
+    for s in build1 cam1 v15a v15b v15c iv15 std1b std1c std1d std1e port1 ix4 v15_exec v15_sky v15_fma cap1b cap1c cap1d v15_bloat v15_metalfx iv15_2; do
+      [ -f "$DIR/${s}.done" ] && printf "  done: %s\n" "$s"
+    done | paste -sd ' ' - | sed 's/^/  /'
+    if [ -n "$active" ]; then
+      echo "  active codex:"
+      echo "$active" | sed 's/^/    /'
+    else
+      echo "  active codex: (none)"
+    fi
+  } >> "$LOG"
+}
+
+while true; do
+  log_status
+  if [ -f "$DIR/wave15.finished" ] && [ -f "$DIR/wave4.finished" ] && [ -f "$DIR/wave15_2.finished" ] \
+     && [ -f "$DIR/build1.done" ] && [ -f "$DIR/cam1.done" ]; then
+    echo "=== [$(date '+%Y-%m-%d %H:%M:%S')] ALL WAVES COMPLETE — supervisor exiting ===" >> "$LOG"
+    exit 0
+  fi
+  sleep 900
+done

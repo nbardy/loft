@@ -28,3 +28,5 @@ Speed rules (lead, 20 Nov): keep the ceremony small.
 
 Std rule: a lib function must replace a recurring, sufficiently complicated block of ≥3× its call's tokens. NEVER add renamed wrappers for standard patterns (map, await, filter, fold) or one-or-two-call helpers. Code lives in the stdlib/ tree (design/std1.md); forking is copy-paste.
 Base: start from origin/main AFTER the std1a restructure (stdlib/ tree), not the old flat lib/.
+
+**Resume note (after 15:36 restart):** `~/git/_wt/loft-port1-legacy` already exists for the legacy reference renders; reuse it rather than recreating it.

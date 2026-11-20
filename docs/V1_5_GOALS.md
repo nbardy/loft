@@ -58,7 +58,7 @@ interval. Numbers taken under contention don't count.
 |---|---|---|---|
 | G6.1 | Corpus median ≤ 10,000 tokens, with pictures matched | Was 96,204 (tok1) | deferred to a later v1.5 wave (std1f brief ready) |
 | G6.2 | A per-scene token budget gate and a repeated-block lint | Fails a scene with unrolled rows | open |
-| G6.3 | stdlib/ tree with styles, integrators, schedules and engines; copy-paste forking documented | std1a plus the port lanes | in progress (wave x4) |
+| G6.3 | stdlib/ tree with styles, integrators, schedules and engines; copy-paste forking documented | std1a plus the port lanes | std1a merged (`f8fc612`); std1b–e + port1 running (wave x4) |
 | G6.4 | A written **style↔integrator contract**: what a style may read and write, per integrator class | A doc plus woodblock running under realtime and reference | open |
 
 ## P6: motion (critique #8)
@@ -104,7 +104,19 @@ These supersede the rows above where they differ.
 | R3 | **Variety:** 6–10 material-family uber-shaders (StandardPbr, LayeredCoat, StylizedInk, DielectricGlass, Emissive, Foliage) over a packed `MaterialTable` (64–128 B rows) plus bindless textures, at 0 ms compile per material; compiled kinds plus a pipeline cache stay for novel maths. **Cut** compiler auto-merge. **Reject** a material VM for shading: Tier 0 is for live geometry previews only. | G3 |
 | R4 | **Two style contracts:** `fn material(hit) -> Bsdf` (works under every physical integrator) and `fn shade_style(hit, light: LightSummary) -> rgb`. LightSummary carries key_dir, key_vis, key_radiance, indirect_irradiance, ao, footprint_m, depth_m and id. An integrator that doesn't provide LightSummary refuses a Style at compile time (for example woodblock with spectral_caustic). `footprint_m` replaces fragment-only dFdx/dFdy. | G6.4 |
 | R5 | **Bloat is a data-serialisation bug** (95.7% of corpus tokens are baked float arrays). (a) `import_table` for binary sampled data; (b) regenerate the corpus from its procedural seeds with `build for` and row defaults (median → ~1.5–4k tokens); (c) fix ad.rs row-constant parameters (−112k tokens); (d) token caps go in `loft lint` and corpus CI only, **not compile errors**. | G6.1, G6.2 |
-| R6 | **Native-first,** with a strict `HostCaps::WEB_BASELINE` tier and no parity promise between native-high and web. **A 3-rung wgpu bridge** (~600–900 LOC): (i) RAY_QUERY in World, (ii) PASSTHROUGH_SHADERS MSL for simdgroup_matrix/bfloat, (iii) MetalFX via HostCallback + wgpu_hal. No objc2-metal backend unless we commit to SBT RT pipelines, mesh shaders or multi-queue. | G8.4, G8.5 (decided) |
+| R6 | **Native-first,** with a strict `HostCaps::WEB_BASELINE` tier and no parity promise between native-high and web. **A 3-rung wgpu bridge** (~600–900 LOC): (i) `EXPERIMENTAL_RAY_QUERY` in World (verified on M4 in `cap1`), (ii) `EXPERIMENTAL_COOPERATIVE_MATRIX` (8×8×8 f32/f16 verified on M4 in `cap1`) plus `PASSTHROUGH_SHADERS` MSL for `bfloat`/unchecked loops, (iii) `MetalFX` via `HostCallback` + `wgpu_hal::metal`. No `objc2-metal` backend unless we commit to SBT RT pipelines, mesh shaders or multi-queue. | G8.4, G8.5 (decided) |
 | R7 | **x2b:** replace the 900-line u32 soft-float with a motion-only FMA contraction barrier; 1,000-crab dispatch ≤ 0.06 ms (predicted); shading stays in MTLMathModeFast. | G7.1 |
 | R8 | **The two-tier picture gate lives in code** (crates/loft-cli/src/gates.rs), as `Deterministic(tol)` and `Stochastic(PSNR/FLIP + temporal)`. | G4 (lane v15c) |
 | R9 | **One conductor:** a central concurrency pool plus a quiet-GPU timing lock that blocks builds and other lanes during Speed and Load scoring. | G4.3 |
+
+## Execution waves (updated 20 Nov 16:05, post-restart resume)
+
+All active conductors share one concurrency pool (`LOFT_MAX_STEPS=4`) and the quiet-GPU lock (`tools/quiet_gpu.sh` once `v15c` lands).
+
+| Wave | Lanes | Covers | Sequencing |
+|---|---|---|---|
+| **Infra (standalone)** | `build1`, `cam1` | Cambium real `cargo-deps` seed + loud cold-seed / harvest fixes | Parallel now |
+| **wave4** (`wave4.sh`) | `std1b`, `std1c`, `std1d` (R4 two-contract addendum), `std1e`, `port1` → `ix4` | G6.3, G6.4/R4, G6.5 (`std1a` merged at `f8fc612`) | Parallel now |
+| **wave15** (`wave15.sh`) | `v15a` (R1 #1 + `EXPERIMENTAL_RAY_QUERY`), `v15b` (`kernel allow` + `NonDet` + `StudyInk`), `v15c` (R8+R9 gates & `quiet_gpu.sh`) → `iv15` | G1, G4, G7.2, G8.1, R1 #1, R8, R9 | Parallel now (resuming existing `~/git/_wt/loft-v15{a,b,c}`) |
+| **wave15_2 phase 1** (`wave15_2.sh`) | **`v15_exec`** (solo!) | **R2** (ONE owner merges one execution path + `wgpu`-free `loft-std` + delete duplicate CLI renderer + `tools/check.sh lines` ratchet ≤ 18,000 scc) | Waits for `wave15.finished` & `wave4.finished`; runs **alone** per R2 |
+| **wave15_2 phase 2** (`wave15_2.sh`) | `v15_sky` (R1 #2–3), `v15_fma` (R7), `cap1b` (G8.2/G2 P2G atomics), `cap1c` (R3 6–10 uber-families, no auto-merge), `cap1d` (R6 rung 2 `EXPERIMENTAL_COOPERATIVE_MATRIX`), `v15_bloat` (R5 binary `import_table` + seed corpus + `ad.rs` + `loft lint`), `v15_metalfx` (R6 rung 3 `MetalFX` + `bk1b` MSL slots) → `iv15_2` | R1 #2–3, R3, R5, R6 rungs 2–3, R7, G2, G5.4, G8.2, G8.3 | Starts after `v15_exec` lands; shares `LOFT_MAX_STEPS=4` |
