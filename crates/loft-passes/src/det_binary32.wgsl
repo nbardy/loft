@@ -139,12 +139,17 @@ fn d_div_bits(x: u32, y: u32) -> u32 {
     let shift = u32(p.m < q.m);
     var rem = (p.m << shift) - q.m;
     var m = 1u;
-    // rem is <2^24. Shifting by seven fits in one u32.
-    for (var i = 0u; i < 4u; i++) {
-        let n = rem << 7u;
-        let digit = n / q.m;
-        rem = n - digit * q.m;
-        m = (m << 7u) | digit;
+    // Divide two 14-bit digits by the top 16 bits of the divisor.
+    // Ignoring its low 8 bits overestimates by at most one, since
+    // 2^14 * 255 < 2^23. The signed residual fits in 25 bits even
+    // though the shifted dividend and product each need 38 bits.
+    let divisor_hi = q.m >> 8u;
+    for (var i = 0u; i < 2u; i++) {
+        let guess = (rem << 6u) / divisor_hi;
+        let delta = (rem << 14u) - guess * q.m;
+        let over = bitcast<i32>(delta) < 0;
+        rem = delta + select(0u, q.m, over);
+        m = (m << 14u) | (guess - u32(over));
     }
     return d_pack(s, p.e - q.e + 127 - i32(shift), d_jam(m, 2u) | u32(rem != 0u));
 }
@@ -158,16 +163,19 @@ fn d_sqrt_bits(x: u32) -> u32 {
     let odd = (p.e - 127) & 1;
     let shift = 29u + u32(odd);
     let rad = d_wide_left(vec2u(p.m, 0u), shift);
-    var root = 0u;
-    var rem = 0u;
-    for (var i = 27u; i > 0u; i--) {
-        let pos = (i - 1u) * 2u;
-        let digit = select(rad.x, rad.y, pos >= 32u) >> (pos & 31u);
-        rem = (rem << 2u) | (digit & 3u);
-        let trial = (root << 2u) | 1u;
-        let bit = u32(rem >= trial);
-        rem -= trial * bit;
-        root = (root << 1u) | bit;
+    // The normalized radicand has 53 or 54 bits, so the first base-four
+    // digit gives root 1. Each subsequent nibble extends the root by two
+    // bits. Subtract (4*root + k)^2 - (4*root)^2 for the largest k that fits.
+    var root = 1u;
+    var rem = (rad.y >> 20u) - 1u;
+    for (var i = 13u; i > 0u; i--) {
+        let pos = (i - 1u) * 4u;
+        let nibble = (select(rad.x, rad.y, pos >= 32u) >> (pos & 31u)) & 15u;
+        let n = (rem << 4u) | nibble;
+        let base = root << 3u;
+        let k = u32(n >= base + 1u) + u32(n >= 2u * (base + 2u)) + u32(n >= 3u * (base + 3u));
+        rem = n - k * (base + k);
+        root = (root << 2u) | k;
     }
     return d_pack(0u, ((p.e - 127 - odd) / 2) + 127, root | u32(rem != 0u));
 }

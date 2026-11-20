@@ -13,6 +13,11 @@ pub trait Scalar: Clone + std::fmt::Debug {
     fn add(&self, o: &Self) -> Self;
     fn sub(&self, o: &Self) -> Self;
     fn mul(&self, o: &Self) -> Self;
+    /// In the interval domain, the product enclosure plus the offset enclosure
+    /// bounds the same real-valued expression. Concrete f32 rounds once.
+    fn mul_add(&self, factor: &Self, offset: &Self) -> Self {
+        self.mul(factor).add(offset)
+    }
     fn div(&self, o: &Self) -> Self;
     fn neg(&self) -> Self;
     fn un(&self, f: Un) -> Self;
@@ -977,6 +982,12 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
             }
             "abs" => un(&v[0], Un::Abs),
             "sqrt" => un(&v[0], Un::Sqrt),
+            "fma" => {
+                let [Val::S(a), Val::S(b), Val::S(c)] = v.as_slice() else {
+                    unreachable!("checked scalar fma");
+                };
+                Val::S(a.mul_add(b, c))
+            }
             "sin" => un(&v[0], Un::Sin),
             "cos" => un(&v[0], Un::Cos),
             "exp" => un(&v[0], Un::Exp),
@@ -1210,6 +1221,9 @@ impl Scalar for f32 {
     }
     fn mul(&self, o: &f32) -> f32 {
         self * o
+    }
+    fn mul_add(&self, factor: &f32, offset: &f32) -> f32 {
+        f32::mul_add(*self, *factor, *offset)
     }
     fn div(&self, o: &f32) -> f32 {
         self / o

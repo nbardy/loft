@@ -198,12 +198,14 @@ pub fn lower(
         em.out
             .push_str(&crate::fusion::event_wgsl(2, 2, "loft_tick"));
     }
-    writeln!(em.out, "struct Row {{\n{state}}}\n{declarations}").unwrap();
+    em.out.push_str(&declarations);
     let mut raw = std::collections::BTreeMap::new();
     em.constants(&constants);
     for f in functions {
         let symbol = format!("motion_{}", fn_symbol(&f.name.name));
-        if f.raw.is_some() { raw.insert(symbol.clone(), f.name.span); }
+        if f.raw.is_some() {
+            raw.insert(symbol.clone(), f.name.span);
+        }
         em.func(f, &symbol);
     }
     em.locals = table.fields.iter().map(|f| f.name.name.clone()).collect();
@@ -287,8 +289,12 @@ pub fn lower(
             resource: DispatchResource::Outbox,
         });
     }
+    let mut wgsl = det_check::lower(em.out, &raw, solver.name.span)?;
+    // Native readback reflects the packed field types from Row. Keep this
+    // declaration after compaction, which drops types unused by the entry.
+    writeln!(wgsl, "struct Row {{\n{state}}}").unwrap();
     Ok((
-        det_check::lower(em.out, &raw, solver.name.span)?,
+        wgsl,
         crate::program::Dispatch {
             module,
             entry: AdvanceArgs::ENTRY.into(),
@@ -383,7 +389,9 @@ mod tests {
     #[test]
     fn authored_solver_uses_the_fixed_tick_outbox() {
         let mut source = loft_ir::Sources::default();
-        source.add("solver-event.loft", r"
+        source.add(
+            "solver-event.loft",
+            r"
 state Contact { count: f = 0.0 }
 solver Impact over Contact writes Contact.{count} config { substeps: 4 } {
   if count == 0.0 {
@@ -392,16 +400,25 @@ solver Impact over Contact writes Contact.{count} config { substeps: 4 } {
   count = count + 1.0
 }
 schedule Main { run_solver(Impact) }
-");
+",
+        );
         let (modules, mut types) =
             crate::front(&source).unwrap_or_else(|e| panic!("{}", e.render(&source)));
         let program = Prog::index(&modules).unwrap();
         let (wgsl, dispatch) = lower(&program, &mut types, 0, program.solvers["Impact"], &[])
             .unwrap_or_else(|e| panic!("{}", e.render(&source)));
         assert!(
-            dispatch.bindings.iter().any(|b| matches!(b.resource, DispatchResource::Outbox))
+            dispatch
+                .bindings
+                .iter()
+                .any(|b| matches!(b.resource, DispatchResource::Outbox))
         );
-        crate::naga_module("Impact.advance", wgsl, &source, loft_ir::GpuFeatures::empty())
-            .unwrap_or_else(|e| panic!("{}", e.render(&source)));
+        crate::naga_module(
+            "Impact.advance",
+            wgsl,
+            &source,
+            loft_ir::GpuFeatures::empty(),
+        )
+        .unwrap_or_else(|e| panic!("{}", e.render(&source)));
     }
 }

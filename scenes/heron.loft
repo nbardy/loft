@@ -9,7 +9,12 @@ const HERON_BLOCK_Y = 0.20m
 const HERON_TOE_R = 0.018m
 const HERON_NECK = 1.55m
 
-fn heron_fish(t: s) -> p3@World = [-1.25 + 4.0 * smootherstep(0.2, 2.0, t), 0.13, 3.0]@World
+fn heron_fish(t: s) -> p3@World {
+  # Use the same rounded reciprocal of the score's duration in both twins.
+  let u = clamp((t - 0.2s) * (1.0 / (2.0s - 0.2s)), 0.0, 1.0)
+  let ease = u * u * u * ((6.0 * u - 15.0) * u + 10.0)
+  [-1.25 + 4.0 * ease, 0.13, 3.0]@World
+}
 
 kind HuntingHeron @World (
   x: f = 0.0, hip_y: f = HERON_REST, lean: f = 0.0,
@@ -64,8 +69,17 @@ fn heron_leg_end(h: HuntingHeron, side: f) -> p3@World =
   ik_reachable_end(heron_leg_root(h, side), heron_pin(h.x, h.foot_y, side),
     0.45m, 0.48m, dir([0.0, 0.0, -1.0]@World))
 
+fn heron_crouch(from: m, to: m, duration: s, t: s) -> m {
+  let u = clamp(t / duration, 0.0, 1.0)
+  let d = to - from
+  let inner = -15.0 * d + u * (6.0 * d)
+  # The outer Horner step rounds once to preserve the authored pose.
+  from + u * u * u * fma(u, inner, 10.0 * d)
+}
+
 fn heron_height(t: s) -> m {
-  if t <= HERON_TAKEOFF { return act_crouch(HERON_REST, HERON_CROUCH, 0.60s, HERON_TAKEOFF, t) }
+  if t < 0.60s { return heron_crouch(HERON_REST, HERON_CROUCH, 0.60s, t) }
+  if t <= HERON_TAKEOFF { return heron_crouch(HERON_CROUCH, HERON_REST, HERON_TAKEOFF - 0.60s, t - 0.60s) }
   if t >= HERON_LAND { return HERON_REST + HERON_BLOCK_Y }
   act_ballistic(HERON_REST, HERON_REST + HERON_BLOCK_Y, HERON_LAND - HERON_TAKEOFF, t - HERON_TAKEOFF)
 }

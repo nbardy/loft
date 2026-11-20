@@ -51,10 +51,24 @@ fn crab_pole(i: u) -> d3@World = dir([crab_side(i) * 0.4, 1.0, 0.0]@World)
 
 fn crab_anchor(h: Scramble, i: u) -> m = select(h.a_pin, h.b_pin, crab_group(i) == 1.0)
 
-fn crab_end(h: Scramble, i: u) -> p3@World {
+fn crab_toe(h: Scramble, i: u) -> p3@World {
   let swing = roam_toe(crab_anchor(h, i), h.aim, h.phase, crab_group(i) == h.swing, 0.095m)
-  let toe = [swing.x + crab_side(i) * CRAB_WIDTH + h.toe_bias, CRAB_TOE_R + swing.y, crab_depth(i)]@World
-  ik_reachable_end(crab_hip(h, i), toe, CRAB_SHORT, CRAB_LONG, crab_pole(i))
+  [swing.x + crab_side(i) * CRAB_WIDTH + h.toe_bias, CRAB_TOE_R + swing.y, crab_depth(i)]@World
+}
+
+fn crab_end(h: Scramble, i: u) -> p3@World =
+  ik_reachable_end(crab_hip(h, i), crab_toe(h, i), CRAB_SHORT, CRAB_LONG, crab_pole(i))
+
+fn crab_contact(h: Scramble, i: u) -> p3@World {
+  let root = crab_hip(h, i)
+  let toe = crab_toe(h, i)
+  let delta = toe - root
+  let span = dot(delta, delta)
+  let lo = CRAB_SHORT - CRAB_LONG
+  let hi = CRAB_SHORT + CRAB_LONG
+  # A reachable pin is its own projection. Preserve its exact coordinates.
+  if span >= lo * lo && span <= hi * hi { return toe }
+  ik_reachable_end(root, toe, CRAB_SHORT, CRAB_LONG, crab_pole(i))
 }
 
 law scramble_step(h: Scramble, dt) writes h.{x, vx, a_pin, b_pin, phase, swing, aim} {
@@ -82,7 +96,7 @@ check crab_planted(h: Scramble) -> m {
   var drift = 0.0
   for i in 0..8 {
     let anchor = [crab_anchor(h, i) + crab_side(i) * CRAB_WIDTH, CRAB_TOE_R, crab_depth(i)]@World
-    let error = dist(crab_end(h, i), anchor)
+    let error = dist(crab_contact(h, i), anchor)
     drift = max(drift, select(error, 0.0, h.phase > 0.0 && crab_group(i) == h.swing))
   }
   return if drift > 0.05mm { missed(drift) } else { held(0.05mm - drift) }
@@ -90,7 +104,7 @@ check crab_planted(h: Scramble) -> m {
 
 check crab_clearance(h: Scramble) -> m {
   var clearance = CRAB_HEIGHT
-  for i in 0..8 { clearance = min(clearance, crab_end(h, i).y - CRAB_TOE_R) }
+  for i in 0..8 { clearance = min(clearance, crab_contact(h, i).y - CRAB_TOE_R) }
   return if clearance < -2mm { missed(-clearance) } else { held(clearance + 2mm) }
 }
 

@@ -79,7 +79,8 @@ law boss_impact(h: HermitBoss, dt) writes h.{x, z, vx, vz, foot_x, foot_z, pin_x
   if sheared && h.slipping == 0.0 {
     emit_event(FootSlip, 0, 0, [h.foot_x, BOSS_TOE_R, h.foot_z, BOSS_MU_SLIP])
   }
-  let velocity = [h.vx, h.vz] + impulse / BOSS_MASS
+  # Round reciprocal mass once before converting the impulse to velocity.
+  let velocity = [h.vx, h.vz] + impulse * (1.0 / BOSS_MASS)
   let sliding = h.slipping > 0.0 || sheared
   let slide = if sliding { act_slip(velocity, BOSS_MU_SLIP, dt) } else { v4(0.0) }
   let planted = length(slide.zw) == 0.0

@@ -46,25 +46,46 @@ pub(crate) fn source_function(f: &FnDecl) -> Res<()> {
 struct Op {
     name: &'static str,
     args: Vec<Handle<E>>,
-    shapes: Vec<usize>,
+    shapes: Vec<Shape>,
 }
 impl Op {
     fn symbol(&self) -> String {
         symbol(self.name, &self.shapes)
     }
 }
-fn symbol(name: &str, shapes: &[usize]) -> String {
-    if shapes.iter().all(|&n| n == 1) {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Shape {
+    Scalar,
+    Vector(usize),
+    Matrix { columns: usize, rows: usize },
+}
+
+impl Shape {
+    fn suffix(self) -> String {
+        match self {
+            Self::Scalar => "1".into(),
+            Self::Vector(width) => width.to_string(),
+            Self::Matrix { columns, rows } => format!("m{columns}{rows}"),
+        }
+    }
+}
+
+fn symbol(name: &str, shapes: &[Shape]) -> String {
+    if shapes.iter().all(|&shape| shape == Shape::Scalar) {
         return format!("d_{name}");
     }
-    let dims = shapes.iter().map(usize::to_string).collect::<String>();
+    let dims = shapes
+        .iter()
+        .map(|shape| shape.suffix())
+        .collect::<String>();
     format!("d_{name}_{dims}")
 }
 
 fn wrappers() -> String {
     let mut out = String::new();
     let mut component = |op: &str, shapes: &[usize], input: &[&str], ret: &str| {
-        let name = symbol(op, shapes);
+        let dims = shapes.iter().map(usize::to_string).collect::<String>();
+        let name = format!("d_{op}_{dims}");
         let width = *shapes.iter().max().unwrap();
         let ty = |n, scalar: &str| {
             if n == 1 {
@@ -149,6 +170,7 @@ fn d_norm_{n}(a: vec{n}f) -> vec{n}f {{ return d_div_{n}1(a,d_len_{n}(a)); }}
         )
         .unwrap();
     }
+    matrix_wrappers(&mut out);
     out.push_str(
         "
 fn d_cross_33(a: vec3f, b: vec3f) -> vec3f {
@@ -163,10 +185,45 @@ fn d_invsqrt(a: f32) -> f32 { return d_div(d_float(0x3f800000u),d_sqrt(a)); }
     out
 }
 
-fn lanes(t: &T) -> Option<usize> {
+fn matrix_wrappers(out: &mut String) {
+    for columns in 2..=4 {
+        for rows in 2..=4 {
+            let m = format!("mat{columns}x{rows}f");
+            let suffix = format!("m{columns}{rows}");
+            let at =
+                |n, lane: &dyn Fn(usize) -> String| (0..n).map(lane).collect::<Vec<_>>().join(", ");
+            // Naga matrices are column-major. Use the same per-lane
+            // products and left-to-right sum as the CPU vector reductions.
+            let terms = (0..columns)
+                .map(|i| format!("d_mul_{rows}1(a[{i}], b[{i}])"))
+                .reduce(|a, b| format!("d_add_{rows}{rows}({a}, {b})"))
+                .unwrap();
+            let dot = at(columns, &|i| format!("d_dot_{rows}{rows}(a, b[{i}])"));
+            let transpose = at(rows, &|r| {
+                let row = at(columns, &|c| format!("a[{c}][{r}]"));
+                format!("vec{columns}f({row})")
+            });
+            writeln!(out, "
+fn d_mul_{suffix}{columns}(a: {m}, b: vec{columns}f) -> vec{rows}f {{ return {terms}; }}
+fn d_mul_{rows}{suffix}(a: vec{rows}f, b: {m}) -> vec{columns}f {{ return vec{columns}f({dot}); }}
+fn d_transpose_{suffix}(a: {m}) -> mat{rows}x{columns}f {{ return mat{rows}x{columns}f({transpose}); }}
+").unwrap();
+            for width in 2..=4 {
+                let product = at(width, &|c| format!("d_mul_{suffix}{columns}(a, b[{c}])"));
+                writeln!(out, "fn d_mul_{suffix}m{width}{columns}(a: {m}, b: mat{width}x{columns}f) -> mat{width}x{rows}f {{ return mat{width}x{rows}f({product}); }}").unwrap();
+            }
+        }
+    }
+}
+
+fn shape(t: &T) -> Option<Shape> {
     match t {
-        T::Scalar(_) => Some(1),
-        T::Vector { size, .. } => Some(*size as usize),
+        T::Scalar(_) => Some(Shape::Scalar),
+        T::Vector { size, .. } => Some(Shape::Vector(*size as usize)),
+        T::Matrix { columns, rows, .. } => Some(Shape::Matrix {
+            columns: *columns as usize,
+            rows: *rows as usize,
+        }),
         _ => None,
     }
 }
@@ -223,6 +280,7 @@ fn math(op: M) -> Option<&'static str> {
         M::InverseSqrt => "invsqrt",
         M::Dot => "dot",
         M::Cross => "cross",
+        M::Transpose => "transpose",
         M::Length => "len",
         M::Distance => "dist",
         M::Normalize => "norm",
@@ -268,9 +326,9 @@ impl Verify<'_> {
             }
             let shapes = args
                 .iter()
-                .map(|&h| lanes(ty(h)))
+                .map(|&h| shape(ty(h)))
                 .collect::<Option<Vec<_>>>()
-                .ok_or_else(|| self.error(at, "matrix arithmetic"))?;
+                .ok_or_else(|| self.error(at, "non-scalar arithmetic operand"))?;
             Ok(Some(Op { name, args, shapes }))
         };
         match *expr {
