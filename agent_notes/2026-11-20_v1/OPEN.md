@@ -257,7 +257,7 @@ All 18 layered frames exceeded frozen picture tolerance. Each independent still 
 
 ## Frame-cost directions (owner → Astra, 20 Nov)
 
-Command count is not the bottleneck: about 5 commands per frame, roughly 75 µs. Hermit-20 at 5.46 ms and Shrine at 3.90 ms are per-pixel shading. In order:
+Command count is not the bottleneck: about 5 commands per frame, roughly 75 µs. The initial hypothesis attributed Hermit-20 at 5.46 ms and Shrine at 3.90 ms to per-pixel shading. PF1 below measures Shrine’s primary visibility pass as the main cost. In order:
 1. **Shading cost:** march steps, BSDF cost and memory traffic per pixel, from naga telemetry plus per-pass timings.
 2. **Pass fusion for shading:** remove barriers and memory round trips between passes, as already done for motion ticks.
 3. **Apple tile memory:** keep the vis-buffer on-chip between raster and shade. wgpu cannot do this; it needs a native Metal backend. See the design question bk1.
@@ -276,3 +276,12 @@ The scientist's ranked playbook is in agent_notes/2026-11-20_v1/scientist_perf_p
   - bake noise, masks and IBL.
 - **Tier 2:** hardware RAY_QUERY, half-resolution secondary effects, a non-inlining policy for large helpers, FMA kept on in shading.
 - **Tier 3 (native Metal, after Tiers 1–2 are measured):** tile memory, async compute, ICBs and binary archives.
+
+## PF1 · M4 frame cost measured on 20 November
+
+At 1280 × 800, the 300-frame Hermit-20 orbit measured **5.585 ms p95** and the 100-frame fixed close Shrine measured **3.958 ms p95**. Both triangle controls were .096 ms. Pass medians in Cull / Vis / Shadow / Classify / Shade / Present order were **.004 / 1.417 / .649 / .000 / 2.188 / .173 ms** for Hermit and **.009 / 2.150 / .461 / .000 / .397 / .189 ms** for Shrine. Classify overlaps other work.
+
+- **Hermit is lighting-bound.** Omitting the twelve sky samples saved 1.542 ms of Shade. Expanding the same fourteen lighting iterations saved .356 ms of Shade but changed 13–29 pixels. The covered traced pixels at t=0 took 9 steps at the median, 23 at p95.
+- **Shrine is visibility-bound.** The folded lantern and analytic branches independently accounted for 1.066 and .957 ms of Vis in omission probes. Lantern hits took 129 steps at the median and 182 at p95. Halving L=22.871492 saved .264 ms Vis but changed 11,705 pixels in the close view.
+- **Two playbook premises are resolved.** Shade already uses per-kind indirect tile lists (1,238,848 / 759,168 Vis reads at t=0). Shading MSL permits FMA contraction, confirmed numerically. HDR is materialized. Physical DRAM bytes and hardware divergence remain unknown. Only timestamps are exposed here.
+- **Two Sol lanes.** Reusing the static sun map saved .564/.459 ms of frame p50 on Hermit/Shrine. Four checked march steps per outer iteration saved .384 ms of Shrine Vis with exact fixed-order images, but the all-ray treatment regressed Hermit frame p95 by 2.046 ms. The second lane targets the long tail after 24 scalar steps, predicting .31 ms on Shrine and .01 ms on Hermit. [PF1 report, raw timings and AOVs](design/pf1.md) · [Lane IDs](../2026-11-20_codex/pf1.lanes)
