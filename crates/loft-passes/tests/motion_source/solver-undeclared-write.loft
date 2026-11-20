@@ -1,3 +1,4 @@
+
 state Points { pos: array[p3@World, 64], prev: array[p3@World, 64] }
 solver Broken over Points writes Points.{pos} config { strategy: sym_gs } {
   prev[0] = pos[0]

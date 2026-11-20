@@ -1,5 +1,5 @@
 use loft_abi::MeshAsset;
-use loft_ir::{Code, Sources, Span};
+use loft_ir::{Code, Span};
 use loft_passes::{Prog, front, gltf::GltfScene};
 
 #[test]
@@ -14,9 +14,9 @@ fn scene_names_resolve_to_bundle_indices() {
 
 #[test]
 fn mesh_constructor_uses_asset_and_optional_lod() {
-    let mut src = Sources::default();
-    src.add("lib/mesh.loft", include_str!("../../../lib/mesh.loft"));
-    src.add("scene.loft", "build { emit Mesh(pose: place([1m,2m,3m]@World), asset: 9) }");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let src = loft_passes::source::Graph::text(&root, std::path::Path::new("scene.loft"),
+        "use stdlib::geometry::mesh::{Mesh}\nbuild { emit Mesh(pose: place([1m,2m,3m]@World), asset: 9) }");
     let (modules, _) = front(&src).unwrap_or_else(|d| panic!("{}", d.render(&src)));
     let p = Prog::index(&modules).unwrap();
     let fields = &p.kinds["Mesh"].row;
@@ -28,20 +28,7 @@ fn mesh_constructor_uses_asset_and_optional_lod() {
 #[test]
 fn imported_instances_share_one_mesh_module() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let mut src = Sources::default();
-    let mut libs: Vec<_> = std::fs::read_dir(root.join("lib"))
-        .unwrap()
-        .map(|p| p.unwrap().path())
-        .filter(|p| p.extension().is_some_and(|s| s == "loft"))
-        .collect();
-    libs.sort();
-    for path in libs {
-        src.add(path.display().to_string(), std::fs::read_to_string(&path).unwrap());
-    }
-    src.add(
-        root.join("crates/loft-passes/tests/phase5/anchor.loft").display().to_string(),
-        include_str!("phase5/anchor.loft"),
-    );
+    let src = loft_passes::source::Graph::file(&root.join("crates/loft-passes/tests/phase5/anchor.loft"), "").unwrap();
     let (program, _, twin) = loft_passes::compile(&src, &[]).unwrap_or_else(|d| panic!("{}", d.render(&src)));
     let meshes: Vec<_> = program.kinds.iter().filter(|k| k.name == "Mesh").collect();
     assert_eq!(meshes.len(), 1);

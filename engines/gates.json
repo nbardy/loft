@@ -36,7 +36,7 @@
         "shapes": 7,
         "warm_s": 0.2
       },
-      "file": "engines/capsules.loft",
+      "file": "stdlib/engines/capsules.loft",
       "name": "capsules-1",
       "set": {
         "count": 1
@@ -52,7 +52,7 @@
         "shapes": 140,
         "warm_s": 0.4
       },
-      "file": "engines/capsules.loft",
+      "file": "stdlib/engines/capsules.loft",
       "name": "capsules-20",
       "set": {
         "count": 20
@@ -68,7 +68,7 @@
         "shapes": 1,
         "warm_s": 0.2
       },
-      "file": "engines/blobs.loft",
+      "file": "stdlib/engines/blobs.loft",
       "name": "blobs-1",
       "set": {
         "count": 1
@@ -84,7 +84,7 @@
         "shapes": 20,
         "warm_s": 0.3
       },
-      "file": "engines/blobs.loft",
+      "file": "stdlib/engines/blobs.loft",
       "name": "blobs-20",
       "set": {
         "count": 20
@@ -100,7 +100,7 @@
         "shapes": 11,
         "warm_s": 0.06
       },
-      "file": "engines/hermit.loft",
+      "file": "stdlib/engines/hermit.loft",
       "name": "hermit-1",
       "set": {
         "count": 1
@@ -116,14 +116,14 @@
         "shapes": 11,
         "warm_s": 0.06
       },
-      "file": "engines/hermit.loft",
+      "file": "stdlib/engines/hermit.loft",
       "name": "hermit-20",
       "set": {
         "count": 20
       }
     },
     {
-      "file": "engines/coral_shrine.loft",
+      "file": "stdlib/engines/coral_shrine.loft",
       "name": "coral_shrine",
       "picture_frames": [
         0.0

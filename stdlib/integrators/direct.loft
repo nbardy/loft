@@ -1,0 +1,24 @@
+use stdlib::sky::environment::{sky_patch, sky_dome}
+use stdlib::lighting::emitters
+
+# The Bsdf under the sun (radiance factor 2.2, 2.0, 1.7, times the shadow map), plus the sky integrated by a fixed
+# 12-direction Fibonacci quadrature of the sphere (each 4 pi / 12 sr, times ambient occlusion, times an exposure of
+# 0.85), plus emit_lobe (the Bsdf at l = 0). A quadrature, not image-based light: glossy lobes see the sky as twelve
+# soft patches. One loop with one `eval_bsdf` site: each site is inlined, and Metal's compile time follows it.
+pub fn sun_sky(b: Bsdf, n: rgb, v: rgb, sun: rgb, shadow: f, ao: f) -> rgb {
+  var c = rgb(0.0)
+  for i in 0..14 {
+    var l = rgb(0.0)
+    var e = rgb(1.0)
+    if i == 1 {
+      l = sun
+      e = sun_color() * shadow
+    }
+    if i >= 2 {
+      l = sky_patch(u32(i - 2))
+      e = sky_dome(l) * (0.85 * 1.0471976 * ao)
+    }
+    c = c + eval_bsdf(b, n, v, l) * e
+  }
+  c
+}

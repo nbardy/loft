@@ -1,2 +1,0 @@
-# Delta emitter. Color is radiant intensity; reach bounds its direct-light support.
-kind PointLamp @World (pos: p3@World, color: rgb, reach: f = 10.0) {}

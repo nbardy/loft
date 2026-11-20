@@ -8,6 +8,7 @@ pub mod ad;
 pub mod check;
 mod cache;
 mod defaults;
+pub mod source;
 mod refine;
 mod provenance;
 mod infer;
@@ -21,12 +22,14 @@ use lip::Iv;
 use loft_parse::ast::*;
 use crate::program::{abi, Draw, Instance, KindTable, Orbit, Pass, Program, ShaderModule};
 use loft_ir::{Code, Diag, Res, Sources, Span};
+use source::Graph;
 use std::collections::{BTreeMap, HashSet};
 use std::time::Instant;
 
 /// The program's items by name. Built from parsed modules; cheap to rebuild.
 pub struct Prog<'a> {
     dimensions: std::collections::HashMap<Span, Dimension>,
+    links: BTreeMap<(u16, &'a str), &'a str>,
     pub fns: BTreeMap<&'a str, &'a FnDecl>,
     pub kinds: BTreeMap<&'a str, &'a KindDecl>,
     /// Declaration order; a kind's index here is its stage-0 table.
@@ -53,6 +56,9 @@ impl<'a> Prog<'a> {
     pub fn index(modules: &'a [Module]) -> Res<Prog<'a>> {
         let mut p = Prog {
             dimensions: modules.iter().flat_map(|m| m.dimensions.iter().copied()).collect(),
+            links: modules.iter().filter_map(|m| m.file.map(|file| (file, &m.links))).flat_map(|(file, links)| {
+                links.iter().map(move |(name, key)| ((file, name.as_str()), key.as_str()))
+            }).collect(),
             fns: BTreeMap::new(),
             kinds: BTreeMap::new(),
             kind_order: vec![],
@@ -86,13 +92,7 @@ impl<'a> Prog<'a> {
                         }
                     }
                 }
-                Item::Use(path) => {
-                    let parts: Vec<_> = path.iter().map(|n| n.name.as_str()).collect();
-                    if !matches!(parts.as_slice(), ["std", "geom" | "light" | "math" | "color" | "noise" | "quant"] | ["engines", "realtime" | "reference" | "woodblock" | "spectral_caustic"]) {
-                        let span = path.first().unwrap().span.to(path.last().unwrap().span);
-                        return Err(Diag::new(Code::E011, span, format!("unresolved import {}", parts.join("::")), "use a module supplied by the loaded prelude"));
-                    }
-                }
+                Item::Use(_) => {}
                 Item::Camera(_) => {}
                 Item::Body(n, items) => {
                     name(n)?;
@@ -184,6 +184,12 @@ impl<'a> Prog<'a> {
         Ok(p)
     }
 
+    pub(crate) fn linked(&self, owner: Span, name: &str) -> Res<&'a str> {
+        self.links.get(&(owner.file, name)).copied().ok_or_else(|| {
+            Diag::new(Code::E011, owner, format!("missing renderer binding `{name}`"), "declare or import it in the engine module")
+        })
+    }
+
     fn continuous_params(&self) -> impl Iterator<Item = (&str, &ConstDecl)> {
         self.consts.iter().filter(|(_, c)| c.comptime && matches!(&c.ty, Some(TyExpr::Name(n)) if n.name == "f32")).map(|(&name, &c)| (name, c))
     }
@@ -219,13 +225,8 @@ impl<'a> Prog<'a> {
 }
 
 /// Parse every file, then generate the derivative fns `diff` asked for (one more module at the end).
-pub fn parse_all(src: &Sources) -> Res<Vec<Module>> {
-    Ok(parse_program(src)?.0)
-}
-
-fn parse_program(src: &Sources) -> Res<(Vec<Module>, bool)> {
-    let mut next = 0;
-    let mut modules = src.files.iter().enumerate().map(|(i, (_, text))| parse::parse(i as u16, text, &mut next)).collect::<Res<Vec<_>>>()?;
+pub fn parse_all(src: &Graph) -> Res<Vec<Module>> {
+    let (mut modules, mut next) = src.parsed()?;
     // Certify the normalized function and the actual resolved call closure. A
     // comment or a different function in the same file has no bearing on it.
     let certified = {
@@ -267,14 +268,10 @@ fn parse_program(src: &Sources) -> Res<(Vec<Module>, bool)> {
         };
         f.attrs.push(Attr { name: Ident { name: "lipschitz".into(), span: sp }, args: vec![ax] });
     }
-    let standalone_compute = modules.iter().flat_map(|m| &m.items).any(|item| {
-        matches!(item, Item::Schedule(s) if s.passes.iter().any(|p| p.resources.is_some())
-            && s.passes.iter().all(|p| p.resources.is_some() || p.verb.name == "table"))
-    });
-    defaults::schedule(&mut modules,&mut next)?;
+
     infer::run(&mut modules)?;
     ad::run(&mut modules, &mut next)?;
-    Ok((modules, standalone_compute))
+    Ok(modules)
 }
 
 /// The space a kind's queries are asked in: the surface's point, or the first point parameter.
@@ -518,7 +515,7 @@ impl Compiled {
             let a = unit(TWIN_LIGHT);
             let t = unit([n[1] * a[2] - n[2] * a[1], n[2] * a[0] - n[0] * a[2], n[0] * a[1] - n[1] * a[0]]);
             let lt = std::array::from_fn(|i| n[i] * 0.5 + t[i] * 0.866_025_4);
-            let b = Val::Bsdf(vec![eval::Layer::Lobe("ggx".into(), vec![v3(mesh.color), Val::S(mesh.roughness), Val::S(mesh.metal)])]);
+            let b = Val::Bsdf(vec![eval::Layer::Lobe(prog.linked(k.name.span, "ggx")?.into(), vec![v3(mesh.color), Val::S(mesh.roughness), Val::S(mesh.metal)])]);
             out.material = of_v3(ev.eval_bsdf(&b, &v3(n), &v3(n), &v3(lt), sp)?);
             return Ok(out);
         }
@@ -593,7 +590,7 @@ fn kind_args<'p>(p: &Prog<'p>, pd: &PassDecl) -> Res<Vec<&'p str>> {
         let ExprKind::Name(n) = &a.value.kind else {
             return Err(Diag::new(Code::E011, a.value.span, "expected kind name", "name a declared drawable kind"));
         };
-        if a.value.span.file == Span::NONE.file && matches!(n.as_str(), "Drawables" | "Casters") {
+        if p.schedule.is_some_and(|s| s.implicit) && matches!(n.as_str(), "Drawables" | "Casters") {
             kinds.extend(p.kind_order.iter().copied().filter(|k| {
                 let kind = p.kinds[k];
                 (!kind.queries.is_empty() || *k == "Mesh") && (n == "Drawables" || pose_field(kind).is_some())
@@ -682,7 +679,7 @@ fn naga_module(name: &str, text: String, src: &Sources, features: loft_ir::GpuFe
 pub const GPU_ORDER: [&str; 6] = ["cull_indirect", "render_bundle", "find_shadow_map", "tile_classify", "shade_tiles", "tonemap_aces"];
 
 /// Front end only: parse, index, check. For `loft check` and the error tests.
-pub fn front(src: &Sources) -> Res<(Vec<Module>, Vec<Ty>)> {
+pub fn front(src: &Graph) -> Res<(Vec<Module>, Vec<Ty>)> {
     let mut modules = parse_all(src)?;
     let mut types = vec![];
     check_modules(&mut modules, &mut types)?;
@@ -700,41 +697,41 @@ fn check_modules(modules: &mut [Module], types: &mut Vec<Ty>) -> Res<Option<Span
     Ok(effects.pending_lowering)
 }
 
-pub fn compile(src: &Sources, overrides: &[(String, f64)]) -> Res<(Program, Report, Compiled)> {
+pub fn compile(src: &Graph, overrides: &[(String, f64)]) -> Res<(Program, Report, Compiled)> {
     compile_cached(src, overrides, std::path::Path::new("target/loft_cache"))
 }
 
-pub fn compile_cached(src: &Sources, overrides: &[(String, f64)], cache: &std::path::Path) -> Res<(Program, Report, Compiled)> {
+pub fn compile_cached(src: &Graph, overrides: &[(String, f64)], cache: &std::path::Path) -> Res<(Program, Report, Compiled)> {
     compile_impl(src, overrides, &[], cache, emit::Aov::Beauty, loft_ir::GpuFeatures::empty())
 }
 
 /// Re-derive local bounds and pack the sampled pose before drawing a requested
 /// still. The render path never culls an animated row against its time-zero box.
-pub fn compile_snapshot(src:&Sources,overrides:&[(String,f64)],samples:&[crate::program::MotionSample])->Res<(Program,Report,Compiled)> {
+pub fn compile_snapshot(src:&Graph,overrides:&[(String,f64)],samples:&[crate::program::MotionSample])->Res<(Program,Report,Compiled)> {
     compile_snapshot_aov(src, overrides, samples, emit::Aov::Beauty)
 }
 
-pub fn compile_snapshot_aov(src: &Sources, overrides: &[(String, f64)], samples: &[crate::program::MotionSample], aov: emit::Aov) -> Res<(Program, Report, Compiled)> {
+pub fn compile_snapshot_aov(src: &Graph, overrides: &[(String, f64)], samples: &[crate::program::MotionSample], aov: emit::Aov) -> Res<(Program, Report, Compiled)> {
     compile_impl(src, overrides, samples, std::path::Path::new("target/loft_cache"), aov, loft_ir::GpuFeatures::empty())
 }
 
-pub fn compile_aov(src: &Sources, overrides: &[(String, f64)], aov: emit::Aov) -> Res<(Program, Report, Compiled)> {
+pub fn compile_aov(src: &Graph, overrides: &[(String, f64)], aov: emit::Aov) -> Res<(Program, Report, Compiled)> {
     compile_for_device(src, overrides, aov, loft_ir::GpuFeatures::empty())
 }
 
 /// Link source-authored compute for the features enabled on the host's device.
-pub fn compile_for_device(src: &Sources, overrides: &[(String, f64)], aov: emit::Aov, features: loft_ir::GpuFeatures) -> Res<(Program, Report, Compiled)> {
+pub fn compile_for_device(src: &Graph, overrides: &[(String, f64)], aov: emit::Aov, features: loft_ir::GpuFeatures) -> Res<(Program, Report, Compiled)> {
     compile_impl(src, overrides, &[], std::path::Path::new("target/loft_cache"), aov, features)
 }
 
-fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::program::MotionSample], cache: &std::path::Path, aov: emit::Aov, features: loft_ir::GpuFeatures) -> Res<(Program, Report, Compiled)> {
+fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::program::MotionSample], cache: &std::path::Path, aov: emit::Aov, features: loft_ir::GpuFeatures) -> Res<(Program, Report, Compiled)> {
     let mut ms = vec![];
     let mut clock = Instant::now();
     let mut lap = |name: &'static str, ms: &mut Vec<(&'static str, f64)>| {
         ms.push((name, clock.elapsed().as_secs_f64() * 1e3));
         clock = Instant::now();
     };
-    let (mut modules, standalone) = parse_program(src)?;
+    let mut modules = parse_all(src)?;
     let meshes = gltf::lower(src, &mut modules)?;
     for c in modules.iter_mut().flat_map(|m|&mut m.items).filter_map(|it|if let Item::Const(c)=it{Some(c)}else{None}){
         if c.comptime && let Some((_,v))=overrides.iter().find(|(n,_)|n==&c.name.name){
@@ -784,10 +781,10 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
     let mut shadow_size = 0u32;
     let mut path = None;
     let mut path_entry = None;
-    let mut print = false;
+    let mut paper = None;
     let has_shadow_pass = sched.passes.iter().any(|p| p.verb.name == "find_shadow_map");
     let mut emitted_passes = HashSet::new();
-    let mut compute = AuthoredCompute { standalone, ..AuthoredCompute::default() };
+    let mut compute = AuthoredCompute { standalone: src.compute_only(), ..AuthoredCompute::default() };
     let mut compute_rows = BTreeMap::new();
     let mut available: HashSet<&str> = ["FrameUniform", "InputsBuf", "ParamsBuf", "RowTables", "LutTables", "BodyTables", "StateBuf", "PoseBuf"].into_iter().collect();
     available.extend(p.bakes.keys().copied());
@@ -944,7 +941,7 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
                     return Err(Diag::new(Code::E505, pd.verb.span, "duplicate path pass", "schedule one path integrator"));
                 }
             }
-            "outline_and_paper" => { print = true; }
+            "outline_and_paper" => { paper = Some(p.linked(pd.verb.span, "paper_grain")?); }
             "tonemap_aces" => {
                 sky = Some(fn_name_arg(&p, pd, "sky")?);
                 passes.push(Pass::Present);
@@ -1390,7 +1387,7 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
         shadow_size = 0;
         emit::paths::module(&p, &types, &kinds, &texts, &lut_refs, path, path_entry.expect("checked path entry"))?
     } else {
-        emit::paths::present(&p, &types, sky, aov, print)
+        emit::present_module(&p, &types, sky, aov, paper)
     };
     let shared = texts.len();
     texts.push(("cull".into(), emit::cull_module(ids.len() == 1)));
@@ -1553,7 +1550,7 @@ impl AuthoredCompute {
     }
 
     fn lower(
-        &mut self, p: &Prog<'_>, types: &mut Vec<Ty>, src: &Sources, overrides: &[(String, f64)],
+        &mut self, p: &Prog<'_>, types: &mut Vec<Ty>, src: &Graph, overrides: &[(String, f64)],
         (decl, resources, rows): (&PassDecl, &PassResources, &BTreeMap<&str, &str>),
         features: loft_ir::GpuFeatures,
     ) -> Res<()> {
@@ -1596,8 +1593,7 @@ impl AuthoredCompute {
                 let extent = compute_extent(p, types, overrides, &extent.value)?;
                 let file = serde_json::from_str::<String>(file).map_err(|e| err(format!("invalid WGSL file literal: {e}")))?;
                 let entry = serde_json::from_str::<String>(entry).map_err(|e| err(format!("invalid WGSL entry literal: {e}")))?;
-                let origin = &src.files[decl.label.span.file as usize].0;
-                let path = std::path::Path::new(origin).with_file_name(file);
+                let path = src.source_path(decl.label.span.file).with_file_name(file);
                 let file = std::fs::read_to_string(&path).map_err(|e| err(format!("{}: {e}", path.display())))?;
                 let (wgsl, bindings) = link_raw_compute(&file, &entry, &allowed, &self.bundle.tables).map_err(err)?;
                 (entry, extent, wgsl, bindings, Vec::new(), Determinism::NonDet)

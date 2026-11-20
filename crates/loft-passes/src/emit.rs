@@ -118,7 +118,7 @@ pub(crate) fn motion_math(name: &str) -> MotionMath {
     }
 }
 
-fn fn_symbol(n: &str) -> String {
+pub(crate) fn fn_symbol(n: &str) -> String {
     match n.split_once('#') {
         Some(("", internal)) => format!("loft_internal_{internal}"),
         Some((kind, helper)) => format!("loft_kind_{}_{}_{}", kind.len(), kind, helper),
@@ -187,6 +187,7 @@ impl<'a> References<'a> {
         let mut refs = Self { proof_only, ..Self::default() };
         let mut locals = f.params.iter().map(|p| p.name.name.as_str()).collect();
         refs.block(&f.body, &mut locals);
+        if let Some(raw) = &f.raw { refs.calls.extend(&raw.references); }
         refs
     }
 
@@ -318,7 +319,12 @@ fn reachable_impl<'a>(p: &Prog<'a>, roots: &[&'a FnDecl], extra: &[&str], proof_
             }
         }
         for c in refs.calls {
-            if let Some(g) = p.fns.get(c.name.as_str())
+            let resolved = p.fns.get(c.name.as_str()).or_else(|| {
+                if c.name != "sky" { return None; }
+                let key = p.linked(c.span, "sky_dome").ok()?;
+                p.fns.get(key)
+            });
+            if let Some(g) = resolved
                 && !seen.iter().any(|s| std::ptr::eq(*s, *g))
                 && !roots.iter().any(|s| std::ptr::eq(*s, *g))
             {
@@ -739,7 +745,10 @@ impl<'p, 'a> Emitter<'p, 'a> {
                     match call.query {
                         Trace { ray } => return format!("loft_trace({world}, {ray})"),
                         Visible { a, b } => return format!("loft_visible({world}, {a}, {b})"),
-                        Sky { direction } => return format!("loft_user_sky_dome({direction})"),
+                        Sky { direction } => {
+                            let key = self.p.linked(callee.span, "sky_dome").expect("checked sky binding");
+                            return format!("{}({direction})", fn_symbol(key));
+                        }
                         Medium { point } => return format!("loft_medium({world}, {point})"),
                         Material { .. } | Light { .. } => {}
                     }
@@ -922,6 +931,43 @@ pub(crate) fn kind_module_edit(
     emit_kind_module(p, types, k, light, luts, draw, aov, Some(edit))
 }
 
+fn traced_march(count_steps: bool) -> String {
+    let mut out = String::from(
+        r"  // Sphere trace with the row's derived Lipschitz bound (hidden column `loft_lip`).
+  var t = max(span.x, 0.0);
+  let step = 1.0 / row.loft_lip;
+  const march_limit = 0u;
+  const march_hit = 1u;
+  const march_interval = 2u;
+  var march_exit = march_limit;
+",
+    );
+    if count_steps {
+        out.push_str("  var steps = 0u;\n");
+    }
+    // A hit owns the distance before the advance. Even in a group, an interval
+    // exit must break before the next sample, and sample 192 can still hit.
+    let step = |out: &mut String, indent| {
+        if count_steps {
+            writeln!(out, "{indent}steps += 1u;").unwrap();
+        }
+        writeln!(out, "{indent}let d = q_trace(row, lro + lrd * t);
+{indent}if d < 1e-4 + 2e-4 * t {{ march_exit = march_hit; break; }}
+{indent}t += d * step;
+{indent}if t > span.y {{ march_exit = march_interval; break; }}").unwrap();
+    };
+    out.push_str("  for (var i = 0u; i < 24u; i++) {\n");
+    step(&mut out, "    ");
+    out.push_str("  }\n  if march_exit == march_limit {\n    for (var i = 0u; i < 42u; i++) {\n");
+    for _ in 0..4 {
+        out.push_str("      {\n");
+        step(&mut out, "        ");
+        out.push_str("      }\n");
+    }
+    out.push_str("    }\n  }\n  if march_exit != march_hit { discard; }\n");
+    out
+}
+
 fn emit_kind_module(
     p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[LutRef],
     draw: Draw, aov: Aov, edit: Option<&str>,
@@ -933,13 +979,15 @@ fn emit_kind_module(
     let mut roots: Vec<&FnDecl> = k.queries.iter().map(|(_, f)| f).collect();
     roots.extend(k.fns.iter());
     let mesh = matches!(draw, Draw::Mesh { .. });
-    let extra = [light, "ggx"];
-    let (lib, consts) = reachable(p, &roots, &extra[..if mesh { 2 } else { 1 }]);
+    let mesh_lobe = mesh.then(|| p.linked(k.name.span, "ggx")).transpose()?;
+    let mut extra = vec![light];
+    extra.extend(mesh_lobe);
+    let (lib, consts) = reachable(p, &roots, &extra);
     em.row_header(k);
     // The Bsdf struct: one field per bound lobe argument, in the material's lobe order.
     let layout = if mesh { Layout::default() } else { material_layout(p, k)? };
     let mut lobes: Vec<_> = layout.lobes.iter().map(|(name, args)| (*name, args.len())).collect();
-    if mesh { lobes.push(("ggx", 3)); }
+    if let Some(lobe) = mesh_lobe { lobes.push((lobe, 3)); }
     let invariants = lobes.iter().map(|(name, _)| {
         if light == "sun_sky" { lighting::invariant_lets(p, p.fns[name]) } else { Vec::new() }
     }).collect::<Vec<_>>();
@@ -1020,6 +1068,7 @@ fn emit_kind_module(
     }
     em.sampled_textures();
     // Draw-form glue: the vis entry points, how shade rebuilds the hit, and the twin's geometry.
+    let count_steps = aov == Aov::SdfSteps && draw == Draw::Traced && edit.is_none();
     let (mut vis, mut geometry, twin_geo) = match draw {
         Draw::Surface { nu, nv } => (
             format!(
@@ -1074,16 +1123,14 @@ struct FsOut {{ @location(0) vis: vec2<u32> }}
         Draw::Mesh { .. } => crate::world::mesh::draw(),
         Draw::Analytic | Draw::Traced => {
             let (hit, split_ao) = match draw {
-                Draw::Analytic => ("  // Closed form: the author's `visible` query, in the kind's space (a rigid pose keeps t).\n  let t = q_visible(row, lro, lrd);\n  if t < 0.0 { discard; }\n",
+                Draw::Analytic => ("  // Closed form: the author's `visible` query, in the kind's space (a rigid pose keeps t).\n  let t = q_visible(row, lro, lrd);\n  if t < 0.0 { discard; }\n".to_owned(),
                     light == "woodblock_pigment" && aov == Aov::Beauty),
-                Draw::Traced if edit.is_some() => ("  let t = loft_edit_march(row, lro, lrd, span);\n  if t < 0.0 { discard; }\n", false),
-                Draw::Traced => ("  // Sphere trace with the row's derived Lipschitz bound (hidden column `loft_lip`).\n  \
-                     var t = max(span.x, 0.0);\n  let step = 1.0 / row.loft_lip;\n  var hit = false;\n  \
-                     for (var i = 0u; i < 192u; i++) {\n    let d = q_trace(row, lro + lrd * t);\n    \
-                     if d < 1e-4 + 2e-4 * t { hit = true; break; }\n    t += d * step;\n    if t > span.y { break; }\n  }\n  \
-                     if !hit { discard; }\n", false),
+                Draw::Traced if edit.is_some() => ("  let t = loft_edit_march(row, lro, lrd, span);\n  if t < 0.0 { discard; }\n".to_owned(), false),
+                Draw::Traced => (traced_march(count_steps), false),
                 Draw::Surface { .. } | Draw::Mesh { .. } => unreachable!("ray draw"),
             };
+            // Diagnostic-only Vis word: 24 high distance bits and the 8-bit step count.
+            let distance = if count_steps { "((bitcast<u32>(t) & 0xffffff00u) | steps)" } else { "bitcast<u32>(t)" };
             let visible_twin = if q(QueryKind::Visible) { "q_visible(row, pl, dl)" } else { "0.0" };
             (
                 format!(
@@ -1130,7 +1177,7 @@ fn loft_box(ro: vec3<f32>, rd: vec3<f32>, lo: vec3<f32>, hi: vec3<f32>) -> vec2<
   let lro = loft_xf_pt(xf, ro);
   let lrd = loft_xf_vec(xf, rd);
 {hit}  let clip = frame.view_proj * vec4<f32>(ro + rd * t, 1.0);
-  return FsOut(vec2<u32>((kp.kind_id << 24u) | v.row, bitcast<u32>(t)), clip.z / clip.w);
+  return FsOut(vec2<u32>((kp.kind_id << 24u) | v.row, {distance}), clip.z / clip.w);
 }}
 "
                 ),
@@ -1251,11 +1298,7 @@ fn loft_box(ro: vec3<f32>, rd: vec3<f32>, lo: vec3<f32>, hi: vec3<f32>) -> vec2<
         }
         Aov::SdfSteps => {
             diagnostics = aov::TRACE_STEPS;
-            if draw == Draw::Traced {
-                // Diagnostic-only Vis word: 24 high distance bits and the 8-bit step count.
-                vis = vis.replace("var hit = false;", "var hit = false; var steps = 0u;")
-                    .replace("let d = q_trace(row, lro + lrd * t);", "steps += 1u; let d = q_trace(row, lro + lrd * t);")
-                    .replace("bitcast<u32>(t)", "((bitcast<u32>(t) & 0xffffff00u) | steps)");
+            if count_steps {
                 geometry = geometry.replace("bitcast<f32>(v.y)", "bitcast<f32>(v.y & 0xffffff00u)");
                 "loft_steps(f32(v.y & 255u) / 192.0)".into()
             } else {
@@ -1501,15 +1544,16 @@ var<workgroup> mask: atomic<u32>;
 }
 
 /// `sky` is the library fn named by the schedule's present pass.
-pub fn present_module(p: &Prog, types: &[Ty], sky: &str, aov: Aov, print: bool) -> String {
+pub fn present_module(p: &Prog, types: &[Ty], sky: &str, aov: Aov, paper: Option<&str>) -> String {
     let mut em = Emitter::new(p, types);
     em.header(abi::NONCE_PLACEHOLDER);
-    let roots = if print && aov == Aov::Beauty { vec![sky, "paper_grain"] } else { vec![sky] };
+    let mut roots = vec![sky];
+    if aov == Aov::Beauty { roots.extend(paper); }
     let (lib, consts) = reachable(p, &[], &roots);
     em.library(&lib, &consts);
     let sky=fn_symbol(sky);
-    let resolve = match aov {
-        Aov::Beauty if print => format!(r"
+    let resolve = match (aov, paper.map(fn_symbol)) {
+        (Aov::Beauty, Some(paper)) => format!(r"
   let center = textureLoad(vis_tex, px, 0).x;
   if center == LOFT_EMPTY {{ c = {sky}(loft_ray(pos.xy), normalize(frame.sun.xyz)); }}
   let size = vec2<i32>(textureDimensions(vis_tex));
@@ -1522,12 +1566,12 @@ pub fn present_module(p: &Prog, types: &[Ty], sky: &str, aov: Aov, print: bool) 
   }}
   let hatch = smoothstep(0.74,0.98,cos((pos.x+pos.y)*1.256637)) * (1.0-smoothstep(0.08,0.32,dot(c,vec3<f32>(0.2126,0.7152,0.0722))));
   c = mix(c, vec3<f32>(0.025,0.02,0.035), min(line + 0.42*hatch,1.0));
-  return vec4<f32>(loft_user_paper_grain(loft_aces(c),pos.xy,0.04,0.03),1.0);
+  return vec4<f32>({paper}(loft_aces(c),pos.xy,0.04,0.03),1.0);
 "),
-        Aov::Beauty => format!("if textureLoad(vis_tex, px, 0).x == LOFT_EMPTY {{ c = {sky}(loft_ray(pos.xy), normalize(frame.sun.xyz)); }} return vec4<f32>(loft_aces(c), 1.0);"),
-        Aov::Overdraw => "return vec4<f32>(c, 1.0);".into(),
-        Aov::Depth => "return vec4<f32>(select(c, vec3<f32>(1.0), textureLoad(vis_tex, px, 0).x == LOFT_EMPTY), 1.0);".into(),
-        Aov::Albedo | Aov::Normal | Aov::Id | Aov::SdfSteps | Aov::LipschitzRatio =>
+        (Aov::Beauty, None) => format!("if textureLoad(vis_tex, px, 0).x == LOFT_EMPTY {{ c = {sky}(loft_ray(pos.xy), normalize(frame.sun.xyz)); }} return vec4<f32>(loft_aces(c), 1.0);"),
+        (Aov::Overdraw, _) => "return vec4<f32>(c, 1.0);".into(),
+        (Aov::Depth, _) => "return vec4<f32>(select(c, vec3<f32>(1.0), textureLoad(vis_tex, px, 0).x == LOFT_EMPTY), 1.0);".into(),
+        (Aov::Albedo | Aov::Normal | Aov::Id | Aov::SdfSteps | Aov::LipschitzRatio, _) =>
             "return vec4<f32>(select(c, vec3<f32>(0.0), textureLoad(vis_tex, px, 0).x == LOFT_EMPTY), 1.0);".into(),
     };
     em.out += &format!(

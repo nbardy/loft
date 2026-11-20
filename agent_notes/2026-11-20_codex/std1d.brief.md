@@ -27,3 +27,12 @@ Speed rules (lead, 20 Nov): keep the ceremony small.
 - ONE paired timing run, if any; the integrator does the final timing.
 - Do not re-read the whole spec. Read only the sections your task names.
 - Iterate cargo check until it compiles, then run your focused tests only. The integrator runs the full suite.
+
+Std rule: a lib function must replace a recurring, sufficiently complicated block of ≥3× its call's tokens. NEVER add renamed wrappers for standard patterns (map, await, filter, fold) or one-or-two-call helpers. Code lives in the stdlib/ tree (design/std1.md); forking is copy-paste.
+Base: start from origin/main AFTER the std1a restructure (stdlib/ tree), not the old flat lib/.
+
+**R4 Style↔Integrator Contract Addendum (20 Nov, supersedes §1 where they differ):**
+Split the surface contract cleanly into two honest interfaces rather than forcing NPR styles onto every physical integrator:
+1. Physical: `fn material(hit: SurfaceHit) -> Bsdf` (works under every physical integrator: `realtime`, `reference`, `spectral_caustic`).
+2. Stylized: `fn shade_style(hit: SurfaceHit, light: LightSummary) -> rgb` where `LightSummary` carries `{ key_dir, key_vis, key_radiance, indirect_irradiance, ao, footprint_m, depth_m, id }`. `footprint_m` replaces non-portable fragment-only `dFdx/dFdy`.
+3. `woodblock` runs on both `realtime` (shadow map + baked sky) and `reference` (RT shadows + path-traced bounce color bleed) because both populate `LightSummary`; an integrator that does not populate `LightSummary` (e.g. `spectral_caustic`) MUST refuse a `Style` cleanly at compile time. Record this contract in `stdlib/README.md`.

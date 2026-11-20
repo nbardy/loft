@@ -1,1 +1,2 @@
+
 state Points checkpoint 0 { pos: array[p3@World, 64] }

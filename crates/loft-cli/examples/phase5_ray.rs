@@ -1,16 +1,11 @@
 //! Diagnostic for device negotiation and transformed triangle BLAS input.
 use loft_cli::native::{self, Loaded, ray_query};
-use loft_ir::Sources;
+use loft_passes::source::Graph;
+use std::path::Path;
 use wgpu::*;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut files = std::fs::read_dir("lib")?.map(|e| e.map(|e| e.path())).collect::<Result<Vec<_>, _>>()?;
-    files.sort();
-    let mut sources = Sources::default();
-    for path in files.into_iter().filter(|p| p.extension().is_some_and(|e| e == "loft"))
-        .chain(["crates/loft-passes/tests/phase5/anchor.loft".into()]) {
-        sources.add(path.display().to_string(), std::fs::read_to_string(&path)?);
-    }
+    let sources = Graph::file(Path::new("crates/loft-passes/tests/phase5/anchor.loft"), "")?;
     let (program, _, scene) = loft_passes::compile(&sources, &[]).map_err(|e| e.render(&sources))?;
     let triangles = scene.mesh_triangles().next().ok_or("missing imported triangles")?;
     let kind = program.kinds.iter().position(|k| k.name == "Mesh").ok_or("missing mesh kind")?;

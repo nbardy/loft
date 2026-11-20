@@ -1,3 +1,5 @@
+use stdlib::motion::solve::{solve_dist_edge}
+
 space Body Head
 body BirdBody {
   trunk { mass: 2.2kg, inertia: [0.18, 0.12, 0.22], rest_h: 0.85m, mu: 0.9, strength: 2.02 }

@@ -21,3 +21,6 @@ Task
 4. Trace a two-bounce path through two families with matching eval/sample/PDF. Exercise a structural graph edit and load one BSDF/light bundle through a versioned dispatch set or queued passes. Verify signature rejection, stable in-flight IDs and promotion. Keep the closed family case branch-free where its ID is already uniform.
 
 Final message ≤120 words.
+
+**R3 Variety Addendum (20 Nov, supersedes Task #2 auto-merge):**
+Per `docs/V1_5_GOALS.md` R3: implement 6–10 explicit material-family uber-shaders (`StandardPbr`, `LayeredCoat`, `StylizedInk`, `DielectricGlass`, `Emissive`, `Foliage`) over a packed `MaterialTable` (64–128 B rows) plus bindless textures (with `texture_2d_array`/atlas fallback on web) at 0 ms compile per new material. **CUT** automatic compiler merging of arbitrary kinds under a pipeline budget — compiled custom `kind`s + pipeline cache stay beside uber-families for novel math. **REJECT** using Tier 0 VM for full-screen shading (Tier 0 is for live geometry previews only).

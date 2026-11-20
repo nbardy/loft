@@ -272,22 +272,9 @@ fn l23a_vm_validates_and_dispatches_all_frozen_ids() {
 
 #[test]
 fn l23a_sphere_tape_matches_the_e_plus_twin() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../lib");
-    let mut files = std::fs::read_dir(root)
-        .unwrap()
-        .map(|p| p.unwrap().path())
-        .filter(|p| p.extension().is_some_and(|ext| ext == "loft"))
-        .collect::<Vec<_>>();
-    files.sort();
-    let mut src = loft_ir::Sources::default();
-    for file in files {
-        src.add(
-            file.display().to_string(),
-            std::fs::read_to_string(&file).unwrap(),
-        );
-    }
-    src.add(
-        "edit.loft",
+    use std::path::Path;
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let src = crate::source::Graph::text(&root, Path::new("edit.loft"),
         "space World Body
 param rough: f = 0.5 in 0.1..1
 param sun_yaw: f = 0.25 in -1..1
@@ -295,7 +282,9 @@ kind K @Body (pose: xf@Body>World, radius: f > 0) {
   trace(p) = sphere(p - [0, 0, 0]@Body, radius)
   material(p, n) = ggx([0.5, 0.5, 0.5], rough, 0)
 }
-build { emit K(pose: place([0, 0, 0]@World), radius: 0.5) }",
+build { emit K(pose: place([0, 0, 0]@World), radius: 0.5) }
+use stdlib::sdf::solid::{sphere}
+use stdlib::materials::bsdf::{ggx}",
     );
     let cache = tempfile::tempdir().unwrap();
     let (program, _, twin) = crate::compile_cached(&src, &[], cache.path())

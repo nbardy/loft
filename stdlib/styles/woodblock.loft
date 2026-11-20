@@ -1,0 +1,8 @@
+pub fn woodblock_pigment(b: Bsdf, n: rgb, v: rgb, sun: rgb, shadow: f, ao: f) -> rgb {
+  let nl = max(dot(n, sun), 0) * shadow
+  let bands = 0.25 + 0.27 * smoothstep(0.08, 0.11, nl) +
+    0.29 * smoothstep(0.41, 0.44, nl) + 0.24 * smoothstep(0.77, 0.80, nl)
+  let pigment = eval_bsdf(b, n, v, n) * 3.14159265
+  let wash = (1.0 - smoothstep(0.1, 0.65, n.y)) * 0.32
+  mix(pigment * bands * (0.7 + 0.3 * ao), [0.08, 0.12, 0.22], wash) + eval_bsdf(b, n, v, rgb(0.0))
+}

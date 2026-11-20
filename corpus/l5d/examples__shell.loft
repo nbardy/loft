@@ -1,3 +1,7 @@
+use stdlib::integrators::direct::{sun_sky}
+use stdlib::materials::bsdf::{ggx}
+use stdlib::sky::environment::{sky_color}
+
 # R0 source: examples/shell.ts. Camera: three.
 space World Local
 

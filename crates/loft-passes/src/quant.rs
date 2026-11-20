@@ -290,7 +290,7 @@ pub(crate) fn wgsl_prelude(shader: &str, features: GpuFeatures) -> String {
 /// Compile using the supplied host capabilities. The ordinary compiler
 /// entry point targets the portable baseline.
 pub fn compile(
-    sources: &loft_ir::Sources,
+    sources: &crate::source::Graph,
     overrides: &[(String, f64)],
     caps: loft_ir::HostCaps,
 ) -> loft_ir::Res<(crate::program::Program, crate::Report, crate::Compiled)> {

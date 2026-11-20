@@ -1,3 +1,8 @@
+use stdlib::engines::act::{act_crouch, act_ballistic}
+use stdlib::materials::bsdf::{ggx}
+use stdlib::motion::solve::{ik_reachable_end, solve_2bone_ik, solve_s_neck_ik}
+use stdlib::sdf::solid::{sphere, capsule, box_sdf}
+
 space World
 
 const HERON_REST = 0.85m

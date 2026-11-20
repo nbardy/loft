@@ -1,3 +1,5 @@
+use stdlib::geometry::mesh::{Mesh}
+
 build {
   let asset = import_gltf("primitives.gltf")
   emit Mesh(pose: place([0m, 0m, 0m]@World), asset: asset.mesh("Paired"))

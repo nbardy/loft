@@ -1,3 +1,9 @@
+use stdlib::engines::act::{act_hit_due, act_slip}
+use stdlib::materials::bsdf::{ggx, coat, emit_lobe}
+use stdlib::motion::solve::{quintic_plan, ik_reachable_end, solve_2bone_ik}
+use stdlib::noise::value::{fbm2}
+use stdlib::sdf::solid::{sphere, capsule, box_sdf, smin, round_box}
+
 space World
 
 const BOSS_HIT1 = 0.50s

@@ -19,10 +19,10 @@ sec() { [ -f "$2" ] || return 0; printf '\n\n===================================
   sec "SPEC README" "docs/spec/README.md" "precedence (07 > PATCH_V1_2 > 06 > 00-05) and lead rulings"
   for f in docs/spec/0*.md docs/spec/PATCH_V1_2.md docs/spec/QUIRKS.md; do sec "SPEC $(basename "$f" .md)" "$f" "your spec as we filed it (normative)"; done
   sec "GRAMMAR" "docs/spec/loft.lark" "the normative grammar"
-  sec "CODE SAMPLE: hermit engine" "engines/hermit.loft" "the hermit crab in E+ (3,021 tokens)"
+  sec "CODE SAMPLE: hermit engine" "stdlib/engines/hermit.loft" "the hermit crab in E+ (3,021 tokens)"
   sec "CODE SAMPLE: crab motion" "scenes/crab.loft" "a motion scene"
-  sec "CODE SAMPLE: motion library" "lib/motion.loft" "the motion std library"
-  sec "CODE SAMPLE: reference integrator" "engines/reference.loft" "the reference path tracer as an example engine"
+  sec "CODE SAMPLE: motion library" "stdlib/motion/solve.loft" "the motion std library"
+  sec "CODE SAMPLE: reference integrator" "stdlib/engines/reference.loft" "the reference path tracer as an example engine"
   printf '\n\n================================================================\n# REPO LAYOUT\n================================================================\n\n'
   git ls-files | cut -d/ -f1-2 | sort | uniq -c | sort -rn | head -40
   printf '\nRust lines per crate (src):\n'; for c in crates/*; do printf '%s %s\n' "$(basename "$c")" "$(git ls-files "$c/src" | grep '\.rs$' | xargs cat 2>/dev/null | wc -l)"; done

@@ -56,7 +56,7 @@ impl Map {
         self.changes
             .get(pos.checked_sub(1)?)?
             .1
-            // An embedded recipe has offsets for its own parser but no file in Sources.
+            // Generated code without source provenance carries Span::NONE.
             .filter(|s| s.file != Span::NONE.file)
     }
     pub fn expressions(&self, module: &naga::Module, src: &Sources) -> Vec<ExpressionOrigin> {

@@ -155,7 +155,7 @@ impl TraceSource {
         self.kind
     }
 
-    pub fn prepare(&self, edited: &Sources, overrides: &[(String, f64)]) -> Res<PreparedEdit> {
+    pub fn prepare(&self, edited: &crate::source::Graph, overrides: &[(String, f64)]) -> Res<PreparedEdit> {
         let start = Instant::now();
         let mut p = self.compiled.prog();
         let initial = p.kinds[self.name.as_str()];
@@ -174,7 +174,7 @@ impl TraceSource {
         let old_text = &self.source.files[file].1;
         let text = &edited.files[file].1;
         let mut next = self.compiled.types.len() as u32;
-        let module = loft_parse::parse(self.file, text, &mut next)?;
+        let module = edited.edited_module(self.file, &mut next)?;
         if !module.diffs.is_empty() {
             return Err(unsupported(
                 module.diffs[0].0.span,

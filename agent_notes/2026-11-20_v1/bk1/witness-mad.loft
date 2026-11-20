@@ -1,3 +1,6 @@
+use stdlib::materials::bsdf::{ggx}
+use stdlib::sdf::solid::{sphere}
+
 space World
 fn witness(v: rgb) -> rgb = wgsl(v: rgb) -> rgb {
   let x = v.x * v.y + v.z;

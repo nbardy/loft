@@ -1,3 +1,9 @@
+use stdlib::geometry::analytic::{ray_sphere, ray_ground}
+use stdlib::integrators::direct::{sun_sky}
+use stdlib::materials::bsdf::{ggx}
+use stdlib::sdf::solid::{sphere, box_sdf}
+use stdlib::sky::environment::{sky_color}
+
 # R0 source: examples/materials/refocus.ts. Camera: close.
 space World Local
 

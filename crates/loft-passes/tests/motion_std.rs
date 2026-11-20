@@ -1,34 +1,19 @@
 //! Exercise the authored scenes and their scheduled laws without a device.
 use loft_abi::{AdvanceArgs, VerdictTag};
-use loft_ir::{Sources, Span};
+use loft_ir::Span;
 use loft_parse::ast::{Arg, Expr, ExprKind, FnDecl, Item, NumSuffix, Stmt, Ty, TyExpr};
 use loft_passes::{
     Compiled, Prog, compile,
     eval::{Eval, RowVal, Val, concrete},
 };
-use std::{fs, path::Path};
+use std::path::Path;
 
 const DT: f32 = AdvanceArgs::DT;
 const LAST_TICK: u32 = 481;
 
 fn build(name: &str) -> Compiled {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let mut prelude: Vec<_> = fs::read_dir(root.join("lib"))
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .filter(|path| path.extension().is_some_and(|ext| ext == "loft"))
-        .collect();
-    prelude.sort();
-    let mut source = Sources::default();
-    for path in prelude
-        .into_iter()
-        .chain([root.join(format!("scenes/{name}.loft"))])
-    {
-        source.add(
-            path.strip_prefix(&root).unwrap().display().to_string(),
-            fs::read_to_string(&path).unwrap(),
-        );
-    }
+    let source = loft_passes::source::Graph::file(&root.join(format!("scenes/{name}.loft")), "").unwrap();
     let (program, _, mut code) =
         compile(&source, &[]).unwrap_or_else(|diag| panic!("{}", diag.render(&source)));
     assert_eq!(program.dispatches.len(), 1, "{name} motion dispatches");

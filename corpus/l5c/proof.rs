@@ -1,5 +1,5 @@
-// CPU-only corpus samples. Link with the prebuilt loft-passes and loft-ir rlibs.
-use loft_ir::Sources;
+// CPU-only corpus samples. Link with the prebuilt loft-passes rlib.
+use loft_passes::source::Graph;
 use loft_passes::program::{Draw, Instance, Program};
 use loft_passes::{Compiled, CpuQuery};
 use std::path::Path;
@@ -8,23 +8,8 @@ const UP: [f32; 3] = [0.0, 1.0, 0.0];
 const FRONT: [f32; 3] = [0.0, 0.0, 1.0];
 
 fn compile(scene: &str, view: u32) -> (Program, Compiled) {
-    let mut sources = Sources::default();
-    let mut lib = std::fs::read_dir("lib")
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .filter(|path| {
-            path.extension()
-                .is_some_and(|extension| extension == "loft")
-        })
-        .collect::<Vec<_>>();
-    lib.sort();
-    lib.push(Path::new("corpus/l5c").join(scene).with_extension("loft"));
-    for path in lib {
-        sources.add(
-            path.to_str().unwrap(),
-            std::fs::read_to_string(&path).unwrap(),
-        );
-    }
+    let path = Path::new("corpus/l5c").join(scene).with_extension("loft");
+    let sources = Graph::file(&path, "").unwrap();
     let (program, _, twin) = loft_passes::compile(&sources, &[("view".into(), f64::from(view))])
         .unwrap_or_else(|diag| panic!("{}", diag.render(&sources)));
     assert!(!program.modules.is_empty(), "{scene}");
@@ -100,6 +85,7 @@ fn truth(program: &Program, twin: &Compiled) {
                     );
                 }
             }
+            Draw::Mesh { .. } => panic!("the bead and lantern fixtures have no imported meshes"),
             Draw::Analytic | Draw::Traced => {
                 let center: [f32; 3] = std::array::from_fn(|i| (row.lo[i] + row.hi[i]) * 0.5);
                 let center_trace = query(twin, row, center, FRONT).trace;

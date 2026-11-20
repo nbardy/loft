@@ -1,24 +1,14 @@
 use loft_abi::LeafRef;
-use loft_ir::Sources;
+use loft_passes::source::Graph;
+use std::path::Path;
 use loft_passes::bvh::{Bvh2, BvhError, CpuWorld, Ray, WGSL};
 use loft_passes::program::{Draw, Instance, Program};
 use loft_passes::{Compiled, compile};
 use std::convert::Infallible;
 
 fn compile_scene(scene: &str, overrides: &[(&str, f64)]) -> (Program, Compiled) {
-    let mut src = Sources::default();
-    for (name, prelude) in [
-        ("core", include_str!("../../../lib/core.loft")),
-        ("bsdf", include_str!("../../../lib/bsdf.loft")),
-        ("light", include_str!("../../../lib/light.loft")),
-        ("post", include_str!("../../../lib/post.loft")),
-        ("analytic", include_str!("../../../lib/analytic.loft")),
-        ("sdf", include_str!("../../../lib/sdf.loft")),
-        ("world", include_str!("../../../lib/world.loft")),
-    ] {
-        src.add(name, prelude);
-    }
-    src.add("scene", scene);
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let src = Graph::text(&root, Path::new("probe.loft"), scene);
     let overrides: Vec<_> = overrides
         .iter()
         .map(|&(name, n)| (name.to_owned(), n))
@@ -276,7 +266,7 @@ fn loft_bvh_intersect(leaf: LoftLeafRef, ray: LoftRay) -> f32 {
 
 #[test]
 fn coral_shrine_has_analytic_branches_and_two_lantern_snapshots() {
-    let scene = include_str!("../../../engines/coral_shrine.loft");
+    let scene = include_str!("../../../stdlib/engines/coral_shrine.loft");
     let (primary, primary_twin) = compile_scene(scene, &[]);
     let (shadow, shadow_twin) = compile_scene(scene, &[("shrine_solid", 1.0)]);
     let mut validator = naga::valid::Validator::new(

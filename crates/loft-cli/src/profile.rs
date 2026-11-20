@@ -232,12 +232,12 @@ mod show_tests {
 
     #[test]
     fn shown_fixed_steps_execute_solver_and_prior() {
-        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/d1_edit/literal-old.loft");
-        let mut source = crate::sources(&fixture).unwrap();
-        source.files.pop();
-        source.add(
-            "motion-probe.loft",
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let source = loft_passes::source::Graph::text(&root, Path::new("motion-probe.loft"),
             r"
+use stdlib::motion::solve::{solve_dist_edge}
+use stdlib::materials::bsdf::{ggx}
+use stdlib::sdf::solid::{sphere}
 state Rope {
   pos: array[p3@World, 3]
   tip: f = 99.0

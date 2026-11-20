@@ -93,7 +93,8 @@ def lexical_input(source):
 def literal_rows():
     productions = (
         'block:       "{" (_NL? stmt (_sep stmt)* _sep?)? "}"',
-        '| "emit" UIDENT ("[" expr_list "]")? "(" named_args? ")"',
+        '| "emit" kind_ref ("[" expr_list "]")? "(" named_args? ")"',
+        'kind_ref: UIDENT | qualified',
         'named_args:  field_init ("," field_init)* ","?',
         'field_init:  LIDENT ":" expr',
         'unary_expr:  ("-" | "!") unary_expr | postfix_expr',

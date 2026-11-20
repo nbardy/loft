@@ -1,4 +1,6 @@
 use loft_ir::*;
+use loft_passes::source::Graph;
+use std::path::Path;
 use loft_passes::fusion::{self, RESULTS, ROWS};
 use loft_runner::Runner;
 use std::{collections::BTreeMap, sync::Arc};
@@ -8,23 +10,14 @@ const EVENTS: TableId = TableId(3);
 const BOSS: &str = include_str!("motion_lane/boss_events.loft");
 const PIN: &str = include_str!("../../../tests/fixtures/pin-drift.loft");
 
-fn sources(source: &str) -> Sources {
-    let lib = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../lib"));
-    let mut prelude: Vec<_> = std::fs::read_dir(lib)
-        .unwrap()
-        .map(|e| e.unwrap().path())
-        .filter(|p| p.extension().is_some_and(|e| e == "loft"))
-        .collect();
-    prelude.sort();
-    let mut src = Sources::default();
-    for path in prelude {
-        src.add(
-            path.display().to_string(),
-            std::fs::read_to_string(&path).unwrap(),
-        );
-    }
-    src.add("motion-proof.loft", source);
-    src
+fn sources(source: &str) -> Graph {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let text = if source.lines().any(|line| line.starts_with("use stdlib::")) {
+        source.to_owned()
+    } else {
+        format!("{source}\nuse stdlib::engines::act::*\nuse stdlib::engines::roam::*\nuse stdlib::motion::solve::*\nuse stdlib::sdf::solid::*\nuse stdlib::geometry::analytic::*\nuse stdlib::materials::bsdf::*")
+    };
+    Graph::text(&root, Path::new("motion-proof.loft"), &text)
 }
 
 fn fixture(source: &str, overrides: &[(String, f64)]) -> Bundle {
@@ -441,23 +434,15 @@ fn motion_cpu_rejects_overlapping_fields() {
     );
 }
 
-fn peer_sources(name: &str) -> Sources {
+fn peer_sources(name: &str) -> Graph {
     let root = std::env::var_os("LOFT_MOTION_FIXTURES")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")));
     let scene = root.join("scenes").join(format!("{name}.loft"));
-    let mut src = sources(&std::fs::read_to_string(scene).expect("supply the l23c scene fixtures"));
-    if std::env::var_os("LOFT_MOTION_FIXTURES").is_some() {
-        for file in ["lib/motion.loft", "engines/roam.loft", "engines/act.loft"] {
-            if !src.files.iter().any(|(p, _)| p.ends_with(file)) {
-                src.add(file, std::fs::read_to_string(root.join(file)).unwrap());
-            }
-        }
-    }
-    src
+    sources(&std::fs::read_to_string(scene).expect("supply the l23c scene fixtures"))
 }
 
-fn compile_peer(src: &Sources, overrides: &[(String, f64)]) -> Bundle {
+fn compile_peer(src: &Graph, overrides: &[(String, f64)]) -> Bundle {
     let p = loft_passes::compile(src, overrides)
         .unwrap_or_else(|d| panic!("{}", d.render(src)))
         .0;
@@ -467,19 +452,14 @@ fn compile_peer(src: &Sources, overrides: &[(String, f64)]) -> Bundle {
 
 #[test]
 fn motion_wave_cpu_crab_grouping_and_mutant() {
-    let mut src = peer_sources("crab");
+    let src = peer_sources("crab");
     let clean = compile_peer(&src, &[]);
     let scored = compare_grouping(&clean);
     assert_eq!(scored[&RESULTS][16..20], 1u32.to_le_bytes());
-    let script = &mut src
-        .files
-        .iter_mut()
-        .find(|(p, _)| p == "motion-proof.loft")
-        .unwrap()
-        .1;
+    let script = &src.files[usize::from(src.entry())].1;
     assert!(script.contains("toe_bias: f = 0.0"));
-    *script = script.replace("toe_bias: f = 0.0", "toe_bias: f = 0.020");
-    let shifted = compile_peer(&src, &[]);
+    let mutant = sources(&script.replace("toe_bias: f = 0.0", "toe_bias: f = 0.020"));
+    let shifted = compile_peer(&mutant, &[]);
     let mut data = tables(&shifted);
     step(&shifted, &mut data, 0, 0);
     assert_eq!(data[&RESULTS][16..20], 2u32.to_le_bytes());
@@ -551,7 +531,7 @@ fn motion_gpu_boss_hit_one() {
 
 #[test]
 fn profile_json_counts_executed_fixture() {
-    let src = sources(include_str!("../../../engines/capsules.loft"));
+    let src = sources(include_str!("../../../stdlib/engines/capsules.loft"));
     let mut p = loft_passes::compile(&src, &[]).unwrap().0;
     let fixture = include_str!("../../../tests/fixtures/telemetry.wgsl");
     p.modules[p.classify].naga = naga::front::wgsl::parse_str(fixture).unwrap();

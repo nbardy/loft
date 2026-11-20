@@ -1,0 +1,7 @@
+use stdlib::materials::bsdf::{ggx}
+use self::ink::print as ink
+use stdlib::sdf::solid::*
+
+pub fn shade(p: p3@ink::Ink) -> rgb = ink::shade(p)
+
+build { emit ink::Ink(weight: 1) }

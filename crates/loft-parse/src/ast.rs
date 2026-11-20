@@ -16,6 +16,10 @@ pub struct Module {
     /// Dimensions (length, time, mass, angle) on source types and literals. Their GPU representation is f32.
     pub dimensions: Vec<(Span, Dimension)>,
     pub items: Vec<Item>,
+    pub public: Vec<Span>,
+    /// Linked names for authored callbacks used by compiler-generated code.
+    pub links: Vec<(String, String)>,
+    pub file: Option<u16>,
     /// `diff(f, x)` sites, as written: the AD pass generates `f__d_x` (the parser already called it).
     pub diffs: Vec<(Ident, Ident)>,
 }
@@ -24,7 +28,7 @@ pub type Dimension = [f64; 4];
 
 #[derive(serde::Serialize, Clone, Debug)]
 pub enum Item {
-    Use(Vec<Ident>),
+    Use(Import),
     Space(Vec<Ident>),
     Struct(Ident, Vec<RowField>),
     TypeAlias(Ident, TyExpr),
@@ -48,6 +52,44 @@ pub enum Item {
     World(Ident, Vec<Ident>),
     Bake(BakeDecl),
     Retarget { name: Ident, source: Ident, target: Ident, fields: Vec<(Ident, Expr)> },
+}
+
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct Import {
+    pub path: Vec<Ident>,
+    pub binding: ImportBinding,
+    pub span: Span,
+}
+
+#[derive(serde::Serialize, Clone, Debug)]
+pub enum ImportBinding {
+    Module(Option<Ident>),
+    Selected(Vec<Ident>),
+    Wildcard,
+}
+
+impl Item {
+    pub fn declarations(&self) -> &[Ident] {
+        let name = match self {
+            Self::Use(_) | Self::Build(_) => return &[],
+            Self::Space(names) => return names,
+            Self::Struct(n, _) | Self::TypeAlias(n, _) | Self::Unit(n)
+            | Self::Body(n, _) | Self::World(n, _) | Self::Retarget { name: n, .. } => n,
+            Self::Const(x) => &x.name,
+            Self::Fn(x) | Self::Check(x) => &x.name,
+            Self::Kind(x) => &x.name,
+            Self::Scan(x) => &x.name,
+            Self::Schedule(x) => &x.name,
+            Self::Law(x) => &x.f.name,
+            Self::State(x) => &x.name,
+            Self::Solver(x) => &x.name,
+            Self::Plan(x) => &x.name,
+            Self::Kernel(x) => &x.f.name,
+            Self::Camera(x) => &x.name,
+            Self::Bake(x) => &x.texel.name,
+        };
+        std::slice::from_ref(name)
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -438,7 +480,11 @@ pub fn frame_field(name:&str)->&str {
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
-pub struct RawWgsl {pub body:String,pub deterministic:bool}
+pub struct RawWgsl {
+    pub body: String,
+    pub deterministic: bool,
+    pub references: Vec<Ident>,
+}
 
 impl FnDecl {
     pub fn refuses_unverified_raw(&self)->bool{self.raw.as_ref().is_some_and(|r|!r.deterministic)}

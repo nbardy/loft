@@ -1,3 +1,5 @@
+use stdlib::sky::environment::{sky_dome}
+
 space World
 param density: f = 2.0
 param unrelated: f = 0.1

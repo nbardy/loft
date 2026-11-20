@@ -13,7 +13,7 @@ decisions live in [the v1 specification](docs/spec/README.md).
   shell syntax and the host GPU dependency pins when the host lock is available.
   `tools/check.sh plan` shows which crates `quick` will test.
 - Serialize local GPU work with `tools/gpu_lock.sh COMMAND`. For example,
-  `tools/gpu_lock.sh target/lab/loft profile engines/capsules.loft --frames 300`.
+  `tools/gpu_lock.sh target/lab/loft profile stdlib/engines/capsules.loft --frames 300`.
   Record the adapter, scene, overrides, frame count, p95 and contention.
 - Integrators run `tools/check.sh full` once per combined revision. The CLI writes five-gate
   measurements and per-frame RGBA hashes to `out/meta/gate.json`. Compare hashes to the
