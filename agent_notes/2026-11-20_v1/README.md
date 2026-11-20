@@ -21,7 +21,7 @@ stops the chain (`chain.stopped`). Restart after a reboot: `nohup agent_notes/20
 | Briefs, logs, final messages | `agent_notes/2026-11-20_codex/` (`p*` implement, `r*` review, `f*` fix) |
 | Phase notes (predictions, scores) | `agent_notes/2026-11-20_meta/<phase>.md` |
 | Reviews | `reviews/` (here) |
-| Deprecated trees | `DEPRECATED.md` |
+| Historical design | [Archive](../../docs/legacy/DESIGN.md) |
 
 ## Update: fan-out pipeline (`chain3.sh`, replaces chain2)
 Per the scientist's fan-out handoff (`fanout_handoff.md` here): Phase 1.5 → review → fix → **Step 0 artifacts** (golden

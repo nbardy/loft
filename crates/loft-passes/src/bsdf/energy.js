@@ -1,4 +1,4 @@
-// Regenerate with bun crates/loft-passes/src/bsdf/energy.js > crates/loft-passes/src/bsdf/energy.in.
+// Regenerate with node crates/loft-passes/src/bsdf/energy.js > crates/loft-passes/src/bsdf/energy.in.
 // Heitz's GGX visible-normal sampling changes the unit-Fresnel integral to
 // the mean of G2(v,l)/G1(v) for reflections above the hemisphere.
 const intervals = 32;

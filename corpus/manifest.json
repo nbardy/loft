@@ -1,6 +1,6 @@
 {
   "examples_rev": "d3674dbdb918b604a5e82f9736db84780a6894a8",
-  "seeds_manifest": "tools/parity/corpus.json",
+  "seeds_manifest": "corpus/sources.json",
   "batches": [
     {
       "batch": 1,

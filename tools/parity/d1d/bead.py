@@ -14,9 +14,9 @@ import subprocess
 from PIL import Image, ImageChops
 
 
-def compare(ref, frame, diff, dst, transects):
-    score = subprocess.run([diff, ref, frame], capture_output=True, text=True, check=False)
-    if score.returncode not in (0, 1):
+def compare(ref, frame, cli, dst, transects):
+    score = subprocess.run([cli, "diff", ref, frame], capture_output=True, text=True, check=False)
+    if score.returncode not in (0, 3):
         raise RuntimeError(score.stderr)
     with Image.open(ref) as old, Image.open(frame) as new:
         if old.mode != "RGBA" or new.mode != "RGBA" or old.size != new.size:
@@ -45,7 +45,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=["initial", "full"])
     parser.add_argument("binary", type=Path)
-    parser.add_argument("diff", type=Path)
+    parser.add_argument("cli", type=Path, help="loft executable from this workspace")
     parser.add_argument("out", type=Path)
     args = parser.parse_args()
     refs = Path("agent_notes/2026-11-19_design/render_impl/R0g")
@@ -69,7 +69,7 @@ def main():
         if render.returncode:
             cases[ref.stem] = {"render_exit": render.returncode, "passed": False}
             continue
-        cases[ref.stem] = compare(ref, frame, args.diff.resolve(), dst, initial)
+        cases[ref.stem] = compare(ref, frame, args.cli.resolve(), dst, initial)
         cases[ref.stem]["passed"] = cases[ref.stem]["picture"]["pass"]
     with (dst / "score.json").open("x") as output:
         json.dump(cases, output, indent=2)

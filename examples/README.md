@@ -1,14 +1,8 @@
-# Examples
+# Legacy TypeScript scenes
 
-These are a starting point to move away from, not a target. Most of them are sea monsters because that is what we
-were making; the library is not about the sea. Pick the example nearest to your **idea** (a swept body, a field traced
-per pixel, a cut list), not to your subject, copy it, and change it until nothing of ours is left.
+These scenes are read-only source material to port to `.loft` during Phase 5 corpus regeneration. They are not runnable in Loft v1.0. Their TypeScript engine and toolchain are available at the Git tag `legacy/2026-11-19`.
 
-**Recipes** are the files meant for copying: each says what it makes and from which library pieces, its parameters,
-what it cannot do, and what to change first, and imports only the public entry (`src/index.ts`) or the files its
-`Uses:` line names (`bun tools/check_recipes.ts` proves it). Everything else is an example: read it, do not import it.
-
-Sizes are lines. Run any scene with `pnpm loft render <file> --out out/x.webp` or `pnpm loft dev <file>`.
+See the [Phase 5 build plan](../docs/spec/05_NUMBERS_AND_BUILD_ORDER.md) and the [Creative seed pack references](../docs/legacy/MIGRATION.md).
 
 ## A first scene
 
@@ -104,9 +98,6 @@ every boss (woodblock), and `bosses/crab_lineup.ts`, whose `--look` switches bet
 | `reeds_shadow.ts` | 71 | shadows from every shape the sun sees: a depth picture from the sun read by a style part; a CPU check that every caster lands inside it |
 | `pool.ts` | 51 | a pool that mirrors what stands round it: the view's camera reflected, half size, read by the ground |
 
-A still needs no new name in a scene: `loft render <scene> --samples 64 --shutter 0.05 --aperture 0.08` averages 64
-samples of one instant (motion blur over the shutter, depth of field focused on the camera's target).
-
 ## Whole scenes
 
 | File | Lines | Shows |
@@ -129,7 +120,7 @@ samples of one instant (motion blur over the shutter, depth of field focused on 
 
 | File | Lines | Makes |
 |---|---:|---|
-| `recipes/film.ts` | 106 | a film: a cut list (stills and eased moves) per format, on a tempo or not; `bun tools/film.ts` delivers it (sheets, a seam proof, clips, sound) |
+| `recipes/film.ts` | 106 | a film: a cut list (stills and eased moves) per format, on a tempo or not |
 | `serpent_clip.ts` | 23 | a use of `recipes/film.ts`: seven seconds of the serpent, four shots, wide and square |
 | `bosses/lib/face_parts.ts` | 272 | a head mass with relief, eyes, lids, brows, a mandible, a moustache |
 | `bosses/lib/stalk_eyes.ts` | 170 | an eye on a bending stalk, its look, its lids, and the marks a check reads |

@@ -1,5 +1,38 @@
 # Open targets for v1.0-alpha
 
+## Legacy retirement
+
+One locked Apple M4 Metal run on `33cdcbf` scored Pictures **0/18**, Twin **36/36**,
+Speed **12/12**, Load **31/33** and Truth **34/34**, with zero contended verdicts.
+All 18 gate RGBA hashes and all nine bead renders matched archived main bit for bit. The two
+Load misses were Hermit's 14 pipelines against a budget of 13. All 1,510 historical beauty
+hashes verified. The reference approval queue is unchanged. [Gate measurements](../../out/meta/del2/five-gates.json) · [Exact frame comparisons](../../out/meta/del2/pixels.json)
+
+The single native build produced 25 test executables. **152/153** tests passed, including all
+six mutants and the three transferred image-comparison tests. The Tier 0 promotion test measured
+**0.581 ms** p95 against **0.500 ms**, with zero of 140,000 pixels over 1/255. Isolated checks
+measured **0.667 ms** and **0.796 ms**. The same test executable (identical SHA-256) measured
+**0.787 ms** on concurrent unchanged main. This timing miss remains open. The wasm32 runner
+checked with web-sys, doctests passed, and Earley and llguidance each returned all 280 expected
+outcomes. [Native and main evidence](../../out/meta/del2/gate.json)
+
+The root Cargo workspace owns the native and WebAssembly builds. The 18 approved images in
+`tests/fixtures/gate-refs/` carry the same RGBA hashes pinned in `engines/gates.json`.
+`loft gate` records each rendered RGBA hash in `out/meta/gate.json` for exact comparisons with
+a previously scored revision. Picture approval remains a separate owner decision.
+
+| Retired check or tool | Disposition |
+| --- | --- |
+| Bun suite, typecheck and loader-import scan | Their compiler, renderer and loader were deleted. The Phase 5 manifest partition check survives in `tools/check_corpus.py`. Native Cargo tests cover the current compiler and runner, and the dependency check keeps the runner independent of compiler passes. |
+| Nested Cargo workspace checks, lab binaries and single-test-binary layout | The Bun serve tests launched the retired `loft-node` and `loft-draw` binaries and exercised their child-process protocol. Those binaries and the old bundle loader were deleted. `tools/dev.sh` builds the root members. Per-crate lint is available through `tools/dev.sh lint`. |
+| R0 regeneration, live cross-engine replay and TypeScript seed sampling | They require executing the retired engine. The original inputs, hashes and observations remain historical evidence. New comparisons use the checked-in corpus and frozen images. |
+| Standalone bead comparator | The same pixel, edge and cluster rules and their three tests now run in the root CLI as `loft diff`. The bead gate renders all nine observations with the workspace’s `phase5_corpus` example. |
+
+The [Phase 5 corpus](../../corpus/README.md) feeds the grammar and geometry checks.
+[Examples](../../examples/README.md) remain read-only migration sources. The browser viewer depended on
+the retired engine. The unused training directory had no tracked files. The [historical design](../../docs/legacy/DESIGN.md)
+and manuals are archived.
+
 ## D2 integration on 20 November
 
 D2a, D2b and D2c remain on their branches. Each lane’s build exited 101. The single locked Apple M4 Metal gate scored retained main at `47ac462`. Its executable matched the archived main binary byte for byte. Twin held 36/36 and Truth 34/34. Speed fell from 12/12 to 10/12, missing the merge rule. The gate recorded zero contended verdicts. [Gate report](../../out/meta/i8/gate.json) · [Contact sheet](../../out/meta/i8/sheet.webp)

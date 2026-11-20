@@ -1,5 +1,5 @@
 #!/bin/bash
-# Lays out the pictures tools/face_shots.ts wrote into two sheets (ImageMagick):
+# Lays out the pictures a render produced into two sheets (ImageMagick):
 #
 #   tools/face_sheet.sh <shots dir> <out dir> <reference dir> "name:label ..." "name:reference ..."
 #
