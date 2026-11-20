@@ -254,3 +254,12 @@ All 18 layered frames exceeded frozen picture tolerance. Each independent still 
 - **Solve cache:** keep the 128 most recently used verified `solve` results (agent_notes/2026-11-18_cook/small.final.md).
 - **Volume march budget** before real-time media: the old dust volume cost 20–61 ms with shadow marches (volume.final.md). Bound the step and shadow counts, and add them to the Speed budget.
 - **Not carried:** f16 gave no gain on M4 (f16.final.md); f32 stays the default.
+
+## Frame-cost directions (owner → Astra, 20 Nov)
+
+Command count is not the bottleneck: about 5 commands per frame, roughly 75 µs. Hermit-20 at 5.46 ms and Shrine at 3.90 ms are per-pixel shading. In order:
+1. **Shading cost:** march steps, BSDF cost and memory traffic per pixel, from naga telemetry plus per-pass timings.
+2. **Pass fusion for shading:** remove barriers and memory round trips between passes, as already done for motion ticks.
+3. **Apple tile memory:** keep the vis-buffer on-chip between raster and shade. wgpu cannot do this; it needs a native Metal backend. See the design question bk1.
+4. **Overlap:** QueueClass::AsyncCompute (the seam exists; wgpu support is limited).
+5. **Persistent megakernel dispatches,** only for chains of many tiny steps.
