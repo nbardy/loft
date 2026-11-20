@@ -10,3 +10,10 @@ You are a Rust engineer on freeze_sampler (~/git/freeze_sampler), the Mac freeze
 5. **Write a note** of 20 lines or fewer at ~/git/loft/agent_notes/2026-11-20_v1/lanes/fs1.md: what changed, and how to install it.
 
 Final message ≤100 words.
+
+**Also make the recorder itself safe during a stall** (lead, 20 Nov). Today its per-PID `identity` lookup was one of the 11 convoy waiters, and an `lsof` and a `spindump` joined after onset.
+1. **At most one process-info lookup in flight.** If a lookup has not returned (stuck in an uninterruptible kernel wait), never start another. Keep sampling the lock-free counters (memory, swap, compressor, load, GPU) and mark process fields stale with a typed reason.
+2. **Back off under stress, do not ramp up.** Replace "process scan every second while alerting" with slower process scans when load > 2× cores, spawn rate is high or pressure ≥ warn, and none at all during a detected stall.
+3. **No `lsof` anywhere in the recorder.** At most one spindump or stackshot per incident at a time; the second stackshot only after the first finishes.
+4. **Prefer one bulk process-list read** over per-PID reads. Read per-PID detail only for the top few by footprint or CPU, and never for processes younger than about 1 s (the convoy formed around a short-lived git).
+5. **Keep the cost claim honest:** re-measure the idle CPU and RAM after the changes, and update the README "Cost" section if it moved.
