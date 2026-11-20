@@ -74,3 +74,5 @@ One style was PBR (GGX, Smith, Schlick, sky environment). The rest were non-phot
 - **stdlib/engines** = a composition of one schedule, one integrator, one style and post. For example `woodblock_realtime` = vis-buffer schedule + direct light + woodblock style + print post. The current engines/*.loft files move here.
 
 A style is NOT an engine. The same woodblock style should run under the realtime and the reference engines. Show this composition in std1.md, and include one example of swapping a style under a fixed engine, and an integrator under a fixed style.
+
+**Corpus bloat (from tok1, 20 Nov):** the median corpus scene is 96,204 tokens against 3,021 for the hand-written hermit, and row defaults alone would save about 986k corpus tokens. Corpus ports are written longhand instead of with kinds and rows. Add a corpus-regeneration lane (std1f) that rewrites the corpus idiomatically with kinds, rows, row defaults and the stdlib, keeping pictures matched. Target: median under 10k tokens.
