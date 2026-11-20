@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import type { Precision } from "../host/manifest.ts";
 
 /** The addon this checkout expects (rust/crates/loft-node STAMP): bump both with any change to run's arguments or answer. */
-const STAMP = "loft-node abi 5 wire 4";
+const STAMP = "loft-node abi 7 wire 5";
 const BUILD = "tools/dev.sh build loft-node --fast";
 
 export type Program = "Scene" | "Solve" | "Evaluate" | "Check";
@@ -25,7 +25,7 @@ export type Phases = { readonly decode: number; readonly plan: number; readonly 
 /** loft-core `check::Verdict` as serde writes it. */
 export type Verdict = {
   readonly truth: "Holds" | "Fails" | { readonly Undecided: unknown }; readonly margin: number; readonly bounds: readonly [number, number];
-  readonly witness: readonly (readonly [number, number])[]; readonly work: { readonly boxes: number }; readonly scope: "Proved" | { readonly Sampled: { readonly n: number } };
+  readonly witness: readonly (readonly [number, number])[]; readonly work: { readonly boxes: number }; readonly scope: "Proved" | { readonly Sampled: { readonly n: number } } | { readonly Observed: {ticks:number; inputs:number[]; law:number[]; by:"Gpu"|"Twin"} };
 };
 export type Site = { readonly file: string; readonly line: number; readonly col: number };
 /** A Solve job leaves every hold "Unproved" (never a pass); a Check job proves each (loft-core `solve::Proof`). */
@@ -67,8 +67,8 @@ export type Build = { readonly naga: "load" | "emit"; readonly precision: Precis
 export const DEFAULT_BUILD: Build = { naga: "load", precision: "f32" };
 
 /** `out`: where a Scene's bundle file is written; omitted, it is built and hashed but not written. */
-type Native = { run(job: Uint8Array, limits: Limits, out?: string, build?: Build): Report };
-type Addon = { run(job: Uint8Array, limits: BigUint64Array, out: Uint8Array, build: Uint8Array): string; stamp: unknown };
+type Native = { link(source:import("../record/passes.ts").Source):string; run(job: Uint8Array, limits: Limits, out?: string, build?: Build): Report };
+type Addon = { link(bytes:Uint8Array):string; run(job: Uint8Array, limits: BigUint64Array, out: Uint8Array, build: Uint8Array): string; stamp: unknown };
 type Answer = { Ok: Report } | { Err: { kind: Kind; code: number; message: string; error: unknown } };
 
 const environment = (message: string): NativeError => new NativeError("environment", 6, message, null);
@@ -82,11 +82,16 @@ export function open(path: string): Native {
     throw environment(`the Loft engine addon did not load from ${path}: ${(e as Error).message}. Fix: ${BUILD}`);
   }
   const addon = m.exports;
-  if (addon.stamp !== STAMP || typeof addon.run !== "function") {
+  if (addon.stamp !== STAMP || typeof addon.run !== "function" || typeof addon.link !== "function") {
     throw environment(`the Loft engine addon at ${path} is stale: it says ${JSON.stringify(addon.stamp)}, this checkout expects "${STAMP}". Fix: ${BUILD}`);
   }
   const run = addon.run;
   return {
+    link(source) {
+      const a=JSON.parse(addon.link!(new TextEncoder().encode(JSON.stringify(source)))) as {Ok:string}|Extract<Answer,{Err:unknown}>;
+      if ("Ok" in a) return a.Ok;
+      throw new NativeError(a.Err.kind,a.Err.code,a.Err.message,a.Err.error);
+    },
     run(job, l, out, build = DEFAULT_BUILD) {
       // loft-node `build_of`: [naga, precision], naga 0 load / 1 emit, precision 0 f32 / 1 mixed.
       const bytes = Uint8Array.of(build.naga === "emit" ? 1 : 0, build.precision === "mixed" ? 1 : 0);

@@ -11,6 +11,8 @@ pub enum Ty {
     V3,
     V4,
     Bool,
+    U32,
+    Kind(u32),
 }
 
 impl Ty {
@@ -22,7 +24,7 @@ impl Ty {
             Ty::V2 => Some(2),
             Ty::V3 => Some(3),
             Ty::V4 => Some(4),
-            Ty::Bool => None,
+            Ty::Bool | Ty::U32 | Ty::Kind(_) => None,
         }
     }
     /// The literal entries a value of this type takes in `Graph::lits` (a bool is one, 0 or 1).
@@ -37,6 +39,8 @@ impl Ty {
             Ty::V3 => "vec3",
             Ty::V4 => "vec4",
             Ty::Bool => "bool",
+            Ty::U32 => "u32",
+            Ty::Kind(_) => "kind",
         }
     }
     pub(crate) fn of_width(w: u8) -> Option<Ty> {
@@ -81,6 +85,9 @@ pub enum Op {
     Grad,
     /// A raw WGSL function called with the node's args. GPU only.
     Raw(u32),
+    Field(u16),
+    Make(u32),
+    Open(u32),
     Swizzle(Sel),
     /// A vector from 1..=4 parts whose widths sum to the node's (or one f32, splatted).
     Vec,
@@ -694,9 +701,33 @@ pub enum Times {
     Span,
 }
 
+/// Field names are symbols. Nested kinds precede their users.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Kind {
+    pub name: u32,
+    pub fields: Box<[(u32, Ty)]>,
+}
+/// All cases have the fallback function's signature; the selector is a separate u32.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Open {
+    pub name: u32,
+    pub cases: Box<[(u32, u32)]>,
+    pub otherwise: u32,
+}
+impl Open {
+    pub fn targets(&self) -> impl Iterator<Item = u32> + '_ {
+        self.cases.iter().map(|case| case.1).chain([self.otherwise])
+    }
+    pub fn at(&self, tag: u32) -> u32 {
+        self.cases.binary_search_by_key(&tag, |(k, _)| *k).map_or(self.otherwise, |i| self.cases[i].1)
+    }
+}
+
 /// A decoded, validated job graph.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct Graph {
+    pub kinds: Box<[Kind]>,
+    pub opens: Box<[Open]>,
     pub nodes: Box<[Node]>,
     pub args: Box<[u32]>,
     /// f64 bits, exactly as authored.
@@ -720,6 +751,7 @@ pub struct Graph {
     pub passes: Box<[Pass]>,
     pub media: Box<[Medium]>,
     pub cameras: Box<[Camera]>,
+    pub row_steps: Vec<(crate::bundle::RowStep, crate::bundle::InputKind)>,
     pub checks: Box<[Check]>,
     pub solves: Box<[Solve]>,
     /// The program's roots.
@@ -727,6 +759,24 @@ pub struct Graph {
 }
 
 impl Graph {
+    /// Scalar tape slots. Two exact 16-bit pieces preserve a u32 tag in an f32 evaluator.
+    pub fn slots(&self, t: Ty) -> Option<usize> {
+        let mut widths: Vec<usize> = Vec::new();
+        let Ty::Kind(k) = t else {
+            return Some(if t == Ty::U32 { 2 } else { t.lits() as usize });
+        };
+        for kind in self.kinds.get(..=k as usize)? {
+            let n = kind.fields.iter().try_fold(0usize, |sum, (_, t)| {
+                sum.checked_add(match *t {
+                    Ty::Kind(child) => *widths.get(child as usize)?,
+                    Ty::U32 => 2,
+                    Ty::F32 | Ty::V2 | Ty::V3 | Ty::V4 | Ty::Bool => t.lits() as usize,
+                })
+            })?;
+            widths.push(n);
+        }
+        widths.last().copied()
+    }
     pub fn args_of(&self, node: &Node) -> &[u32] {
         &self.args[node.args as usize..(node.args + node.n) as usize]
     }

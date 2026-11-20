@@ -54,7 +54,9 @@ pub fn parse(mut it: impl Iterator<Item = String>, profile: bool) -> (Args, Flag
     while let Some(flag) = it.next() {
         let mut value = || it.next().unwrap_or_else(|| usage(format!("{flag} needs a value")));
         match flag.as_str() {
-            "--frames" | "--loads" | "--pipeline-cache" | "--budget-ms" if !profile => usage(PROFILE.into()),
+            "--cold-nonce" | "--frames" | "--loads" | "--pipeline-cache" | "--budget-ms" if !profile => {
+                usage(PROFILE.into())
+            }
             "--out" if profile => usage("--out is a flag of `still`".into()),
             "--view" => a.view = value(),
             "--time" => a.time = num(&value(), "--time"),
@@ -88,6 +90,9 @@ pub fn parse(mut it: impl Iterator<Item = String>, profile: bool) -> (Args, Flag
                     "--input" => a.inputs.push((name.into(), vals)),
                     _ => a.params.push((name.into(), vals[0])),
                 }
+            }
+            "--cold-nonce" => {
+                f.nonce = Some(value().parse().unwrap_or_else(|_| usage("--cold-nonce needs a u32".into())))
             }
             "--frames" => f.frames = count(value(), "--frames"),
             "--loads" => f.loads = count(value(), "--loads"),
@@ -131,7 +136,12 @@ pub fn run(mut a: Args) -> Result<(), Verdict> {
         let target = Target::new(&g.device, a.size);
         let rgba = target.picture(&g, &mut loft)?;
         if k == 0 {
-            eprintln!("frame: {} draws in {} passes", loft.bundle().draws.len(), loft.bundle().passes.len());
+            let b = loft.bundle();
+            let (draws, passes) = match &b.format {
+                loft_ir::bundle::Format::V1 => (b.draws.len(), b.passes.len()),
+                loft_ir::bundle::Format::V2(s) => (s.draws(), s.passes.len()),
+            };
+            eprintln!("frame: {draws} draws in {passes} passes");
         }
         if let Some(out) = &out {
             let fail = |e: &dyn std::fmt::Display| Verdict::Environment(format!("{}: {e}", out.display()));

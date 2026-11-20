@@ -252,6 +252,16 @@ class Writer {
 
   write(program: Program, roots: readonly number[], scene: Scene): Job {
     const top = roots.map((r) => this.visit(r));
+    for (const s of scene.rowSteps ?? []) {
+      const input = this.input(s.input, TY[s.input.ty]);
+      const home = () => { switch (s.home.kind) {
+        case "level": return [0, 0];
+        case "script": return [1, this.kernel(s.home.samples)];
+        case "events": return [2, s.home.slots];
+      } };
+      const words = [this.sym(s.source), this.kernel(s.plan), this.kernel(s.seed), this.kernel(s.output), input, s.hz, s.ticks, ...home()];
+      this.reserve(Decl.RowStep, s).d.words.push(...words);
+    }
     for (const c of scene.cameras) this.camera(c);
     for (const p of scene.passes) this.pass(p);
     for (const c of scene.checks) this.check(c);
@@ -265,6 +275,7 @@ class Writer {
     declRoots.pushAll(top);
     for (const d of this.decls) { decls.push1(d.tag); decls.push1(d.roots.length); decls.push1(d.words.length); decls.pushAll(d.words); declRoots.pushAll(d.roots); }
     return {
+      ...(scene.rowSteps?.length ? { wire: 5 as const } : {}),
       program, nodes: this.nodes.done(), args: this.args.done(), lits: this.lits.done(), rows: this.rows.done(),
       blobs: new Uint8Array(0), syms: all, symAt, sites: new Uint32Array(0), siteOf: new Uint32Array(this.nodes.n >> 2),
       decls: decls.done(), roots: declRoots.done(),
@@ -341,6 +352,7 @@ class Writer {
       case Op.Raw: { const ks = kids(); return this.emit(h, ks, this.rawFn(L.leaves[imm] as LibFn)); }
       case Op.Loop: return this.emit(h, NONE, this.loop(imm));
       case Op.Swizzle: case Op.Vec: return this.emit(h, kids(), imm);
+      case Op.Make: case Op.Field: case Op.Open: throw new Unrecorded("typed record operations use the wire 5 kind and open declarations");
       case Op.Call: case Op.Grad: throw new Error(`internal: the log holds no ${Op[op]} node (calls live beside it)`);
     }
   }

@@ -74,7 +74,7 @@ use crate::graph::{
 
 pub const MAGIC: u32 = u32::from_le_bytes(*b"LFTW");
 /// Internal, never persisted: the recorder and this decoder change together. The binding reports it at load.
-pub const WIRE: u32 = 4;
+pub const WIRE: u32 = 5;
 /// Quota checked before any span is read: 16.7M nodes, 30x Titan's recorded count.
 pub const MAX_NODES: u64 = 1 << 24;
 /// Wire code of `Prim::ALL[0]`.
@@ -101,6 +101,7 @@ const SPANS: [(Span, usize); 11] = [
 pub struct Job {
     pub program: Program,
     pub graph: Graph,
+    pub declarations: Option<crate::pass::Declarations>,
 }
 
 fn bad(span: Span, at: usize, what: Fault) -> Error {
@@ -123,20 +124,25 @@ enum FnSlot {
     Raw(u32),
 }
 
+/// A checked job: its wire version, program, the eleven spans and wire 5's optional ordered declarations.
+type Spans<'a> = (u32, Program, [&'a [u8]; 11], Option<crate::pass::Declarations>);
+
 /// The header and the eleven spans, each checked for length, padding and whole elements.
-fn spans(buf: &[u8]) -> Result<(Program, [&[u8]; 11]), Error> {
+fn spans(buf: &[u8]) -> Result<Spans<'_>, Error> {
     let word = |at: usize| buf.get(at..at + 4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]));
     let h = |i: usize| word(4 * i).ok_or_else(|| bad(Span::Header, i, Fault::Truncated));
     (h(0)? == MAGIC).then_some(()).ok_or_else(|| bad(Span::Header, 0, Fault::Magic))?;
     let wire = h(1)?;
-    (wire == WIRE).then_some(()).ok_or_else(|| bad(Span::Header, 1, Fault::Version { found: wire }))?;
+    (wire == 4 || wire == WIRE).then_some(()).ok_or_else(|| bad(Span::Header, 1, Fault::Version { found: wire }))?;
     let code = h(2)?;
     let program = [Program::Scene, Program::Solve, Program::Evaluate, Program::Check]
         .get(code as usize)
         .copied()
         .ok_or_else(|| bad(Span::Header, 2, Fault::Program { found: code }))?;
     let n = h(3)?;
-    (n as usize == SPANS.len()).then_some(()).ok_or_else(|| bad(Span::Header, 3, Fault::SpanCount { found: n }))?;
+    (n == 11 || (wire == WIRE && n == 12))
+        .then_some(())
+        .ok_or_else(|| bad(Span::Header, 3, Fault::SpanCount { found: n }))?;
     let mut out: [&[u8]; 11] = [&[]; 11];
     let mut at = 16usize;
     for (i, (span, size)) in SPANS.iter().enumerate() {
@@ -154,13 +160,36 @@ fn spans(buf: &[u8]) -> Result<(Program, [&[u8]; 11]), Error> {
         out[i] = &buf[start..end];
         at = padded;
     }
+    let declarations = if n == 12 {
+        let fault = || bad(Span::Decls, at, Fault::Length);
+        let len = word(at).ok_or_else(fault)? as usize;
+        let start = at + 8;
+        let end = start.checked_add(len).ok_or_else(fault)?;
+        let padded = end.next_multiple_of(8);
+        if program != Program::Scene
+            || word(at + 4) != Some(0)
+            || !buf.get(end..padded).is_some_and(|p| p.iter().all(|v| *v == 0))
+        {
+            return Err(fault());
+        }
+        let d = serde_json::from_slice(buf.get(start..end).ok_or_else(fault)?).map_err(|e| {
+            Error::Usage(format!("ordered declarations: {e}. Fix the declaration at its reported column").into())
+        })?;
+        at = padded;
+        Some(d)
+    } else {
+        None
+    };
     (at == buf.len()).then_some(()).ok_or_else(|| bad(Span::Header, 3, Fault::Length))?;
-    Ok((program, out))
+    Ok((wire, program, out, declarations))
 }
 
 /// The decls of a job, classified into `Graph`'s per-kind arrays, with each Fn ordinal's kind and each decl's word
 /// offset (for the layout pass, which needs the nodes).
 struct Decls {
+    kinds: Vec<crate::graph::Kind>,
+    kind_nodes: std::collections::HashMap<u32, u32>,
+    opens: Vec<crate::graph::Open>,
     fns: Vec<GraphFn>,
     raws: Vec<RawFn>,
     loops: Vec<Loop>,
@@ -176,6 +205,7 @@ struct Decls {
     passes: Vec<Pass>,
     media: Vec<Medium>,
     cameras: Vec<Camera>,
+    row_steps: Vec<(crate::bundle::RowStep, crate::bundle::InputKind)>,
     checks: Vec<Check>,
     solves: Vec<Solve>,
     /// Each scene-level decl's word offset, for refusing a reference checked after all decls are read.
@@ -425,6 +455,7 @@ fn solve(c: &mut Cur) -> Result<Solve, ()> {
 
 /// The counts the decl words are checked against.
 struct Sizes {
+    typed: bool,
     nodes: usize,
     lits: usize,
     rows: usize,
@@ -573,6 +604,9 @@ fn decls(d: &[u32], roots: &[u32], z: &Sizes) -> Result<Decls, Error> {
     let r0 = *d.first().ok_or_else(|| bad(Span::Decls, 0, Fault::Length))?;
     (r0 as usize <= roots.len()).then_some(()).ok_or_else(|| bad(Span::Decls, 0, Fault::Ref { found: r0 }))?;
     let mut out = Decls {
+        kinds: vec![],
+        kind_nodes: Default::default(),
+        opens: vec![],
         fns: Vec::new(),
         raws: Vec::new(),
         loops: Vec::new(),
@@ -588,6 +622,7 @@ fn decls(d: &[u32], roots: &[u32], z: &Sizes) -> Result<Decls, Error> {
         passes: Vec::new(),
         media: Vec::new(),
         cameras: Vec::new(),
+        row_steps: Vec::new(),
         checks: Vec::new(),
         solves: Vec::new(),
         top_at: Vec::new(),
@@ -607,8 +642,13 @@ fn decls(d: &[u32], roots: &[u32], z: &Sizes) -> Result<Decls, Error> {
             |x: u32| ((x as usize) < z.nodes).then_some(x).ok_or_else(|| bad(Span::Decls, at, Fault::Ref { found: x }));
         let lit =
             |k: u32, n: u8| fits(k, u32::from(n), z.lits).then_some(k).ok_or_else(|| bad(Span::Decls, at, Fault::Lit));
-        let ty = |c: u32| {
-            Ty::ALL.get(c as usize).copied().ok_or_else(|| bad(Span::Decls, at, Fault::Ty { code: c.min(255) as u8 }))
+        let ty = |c: u32| match c {
+            5 if z.typed => Ok(Ty::U32),
+            6.. if z.typed && (c - 6) < out.kinds.len() as u32 => Ok(Ty::Kind(c - 6)),
+            _ => Ty::ALL
+                .get(c as usize)
+                .copied()
+                .ok_or_else(|| bad(Span::Decls, at, Fault::Ty { code: c.min(255) as u8 })),
         };
         match (tag, w) {
             (0, [0, name, ret, n, binders @ ..]) => {
@@ -715,6 +755,38 @@ fn decls(d: &[u32], roots: &[u32], z: &Sizes) -> Result<Decls, Error> {
                 out.kernel_at.push(at);
                 out.kernels.push(Kernel::Table { name: sym(*name)?, lanes: *lanes, entries: *entries, role, fill });
             }
+            (11, [text, plan, seed, output, input, hz, ticks, how, arg]) if z.typed => {
+                use crate::bundle::{InputKind, RowStep};
+                let table =
+                    |r: u32| matches!(out.kernels.get(r as usize), Some(Kernel::Table { fill: Fill::Data { .. }, .. }));
+                layout(
+                    rs.is_empty()
+                        && table(*plan)
+                        && table(*seed)
+                        && table(*output)
+                        && (*input as usize) < out.inputs.len()
+                        && *hz > 0
+                        && *ticks > 0,
+                )?;
+                let kind = match (*how, *arg) {
+                    (0, 0) => InputKind::Level,
+                    (1, r) if table(r) => InputKind::Script { samples: r },
+                    (2, slots) if slots > 0 => InputKind::Events { slots },
+                    _ => return Err(bad(Span::Decls, at, Fault::Layout)),
+                };
+                out.row_steps.push((
+                    RowStep {
+                        module: sym(*text)?,
+                        plan: *plan,
+                        seed: *seed,
+                        output: *output,
+                        input: *input,
+                        hz: *hz,
+                        ticks: *ticks,
+                    },
+                    kind,
+                ));
+            }
             (8, [name, def, min, max]) => {
                 layout(rs.is_empty())?;
                 out.params.push(Param {
@@ -751,6 +823,37 @@ fn decls(d: &[u32], roots: &[u32], z: &Sizes) -> Result<Decls, Error> {
                 }
             }
             (0..=2 | 8 | 9, _) => layout(false)?,
+            (12, [name, fields @ ..]) if z.typed => {
+                layout(!fields.is_empty() && fields.len() % 2 == 0 && fields.len() / 2 <= u16::MAX as usize)?;
+                let id = out.kinds.len() as u32;
+                let fields = fields.as_chunks::<2>().0.iter().map(|f| Ok((sym(f[0])?, ty(f[1])?))).collect::<Result<
+                    Vec<_>,
+                    Error,
+                >>(
+                )?;
+                let unique: std::collections::HashSet<_> = fields.iter().map(|f| f.0).collect();
+                layout(unique.len() == fields.len())?;
+                for &r in rs {
+                    layout(out.kind_nodes.insert(node(r)?, id).is_none())?;
+                }
+                out.kinds.push(crate::graph::Kind { name: sym(*name)?, fields: fields.into() });
+            }
+            (13, [name, fallback, cases @ ..]) if z.typed => {
+                layout(rs.is_empty() && cases.len() % 2 == 0)?;
+                let graph_fn = |f: u32| match out.fn_slots.get(f as usize) {
+                    Some(FnSlot::Graph(k)) => Ok(*k),
+                    _ => Err(bad(Span::Decls, at, Fault::Ref { found: f })),
+                };
+                let otherwise = graph_fn(*fallback)?;
+                let mut cases = cases.as_chunks::<2>().0.iter().map(|c| Ok((c[0], graph_fn(c[1])?))).collect::<Result<
+                    Vec<_>,
+                    Error,
+                >>(
+                )?;
+                cases.sort_by_key(|c| c.0);
+                layout(!cases.windows(2).any(|p| p[0].0 == p[1].0))?;
+                out.opens.push(crate::graph::Open { name: sym(*name)?, cases: cases.into(), otherwise });
+            }
             (_, _) => return Err(bad(Span::Decls, at, Fault::Tag { found: tag })),
         }
         at += 3 + nw;
@@ -827,7 +930,7 @@ impl Top {
 
 /// Decodes and validates a job: every bound, reference, layout, quota and type rule, before any pass sees it.
 pub fn decode(buf: &[u8]) -> Result<Job, Error> {
-    let (program, spans) = spans(buf)?;
+    let (wire, program, spans, declarations) = spans(buf)?;
     let [nodes_b, args_b, lits_b, rows_b, blobs_b, syms_b, at_b, sites_b, nsites_b, decls_b, roots_b] = spans;
 
     let n_nodes = nodes_b.len() / 16;
@@ -868,11 +971,13 @@ pub fn decode(buf: &[u8]) -> Result<Job, Error> {
     if let Some(i) = roots.iter().position(|r| *r as usize >= n_nodes) {
         return Err(bad(Span::Roots, i, Fault::Ref { found: roots[i] }));
     }
-    let sizes = Sizes { nodes: n_nodes, lits: lits.len(), rows: rows.len(), syms: n_syms };
+    let sizes = Sizes { typed: wire == WIRE, nodes: n_nodes, lits: lits.len(), rows: rows.len(), syms: n_syms };
     let d = decls(&words(decls_b), &roots, &sizes)?;
 
     let nodes = nodes(&words(nodes_b), &args, &d, &sizes)?;
     let graph = Graph {
+        kinds: d.kinds.into(),
+        opens: d.opens.into(),
         nodes,
         args,
         lits,
@@ -892,6 +997,7 @@ pub fn decode(buf: &[u8]) -> Result<Job, Error> {
         passes: d.passes.into(),
         media: d.media.into(),
         cameras: d.cameras.into(),
+        row_steps: d.row_steps,
         checks: d.checks.into(),
         solves: d.solves.into(),
         roots: roots[..d.program_roots as usize].into(),
@@ -909,12 +1015,18 @@ pub fn decode(buf: &[u8]) -> Result<Job, Error> {
         top_layout(&graph, *top).map_err(|()| bad(Span::Decls, *at, Fault::Layout))?;
     }
     for i in 0..graph.nodes.len() {
+        if let Node { op: Op::Lit(at), ty: Ty::U32, .. } = graph.nodes[i] {
+            let v = f64::from_bits(graph.lits[at as usize]);
+            if v != f64::from(v as u32) {
+                return Err(bad(Span::Nodes, i, Fault::Lit));
+            }
+        }
         typed(&graph, i).map_err(|(want, got)| Error::Scene {
             site: graph.site(i as u32).cloned(),
             fault: SceneFault::Type { want, got },
         })?;
     }
-    Ok(Job { program, graph })
+    Ok(Job { program, graph, declarations })
 }
 
 /// The node words, each classified into its `Op` with its references, counts and flags checked.
@@ -924,7 +1036,13 @@ fn nodes(w: &[u32], args: &[u32], d: &Decls, z: &Sizes) -> Result<Box<[Node]>, E
         let fault = |what: Fault| bad(Span::Nodes, i, what);
         // flags is 16 bits: a table's lane reaches 632 in the corpus (the_strike), past the 8 bits §3.2 first drew.
         let (code, ty_code, flags) = ((head & 0xff) as u8, ((head >> 8) & 0xff) as u8, (head >> 16) as u16);
-        let ty = *Ty::ALL.get(usize::from(ty_code)).ok_or_else(|| fault(Fault::Ty { code: ty_code }))?;
+        let nominal = d.kind_nodes.get(&(i as u32));
+        let ty = match (ty_code, nominal) {
+            (6, Some(k)) => Ty::Kind(*k),
+            (5, None) if z.typed => Ty::U32,
+            (code, None) => *Ty::ALL.get(usize::from(code)).ok_or_else(|| fault(Fault::Ty { code }))?,
+            _ => return Err(fault(Fault::Ty { code: ty_code })),
+        };
         // A Lit's count is its literal entries, not args.
         let n_args = if code == 0 { 0 } else { n };
         fits(a, n_args, args.len()).then_some(()).ok_or_else(|| fault(Fault::Ref { found: a }))?;
@@ -947,6 +1065,9 @@ fn nodes(w: &[u32], args: &[u32], d: &Decls, z: &Sizes) -> Result<Box<[Node]>, E
         let op = match code {
             0 => {
                 no_flags()?;
+                if matches!(ty, Ty::Kind(_)) {
+                    return Err(fault(Fault::Lit));
+                }
                 (n == u32::from(ty.lits()) && fits(imm, n, z.lits)).then_some(()).ok_or_else(|| fault(Fault::Lit))?;
                 Op::Lit(imm)
             }
@@ -1014,6 +1135,32 @@ fn nodes(w: &[u32], args: &[u32], d: &Decls, z: &Sizes) -> Result<Box<[Node]>, E
                 Op::Swizzle(Sel { len: len as u8, comps: (imm & 0xff) as u8 })
             }
             11 => no_flags().and(no_imm()).and(arity((1..=4).contains(&n))).map(|()| Op::Vec)?,
+            12 if z.typed => {
+                no_flags().and(arity(n == 1))?;
+                let Ty::Kind(k) = out[operands[0] as usize].ty else {
+                    return Err(fault(Fault::Layout));
+                };
+                ordinal(d.kinds[k as usize].fields.len())?;
+                Op::Field(imm as u16)
+            }
+            13 if z.typed => {
+                no_flags()?;
+                ordinal(d.kinds.len())?;
+                arity(n as usize == d.kinds[imm as usize].fields.len())?;
+                Op::Make(imm)
+            }
+            14 if z.typed => {
+                no_flags()?;
+                ordinal(d.opens.len())?;
+                let open = &d.opens[imm as usize];
+                arity(n as usize == 1 + d.fns[open.otherwise as usize].binders.len())?;
+                for k in open.targets() {
+                    let f = &d.fns[k as usize];
+                    arity(1 + f.binders.len() == n as usize)?;
+                    before(late(f.binders.iter().copied().chain([f.body]), i))?;
+                }
+                Op::Open(imm)
+            }
             12..PRIM0 => return Err(fault(Fault::Op { code })),
             PRIM0.. => {
                 let p = *Prim::ALL.get(usize::from(code - PRIM0)).ok_or_else(|| fault(Fault::Op { code }))?;
@@ -1044,6 +1191,9 @@ fn binder(g: &Graph, x: u32) -> Result<Ty, ()> {
         | Op::Loop { .. }
         | Op::Grad
         | Op::Raw(_)
+        | Op::Field(_)
+        | Op::Make(_)
+        | Op::Open(_)
         | Op::Swizzle(_)
         | Op::Vec
         | Op::Prim(_) => Err(()),
@@ -1222,6 +1372,40 @@ fn typed(g: &Graph, i: usize) -> Result<(), (Ty, Ty)> {
     let rec = node.ty;
     let want = match node.op {
         Op::Lit(_) | Op::Bind(_) | Op::Var(_) => rec,
+        Op::Make(k) => {
+            for (j, &(_, t)) in g.kinds[k as usize].fields.iter().enumerate() {
+                if arg(j) != t {
+                    return Err((t, arg(j)));
+                }
+            }
+            Ty::Kind(k)
+        }
+        Op::Field(j) => {
+            let Ty::Kind(k) = arg(0) else {
+                return Err((Ty::Kind(0), arg(0)));
+            };
+            g.kinds[k as usize].fields[j as usize].1
+        }
+        Op::Open(k) => {
+            let open = &g.opens[k as usize];
+            if arg(0) != Ty::U32 {
+                return Err((Ty::U32, arg(0)));
+            }
+            let result = g.fns[open.otherwise as usize].ret;
+            for target in open.targets() {
+                let f = &g.fns[target as usize];
+                if f.ret != result {
+                    return Err((result, f.ret));
+                }
+                for (j, &b) in f.binders.iter().enumerate() {
+                    let t = g.nodes[b as usize].ty;
+                    if t != arg(j + 1) {
+                        return Err((t, arg(j + 1)));
+                    }
+                }
+            }
+            result
+        }
         Op::Time | Op::Param(_) => Ty::F32,
         Op::Input(d) => g.inputs[d as usize].ty,
         Op::Prim(p) => {

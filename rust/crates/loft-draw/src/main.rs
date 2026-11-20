@@ -6,9 +6,11 @@
 //!   loft-draw still BUNDLE [flags]       one PNG (still.rs)
 //!   loft-draw profile BUNDLE [flags]     load and frame timings, the Vulkan cache, the frame budget (profile.rs)
 
+mod nonce;
 mod profile;
 mod serve;
 mod still;
+mod trace;
 
 use loft_gpu::{Canvas, Layers, Loft, Owner, View};
 use loft_ir::identity::Precision;
@@ -25,6 +27,7 @@ pub const CANVAS: Canvas = Canvas { color: OUTPUT_FORMAT, depth: loft_gpu::DEPTH
 pub enum Verdict {
     /// The request names something the artefact lacks, or a bad size or camera.
     Usage(String),
+    Check(String),
     /// The bundle is refused: format, ids, sizes, or library WGSL that validation refuses.
     Load(String),
     /// The author's WGSL in the bundle, refused at load.
@@ -42,6 +45,7 @@ impl Verdict {
         match self {
             Verdict::Internal(_) => 1,
             Verdict::Usage(_) => 2,
+            Verdict::Check(_) => 5,
             Verdict::Load(_) => 3,
             Verdict::Scene(_) => 4,
             Verdict::Environment(_) => 6,
@@ -100,7 +104,8 @@ pub fn gpu(f16: bool) -> Result<Gpu, Verdict> {
     }))
     .map_err(|e| env(&format!("no adapter: {e}")))?;
     // PIPELINE_CACHE where the adapter has it (Vulkan), for `profile --pipeline-cache`.
-    let wanted = wgpu::Features::TIMESTAMP_QUERY
+    let wanted = wgpu::Features::FLOAT32_BLENDABLE
+        | wgpu::Features::TIMESTAMP_QUERY
         | wgpu::Features::PIPELINE_CACHE
         | if f16 { wgpu::Features::SHADER_F16 } else { wgpu::Features::empty() };
     let features = adapter.features() & wanted;
@@ -236,6 +241,8 @@ impl Target {
 
 enum Command {
     Serve,
+    Show(std::path::PathBuf),
+    Trace(std::path::PathBuf, usize, String),
     Still(still::Args),
     Profile(still::Args, profile::Flags),
 }
@@ -243,6 +250,18 @@ enum Command {
 fn main() {
     let mut args = std::env::args().skip(1);
     let command = match args.next().as_deref() {
+        Some("show") => {
+            let (Some(file), None) = (args.next(), args.next()) else { still::usage("show BUNDLE".into()) };
+            Command::Show(file.into())
+        }
+        Some("trace") => {
+            let (Some(dir), Some(step), Some(sites), None) =
+                (args.next(), args.next().and_then(|n| n.parse().ok()), args.next(), args.next())
+            else {
+                still::usage("trace BUNDLE STEP SITES_JSON".into())
+            };
+            Command::Trace(dir.into(), step, sites)
+        }
         Some("serve") => Command::Serve,
         Some("still") => Command::Still(still::parse(args, false).0),
         Some("profile") => {
@@ -250,11 +269,13 @@ fn main() {
             Command::Profile(a, f)
         }
         other => {
-            eprintln!("loft-draw: expected `serve`, `still DIR ...` or `profile DIR ...`, got {other:?}");
+            eprintln!("loft-draw: expected serve, still, profile, show or trace, got {other:?}");
             std::process::exit(2)
         }
     };
     let ended = match command {
+        Command::Trace(dir, step, sites) => trace::run(&dir, step, &sites),
+        Command::Show(dir) => trace::modules(&dir),
         Command::Serve => serve::run(),
         Command::Still(a) => still::run(a),
         Command::Profile(a, f) => profile::run(a, f),

@@ -77,14 +77,27 @@ fn read(path: &str) -> Result<Image, String> {
     let mut decoder = png::Decoder::new(std::io::BufReader::new(file));
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
     let mut reader = decoder.read_info().map_err(|e| format!("{path}: {e}"))?;
-    let mut buf = vec![0; reader.output_buffer_size().ok_or_else(|| format!("{path}: image too large"))?];
-    let info = reader.next_frame(&mut buf).map_err(|e| format!("{path}: {e}"))?;
+    let mut buf = vec![
+        0;
+        reader
+            .output_buffer_size()
+            .ok_or_else(|| format!("{path}: image too large"))?
+    ];
+    let info = reader
+        .next_frame(&mut buf)
+        .map_err(|e| format!("{path}: {e}"))?;
     let (w, h) = (info.width as usize, info.height as usize);
     let rgba = match info.color_type {
         png::ColorType::Rgba => buf[..w * h * 4].to_vec(),
-        png::ColorType::Rgb => buf[..w * h * 3].chunks(3).flat_map(|p| [p[0], p[1], p[2], 255]).collect(),
+        png::ColorType::Rgb => buf[..w * h * 3]
+            .chunks(3)
+            .flat_map(|p| [p[0], p[1], p[2], 255])
+            .collect(),
         png::ColorType::Grayscale | png::ColorType::GrayscaleAlpha | png::ColorType::Indexed => {
-            return Err(format!("{path}: {:?} PNG; the gate compares RGB(A) frames as the executors write them", info.color_type))
+            return Err(format!(
+                "{path}: {:?} PNG; the gate compares RGB(A) frames as the executors write them",
+                info.color_type
+            ));
         }
     };
     Ok(Image { w, h, rgba })
@@ -100,9 +113,21 @@ fn compare(r: &Image, c: &Image, rule: &Rule, envelope: u8) -> Report {
     let jump = |a: &[u8], b: &[u8]| (0..3).any(|k| a[k].abs_diff(b[k]) > EDGE_JUMP);
     let neighbours = |i: usize| {
         let (x, y) = (i % r.w, i / r.w);
-        [(x > 0).then(|| i - 1), (x + 1 < r.w).then(|| i + 1), (y > 0).then(|| i - r.w), (y + 1 < r.h).then(|| i + r.w)]
+        [
+            (x > 0).then(|| i - 1),
+            (x + 1 < r.w).then(|| i + 1),
+            (y > 0).then(|| i - r.w),
+            (y + 1 < r.h).then(|| i + r.w),
+        ]
     };
-    let edge: Vec<bool> = (0..n).map(|i| neighbours(i).into_iter().flatten().any(|j| jump(px(r, i), px(r, j)))).collect();
+    let edge: Vec<bool> = (0..n)
+        .map(|i| {
+            neighbours(i)
+                .into_iter()
+                .flatten()
+                .any(|j| jump(px(r, i), px(r, j)))
+        })
+        .collect();
     let mut max_diff = 0u8;
     let over: Vec<bool> = (0..n)
         .map(|i| {
@@ -116,11 +141,19 @@ fn compare(r: &Image, c: &Image, rule: &Rule, envelope: u8) -> Report {
         (-1..=1isize).any(|dy| {
             (-1..=1isize).any(|dx| {
                 let (u, v) = (x + dx, y + dy);
-                u >= 0 && v >= 0 && (u as usize) < r.w && (v as usize) < r.h && edge[v as usize * r.w + u as usize]
+                u >= 0
+                    && v >= 0
+                    && (u as usize) < r.w
+                    && (v as usize) < r.h
+                    && edge[v as usize * r.w + u as usize]
             })
         })
     };
-    let off_edge = if by_edge { (0..n).filter(|&i| over[i] && !near_edge(i)).count() } else { 0 };
+    let off_edge = if by_edge {
+        (0..n).filter(|&i| over[i] && !near_edge(i)).count()
+    } else {
+        0
+    };
     let (mut seen, mut max_cluster, mut stack) = (vec![false; n], 0, Vec::new());
     for s in (0..n).filter(|&i| over[i]) {
         if seen[s] {
@@ -140,7 +173,14 @@ fn compare(r: &Image, c: &Image, rule: &Rule, envelope: u8) -> Report {
         }
         max_cluster = max_cluster.max(size);
     }
-    Report { over: over.iter().filter(|&&o| o).count(), limit, max_cluster, off_edge, max_diff, tol }
+    Report {
+        over: over.iter().filter(|&&o| o).count(),
+        limit,
+        max_cluster,
+        off_edge,
+        max_diff,
+        tol,
+    }
 }
 
 fn run(args: &[String]) -> Result<bool, String> {
@@ -151,7 +191,9 @@ fn run(args: &[String]) -> Result<bool, String> {
             "--rule" => rule = Rule::parse(it.next().ok_or("--rule needs picture or cross")?)?,
             "--envelope" => {
                 let v = it.next().ok_or("--envelope needs a count of 8-bit codes")?;
-                envelope = v.parse().map_err(|_| format!("--envelope: expected 0..255, got {v}"))?;
+                envelope = v
+                    .parse()
+                    .map_err(|_| format!("--envelope: expected 0..255, got {v}"))?;
             }
             p if !p.starts_with("--") => paths.push(p.to_string()),
             other => return Err(format!("unknown flag {other}")),
@@ -163,13 +205,24 @@ fn run(args: &[String]) -> Result<bool, String> {
     let (r, c) = (read(reference)?, read(candidate)?);
     let rule_name = rule.name();
     if (r.w, r.h) != (c.w, c.h) {
-        println!(r#"{{"pass":false,"rule":"{rule_name}","fault":"size","reference":[{},{}],"candidate":[{},{}]}}"#, r.w, r.h, c.w, c.h);
+        println!(
+            r#"{{"pass":false,"rule":"{rule_name}","fault":"size","reference":[{},{}],"candidate":[{},{}]}}"#,
+            r.w, r.h, c.w, c.h
+        );
         return Ok(false);
     }
     let rep = compare(&r, &c, &rule, envelope);
     println!(
         r#"{{"pass":{},"rule":"{rule_name}","edges":"picture-jump-{EDGE_JUMP}","tol":{},"over":{},"limit":{},"maxCluster":{},"offEdge":{},"maxDiff":{},"size":[{},{}]}}"#,
-        rep.pass(), rep.tol, rep.over, rep.limit, rep.max_cluster, rep.off_edge, rep.max_diff, r.w, r.h
+        rep.pass(),
+        rep.tol,
+        rep.over,
+        rep.limit,
+        rep.max_cluster,
+        rep.off_edge,
+        rep.max_diff,
+        r.w,
+        r.h
     );
     Ok(rep.pass())
 }
@@ -211,7 +264,10 @@ mod tests {
     fn identical_and_one_code_pass() {
         assert!(check(&step(256)).pass());
         let mut c = step(256);
-        c.rgba.iter_mut().step_by(3).for_each(|v| *v = v.saturating_add(1));
+        c.rgba
+            .iter_mut()
+            .step_by(3)
+            .for_each(|v| *v = v.saturating_add(1));
         assert!(check(&c).pass());
     }
 

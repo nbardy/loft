@@ -51,12 +51,15 @@ impl B {
     fn node(&mut self, op: Op, ty: Ty, args: &[u32]) -> u32 {
         let k = match op {
             Op::Lit(_) => true,
-            Op::Prim(_) | Op::Swizzle(_) | Op::Vec => args.iter().all(|&a| self.konst[a as usize]),
+            Op::Make(_) | Op::Field(_) | Op::Prim(_) | Op::Swizzle(_) | Op::Vec => {
+                args.iter().all(|&a| self.konst[a as usize])
+            }
             Op::Time
             | Op::Param(_)
             | Op::Input(_)
             | Op::Bind(_)
             | Op::Var(_)
+            | Op::Open(_)
             | Op::Call(_)
             | Op::Fetch { .. }
             | Op::Loop { .. }
@@ -256,6 +259,7 @@ fn program(seed: u64) -> (B, u32) {
         let s = match b.nodes[x as usize].ty {
             Ty::F32 => x,
             Ty::Bool => b.node(Op::Prim(Prim::Select), Ty::F32, &[x, one, zero]),
+            Ty::U32 | Ty::Kind(_) => unreachable!("the random arithmetic generator uses float and bool"),
             Ty::V2 | Ty::V3 | Ty::V4 => b.node(Op::Prim(Prim::Length), Ty::F32, &[x]),
         };
         acc = b.node(Op::Prim(Prim::Add), Ty::F32, &[acc, s]);
@@ -339,6 +343,9 @@ fn permute(b: &B, main: u32, seed: u64, dead: usize) -> (B, u32) {
             | Op::Grad
             | Op::Raw(_)
             | Op::Swizzle(_)
+            | Op::Field(_)
+            | Op::Make(_)
+            | Op::Open(_)
             | Op::Vec
             | Op::Prim(_) => {}
         }
@@ -389,6 +396,9 @@ fn permute(b: &B, main: u32, seed: u64, dead: usize) -> (B, u32) {
             | Op::Time
             | Op::Bind(_)
             | Op::Var(_)
+            | Op::Field(_)
+            | Op::Make(_)
+            | Op::Open(_)
             | Op::Vec
             | Op::Prim(_)
             | Op::Swizzle(_)
@@ -485,4 +495,34 @@ fn two_raw_sources_with_one_name_are_refused() {
         Err(Error::Scene { fault: SceneFault::Wgsl { msg, .. }, .. }) => println!("refused: {msg}"),
         other => panic!("expected Scene{{Wgsl}}, got {:?}", other.map(|m| m.text)),
     }
+}
+
+#[test]
+fn nominal_fields_and_known_or_dynamic_open_calls_emit_valid_wgsl() {
+    use loft_ir::graph::{Kind, Open};
+    let mut b = B::default();
+    let name = b.sym("Pair");
+    let field = b.sym("tag");
+    let param = b.node(Op::Bind(name), Ty::Kind(0), &[]);
+    let key = b.node(Op::Field(0), Ty::U32, &[param]);
+    let zero = b.lit(&[0.], Ty::F32);
+    let one = b.lit(&[1.], Ty::F32);
+    let fallback = b.func(&[], zero);
+    let chosen = b.func(&[], one);
+    let dynamic = b.node(Op::Open(0), Ty::F32, &[key]);
+    let entry = b.func(&[param], dynamic);
+    let exact = b.lit(&[4294967295.], Ty::U32);
+    let value = b.node(Op::Make(0), Ty::Kind(0), &[exact]);
+    let consumed = b.node(Op::Call(entry), Ty::F32, &[value]);
+    let known = b.node(Op::Open(0), Ty::F32, &[exact]);
+    let sum = b.node(Op::Prim(Prim::Add), Ty::F32, &[consumed, known]);
+    let wrapper = b.func(&[], sum);
+    let mut g = b.graph();
+    g.kinds = Box::new([Kind { name, fields: Box::new([(field, Ty::U32)]) }]);
+    g.opens = Box::new([Open { name: field, cases: Box::new([(u32::MAX, chosen)]), otherwise: fallback }]);
+    let m = module(&g, &[("both", wrapper)], &b.slots(), Stage::Render).unwrap();
+    check(&g, &m).unwrap();
+    assert_eq!(m.text.matches("switch tag").count(), 1);
+    assert_eq!(m.text.matches("loft_open0(").count(), 2, "the known tag compiles to a direct call");
+    assert!(m.text.contains("4294967295u"));
 }

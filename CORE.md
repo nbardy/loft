@@ -105,6 +105,9 @@ The product is the picture. The reward we train on is aesthetic; checks and `sol
 |---|---|---|
 | Analytic impostors, raymarching, raster surfaces, instancing, media, post | Built in the TS engine | DESIGN.md |
 | Rust path | Builds 233/295 corpus entries, loads and draws 233; 13 pass picture parity in every frame (full run at 963c667, before the grain fix) | lean Rust plan, `agent_notes/2026-11-19_lean_rust_draws.md` |
+| Ordered render (`loft/render`) | Kinds, six queries over a world, print/realtime/reference/inspect engines, indexed indirect grids; same 6 pipelines at 10–1,000 things; 13/17 slice checks pass (cold load, one-bounce bias, time model, consumer tokens open) | `agent_notes/2026-11-19_design/render_step3_impl.md` |
+| Motion (`loft/motion`) | BODY/STATE/POSE rows, one fused dispatch per frame, baked and live takes; the crab plays, seeks and draws on the Rust path; 0/481 state differences across tick groupings; owner verdict on the look pending | `agent_notes/2026-11-19_design/motion_step3_impl.md` |
+| Render reads motion | Ordered scenes take row steps; the live post-IK POSE drives record and ray observers through playback, seek and rewind with zero snapshot or off-edge pixel errors. Wire-4 grid draws still bake row counts into shader text | `agent_notes/2026-11-19_design/integration.md` |
 | Compact graph | Not yet: the TS engine inlines every call (Titan records 308k nodes) | switch-to-Rust lane |
 | Spatial lookup for many-part fields | Not yet | — |
 | State-of-the-art PBR | PBR with AO and a moving sun; gap to the state of the art not assessed | — |
@@ -114,5 +117,5 @@ The product is the picture. The reward we train on is aesthetic; checks and `sol
 | Creative training on latest Loft | Pinned at c8502c2; re-pin after the switch | creative `vendor/loft` |
 
 Next, in order: the switch
-to Rust with the compact graph (TS engine, host and old loader deleted); GPU work from the measured frame times; the
-PBR audit.
+to Rust with the compact graph (TS engine, host and old loader deleted), with grid draws reading row counts as data;
+GPU work from the measured frame times; the PBR audit.

@@ -7,6 +7,7 @@ publish.workspace = true
 description = "The headless executor: loft serve's draw child, stills and timings of scene.loft bundles on loft-gpu (plan 2026-11-19 §4.1)."
 
 [dependencies]
+loft-core = { path = "../loft-core" }
 loft-gpu = { path = "../loft-gpu" }
 loft-ir = { path = "../loft-ir" }
 wgpu = { workspace = true, features = ["std", "parking_lot", "metal", "vulkan", "wgsl"] }
@@ -18,3 +19,7 @@ sha2.workspace = true
 
 [lints]
 workspace = true
+
+[[example]]
+name = "parity-diff"
+path = "../../../tools/parity/diff.rs"

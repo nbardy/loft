@@ -1,0 +1,920 @@
+{
+  "revision": "797bf73",
+  "base": "5d94531",
+  "flat_reference_commit": "d3674db",
+  "adapter": "Apple M4",
+  "backend": "Metal",
+  "precision": "F32",
+  "time_units": "milliseconds unless explicitly stated",
+  "timing_vector": [
+    "min",
+    "median",
+    "p95",
+    "max"
+  ],
+  "passed": 13,
+  "total": 17,
+  "checks": {
+    "1": {
+      "predicted": "Identical module texts at 10/100/1000 rows, <=8 pipelines, <=2000 total shader lines.",
+      "observed": {
+        "pipelines": 6,
+        "modules": 6,
+        "bundleLines": 628,
+        "cameraLines": 73,
+        "equal": true,
+        "hashes": [
+          "7e9d93bcd96098c2b8c2313d3077264f67594833fa35667fb28308674f3472d9",
+          "77be4d07bb7f38500fd7f1c33e8ca7c6e37067007bb5984422d50654c78bdb61",
+          "618bacb48cc3fcd45dbc9e33ae69a94bce3d072bd1a67247f09431b2e7107004",
+          "74e96380dda8990f3830ee3bc869d4aee4bfdd00e8ae0b75a09cd8cadf655df1",
+          "2e44f2344039edcc509d9202df0688b2aa359e77de1bd96cc42410ac2aedeb86",
+          "0319322d4707be1ba83295c06ce1e5b1ebf6641cd38dd35e7fef887b3a69bd9e"
+        ]
+      },
+      "passed": true
+    },
+    "2": {
+      "predicted": "Washer edit changes zero texts and one row. Introducing only the bead shape changes exactly three shader texts across both engines.",
+      "observed": {
+        "edits": 0,
+        "wordsChanged": [
+          [
+            1,
+            0
+          ]
+        ],
+        "changed": [
+          "realtime/1",
+          "realtime/2",
+          "reference/1"
+        ]
+      },
+      "passed": true
+    },
+    "3": {
+      "predicted": "30/280 ms warm/cold forecast, 60/350 ms warm/cold ceilings, spread <=10%. Nonce changes each bundle pipeline. The host matrix shader is constant.",
+      "observed": {
+        "cold": [
+          481.550667,
+          375.579709,
+          365.359917
+        ],
+        "warm": [
+          7.531167,
+          7.038542,
+          7.135083000000001
+        ],
+        "coldSpread": 0.3180172334011122,
+        "warmSpread": 0.06998963705835681
+      },
+      "passed": false
+    },
+    "4": {
+      "predicted": "Primary 9664 then 12080 pixels. Solid shadow leaves primary at 9664.",
+      "observed": {
+        "4-5 0.5 solid false": {
+          "primary": 9664,
+          "badIDs": 0
+        },
+        "4-5 0.25 solid false": {
+          "primary": 12080,
+          "badIDs": 0
+        },
+        "4-5 0.5 solid true": {
+          "primary": 9664,
+          "badIDs": 0
+        }
+      },
+      "passed": true
+    },
+    "5": {
+      "predicted": "Shift left 128 pixels, 9664/12080/12892 blocked. Zero bit errors.",
+      "observed": {
+        "4-5 0.5 solid false": {
+          "shadow": 9664,
+          "badShadow": 0
+        },
+        "4-5 0.25 solid false": {
+          "shadow": 12080,
+          "badShadow": 0
+        },
+        "4-5 0.5 solid true": {
+          "shadow": 12892,
+          "badShadow": 0
+        }
+      },
+      "passed": true
+    },
+    "6": {
+      "predicted": "Before/after picks (9,3),(9,3) to (9,3),(7,2); secondary distances 2/2 to 2/1. Error <=1e-4 m.",
+      "observed": {
+        "6 0.5": [
+          [
+            9,
+            3
+          ],
+          [
+            9,
+            3
+          ],
+          [
+            9,
+            2
+          ],
+          [
+            9,
+            2
+          ]
+        ],
+        "6 0.25": [
+          [
+            9,
+            3
+          ],
+          [
+            7,
+            2
+          ],
+          [
+            9,
+            2
+          ],
+          [
+            7,
+            1
+          ]
+        ]
+      },
+      "passed": true
+    },
+    "7": {
+      "predicted": "Miss; 2.2 m; 0.35 m inward; 0.4 m outward. CPU and GPU within 1e-5. Arrays contain four distances followed by x, y, z of the four normals.",
+      "observed": {
+        "cpu": [
+          -1,
+          2.1999998092651367,
+          0.3499999940395355,
+          0.3999999761581421,
+          0,
+          0.5999999642372131,
+          -1,
+          1,
+          0,
+          0.8000000715255737,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "gpu": [
+          -1,
+          2.1999998092651367,
+          0.3499999940395355,
+          0.3999999761581421,
+          0,
+          0.5999999046325684,
+          -1,
+          1,
+          0,
+          0.8000000715255737,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "passed": true
+    },
+    "8": {
+      "predicted": "Record vs trace <=0.01% interior errors, relative depth threshold 1e-4 at two 512x512 camera views.",
+      "observed": {
+        "8 front": {
+          "bad": 0,
+          "edge": 0
+        },
+        "8 side": {
+          "bad": 0,
+          "edge": 197
+        }
+      },
+      "passed": true
+    },
+    "9": {
+      "predicted": "Closed furnace 1.5/1.75/1.999985 E at 1024 samples per pixel, within 1%.",
+      "observed": {
+        "9 D=1": [
+          1.5,
+          1.5,
+          1.5,
+          1.5
+        ],
+        "9 D=2": [
+          1.75,
+          1.75,
+          1.75,
+          1.75
+        ],
+        "9 D=16": [
+          1.9999980926513672,
+          1.9999980926513672,
+          1.9999560117721558,
+          1.9999980926513672
+        ]
+      },
+      "passed": true
+    },
+    "10": {
+      "predicted": "White furnace 0.50 at centre and rim, within 2%.",
+      "observed": {
+        "centre": 0.4998427927494049,
+        "rim": 0.5001357793807983
+      },
+      "passed": true
+    },
+    "11": {
+      "predicted": "Absolute mean per-interior-pixel signed relative bias <=1% per linear RGB channel, default engines, one bounce, 256 samples, 48x48.",
+      "observed": [
+        {
+          "channel": "r",
+          "interior": 2229,
+          "relativeBias": -0.0023318307873551143,
+          "meanRelative": -0.02069159849236359
+        },
+        {
+          "channel": "g",
+          "interior": 2229,
+          "relativeBias": -0.0031336990612210736,
+          "meanRelative": -0.01989986462055683
+        },
+        {
+          "channel": "b",
+          "interior": 2229,
+          "relativeBias": -0.003373016767650414,
+          "meanRelative": -0.0183025200693044
+        }
+      ],
+      "passed": false
+    },
+    "12": {
+      "predicted": "Original shade 3.0/5.2 ms; frame 4.5/6.7 ms at 1280x800, N=10/30, frame p50 <=9/13.4 ms. Calibrated shade intercept 11 ms and slope 0.481 ms/row, both within 30%.",
+      "observed": {
+        "shade": [
+          2.268833,
+          4.4375
+        ],
+        "slope": 0.10843335000000001,
+        "offset": 1.1844994999999998,
+        "frames": [
+          [
+            2.354208,
+            2.397666,
+            10.242042,
+            10.242042
+          ],
+          [
+            4.518958,
+            4.599083,
+            7.177041,
+            7.177041
+          ]
+        ]
+      },
+      "passed": false
+    },
+    "13": {
+      "predicted": "512x512, 16 frames, 16 samples, N=30: forecast 21.7 ms per frame, p95 <=50 ms.",
+      "observed": {
+        "times": [
+          17.615958,
+          17.785917,
+          18.16675,
+          18.18675
+        ]
+      },
+      "passed": true
+    },
+    "14": {
+      "predicted": "Identical isolated and clip frame at t=1.37. Still-camera 64-frame history vs 64-sample still in linear RGB, mean relative difference <=1%.",
+      "observed": {
+        "same": true,
+        "channelErrors": [
+          0.009170697443136873,
+          0.009648784960798022,
+          0.009152505516471334
+        ],
+        "meanRelative": 0.009323995973468743
+      },
+      "passed": true
+    },
+    "15": {
+      "predicted": "All nine bead R0g pictures pass parity rule (a), including the log-distance channel.",
+      "observed": [
+        {
+          "frame": "through@0.5@512x512",
+          "pass": true,
+          "rule": "picture",
+          "edges": "picture-jump-32",
+          "tol": 1,
+          "over": 3,
+          "limit": 26,
+          "maxCluster": 1,
+          "offEdge": 0,
+          "maxDiff": 119,
+          "size": [
+            512,
+            512
+          ]
+        },
+        {
+          "frame": "through@0@512x512",
+          "pass": true,
+          "rule": "picture",
+          "edges": "picture-jump-32",
+          "tol": 1,
+          "over": 3,
+          "limit": 26,
+          "maxCluster": 1,
+          "offEdge": 0,
+          "maxDiff": 119,
+          "size": [
+            512,
+            512
+          ]
+        },
+        {
+          "frame": "through@1.37@512x512",
+          "pass": true,
+          "rule": "picture",
+          "edges": "picture-jump-32",
+          "tol": 1,
+          "over": 3,
+          "limit": 26,
+          "maxCluster": 1,
+          "offEdge": 0,
+          "maxDiff": 119,
+          "size": [
+            512,
+            512
+          ]
+        },
+        {
+          "frame": "through@2.9@512x512",
+          "pass": true,
+          "rule": "picture",
+          "edges": "picture-jump-32",
+          "tol": 1,
+          "over": 3,
+          "limit": 26,
+          "maxCluster": 1,
+          "offEdge": 0,
+          "maxDiff": 119,
+          "size": [
+            512,
+            512
+          ]
+        },
+        {
+          "frame": "whole@0.5@512x512",
+          "pass": true,
+          "rule": "picture",
+          "edges": "picture-jump-32",
+          "tol": 1,
+          "over": 16,
+          "limit": 26,
+          "maxCluster": 1,
+          "offEdge": 0,
+          "maxDiff": 47,
+          "size": [
+            512,
+            512
+          ]
+        },
+        {
+          "frame": "whole@0@512x512",
+          "pass": true,
+          "rule": "picture",
+          "edges": "picture-jump-32",
+          "tol": 1,
+          "over": 16,
+          "limit": 26,
+          "maxCluster": 1,
+          "offEdge": 0,
+          "maxDiff": 47,
+          "size": [
+            512,
+            512
+          ]
+        },
+        {
+          "frame": "whole@1.37@1280x800",
+          "pass": true,
+          "rule": "picture",
+          "edges": "picture-jump-32",
+          "tol": 1,
+          "over": 6,
+          "limit": 102,
+          "maxCluster": 1,
+          "offEdge": 0,
+          "maxDiff": 46,
+          "size": [
+            1280,
+            800
+          ]
+        },
+        {
+          "frame": "whole@1.37@512x512",
+          "pass": true,
+          "rule": "picture",
+          "edges": "picture-jump-32",
+          "tol": 1,
+          "over": 16,
+          "limit": 26,
+          "maxCluster": 1,
+          "offEdge": 0,
+          "maxDiff": 47,
+          "size": [
+            512,
+            512
+          ]
+        },
+        {
+          "frame": "whole@2.9@512x512",
+          "pass": true,
+          "rule": "picture",
+          "edges": "picture-jump-32",
+          "tol": 1,
+          "over": 16,
+          "limit": 26,
+          "maxCluster": 1,
+          "offEdge": 0,
+          "maxDiff": 47,
+          "size": [
+            512,
+            512
+          ]
+        }
+      ],
+      "passed": true
+    },
+    "16": {
+      "predicted": "Zero new rendering vocabulary in core identifiers.",
+      "observed": {
+        "vocabulary": [
+          "albedo",
+          "bead",
+          "bounce",
+          "brdf",
+          "bsdf",
+          "capsule",
+          "emit",
+          "emitter",
+          "furnace",
+          "ggx",
+          "hit",
+          "ink",
+          "lamp",
+          "light",
+          "material",
+          "medium",
+          "normal",
+          "occlusion",
+          "radiance",
+          "ray",
+          "scatter",
+          "shadow",
+          "shape",
+          "sky",
+          "sphere",
+          "sun",
+          "surface",
+          "toon",
+          "trace",
+          "visible",
+          "washer"
+        ],
+        "hits": [
+          "Emit",
+          "Medium",
+          "Shape",
+          "emit",
+          "emit_to_string",
+          "occlusion_query_set",
+          "shape"
+        ],
+        "domain_identifiers": [],
+        "passed": true
+      },
+      "passed": true
+    },
+    "17": {
+      "predicted": "o200k_base case counts 263/231/171+69/377/107, each within +/-15%.",
+      "observed": {
+        "2": {
+          "predicted": 263,
+          "measured": 205,
+          "passed": false
+        },
+        "3": {
+          "predicted": 231,
+          "measured": 193,
+          "passed": false
+        },
+        "4 shade": {
+          "predicted": 171,
+          "measured": 152,
+          "passed": true
+        },
+        "4 world": {
+          "predicted": 69,
+          "measured": 33,
+          "passed": false
+        },
+        "5": {
+          "predicted": 377,
+          "measured": 706,
+          "passed": false
+        },
+        "6": {
+          "predicted": 107,
+          "measured": 185,
+          "passed": false
+        }
+      },
+      "passed": false
+    }
+  },
+  "matched_primary_control_11": {
+    "data": [
+      {
+        "channel": "r",
+        "interior": 2229,
+        "relativeBias": -0.0022165309775669453,
+        "meanRelative": -0.00839815021194838
+      },
+      {
+        "channel": "g",
+        "interior": 2229,
+        "relativeBias": -0.0032463891436977192,
+        "meanRelative": -0.00840863176671948
+      },
+      {
+        "channel": "b",
+        "interior": 2229,
+        "relativeBias": -0.004275930397352431,
+        "meanRelative": -0.008336238567430966
+      }
+    ],
+    "pass": true
+  },
+  "calibration": {
+    "base": 0.024375,
+    "alu": 0.5855,
+    "load": 0.596958,
+    "one": 0.019334,
+    "many": 0.179458,
+    "scalar_ps": 16.722828149795532,
+    "coherent_ps": 51.53438448905945,
+    "draw_us": 0.6254843750000001
+  },
+  "timing_samples": {
+    "cold_nonce_by_N": [
+      927457831,
+      539763047,
+      406151424
+    ],
+    "loads_by_N": [
+      [
+        481.550667,
+        8.107332999999999,
+        7.531167,
+        7.334333
+      ],
+      [
+        375.579709,
+        7.192708,
+        7.038542,
+        6.658584
+      ],
+      [
+        365.359917,
+        7.46625,
+        7.135083000000001,
+        6.684375
+      ]
+    ],
+    "by_pass_N10_N30": [
+      [
+        [
+          0.135166,
+          0.139541,
+          0.58225,
+          0.58225
+        ],
+        [
+          2.187375,
+          2.268833,
+          9.862,
+          9.862
+        ],
+        [
+          2.229125,
+          2.322333,
+          10.089958,
+          10.089958
+        ]
+      ],
+      [
+        [
+          0.146,
+          0.147167,
+          0.230958,
+          0.230958
+        ],
+        [
+          4.333417,
+          4.4375,
+          6.961458,
+          6.961458
+        ],
+        [
+          4.393333,
+          4.521333,
+          7.100375,
+          7.100375
+        ]
+      ]
+    ],
+    "passes": [
+      "find",
+      "shade",
+      "film"
+    ],
+    "training_passes": [
+      [
+        0.051042,
+        0.053917,
+        0.057292,
+        0.057459
+      ],
+      [
+        17.537667,
+        17.712208,
+        17.992584,
+        18.109666
+      ],
+      [
+        17.539667,
+        17.712083,
+        17.999125,
+        18.110833
+      ]
+    ]
+  },
+  "first_timing_build": {
+    "1": {
+      "pipelines": 6,
+      "modules": 6,
+      "bundleLines": 614,
+      "equal": true,
+      "hashes": [
+        "7e9d93bcd96098c2b8c2313d3077264f67594833fa35667fb28308674f3472d9",
+        "f9e495f4fd495dfec53dcb549453572934b0973ba78ae0358e3179cf25e2de1f",
+        "11f7919c56aa74d71f545146b16c44a3abd2f93b09a265da578849690843f49c",
+        "74e96380dda8990f3830ee3bc869d4aee4bfdd00e8ae0b75a09cd8cadf655df1",
+        "92adf523f806e2c4d0a5a09fa077c600d5e8da27b4ff0bbdfc27fd52e34c882d"
+      ],
+      "pass": true
+    },
+    "2": {
+      "edits": 0,
+      "wordsChanged": [
+        [
+          1,
+          0
+        ]
+      ],
+      "changed": [
+        "realtime/1",
+        "realtime/2",
+        "realtime/4",
+        "reference/1",
+        "reference/3"
+      ],
+      "pass": false
+    },
+    "3": {
+      "cold": [
+        353.208042,
+        339.694,
+        340.788791
+      ],
+      "warm": [
+        6.402292,
+        6.407584,
+        6.435416999999999
+      ],
+      "coldSpread": 0.03978298704127825,
+      "warmSpread": 0.005173928336914324,
+      "pass": false
+    },
+    "12": {
+      "shade": [
+        2.280209,
+        4.427083
+      ],
+      "slope": 0.10734369999999997,
+      "offset": 1.2067720000000004,
+      "frames": [
+        [
+          2.363,
+          2.381334,
+          10.327042,
+          10.327042
+        ],
+        [
+          4.516166,
+          4.53075,
+          6.434542,
+          6.434542
+        ]
+      ],
+      "pass": false
+    },
+    "13": {
+      "times": [
+        17.3815,
+        17.644,
+        18.02,
+        19.668542
+      ],
+      "pass": true
+    }
+  },
+  "first_geometry_gate": {
+    "passed": 5,
+    "total": 9,
+    "oblique_over": 53,
+    "limit": 26
+  },
+  "first_lighting_bias_range_percent": [
+    -25.7,
+    -25.6
+  ],
+  "line_budgets_net": {
+    "Rust core": {
+      "budget": 900,
+      "189bd54": 1282,
+      "797bf73": 1465
+    },
+    "TS recorder and text": {
+      "budget": 250,
+      "189bd54": 119,
+      "797bf73": 185
+    },
+    "Render": {
+      "budget": 450,
+      "189bd54": 249,
+      "797bf73": 431
+    },
+    "Light": {
+      "budget": 350,
+      "189bd54": 154,
+      "797bf73": 197
+    },
+    "Kinds": {
+      "budget": 600,
+      "189bd54": 131,
+      "797bf73": 134
+    },
+    "Engines": {
+      "budget": 250,
+      "189bd54": 108,
+      "797bf73": 180
+    },
+    "Scenes and instruments": {
+      "budget": 500,
+      "189bd54": 469,
+      "797bf73": 882
+    }
+  },
+  "phase_2": {
+    "indexed_indirect": [
+      {
+        "t": 0,
+        "coarse": 512,
+        "fine": 256,
+        "wrong": 0
+      },
+      {
+        "t": 1,
+        "coarse": 256,
+        "fine": 256,
+        "wrong": 0
+      },
+      {
+        "t": 2,
+        "coarse": 0,
+        "fine": 0,
+        "wrong": 0
+      }
+    ],
+    "shared_pose": {
+      "results": [
+        {
+          "t": 0,
+          "wrong": 0,
+          "hits": 156,
+          "centre": 32
+        },
+        {
+          "t": 1,
+          "wrong": 0,
+          "hits": 156,
+          "centre": 40
+        }
+      ],
+      "snapshot": {
+        "edge": {
+          "kind": "hit",
+          "t": 2,
+          "id": 7,
+          "normal": [
+            0,
+            0,
+            1
+          ],
+          "uv": [
+            0,
+            0.75
+          ]
+        },
+        "hole": {
+          "kind": "miss"
+        },
+        "pass": true
+      }
+    },
+    "timestamp_revision": "ab15dfb",
+    "timestamps": {
+      "live_pose": {
+        "size": [
+          64,
+          64
+        ],
+        "frames": 3,
+        "gpu_ms": [
+          0.155667,
+          0.16875,
+          0.2055,
+          0.2055
+        ],
+        "pass_ms": [
+          [
+            0.01475,
+            0.015208,
+            0.020041,
+            0.020041
+          ],
+          [
+            0.011833,
+            0.012083,
+            0.015542,
+            0.015542
+          ]
+        ]
+      },
+      "compact_grid": {
+        "size": [
+          64,
+          16
+        ],
+        "frames": 3,
+        "gpu_ms": [
+          0.126291,
+          0.133584,
+          0.226709,
+          0.226709
+        ],
+        "pass_ms": [
+          [
+            0.010917,
+            0.01175,
+            0.011834,
+            0.011834
+          ],
+          [
+            0.01075,
+            0.012459,
+            0.012459,
+            0.012459
+          ]
+        ]
+      }
+    }
+  }
+}

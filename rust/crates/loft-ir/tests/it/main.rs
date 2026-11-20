@@ -5,7 +5,7 @@ use loft_ir::bundle::*;
 use loft_ir::error::{Error, Fault, Internal, SceneFault, Span};
 use loft_ir::graph::{self, Fill, Op, Prim, Program, Site, Ty};
 use loft_ir::identity::{self, Backend, Device, FrameKey, Identity, Precision};
-use loft_ir::wire::{self, BOUND, MAGIC, PRIM0, WIRE};
+use loft_ir::wire::{self, BOUND, MAGIC, PRIM0};
 
 /// A job writer in the wire's layout (src/record/wire.ts `pack`; the recorder's job in TS, here only for test jobs).
 #[derive(Default, Clone)]
@@ -89,7 +89,7 @@ impl Job {
             le(&decls),
             le(&roots),
         ];
-        let mut out = le(&[MAGIC, WIRE, program, 11]);
+        let mut out = le(&[MAGIC, 4, program, 11]);
         for s in &spans {
             out.extend(le(&[s.len() as u32, 0]));
             out.extend(s);
@@ -470,6 +470,7 @@ fn quota_is_a_budget() {
 fn bundle() -> Bundle {
     let f = |x: f32| loft_ir::bundle::F32(x.to_bits());
     Bundle {
+        row_steps: vec![],
         format: Format::V1,
         compiler: "c8502c2".into(),
         names: ["view".into(), "main".into()].into(),
@@ -529,7 +530,8 @@ fn bundle() -> Bundle {
         media: [Medium { transmittance: (0, 1), integrate: Integrate::March { steps: 64, shadow_steps: 16 } }].into(),
         cameras: [Camera { name: 0, lens: (0, 0) }].into(),
         params: [ParamDecl { name: 1, def: f(0.5), min: f(0.0), max: f(1.0) }].into(),
-        inputs: [InputDecl { name: 0, ty: Ty::V3, def: [f(0.0), f(1.0), f(-0.0)].into() }].into(),
+        inputs: [InputDecl { kind: InputKind::Level, name: 0, ty: Ty::V3, def: [f(0.0), f(1.0), f(-0.0)].into() }]
+            .into(),
         sites: [Site { file: "examples/owl.ts".into(), line: 3, col: 1 }].into(),
         sections: [vec![1u8; 100].into(), b"fn main() {}".to_vec().into(), vec![].into()].into(),
     }
@@ -559,6 +561,8 @@ fn every_identity_field_moves_the_hash() {
     let base = Identity {
         build: identity::build(&bundle().write().unwrap()),
         frame: FrameKey {
+            previous: None,
+            steps: vec![],
             camera: 0,
             time: 0.5f32.to_bits(),
             size: [512, 512],
@@ -568,9 +572,10 @@ fn every_identity_field_moves_the_hash() {
         },
         device: Device { backend: Backend::Metal, adapter: "Apple M4".into(), driver: "".into() },
     };
-    let edits: [fn(&mut Identity); 10] = [
+    let edits: [fn(&mut Identity); 11] = [
         |i| i.build[31] ^= 1,
         |i| i.frame.camera = 1,
+        |i| i.frame.previous = Some([1; 32]),
         |i| i.frame.time = 1.37f32.to_bits(),
         |i| i.frame.size = [512, 513],
         |i| i.frame.params = [1, 3].into(),
@@ -586,4 +591,36 @@ fn every_identity_field_moves_the_hash() {
         edit(&mut i);
         assert!(seen.insert(i.hash()), "edit {k} left the hash unchanged");
     }
+}
+
+#[test]
+fn wire_five_checks_nominal_members_and_the_open_selector() {
+    let mut j = Job::default();
+    let name = j.sym("Pair");
+    let member = j.sym("key");
+    let tag = j.lit(ty(5), &[4294967295.0]);
+    let val = j.node(13 | ty(6), &[tag], 0);
+    let proj = j.node(12 | ty(5), &[val], 0);
+    let one = j.lit(F32, &[1.0]);
+    j.decl(12, &[name, member, 5], &[val]);
+    j.decl(0, &[0, name, 0, 0], &[one]);
+    j.decl(13, &[member, 0, u32::MAX, 0], &[]);
+    let open = j.node(14 | F32, &[proj], 0);
+    j.roots.push(open);
+    let bytes = |j: &Job| {
+        let mut b = j.bytes(0);
+        b[4] = 5;
+        b
+    };
+    let got = wire::decode(&bytes(&j)).unwrap().graph;
+    assert_eq!(got.nodes[val as usize].ty, Ty::Kind(0));
+    assert_eq!(got.nodes[open as usize].op, Op::Open(0));
+    j.nodes[proj as usize][3] = 1;
+    assert!(wire::decode(&bytes(&j)).is_err());
+    j.nodes[proj as usize][3] = 0;
+    j.args[2] = one;
+    assert!(matches!(
+        wire::decode(&bytes(&j)),
+        Err(Error::Scene { fault: SceneFault::Type { want: Ty::U32, .. }, .. })
+    ));
 }

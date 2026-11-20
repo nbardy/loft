@@ -309,7 +309,7 @@ async function profileOnDraw(cmd: Extract<Command, { kind: "profile" }>) {
   const { existsSync } = await import("node:fs");
   if (!existsSync(LOFT_DRAW)) throw new EnvironmentError(`${LOFT_DRAW} is missing. Fix: tools/dev.sh build loft-draw --fast`, false);
   const out = `out/profile/${/([^/]+?)(\.ts)?$/.exec(cmd.path)![1]!}`;
-  await buildRust({ kind: "build", engine: "rust", naga: "load", precision: cmd.precision, out, source: { kind: "file", path: cmd.path, style: cmd.style, light: cmd.light, variant: cmd.variant } });
+  await build({ kind: "build", engine: "rust", naga: "load", precision: cmd.precision, out, source: { kind: "file", path: cmd.path, style: cmd.style, light: cmd.light, variant: cmd.variant, renderEngine: cmd.renderEngine } });
   const child = Bun.spawn([LOFT_DRAW, "profile", out, "--view", cmd.view, "--time", String(cmd.time), "--size", `${cmd.size.width}x${cmd.size.height}`, "--frames", String(cmd.frames)], { stdout: "inherit", stderr: "inherit" });
   const code = await child.exited;
   if (code !== 0) process.exit(code);
@@ -317,9 +317,20 @@ async function profileOnDraw(cmd: Extract<Command, { kind: "profile" }>) {
 
 async function build(cmd: Extract<Command, { kind: "build" }>) {
   switch (cmd.engine) {
-    case "view": case "dawn": return buildTs(cmd);
     case "rust": return buildRust(cmd);
+    case "view": case "dawn": {
+      const scene = await (await import("./ordered.ts")).orderedAt(cmd.source);
+      return scene ? buildOrderedFile(cmd, scene) : buildTs(cmd);
+    }
   }
+}
+
+async function buildOrderedFile(cmd: Extract<Command, {kind:"build"}>, scene: import("../render/record.ts").OrderedScene) {
+  const [{buildOrdered},{mkdirSync}]=await Promise.all([import("../core/ordered.ts"),import("node:fs")]);
+  mkdirSync(cmd.out,{recursive:true});
+  const file=`${cmd.out}/scene.loft`;
+  const r=buildOrdered(scene,file,{naga:cmd.naga,precision:cmd.precision});
+  console.log(`wrote ${file}  ${r.resources} resources  build ${r.build}`);
 }
 
 /**
@@ -331,11 +342,22 @@ async function buildRust(cmd: Extract<Command, { kind: "build" }>) {
   const [{ rec }, { pack, Program }, { native, UNLIMITED }, { mkdirSync }, { compiledScene }, { sceneDecls }] = await Promise.all([
     import("../record/recorder.ts"), import("../record/wire.ts"), import("../core/native.ts"), import("node:fs"), import("./load.ts"), import("../draw/record.ts")]);
   const t = performance.now(), stop = rec.watch();
-  let roots: ReturnType<typeof stop>, scene: Awaited<ReturnType<typeof compiledScene>>["scene"];
-  let artefact: Awaited<ReturnType<typeof compiledScene>>["artefact"];
-  try { ({ scene, artefact } = await compiledScene(cmd.source)); } finally { roots = stop(); }
-  // The scene's cameras and draws (src/draw/record.ts); what no thing can record yet is said by name.
-  const decls = sceneDecls(scene, artefact);
+  let roots: ReturnType<typeof stop>, decls: ReturnType<typeof sceneDecls>;
+  // Wire-4 scenes may create roots during module evaluation. Start watching before classifying the export.
+  try {
+    const subject = await (await import("./variant.ts")).subjectAt(cmd.source.path);
+    const ordered = await (await import("./ordered.ts")).orderedOf(subject, cmd.source);
+    if (ordered) return buildOrderedFile(cmd, ordered);
+    if (subject.kind === "recorded") {
+      if (cmd.source.variant.kind === "ask" || cmd.source.style.kind !== "scene" || cmd.source.light.kind !== "scene")
+        throw new UsageError("explicit passes own their draws and lighting: drop the variant, style and light overrides");
+      decls = { scene: subject.scene, unported: [] };
+    } else {
+      // The scene's cameras and draws (src/draw/record.ts); what no thing can record yet is said by name.
+      const { scene, artefact } = await compiledScene(cmd.source);
+      decls = sceneDecls(scene, artefact);
+    }
+  } finally { roots = stop(); }
   for (const u of decls.unported) console.log(`unported ${u}`);
   const job = pack(rec.job(Program.Scene, roots, decls.scene));
   mkdirSync(cmd.out, { recursive: true });
@@ -394,6 +416,9 @@ async function writeArtefact(artefact: Artefact, precision: Precision, out: stri
 
 async function main(argv: readonly string[]) {
   const cmd = parseArgs(argv);
+  if(cmd.kind==="render" || cmd.kind==="clip" || cmd.kind==="frames") {
+    if(await (await import("./ordered.ts")).drawNative(cmd)) return;
+  }
   switch (cmd.kind) {
     case "render": return render(cmd);
     case "frames": return frames(cmd);
@@ -405,12 +430,19 @@ async function main(argv: readonly string[]) {
     case "gallery": return (await import("./gallery.ts")).gallery(cmd);
     case "serve": return (await import("./serve.ts")).serve(cmd);
     case "show": return (await import("./show.ts")).show(cmd);
-    case "profile":
+    case "profile": {
+      if (cmd.engine === "rust") return profileOnDraw(cmd);
+      // An ordered scene (src/render) builds Bundle V1 whichever engine is named: loft-draw times it.
+      const { orderedAt } = await import("./ordered.ts");
+      if (await orderedAt({ kind: "file", path: cmd.path, style: cmd.style, light: cmd.light, variant: cmd.variant, renderEngine: cmd.renderEngine })) {
+        if (cmd.outline !== "scene") throw new UsageError("set outlines in the ordered scene's look");
+        return profileOnDraw(cmd);
+      }
       switch (cmd.engine) {
         case "view": return profileOnView(cmd);
         case "dawn": return (await import("./profile.ts")).profile(cmd);
-        case "rust": return profileOnDraw(cmd);
       }
+    }
     case "variants": return (await import("./variants.ts")).variants(cmd);
     case "help": return void console.log(USAGE);
     case "api": {

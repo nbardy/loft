@@ -20,8 +20,9 @@ export type LightChoice = { readonly kind: "scene" } | { readonly kind: "named";
 /** The variant of a design to draw (`--variant`, docs/variants.md): none given (the base; `check` checks every named
  * variant), or a choice parsed here and resolved against the design when the module is loaded (src/cli/variant.ts). */
 export type VariantArg = { readonly kind: "default" } | { readonly kind: "ask"; readonly ask: VariantAsk; readonly text: string };
+export type RenderEngine = "realtime" | "reference" | "print" | "inspect";
 export type Source =
-  | { readonly kind: "file"; readonly path: string; readonly style: StyleChoice; readonly light: LightChoice; readonly variant: VariantArg }
+  | { readonly kind: "file"; readonly renderEngine?: RenderEngine; readonly path: string; readonly style: StyleChoice; readonly light: LightChoice; readonly variant: VariantArg }
   | { readonly kind: "fixture" }
   /** A directory `loft build` wrote: drawn from files alone, without the compiler (docs/artefact_format.md). */
   | { readonly kind: "artefact"; readonly dir: string };
@@ -57,7 +58,7 @@ export type Command =
    * to the host's module creation (src/core/native.ts `Build`). */
   /** `engine`: "view" and "dawn" both write the TS compiler's artefact folder; "rust" writes `scene.loft` (Bundle V1). */
   | { readonly kind: "build"; readonly precision: Precision; readonly source: Extract<Source, { kind: "file" }>; readonly out: string; readonly engine: Drawing; readonly naga: "emit" | "load" }
-  | { readonly kind: "profile"; readonly precision: Precision; readonly path: string; readonly style: StyleChoice; readonly light: LightChoice; readonly variant: VariantArg; readonly view: ViewName; readonly size: Size; readonly frames: number; readonly time: number; readonly outline: "scene" | OutlineMethod; readonly engine: Drawing }
+  | { readonly kind: "profile"; readonly renderEngine?: RenderEngine; readonly precision: Precision; readonly path: string; readonly style: StyleChoice; readonly light: LightChoice; readonly variant: VariantArg; readonly view: ViewName; readonly size: Size; readonly frames: number; readonly time: number; readonly outline: "scene" | OutlineMethod; readonly engine: Drawing }
   | { readonly kind: "bake"; readonly source: SceneSource; readonly path: string; readonly out: string; readonly when: BakeWhen; readonly density: { readonly along: number; readonly around: number } }
   /** Text only, no GPU: the usage, the API reference (all of it, or one name), and the craft guide with the API. */
   | { readonly kind: "help" }
@@ -88,6 +89,7 @@ export const USAGE = `usage: loft <command> <scene.ts | --fixture | --artefact d
   --artefact dir      (render, clip, frames) draws a built directory, without the scene or the compiler
   --style toon|woodblock|biolume|papercraft|sketch|neon|pbr  (render, clip, frames, dev, build) draws the scene in that style instead of its own
   gallery [--out out/gallery] [--scenes "examples/*.ts,examples/scenes/*.ts"] [--styles toon,woodblock,biolume,papercraft] [--size 960x600] [--clip-seconds 6] [--only a,b] [--force]
+  --engine realtime|reference|print|inspect   (render, frames, clip, build, profile) choose the ordered scene’s pass list
   --precision f32|mixed   (build, render, clip, frames, profile, dev; default f32 for scenes)
   --light name        (render, clip, frames, profile, build, variants) draws the scene's style in one of its named lightings
                       (woodblock: flat, twoTone, threeTone, bokashi, hatched, contact, rim, cel; docs/lighting.md)
@@ -115,6 +117,7 @@ const FLAGS: Record<string, { readonly value: boolean; readonly commands: readon
   "--out": { value: true, commands: ["render", "clip", "frames", "bake", "build", "variants"] },
   "--size": { value: true, commands: ["render", "clip", "frames", "profile", "variants"] },
   "--frames": { value: true, commands: ["profile"] },
+  "--engine": { value: true, commands: ["render", "clip", "frames", "profile", "build"] },
   "--outline": { value: true, commands: ["profile"] },
   "--param": { value: true, commands: ["render", "clip", "frames"] },
   "--input": { value: true, commands: ["render", "clip", "frames"] },
@@ -272,6 +275,13 @@ export function parseArgs(argv: readonly string[]): Command {
   if ([fixture, built !== undefined, positional.length === 1].filter((x) => x).length > 1) throw new UsageError("give one of a scene file, --fixture or --artefact");
   if (!fixture && built === undefined && positional.length === 0) throw new UsageError(`${name}: needs a scene file (or --fixture, or --artefact)`);
   const precision = parsePrecision(one("--precision"));
+  const renderEngine = one("--engine");
+  if (renderEngine !== undefined) {
+    if (fixture || built !== undefined) throw new UsageError("--engine needs an ordered scene source. A bundle already contains its pass list");
+    if (renderEngine !== "realtime" && renderEngine !== "reference" && renderEngine !== "print" && renderEngine !== "inspect")
+      throw new UsageError("--engine: choose realtime, reference, print or inspect");
+  }
+  const selected: { renderEngine?: RenderEngine } = renderEngine ? { renderEngine } : {};
   const styleName = one("--style");
   if ((fixture || built !== undefined) && styleName !== undefined) throw new UsageError("--style: a fixture or a built artefact is compiled already; it has no style to change");
   const lightName = one("--light");
@@ -280,7 +290,7 @@ export function parseArgs(argv: readonly string[]): Command {
   if ((fixture || built !== undefined) && flags.has("--variant")) throw new UsageError("--variant: a fixture or a built artefact is compiled already; it has no variants to choose");
   const source: Source = fixture ? { kind: "fixture" }
     : built !== undefined ? { kind: "artefact", dir: built }
-    : { kind: "file", path: positional[0]!, style: styleName === undefined ? { kind: "scene" } : { kind: "named", name: styleName }, light, variant: variantOf(one("--variant")) };
+    : { kind: "file", ...selected, path: positional[0]!, style: styleName === undefined ? { kind: "scene" } : { kind: "named", name: styleName }, light, variant: variantOf(one("--variant")) };
 
   if (name === "check") {
     if (source.kind !== "file") throw new UsageError("check: needs a scene file (a fixture has no checks)");
@@ -307,7 +317,7 @@ export function parseArgs(argv: readonly string[]): Command {
     // loft-view and loft-draw time the built artefact as drawn; the outline method is a TS-host profiling knob.
     if (engine !== "dawn" && outline !== "scene") throw new UsageError(`--outline: a flag of the Dawn profile (LOFT_ENGINE=dawn); LOFT_ENGINE=${engine} draws the scene's own outline`);
     return {
-      kind: "profile", engine, precision: precision ?? "f32", path: source.path, style: source.style, light: source.light, variant: source.variant, view: one("--view") ?? "game", size: parseSize(one("--size") ?? "1280x800"), frames,
+      kind: "profile", ...selected, engine, precision: precision ?? "f32", path: source.path, style: source.style, light: source.light, variant: source.variant, view: one("--view") ?? "game", size: parseSize(one("--size") ?? "1280x800"), frames,
       time: one("--time") === undefined ? 1.0 : num("--time", one("--time")!),
       outline,
     };

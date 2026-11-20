@@ -12,8 +12,8 @@ use serde::Serialize;
 use std::panic::{self, AssertUnwindSafe};
 
 /// What native.ts expects, byte for byte. Bump the abi number with any change to `run`'s arguments or answer.
-const STAMP: &str = concat!("loft-node abi 5 wire ", 4);
-const _: () = assert!(WIRE == 4, "STAMP names the wire version");
+const STAMP: &str = concat!("loft-node abi 7 wire ", 5);
+const _: () = assert!(WIRE == 5, "STAMP names the wire version");
 /// The Loft commit this addon was built from (build.rs), written into every bundle as `compiler`.
 const COMMIT: &str = env!("LOFT_COMMIT");
 
@@ -133,7 +133,7 @@ mod napi {
         // SAFETY: argv has room for argc = 4 values; the out-pointers are live locals.
         unsafe {
             if napi_get_cb_info(env, info, &mut argc, argv.as_mut_ptr(), ptr::null_mut(), ptr::null_mut()) != OK
-                || argc < 4
+                || argc <= k
                 || napi_get_typedarray_info(env, argv[k], &mut ty, &mut len, &mut data, &mut buf, &mut off) != OK
                 || ty != want
             {
@@ -175,6 +175,20 @@ mod napi {
         string(env, &super::guard::<()>(|| panic!("probe: a deliberate panic inside the binding")))
     }
 
+    unsafe extern "C" fn link(env: Env, info: Info) -> Value {
+        // SAFETY: the borrowed declaration bytes live for this callback; the result is copied by N-API.
+        let source = unsafe { array(env, info, 0, UINT8_ARRAY) };
+        string(
+            env,
+            &super::guard(|| {
+                let bytes = source.map_err(|_| super::Error::Usage("link takes one UTF-8 declaration array".into()))?;
+                let src =
+                    serde_json::from_slice(bytes).map_err(|e| super::Error::Usage(format!("link: {e}").into()))?;
+                loft_core::link_source(src)
+            }),
+        )
+    }
+
     fn export(env: Env, exports: Value, name: &str, cb: Callback) {
         let mut f = ptr::null_mut();
         // SAFETY: `name` is UTF-8 of the given length; the C name below is NUL-terminated by the caller's literal.
@@ -188,6 +202,7 @@ mod napi {
     #[unsafe(no_mangle)]
     pub unsafe extern "C" fn napi_register_module_v1(env: Env, exports: Value) -> Value {
         export(env, exports, "run", run);
+        export(env, exports, "link", link);
         #[cfg(feature = "probe")]
         export(env, exports, "panic", probe);
         // SAFETY: a NUL-terminated literal name and a value created on this env.

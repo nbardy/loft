@@ -13,7 +13,21 @@ pub struct Identity {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct TickKey {
+    pub checkpoint: u32,
+    pub prefix: [u8; 32],
+    pub tick: u32,
+    pub fraction: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct FrameKey {
+    /// Digest of the frames already observed by a Previous read, in presentation order.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous: Option<[u8; 32]>,
+    /// Each row step's presented tick and the digest of the per-instance state/input prefix that produced it.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub steps: Vec<TickKey>,
     pub camera: Id,
     /// f32 bits of the time.
     pub time: u32,
@@ -59,5 +73,12 @@ impl Identity {
         // Plain structs of integers, arrays and strings always serialise; a failure is a Loft bug, so it panics
         // (Internal at the binding) rather than hash a placeholder.
         Sha256::digest(serde_json::to_vec(self).expect("an Identity serialises")).into()
+    }
+}
+
+impl FrameKey {
+    /// Includes the previous digest, so two orders of the same observations remain distinct.
+    pub fn prefix(&self) -> [u8; 32] {
+        Sha256::digest(serde_json::to_vec(self).expect("a FrameKey serialises")).into()
     }
 }

@@ -84,6 +84,37 @@ pub enum Why {
 pub enum Scope {
     Proved,
     Sampled { n: u32 },
+    Observed { ticks: u32, inputs: [u8; 32], law: [u8; 32], by: Evaluator },
+}
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub enum Evaluator {
+    Gpu,
+    Twin,
+}
+
+/// Each element is the signed margin of the observed site at that tick. Refuse missing or nonfinite evidence.
+pub fn observed(margins: &[Option<f32>], inputs: [u8; 32], law: [u8; 32], by: Evaluator) -> Result<Verdict, Error> {
+    if margins.is_empty() || margins.iter().flatten().any(|m| !m.is_finite()) {
+        return Err(Error::Usage(
+            "an observed check needs a finite margin at every sampled tick: supply the missing site".into(),
+        ));
+    }
+    let (tick, margin) = margins
+        .iter()
+        .enumerate()
+        .filter_map(|(k, v)| v.map(|m| (k, m)))
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .ok_or_else(|| {
+            Error::Usage("the predicate selected no observed ticks: choose a take containing the hold".into())
+        })?;
+    Ok(Verdict {
+        truth: if margin >= 0.0 { Truth::Holds } else { Truth::Fails },
+        margin,
+        bounds: [f64::from(margin); 2],
+        witness: Box::new([(0, tick as f32)]),
+        work: Work::default(),
+        scope: Scope::Observed { ticks: margins.len() as u32, inputs, law, by },
+    })
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct Work {

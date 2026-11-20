@@ -473,6 +473,7 @@ dependencies = [
 name = "loft-draw"
 version = "0.1.0"
 dependencies = [
+ "loft-core",
  "loft-gpu",
  "loft-ir",
  "png",
@@ -513,6 +514,15 @@ dependencies = [
  "sha2",
  "thiserror",
  "wgpu",
+]
+
+[[package]]
+name = "loft-lower"
+version = "0.1.0"
+dependencies = [
+ "loft-ir",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

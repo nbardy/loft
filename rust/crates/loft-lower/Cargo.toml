@@ -1,0 +1,19 @@
+[package]
+name = "loft-lower"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "The TS compiler's pure lowering, translated 1:1: wire job in, artefact files (docs/artefact_format.md) out, byte-identical to `loft build` (agent_notes/2026-11-19_port/PLAN.md)."
+
+[dependencies]
+loft-ir = { path = "../loft-ir" }
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "loft-lower"
+path = "src/main.rs"

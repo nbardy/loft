@@ -238,7 +238,7 @@ export function printJob(job: Job): string {
   };
   const node = (id: number, s: Scope, inCall: boolean): number => {
     const h = N[4 * id]!, at = N[4 * id + 1]!, n = N[4 * id + 2]!, imm = N[4 * id + 3]!;
-    const op = h & 0xff, ty: Ty = TYS[(h >> 8) & 0xff]!, flags = h >>> 16;
+    const op = h & 0xff, ty = [...TYS,"u32","kind"][(h >> 8) & 0xff]!, flags = h >>> 16;
     const kids = (): number[] => Array.from(job.args.subarray(at, at + n), (a) => walk(a, s, inCall));
     if (op >= PRIM0) return c.op(`${PRIMS[op - PRIM0]} ${ty}`, kids());
     switch (op as Op) {
@@ -267,6 +267,9 @@ export function printJob(job: Job): string {
         const body: Scope = { level: s.level, frame: ++frames, bound: new Map(), args: new Map(Array.from(d.words.subarray(4, 4 + d.words[3]!), (b, j) => [b, () => walk(args[j]!, s, inCall)])), memo: new Map(), parent: undefined };
         return walk(d.roots[0]!, body, true);
       }
+      case Op.Make: return c.op(`make ${sym(of(Decl.Kind)[imm].words[0])}`,kids());
+      case Op.Open: return c.op(`open ${sym(of(Decl.Open)[imm].words[0])}`,kids());
+      case Op.Field: return c.op(`field ${imm}`,kids());
       case Op.Grad: throw new Error("job: a Grad node (the wave-1 recorder writes derivatives expanded)");
     }
   };

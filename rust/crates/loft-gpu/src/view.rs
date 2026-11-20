@@ -126,6 +126,7 @@ impl Cameras {
         aim: &Aim,
         (g0, packs): (&BindGroup, &BindGroup),
         frames: &[&Buffer],
+        timestamp_writes: Option<wgpu::ComputePassTimestampWrites<'_>>,
     ) {
         let lens = match aim {
             Aim::Matrices(_) => return,
@@ -136,10 +137,8 @@ impl Cameras {
             Aim::Named(k) => Some(*k),
         };
         {
-            let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("loft camera"),
-                timestamp_writes: None,
-            });
+            let mut pass =
+                enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("loft camera"), timestamp_writes });
             pass.set_bind_group(0, g0, &[0]);
             if let Some(k) = lens {
                 pass.set_pipeline(&self.lenses[k]);

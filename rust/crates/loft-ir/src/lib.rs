@@ -6,6 +6,7 @@ pub mod error;
 pub mod frame;
 pub mod graph;
 pub mod identity;
+pub mod pass;
 pub mod print;
 pub mod wire;
 
