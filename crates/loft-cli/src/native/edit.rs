@@ -1,7 +1,7 @@
 //! Dirty-kind pipeline selection and publication of one checked generation.
 use super::*;
 use loft_passes::tier0::{EditClass, TraceEdit, TraceSource};
-use loft_runner::promotion::{self, Pending};
+use loft_runner::{frame::{ModuleRecipe, ModulePipelines as Pipelines}, promotion::{self, Pending}};
 use std::{
     ops::Range,
     sync::{
@@ -11,23 +11,6 @@ use std::{
     },
     time::Duration,
 };
-
-#[derive(Clone)]
-struct Pipelines {
-    module: wgpu::ShaderModule,
-    render: wgpu::RenderPipeline,
-    shade: wgpu::ComputePipeline,
-}
-
-impl Pipelines {
-    fn current(kind: &KindGpu) -> Self {
-        Self {
-            module: kind.module.clone(),
-            render: kind.render.clone(),
-            shade: kind.shade.clone(),
-        }
-    }
-}
 
 struct PipelineCreates {
     foreground_id: std::thread::ThreadId,
@@ -78,6 +61,9 @@ pub struct TraceSession {
     source: TraceSource,
     tape: TraceEdit,
     fallback: Pipelines,
+    current: Pipelines,
+    recipe: ModuleRecipe,
+    casters: Vec<u32>,
     instances: Vec<loft_passes::program::Instance>,
     instance_slots: Vec<usize>,
     rows: Vec<f32>,
@@ -132,8 +118,9 @@ impl TraceSession {
         size: (u32, u32),
     ) -> Result<Self, String> {
         let kind = source.kind();
-        let loaded = Loaded::load(g, p, size, None, Some((kind, &tape)), Aov::Beauty)?;
-        let fallback = Pipelines::current(&loaded.kinds[kind]);
+        let mut loaded = Loaded::load(g, p, size, None, Some((kind, &tape)), Aov::Beauty)?;
+        let (recipe, fallback) = loaded.runner.get_mut().unwrap().module_pipelines(loaded.id, loaded.modules[kind])
+            .map_err(runner_error)?;
         let mut instance_slots = vec![usize::MAX; p.kinds[kind].n_rows as usize];
         for (i, inst) in p.instances.iter().enumerate() {
             if inst.kind as usize == kind {
@@ -147,7 +134,10 @@ impl TraceSession {
             loaded,
             source,
             tape,
+            current: fallback.clone(),
             fallback,
+            recipe,
+            casters: shadow_kinds(&p.passes).to_vec(),
             instances: p.instances.clone(),
             instance_slots,
             rows: p.kinds[kind].rows.clone(),
@@ -206,12 +196,12 @@ impl TraceSession {
                 instance_patches.push((slot, next));
             }
         }
-        let casters = shadow_kinds(&self.loaded.passes);
+        let casters = &self.casters;
         let caster_changed = !instance_patches.is_empty() && casters.contains(&(kind as u32));
         for &(slot, bound) in &instance_patches {
             self.instances[slot] = bound;
         }
-        if caster_changed && let Some(shadow) = &mut self.loaded.shadow {
+        if caster_changed {
             let (mut lo, mut hi) = ([f32::INFINITY; 3], [f32::NEG_INFINITY; 3]);
             for inst in self.instances.iter().filter(|i| casters.contains(&i.kind)) {
                 for axis in 0..3 {
@@ -219,25 +209,24 @@ impl TraceSession {
                     hi[axis] = hi[axis].max(inst.hi[axis]);
                 }
             }
-            (shadow.view_proj, shadow.texel, shadow.dir) =
-                sun_camera(self.loaded.sun, lo, hi, self.shadow_size);
+            self.loaded.light_view = Some(sun_camera(self.loaded.sun, lo, hi, self.shadow_size));
         }
-        if self.loaded.kinds[kind].shade != self.fallback.shade {
-            self.install(&g.device, self.fallback.clone());
+        if self.current.shade != self.fallback.shade {
+            self.install(self.fallback.clone())?;
         }
 
         // Loaded is exclusively borrowed through publication. Render commands
         // for this session cannot observe the middle of these queue writes.
         let write_start = Instant::now();
-        let dst = &self.loaded.kinds[kind].rows;
+        let dst = self.loaded.rows(kind)?;
         for &(_, offset, words) in &row_patches {
             self.rows[offset..offset + words.len()].copy_from_slice(&words);
             g.queue
-                .write_buffer(dst, (offset * 4) as u64, &f32_bytes(&words));
+                .write_buffer(&dst, (offset * 4) as u64, &f32_bytes(&words));
         }
         for range in &tape_writes {
             g.queue.write_buffer(
-                dst,
+                &dst,
                 (self.rows.len() * 4 + range.start) as u64,
                 &tape[range.clone()],
             );
@@ -272,28 +261,12 @@ impl TraceSession {
         })
     }
 
-    fn install(&mut self, d: &wgpu::Device, pipelines: Pipelines) {
-        let kind = &mut self.loaded.kinds[self.source.kind()];
-        kind.module = pipelines.module;
-        kind.render = pipelines.render;
-        kind.shade = pipelines.shade;
+    fn install(&mut self, pipelines: Pipelines) -> Result<(), String> {
         let l = &mut self.loaded;
-        let kinds = pass_kinds(
-            &l.passes,
-            |p| if let Pass::Vis(k) = p { Some(k) } else { None },
-        );
-        l.bundle = draw_bundle(d, &l.g0, &l.kinds, kinds, &l.draw_args, None);
-        if let Some(shadow) = &mut l.shadow {
-            shadow.bundle = draw_bundle(
-                d,
-                &shadow.groups.0,
-                &l.kinds,
-                shadow_kinds(&l.passes),
-                &shadow.args,
-                Some(&shadow.groups.1),
-            );
-        }
-        l.prepare_passes();
+        l.runner.get_mut().unwrap().install_module_pipelines(l.id, l.modules[self.source.kind()], &pipelines)
+            .map_err(runner_error)?;
+        self.current = pipelines;
+        Ok(())
     }
 
     /// A preparation failure leaves the last validated tape installed.
@@ -306,7 +279,7 @@ impl TraceSession {
             };
             let job = self.job.take().expect("completed trace job");
             if let Some(pipeline) = self.pending.complete(job.generation, job.source, result)? {
-                self.install(&g.device, pipeline);
+                self.install(pipeline)?;
                 self.edited = false;
                 return Ok(true);
             }
@@ -315,54 +288,21 @@ impl TraceSession {
             return Ok(!self.edited);
         };
         if let Some(pipelines) = self.pending.cached(generation, &source) {
-            self.install(&g.device, pipelines);
+            self.install(pipelines)?;
             self.edited = false;
             return Ok(true);
         }
         let d = g.device.clone();
-        let [g0, g1, g2] = [
-            &self.loaded.bgl0,
-            &self.loaded.bgl_kind,
-            &self.loaded.bgl_shade,
-        ]
-        .map(Clone::clone);
+        let recipe = self.recipe.clone();
         let wgsl = source.clone();
         let creates = self.creates.clone();
         let done = promotion::worker(move || {
+            let wgsl = loft_passes::bundle::replacement(&wgsl)?;
             let scope = d.push_error_scope(wgpu::ErrorFilter::Validation);
-            let module = d.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("promoted trace"),
-                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(&wgsl)),
-            });
             creates.record();
-            let render = render(
-                &d,
-                "promoted visibility",
-                &[&g0, &g1],
-                &module,
-                ("vs", "fs"),
-                VIS,
-                true,
-                Some(wgpu::Face::Front),
-                None,
-            );
             creates.record();
-            let shade = compute(
-                &d,
-                "promoted shade",
-                &[&g0, &g1, &g2],
-                &module,
-                "shade",
-                None,
-            );
-            pollster::block_on(scope.pop()).map_or(
-                Ok(Pipelines {
-                    module,
-                    render,
-                    shade,
-                }),
-                |e| Err(e.to_string()),
-            )
+            let pipelines = recipe.compile(&d, &wgsl);
+            pollster::block_on(scope.pop()).map_or(Ok(pipelines), |e| Err(e.to_string()))
         })
         .map_err(|e| e.to_string())?;
         self.job = Some(Job {
@@ -379,14 +319,14 @@ impl TraceSession {
         t: f32,
         count: usize,
     ) -> Result<Vec<[Option<f64>; 2]>, String> {
-        let current = Pipelines::current(&self.loaded.kinds[self.source.kind()]);
+        let current = self.current.clone();
         let mut observations = Vec::with_capacity(count);
         let result = (|| {
             for i in 0..count {
                 let mut pair = [None; 2];
                 for tier in [i % 2, 1 - i % 2] {
                     let target = if tier == 0 { &self.fallback } else { &current };
-                    self.install(&g.device, target.clone());
+                    self.install(target.clone())?;
                     self.loaded.frame(g, t);
                     pair[tier] = self.loaded.gpu_ms(g)?.map(|(ms, _)| ms);
                 }
@@ -394,18 +334,17 @@ impl TraceSession {
             }
             Ok(observations)
         })();
-        self.install(&g.device, current);
+        self.install(current)?;
         result
     }
 
     pub fn clean_pipelines(&self) -> Vec<(wgpu::RenderPipeline, wgpu::ComputePipeline)> {
-        self.loaded
-            .kinds
-            .iter()
-            .enumerate()
-            .filter(|(kind, _)| *kind != self.source.kind())
-            .map(|(_, kind)| (kind.render.clone(), kind.shade.clone()))
-            .collect()
+        let mut runner = self.loaded.runner.lock().unwrap();
+        self.loaded.modules.iter().enumerate().filter(|(kind, _)| *kind != self.source.kind())
+            .map(|(_, &id)| {
+                let (_, pipes) = runner.module_pipelines(self.loaded.id, id).expect("prepared clean kind");
+                (pipes.render, pipes.shade)
+            }).collect()
     }
 
     pub fn kind(&self) -> usize {

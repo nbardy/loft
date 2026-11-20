@@ -348,7 +348,7 @@ fn host_edits_parameters_and_external_handles_at_frame_boundary() {
         &texture,
         &r.export_texture(id, TableId(21)).unwrap()
     ));
-    let host = allocate(&r.device, 4);
+    let host = allocate(&r.device, 4, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC);
     r.bind_external_buffer(id, TableId(20), host.clone())
         .unwrap();
     assert!(Arc::ptr_eq(
@@ -367,7 +367,7 @@ fn host_edits_parameters_and_external_handles_at_frame_boundary() {
     }
     let before = r.instances[0].compute.bound_groups(PassId(1));
     let unrelated = r.instances[0].compute.bound_groups(PassId(2));
-    let other = allocate(&r.device, 4);
+    let other = allocate(&r.device, 4, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC);
     r.queue.write_buffer(&other, 0, &230u32.to_le_bytes());
     r.bind_external_buffer(id, TableId(20), other).unwrap();
     assert_eq!(step(&mut r, id, &view)[0], 254);

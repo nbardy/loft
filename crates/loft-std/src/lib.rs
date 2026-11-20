@@ -9,8 +9,6 @@ pub mod pick;
 pub mod stepping;
 pub mod bundle;
 pub mod error;
-#[cfg(all(target_arch = "wasm32", feature = "web-sys"))]
-pub mod web;
 pub mod bindings;
 pub mod edits;
 pub mod outbox;

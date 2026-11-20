@@ -1,6 +1,7 @@
 //! Shared execution declarations, source locations, diagnostics and verdicts.
 mod schema;
 mod bundle;
+pub mod execution;
 pub use bundle::*;
 
 
