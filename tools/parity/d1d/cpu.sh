@@ -12,6 +12,9 @@ mkdir -p "$out/import"
 for ext in loft gltf bin; do
   cp "$prior_fixtures/triangles.$ext" "$out/import/"
 done
+# The historical witness used the flat prelude. Move its import into the
+# scratch entry so the pinned source and binary assets can be replayed as-is.
+printf '\nuse stdlib::geometry::mesh::{Mesh}\n' >> "$out/import/triangles.loft"
 assets=crates/loft-passes/tests/d1_assets
 "$loft" build crates/loft-passes/tests/phase5/anchor.loft -o "$out/anchor.loftb" > "$out/anchor.log"
 "$loft" build "$assets/primitives.loft" -o "$out/primitives.loftb" > "$out/primitives.log"

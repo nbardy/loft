@@ -1,3 +1,4 @@
+use stdlib::lighting::world
 use stdlib::integrators::restir::{reservoir_add, reservoir_scale, reservoir_reuse}
 use stdlib::frames::transport::{frame}
 use stdlib::geometry::analytic::{ray_ground}

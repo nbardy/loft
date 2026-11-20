@@ -81,14 +81,19 @@ pub(crate) fn module(p: &Prog, types: &[Ty], kinds: &[KindTable], queries: &[(St
         .expect("world medium math");
     em.out.push_str("struct WorldSigma");
     em.out.push_str(medium);
+    // The path template uses the checked ABI payloads from lighting/world.
+    let world_payload = |name| p.structs.get(name).ok_or_else(|| Diag::new(Code::E011, f.name.span,
+        format!("missing path payload `{name}`"), "import stdlib::lighting::world"));
     for name in ["Ray", "Hit", "Sigma", "Vol"] {
         let mut fields = Vec::new();
-        for field in p.structs[name].1 {
+        for field in world_payload(name)?.1 {
             fields.push(format!("  {}: {},", super::member_name(&field.name.name), super::wty(&em.resolve(&field.ty))));
         }
         let _ = writeln!(em.out, "struct loft_type_{name} {{\n{}\n}}", fields.join("\n"));
     }
-    let radiance = &p.structs["Vol"].1[0].ty;
+    let volume = world_payload("Vol")?;
+    let radiance = &volume.1.first().ok_or_else(|| Diag::new(Code::E003, volume.0.span,
+        "Vol has no radiance field", "use the Vol payload from stdlib::lighting::world"))?.ty;
     if em.resolve(radiance) == Ty::VecN(3) {
         em.out.push_str(r"
 fn loft_medium(world: u32, p: vec3<f32>) -> loft_type_Sigma {
