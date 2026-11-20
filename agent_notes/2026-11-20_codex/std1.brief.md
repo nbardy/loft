@@ -57,3 +57,20 @@ Write agent_notes/2026-11-20_v1/design/std1.md containing:
    Name them std1a.brief.md and std1b..e.brief.md, and list the parallel ones (not std1a) in agent_notes/2026-11-20_codex/std1.lanes.
 
 Commit by path to main and push. Commit messages end with "Co-Authored-By: GPT (codex) <noreply@openai.com>". Final message ≤150 words.
+
+**Addendum (lead, 20 Nov): styles vs engines.** In the old engine, a style was a *shading recipe* applied over the same raster and SDF-march visibility:
+- a paint treatment;
+- a lighting recipe (light.ts, 591 lines);
+- a shade function;
+- post passes.
+
+One style was PBR (GGX, Smith, Schlick, sky environment). The rest were non-photoreal: woodblock, toon, sketch, neon, biolume and papercraft, plus shared print parts (sky, sea, foam, whitewater) and gloss. Keep that separation explicit in the tree, as layers:
+- stdlib/{math, noise, sdf, geometry, frames};
+- stdlib/{materials, lighting, sky};
+- stdlib/styles: how a surface looks — paint treatment, shading recipe, ink and outline;
+- stdlib/integrators: how light is transported — direct, ReSTIR, the path-traced reference, spectral;
+- stdlib/schedules: how the frame is built — vis-buffer raster plus tile shading, forward, path tracing;
+- stdlib/post;
+- **stdlib/engines** = a composition of one schedule, one integrator, one style and post. For example `woodblock_realtime` = vis-buffer schedule + direct light + woodblock style + print post. The current engines/*.loft files move here.
+
+A style is NOT an engine. The same woodblock style should run under the realtime and the reference engines. Show this composition in std1.md, and include one example of swapping a style under a fixed engine, and an integrator under a fixed style.
