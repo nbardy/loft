@@ -91,6 +91,9 @@ pub(super) fn timed<T>(clock: Option<fn() -> Duration>, create: impl FnOnce() ->
 
 #[cfg(not(target_arch = "wasm32"))]
 fn create_all<T: Send + 'static, P: Send + 'static>(recipes: Vec<T>, create: impl Fn(T) -> P + Send + Sync + 'static) -> Result<Vec<P>> {
+    if recipes.len() <= 1 {
+        return Ok(recipes.into_iter().map(create).collect());
+    }
     let create = Arc::new(create);
     let workers = recipes.into_iter().map(|recipe| {
         let create = Arc::clone(&create);
@@ -144,11 +147,17 @@ impl ComputeCache {
         }
         if !ranges.is_empty() { return Err(RunnerError::AbiMismatch); }
         let templates = Templates::new(b, 256)?;
-        let mut modules = BTreeMap::new();
-        for m in &b.modules {
-            let src = std::str::from_utf8(&m.bytes).map_err(|_| RunnerError::AbiMismatch)?;
-            modules.insert(m.id, d.create_shader_module(wgpu::ShaderModuleDescriptor { label: None, source: wgpu::ShaderSource::Wgsl(src.into()) }));
-        }
+        let sources = b.modules.iter().map(|module| {
+            let source = std::str::from_utf8(&module.bytes).map_err(|_| RunnerError::AbiMismatch)?;
+            Ok((module.id, source.to_owned()))
+        }).collect::<Result<Vec<_>>>()?;
+        let device = d.clone();
+        let modules = create_all(sources, move |(id, source)| {
+            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: None, source: wgpu::ShaderSource::Wgsl(source.into()),
+            });
+            (id, module)
+        })?.into_iter().collect::<BTreeMap<_, _>>();
         let entries = [Uniform, Storage { read_only:true }, Storage { read_only:true }].into_iter().enumerate().map(|(i,ty)| {
             let mut entry = slot(i as u32,ty);
             entry.visibility |= wgpu::ShaderStages::VERTEX_FRAGMENT;
