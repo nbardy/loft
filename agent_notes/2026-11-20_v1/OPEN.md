@@ -1,5 +1,43 @@
 # Open targets for v1.0-alpha
 
+## Cook cycle 1 integration
+
+Main retains the del2 engine. C1b and C1d passed their focused promotion and replay measurements. The combined candidate `bb7e43c` missed the publication rule. Cargo discovered C1c’s integration-test target before the integrator removed that lane for a legal-loop regression. The production compiler built after removal. The stale test path stopped the single workspace build with exit 101. Its 11 emitted native test executables passed **81 tests** of 156 expected. 75 tests lack a combined result. [Build diagnostics](../../out/meta/i1/full.stderr) · [Cargo timeline](../../out/meta/i1/build-timeline.json) · [Excluded heads and metrics](../../out/meta/i1/BLOCKED)
+
+The single Apple M4 Metal gate returned 3. Pictures held **0/18** against the approved frames. **18/18** actual RGBA hashes matched del2. Twin held **36/36**, Speed **9/12**, Load **31/33** and Truth **34/34**. All nine bead renders matched main, and the 18 gate pins, nine bead pins and 1,510 historical beauty hashes verified before and after. Both grammar recognizers passed all 280 original cases including the negative sentinel and all three additions. Doctests and wasm32 with web-sys passed. Five mutants fired in the combined binaries. The sixth, five inlined BSDF copies, fired separately in C1b’s compiler test binary with matching compiler sources. [Gate evidence](../../out/meta/i1/gate.json) · [Frame comparisons](../../out/meta/i1/pixels.json) · [Contact sheet](../../out/meta/i1/sheet.webp)
+
+| Lane | Delivery and remaining work |
+| --- | --- |
+| C1a · index-only Hermit · [f9bd52c](https://github.com/nbardy/loft/blob/f9bd52cb89f2195314cb25ccbf496447ac53890c/agent_notes/2026-11-20_v1/lanes/c1a.md) | The actual bake pipeline disappeared at counts 1 and 20. Creates fell 14→13, load-bake dispatches fell to zero, eight modules and 17 frame commands remained, and all 18 beauty/depth/ID frames matched. Both final cold loads missed 1.500 s at 3.781/4.371 s. The slowest existing pipeline took 3.413/4.091 s. Matched main also missed its ordinary CLI load caps. The branch needs a qualifying cold-load and Speed measurement. |
+| C1b · native Tier 0 promotion · [b656186](https://github.com/nbardy/loft/blob/b656186b7cc6b00f2a3df35ed3f821be6805c040/agent_notes/2026-11-20_v1/lanes/c1b.md) | The three planned paired p95 increases were +0.244/+0.257/+0.230 ms against +0.500 ms. The combined runner measured +0.264 ms with 0/140,000 pixels over 1/255. All seven register, loop and edit controls matched the CPU. A full combined suite remains due. Authored full-screen tapes, LUT/texture paths and browser promotion remain open. |
+| C1c · raw motion verification · [f01386f](https://github.com/nbardy/loft/blob/f01386f81d638fa2d9a0acdb29409bcd13016cc3/agent_notes/2026-11-20_v1/lanes/c1c.md) | All 12 planned law and solver cases passed. The literal and declared three-trip loops reproduced law 0/4/12 and solver 1/4/10 at ticks 0/1/3. Main accepts both `i < 3u` and `3u > i`. The lane emits E504 for the second spelling on both routes. Normalize the comparison operands in its induction proof and retain the data-dependent loop refusals and author locations. [Guard controls](../../out/meta/i1/loop-controls/results.json) |
+| C1d · persistent native replay · [009fca1](https://github.com/nbardy/loft/blob/009fca1a898cbf451f0125aa999d053e0933ab14/agent_notes/2026-11-20_v1/lanes/c1d.md) | Render and check matched the independent four-byte identities for 8.0 and 7.0 after four ticks. Check returned 2 for the recovering tick-2 miss. The fresh 481-tick Scramble image matched. A full combined suite remains due. Event/PosePacket input, cross-device tolerances and checkpoints remain open. |
+
+### Frame and load observations
+
+Each scene used 1280 × 800, 30 warmups and 300 measured frames. Commands are the observed count on every timed frame. Cold/warm times include derivation and device preparation. Del2 at `33cdcbf` scored Speed 12/12 and Load 31/33. The intervening PF1 diagnostic on the same engine scored 8/12 and 24/33.
+
+| Scene | Del2 p95, ms | Candidate p95, ms | Delta, ms | Cap, ms | Commands | Triangle, ms | Cold / warm, s |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| capsules-1 | 0.528 | 0.691 | +0.163 | 0.800 | 5 | 0.096 | 0.327 / 0.005 |
+| capsules-20 | 0.961 | 0.990 | +0.029 | 1.100 | 5 | 0.031 | 0.380 / 0.006 |
+| blobs-1 | 0.677 | 2.082 | +1.404 | 1.100 | 5 | 0.096 | 0.343 / 0.006 |
+| blobs-20 | 1.629 | 1.974 | +0.346 | 2.400 | 5 | 0.032 | 0.426 / 0.007 |
+| hermit-1 | 3.225 | 5.130 | +1.905 | 5.000 | 17 | 0.100 | 0.916 / 0.021 |
+| hermit-20 | 4.802 | 6.533 | +1.731 | 5.600 | 17 | 0.099 | 0.893 / 0.022 |
+
+Frame-time misses were blobs-1 2.082/1.100 ms, hermit-1 5.130/5.000 ms, hermit-20 6.533/5.600 ms. Hermit created 14 and 14 pipelines against 13 at each count. The gate classified 0 Speed verdicts as contended. [All verdicts](../../out/meta/i1/gate.stdout)
+
+Matched main/candidate profiles reversed the order for the second pair. The candidate-minus-main p95 deltas were capsules-1 +0.076/-0.548 ms, capsules-20 -0.021/-0.027 ms, blobs-1 -0.031/+0.142 ms, blobs-20 -0.188/+0.218 ms, hermit-1 +0.648/+0.005 ms, hermit-20 -0.021/+0.269 ms. Both orders measured a positive delta for hermit-1. Hermit-1 varied by 1.320 ms between the two candidate profiles. Its Shade median changed by +0.130 ms and −0.027 ms against adjacent main. All paired shader digests matched. Those measurements leave the cause of the hard Speed misses unresolved. [Profile controls and pass medians](../../out/meta/i1/controls/profiles.json)
+
+The candidate adds 144 physical Rust/WGSL source lines in CLI, 165 in Passes and 98 in Runner. The expanded functional L0 count is 5,814→5,953 using the same source ranges on both revisions where the files match. It charges motion and replay execution in CLI and the shipped VM in Passes, with a single physical opcode body. [Per-crate and L0 accounting](../../out/meta/i1/lines.json)
+
+### Owner decisions
+
+The 18 layered frames, Shrine woodblock look, archived per-hit-shadow proposal and 187 corpus beauty pairs in 17 batches, including revised bead, remain queued. The 107 scratch geometry/depth observations and pinned trace identities await owner re-pins. [Appearance queue](../../out/meta/i6/approval_needed.md) · [Scratch provenance](lanes/d1d.md) · [Trace bundle identities](../../out/meta/c1d/bundle-controls.json)
+
+The frozen texture-bundle format, external Keel and Room Runners dependency re-pins, release retag and downstream first-light merge remain owner decisions. The first-light candidate is `472a78f` on Room Runners, using Loft `b1a4c26` against Keel base `b4cf34f`. [Frozen format request](../../out/meta/i4-r2/approval_needed.md) · [Host pin history](room_runner/STUDY.md) · [First-light candidate](https://github.com/nbardy/room-runners-arena-lib/commit/472a78f341389118e7b845660f654e5bcdda3aba) · [Release decisions](NOTES_AND_TODO.md)
+
 ## Legacy retirement
 
 One locked Apple M4 Metal run on `33cdcbf` scored Pictures **0/18**, Twin **36/36**,
