@@ -1,9 +1,0 @@
-Committed `9be0fbac0f256ad6ca70cd68b2fe2805892f3da8` on `loft/reconstruct-migrate`. Reconstruction and training now share the `vendor/loft` pin at `e7c3c5a`. Native reconstruction prompts and seed SFT read that pin’s `loft context`, and dataset workers archive the pinned runtime and record its commit in their receipts.
-
-The codemod ported **37 distinct native states**, with **0 hand fixes and 0 final failures**. I rebaked **42 recipe states** with byte-identical recipe JSON and copied **44 Python states** unchanged, including two in the seed. Across the 79 rebuilt states, **all 103 views matched the original decoded pixels exactly**. The GLB hashes also matched. One Chrome capture timed out and matched on retry.
-
-- **Pilot** exported 50 complete samples, 111 captures, and 193 pairs. [Pilot dataset](/Users/nicholasbardy/git/creative/3d_scrape/data/reconstruction-pilot-loftmain)
-- **Curated queue** exported 7 captures and 11 pairs across 3 complete and 1 partial sample. The other 1,500 assignments remain pending. [Curated dataset](/Users/nicholasbardy/git/creative/3d_scrape/data/reconstruction-v1-loftmain)
-- **Seed SFT** exported both two-trajectory copies offline, sharing the same three regenerated native observations. [Seed export](/Users/nicholasbardy/git/creative/3d_scrape/data/seed-trajectories-loftmain/seed-trajectories-loft-python.jsonl)
-
-The exact resume command starts the partial recipe in a fresh session with its saved source and render. The originals remain untouched. No provider calls, training, or push occurred. [Resume command](/Users/nicholasbardy/git/_wt/creative-reconstruct/art/reference_sculptures/loft/README.md) · [Migration note](/Users/nicholasbardy/git/_wt/creative-reconstruct/agent_notes/2026-11-18_reconstruction_MIGRATION.md)

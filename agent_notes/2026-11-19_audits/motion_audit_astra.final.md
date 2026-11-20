@@ -1,7 +1,0 @@
-I recommend making foot contact drive the first motion experiment. Loft already gives the turning crab world-space foot targets, delayed shell motion, and antennae that whip after impact. The opportunity is to connect those effects. An outside foot takes the turn, the shell transfers weight over it, and the claw carries on after the shell slows.
-
-For the heron, the same approach makes a testable prediction. Given the proposed launch and landing positions and times, the contact forces produce a **0.37 m crouch before takeoff**. Compare that performance with the existing minimum-jerk leap from the game camera.
-
-Split §3 into two decisions. An analytic spring could save authors from retuning appendages after editing a parent curve. Torque minimisation needs masses, inertias, contact forces, and a torque scale before its result has a physical interpretation. Rank performed motion matching third and live simulation fourth. Simulation earns a trial when a second hit arrives before the boss recovers from the first.
-
-The audit includes twelve author examples, cost estimates, proof limits, and a phased plan. The proposed GPU costs are predictions. Promotion depends on visible improvement, planted-foot measurements, and frame timings on the Rust renderer. I changed only the requested file. [Read the audit](</Users/nicholasbardy/git/loft/agent_notes/2026-11-19_audits/motion_audit_astra.md>)

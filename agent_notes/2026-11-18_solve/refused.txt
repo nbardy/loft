@@ -1,4 +1,0 @@
-solve: given holds that cannot all be met: equal at t = 0 (examples/second/heron_leap.ts:71); atLeast over the whole span (examples/second/heron_leap.ts:83) (least worst violation found 0.0373); expected holds some curve of the family meets together. Fix: drop or loosen one of these 2: without any one of them the others can be met
-  at examples/second/heron_leap.ts:95
-loft: scene: solve: given holds that cannot all be met: equal at t = 0 (examples/second/heron_leap.ts:71); atLeast over the whole span (examples/second/heron_leap.ts:83) (least worst violation found 0.0373); expected holds some curve of the family meets together. Fix: drop or loosen one of these 2: without any one of them the others can be met (at examples/second/heron_leap.ts:95)
-exit 4

@@ -1,7 +1,0 @@
-Implemented `spray` and a warm red-clay boot burst. Authors control each grain’s position, radius, colour and opacity with expressions of index and time. The example’s 12 puffs reuse the flight equation. Grains have stable subpixel coverage, optional motion stretch, sun and lamp lighting, opaque depth testing, and coloured attenuation through the cloud. Rain keeps its dedicated streak and splash renderer.
-
-At **1280×720 on Apple M4**, the whole GPU frame took **8.13 ms for 100,000 grains** and **31.92 ms for 1 million**. The shared veil grid uses **512 KiB** with zero per-grain storage. The million-grain variant exceeds a 60 fps frame budget.
-
-Typecheck, eight focused tests, and both variant checks and builds passed. Source and built files produced byte-identical stills. The all-examples pipeline test timed out in the full suite. The suite and isolated retry both ended with SIGTERM before completing.
-
-[Example](/Users/nicholasbardy/git/_wt/loft-spray/examples/spray_burst.ts) · [Lane notes](/Users/nicholasbardy/git/_wt/loft-spray/agent_notes/2026-11-18_spray.md) · [100k still](/Users/nicholasbardy/git/_wt/loft-spray/agent_notes/2026-11-18_spray/100k.webp) · [1M still](/Users/nicholasbardy/git/_wt/loft-spray/agent_notes/2026-11-18_spray/million.webp)
