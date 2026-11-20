@@ -1,53 +1,28 @@
-# Loft: agent guide
+# Working on Loft
 
-Start with `CORE.md`: what Loft is for, the priorities (picture, GPU frame time, tokens, truth, lean) and how a change
-is judged.
+Read [CORE.md](CORE.md) for priorities and [OPEN.md](agent_notes/2026-11-20_v1/OPEN.md) for
+the measured state of main. Authors start with [AGENT_CARD.md](AGENT_CARD.md). Language and ABI
+decisions live in [the v1 specification](docs/spec/README.md).
 
-- Parallel work: a disposable Cambium workspace, `git cambium add -b BRANCH -name NAME -ephemeral` (root `~/git/_wt` and the sweep come from `.cambium.toml`; `add` first removes workspaces already merged into origin/main). From the primary checkout, run `cambium prune --merged origin/main` or `cambium maintain` after a merge: it removes every clean workspace merged into origin/main and keeps the rest with the reason. `cambium remove NAME` refuses a dirty or in-use workspace and checkpoints before deleting. Pass the base commit explicitly if you need one other than this checkout's HEAD.
-- `bun` runs everything; `pnpm` installs. Nothing is compiled ahead of time.
-- Typecheck with `rtk proxy pnpm exec tsc --noEmit`. A shell hook rewrites a bare `tsc` and reports errors that are
-  not there.
-- `pnpm test` is the suite (`bun test --timeout 120000`: a bare `bun test` gives some GPU tests bun's 5 s limit, which
-  they miss when the whole suite runs at once, although `tests/setup.ts` asks for 60 s). The old note: Under a loaded machine it can time out or fail once and pass on the next run; the intermittent shader-module
-  failure was bun-webgpu freeing descriptor strings early, patched (`docs/reliable_render.md`). Exit codes: `docs/errors.md`.
-- For parallel worktrees, each worker runs its focused checks. The integrating reviewer owns one full suite on the
-  combined revision. On macOS the test preload admits one LOFT Bun test process per user across worktrees. Exit 75
-  means another check is running. Record the pending check for the reviewer.
-- GPU time per draw: `bun src/cli/main.ts profile <scene> --view <camera>`. It also prints the pose stages (the
-  per-frame tables, computed on the GPU since phase 1 of `docs/gpu_native.md`), the CPU pose time, and every table
-  still filled on the CPU (`cpu`) with its reason. Pose stages alone: `bun tools/pose_time.ts [scene.ts:view ...]`. The GPU clock ticks in 0.065 ms steps; a reading below that is unresolved.
-- Comparing two ways of drawing one thing in the same timing rounds: `bun tools/tracer_bench.ts`.
-- Pictures and other output go under `out/`, which git ignores.
-- Reference pictures (concepts, model sheets, storyboards, paint-overs of our renders) come from GPT image through the
-  Codex CLI's `$imagegen` skill. It runs on the server, costs nothing extra and takes a few minutes for ten pictures:
-  1. Make a scratch directory under `out/` with the brief in `brief.md` and any pictures to look at or paint over in
-     `in/` as PNG (`dwebp x.webp -o in/x.png`).
-  2. Run it in the background:
-     `command codex exec -s workspace-write -C <dir> --skip-git-repo-check -o <dir>/final.txt "$(cat <dir>/brief.md)" < /dev/null`.
-     `< /dev/null` is required or it waits on stdin forever. `command` skips the `--yolo` alias.
-  3. The brief opens with: use the `$imagegen` skill in its built-in tool mode, never the CLI fallback or an API key;
-     save PNGs in the current directory under exact file names; touch nothing else; stop and say so if the tool is
-     unavailable. Then the character description and the style clause (both repeated in every prompt, so a set stays
-     on model), then the numbered list of pictures, then what the final message should list.
-     The tool takes at most five reference images per call: put no more than three or four in `in/`, and tell it to
-     report a failed picture and go on, not stop (a thirteen-picture job stopped at the seventh on this).
-  4. Ask for sheets a modeller can use: a turnaround (front, three-quarter, side, from above at the game camera's
-     angle), an expression sheet, key poses of an action, a storyboard with single frames, close-ups of a surface, and
-     paint-overs of our own renders at the same camera. Keep names, project details and anything personal out of the
-     brief.
-  5. Look at every picture, keep the good ones as WebP (`cwebp -q 90`) beside the brief under
-     `docs/art_direction/<round>/`, and show them to the owner before anything is built from them.
-  Worked briefs: `docs/art_direction/crab_round4/prompt.md` and `crab_round4/others/prompt.md`. The local Flux script
-  (`tools/crab_concepts.py`) is the fallback; it is slower, rougher, and another session may be using that repo.
-- **Freeze (from wave 0 of `docs/proposals/2026-11-19_lean_rust_loft.md`, §7):** no new feature lands in the TS
-  engine (`src/compile`, `src/draw`, `src/host`, `expr.ts`, `interval.ts`, `ranged.ts`, `check.ts`, `geom/solve.ts`).
-  A feature request during the port is written against the Rust types in that plan and lands in its lane. A fix that
-  changes a reference picture or refusal (`out/parity/R0`) says so in its commit.
-- Rust: one workspace in `rust/` (toolchain pinned by `rust/rust-toolchain.toml`). Edit loop `tools/dev.sh
-  check|lint|test|build|run CRATE`, gate `tools/check.sh static|quick|full`, workspaces `git cambium add -ephemeral`. Cargo goes
-  through the machine-wide compile lock shared with Keel; a waiter prints the holder. Picture parity:
-  `bun tools/parity/run.ts`, reference set in `out/parity/R0`.
-- Design as built: `DESIGN.md`. Research notes: `docs/`. Handoff prompts: `prompts/art_research/`.
-- A scene as files: `bun src/cli/main.ts build <scene> --out out/files/<name>`, drawn without the compiler by
-  `render --artefact <dir>`. Format: `docs/artefact_format.md`. `bun tools/check_loader_closure.ts` fails if the file
-  loader's imports reach the compiler; `bun tools/files_proof.ts` compares files, scene and phase-1 pixels.
+## Build and check
+
+- Work from the root Cargo workspace. Use `tools/dev.sh check|lint|test|build|run CRATE`.
+  `--workspace` selects every member. `--fast` selects the optimized lab profile.
+  The wrapper uses the pinned toolchain, checkout-local Cargo outputs and the shared compile lock.
+- Run `tools/check.sh static` for corpus provenance, both grammar recognizers, core vocabulary,
+  shell syntax and the host GPU dependency pins when the host lock is available.
+  `tools/check.sh plan` shows which crates `quick` will test.
+- Serialize local GPU work with `tools/gpu_lock.sh COMMAND`. For example,
+  `tools/gpu_lock.sh target/lab/loft profile engines/capsules.loft --frames 300`.
+  Record the adapter, scene, overrides, frame count, p95 and contention.
+- Integrators run `tools/check.sh full` once per combined revision. The CLI writes five-gate
+  measurements and per-frame RGBA hashes to `out/meta/gate.json`. Compare hashes to the
+  previously scored main. Frozen image approvals are owner decisions.
+- Use a Cambium workspace for a lane. Preserve ignored evidence under the primary checkout's
+  `out/` before running `git cambium remove --safe NAME` from that checkout.
+
+## Changes
+
+Predict the measurable result before implementation. Keep shared contracts in the workspace
+crates and scene-specific behavior in authored libraries. Run focused checks on the edited
+crate. Keep the Phase 5 source archive in `examples/` read-only.

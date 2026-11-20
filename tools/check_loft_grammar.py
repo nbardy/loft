@@ -2,6 +2,7 @@
 # dependencies = ["lark==1.3.1", "llguidance==1.9.1", "tiktoken"]
 # ///
 """Independent acceptance test of the decoding grammar, with the two lexer rules in §06.A.4."""
+from functools import lru_cache
 from pathlib import Path
 import re
 import sys
@@ -86,19 +87,66 @@ def lexical_input(source):
     return "".join(result)
 
 
-def accepts(source):
-    source = lexical_input(source)
+# The generated corpus ends each build with hundreds of literal emit statements.
+# Recognize that repeated nonterminal without constructing one enormous Earley forest.
+# These are sufficient productions, so an unfamiliar grammar or row takes the full parser.
+def literal_rows():
+    productions = (
+        'block:       "{" (_NL? stmt (_sep stmt)* _sep?)? "}"',
+        '| "emit" UIDENT ("[" expr_list "]")? "(" named_args? ")"',
+        'named_args:  field_init ("," field_init)* ","?',
+        'field_init:  LIDENT ":" expr',
+        'unary_expr:  ("-" | "!") unary_expr | postfix_expr',
+        'expr_list:   expr ("," expr)* ","?',
+    )
+    if not all(rule in GRAMMAR_TEXT for rule in productions):
+        return None
+    # Establish a complete derivation for the scalar, vector and call forms.
+    GRAMMAR.parse("build { emit Sweep(paint: [0.1, -0.2, 3], height: -1,); emit Sweep(x: 0) }")
+    def terminal(name):
+        return "(?:" + GRAMMAR.get_terminal(name).pattern.to_regexp() + ")"
+    num = "-?" + terminal("NUMBER")
+    value = rf"(?:{num}|\[{num}, {num}, {num}\])"
+    arg = rf"    {terminal('LIDENT')}: {value},\n"
+    return re.compile(rf"  emit {terminal('UIDENT')}\(\n(?:{arg})+  \)\n(?:  \#[^\n]*\n)*")
+
+
+LITERAL_ROW = literal_rows()
+
+
+def earley_input(raw):
+    # Compress only consecutive, whole emit statements ending the generated build.
+    build = raw.find("\nbuild {\n")
+    first = raw.find("  emit Sweep", build) if build >= 0 else -1
+    if LITERAL_ROW is not None and first >= 0 and raw[first-1] == "\n":
+        pos = first
+        while match := LITERAL_ROW.match(raw, pos):
+            pos = match.end()
+        if pos > first and raw[pos:] == "}\n":
+            return lexical_input(raw[:first] + "  emit Sweep(x: 0)\n}\n")
+    return lexical_input(raw)
+
+
+@lru_cache(maxsize=64)
+def earley_accepts(source):
     try:
         GRAMMAR.parse(source)
-        earley = True
+        return True
     except UnexpectedInput:
-        earley = False
+        return False
+
+
+def accepts(raw, generated=False):
+    source = lexical_input(raw)
+    earley = earley_accepts(earley_input(raw) if generated else source)
     decoder = LLMatcher(TOKENIZER, DECODER_GRAMMAR, limits=DECODER_LIMITS)
     if decoder.is_error():
         raise ValueError(decoder.get_error())
     tokens = TOKENIZER.tokenize_str(source.lstrip(" \t"))
-    rejected = next((i for i, token in enumerate(tokens) if not decoder.consume_token(token)), None)
-    return earley, rejected is None and decoder.is_accepting(), rejected
+    for start in range(0, len(tokens), 4096):
+        if not decoder.consume_tokens(tokens[start:start + 4096]):
+            return earley, False, start
+    return earley, decoder.is_accepting() and not decoder.is_error(), None
 
 
 def main():
@@ -111,10 +159,11 @@ def main():
     failed = 0
     for path in files:
         expected = path.suffix != ".invalid"
-        earley, decoder, rejected = accepts(path.read_text())
+        generated = path.resolve().is_relative_to(ROOT / "corpus/l5e") or path.resolve().is_relative_to(ROOT / "corpus/seeds")
+        earley, decoder, rejected = accepts(path.read_text(), generated)
         if (earley, decoder) != (expected, expected):
             failed += 1
-            print(f"{path}: wanted {expected}, Earley={earley}, llguidance={decoder} (byte {rejected})")
+            print(f"{path}: wanted {expected}, Earley={earley}, llguidance={decoder} (failing chunk starts at byte {rejected})")
     card = (ROOT / "AGENT_CARD.md").read_text()
     tokens = len(tiktoken.get_encoding("o200k_base").encode_ordinary(card))
     if tokens >= 1400:

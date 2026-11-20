@@ -1,5 +1,24 @@
 # Open targets for v1.0-alpha
 
+## Legacy retirement
+
+The root Cargo workspace owns the native and WebAssembly builds. The 18 approved images in
+`tests/fixtures/gate-refs/` carry the same RGBA hashes pinned in `engines/gates.json`.
+`loft gate` records each rendered RGBA hash in `out/meta/gate.json` for exact comparisons with
+a previously scored revision. Picture approval remains a separate owner decision.
+
+| Retired check or tool | Disposition |
+| --- | --- |
+| Bun suite, typecheck and loader-import scan | Their compiler, renderer and loader were deleted. The Phase 5 manifest partition check survives in `tools/check_corpus.py`. Native Cargo tests cover the current compiler and runner, and the dependency check keeps the runner independent of compiler passes. |
+| Nested Cargo workspace checks, lab binaries and single-test-binary layout | The Bun serve tests launched the retired `loft-node` and `loft-draw` binaries and exercised their child-process protocol. Those binaries and the old bundle loader were deleted. `tools/dev.sh` builds the root members. Per-crate lint is available through `tools/dev.sh lint`. |
+| R0 regeneration, live cross-engine replay and TypeScript seed sampling | They require executing the retired engine. The original inputs, hashes and observations remain historical evidence. New comparisons use the checked-in corpus and frozen images. |
+| Standalone bead comparator | The same pixel, edge and cluster rules and their three tests now run in the root CLI as `loft diff`. The bead gate renders all nine observations with the workspace’s `phase5_corpus` example. |
+
+The [Phase 5 corpus](../../corpus/README.md) feeds the grammar and geometry checks.
+[Examples](../../examples/README.md) remain read-only migration sources. The browser viewer depended on
+the retired engine. The unused training directory had no tracked files. The [historical design](../../docs/legacy/DESIGN.md)
+and manuals are archived.
+
 ## v1–v3 integration on 20 November
 
 All three lane heads stay on their branches. The single locked Apple M4 Metal run scored the retained engine at `843adfe`. Its executable matched the SHA-256 of the archived main build at `9878c6e`. Twin held 36/36, Truth 34/34 and Speed 12/12, with zero contended verdicts. All six mutants fired, the wasm32 runner checked with web-sys, and Earley and llguidance each returned 280/280 expected results. Native passed 150/150 and Bun passed 315/315. [Gate report](../../out/meta/iv/gate.json) · [Contact sheet](../../out/meta/iv/sheet.webp)

@@ -294,7 +294,7 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
                 l.frame(c.g, t);
                 let px = l.pixels(c.g)?;
                 let key = format!("{}@{t}", s.name);
-                let path = c.root.join(format!("out/meta/refs/{}_t{t}.png", s.name));
+                let path = c.root.join(format!("tests/fixtures/gate-refs/{}_t{t}.png", s.name));
                 if c.approve {
                     write_png(&path, c.size, &px)?;
                     c.refs.insert(key.clone(), format!("{:x}", Sha256::digest(&px)));
@@ -323,7 +323,7 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
                                 worst = worst.max(d);
                                 over += usize::from(d > 2);
                             }
-                            report[&s.name]["pictures"][format!("{t}")] = json!({"over_2": over, "max_diff": worst});
+                            report[&s.name]["pictures"][format!("{t}")] = json!({"over_2": over, "max_diff": worst, "rgba_sha256": format!("{:x}", Sha256::digest(&px))});
                             held_if(0.001 - over as f64 / n as f64, None)
                         }
                     }
@@ -613,7 +613,7 @@ fn run_selected(approve: bool, only: Option<&str>, selected: &[Gate]) -> Result<
     if approve {
         cfg.refs = c.refs.clone();
         std::fs::write(&path, serde_json::to_string_pretty(&cfg).map_err(|e| Failure::Usage(e.to_string()))? + "\n").map_err(|e| Failure::Usage(e.to_string()))?;
-        println!("approved {} references into engines/gates.json and out/meta/refs/", c.refs.len());
+        println!("approved {} references into engines/gates.json and tests/fixtures/gate-refs/", c.refs.len());
     }
     for &gt in selected {
         let mine: Vec<&Check> = checks.iter().filter(|x| x.gate == gt).collect();

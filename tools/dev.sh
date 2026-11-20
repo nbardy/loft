@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# The Rust edit loop (plan 2026-11-19 §6, after Keel's keel/scripts/dev.sh):
-#   tools/dev.sh check|lint|test|build|run CRATE [--fast|--release|--dev] [cargo args] [-- program/test args]
-# Pinned toolchain (rust/rust-toolchain.toml), --locked, rust/target only, and a machine-wide compile lock shared with
+# Compile and run members of the root Cargo workspace.
+#   tools/dev.sh check|lint|test|build|run CRATE|--workspace [--fast|--release|--dev] [cargo args] [-- program/test args]
+# Pinned toolchain (rust-toolchain.toml), --locked, checkout-local target, and a machine-wide compile lock shared with
 # Keel: check/lint/test take LIGHT (niced), build/run take HEAVY. Both default to two jobs.
-#   lint   single-crate Clippy with the gate's flags (tools/lib/gate_flags.sh), so it shares units with check.sh full
-#   test   cargo-nextest (rust/.config/nextest.toml); `test CRATE --doc` runs the doctests with cargo test
+#   lint   Clippy with the workspace lint flags in tools/lib/gate_flags.sh
+#   test   cargo-nextest; `test CRATE --doc` runs the doctests with cargo test
 #   run    builds under HEAVY (default --fast = profile lab), releases the lock, then execs the program at nice +15:
 #          a long run never holds the compile lock (Keel 2026-11-02: a 70-minute batch stalled every lane)
-#   --fast = --profile lab (release code, no thin LTO; rust/Cargo.toml says why)
+#   --fast = --profile lab (release code, no thin LTO; Cargo.toml says why)
 set -euo pipefail
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}"
 root="$(cd "$(dirname "$0")/.." && pwd -P)"
-usage() { echo 'Usage: tools/dev.sh check|lint|test|build|run CRATE [--fast|--release|--dev] [cargo args] [-- args]' >&2; exit 2; }
+usage() { echo 'Usage: tools/dev.sh check|lint|test|build|run CRATE|--workspace [--fast|--release|--dev] [cargo args] [-- args]' >&2; exit 2; }
 [[ $# -ge 2 ]] || usage
 command_name="$1" crate="$2"
 shift 2
@@ -21,17 +21,13 @@ case "$command_name" in
   run) profile=lab ;;
   *) usage ;;
 esac
-# Two workspaces while the old tree stays (meta plan 2026-11-20 §5): the meta engine's crates/ at the root, with its
-# own target/, and the legacy rust/ workspace. A crate name picks its workspace; the meta one wins a clash.
-if [[ -f "$root/crates/$crate/Cargo.toml" ]]; then
-  ws="$root"
-  export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$root/target}"
-elif [[ -f "$root/rust/crates/$crate/Cargo.toml" ]]; then
-  ws="$root/rust"
+if [[ "$crate" == --workspace ]]; then
+  scope=(--workspace)
+elif [[ -f "$root/crates/$crate/Cargo.toml" ]]; then
+  scope=(-p "$crate")
 else
-  echo "dev.sh: no crate crates/$crate or rust/crates/$crate" >&2; exit 2
+  echo "dev.sh: unknown workspace crate '$crate'" >&2; exit 2
 fi
-
 # Cargo's arguments before the first `--` (the profile shorthands rewritten), the program's after it, untouched.
 cargo_args=() program_args=() doc=0
 while [[ $# -gt 0 && "$1" != -- ]]; do
@@ -51,7 +47,7 @@ done
 source "$root/tools/lib/cache-env.sh"
 source "$root/tools/lib/gate_flags.sh"
 source "$root/tools/lib/build_gate.sh"
-cd "$ws"
+cd "$root"
 toolchain="$(sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)"
 cargo=(rustup run "$toolchain" cargo)
 case "$command_name" in
@@ -60,11 +56,11 @@ case "$command_name" in
 esac
 
 # One argument list for every command.
-args=(-p "$crate")
+args=("${scope[@]}")
 # nextest spells Cargo's --profile as --cargo-profile (its own --profile picks a nextest.toml profile).
 case "$command_name:$profile" in
   test:) ;;
-  test:*) args+=(--cargo-profile "$profile") ;;
+  test:*) if [[ "$doc" == 1 ]]; then args+=(--profile "$profile"); else args+=(--cargo-profile "$profile"); fi ;;
   *) args+=(--profile "$profile") ;;
 esac
 args+=(${cargo_args[@]+"${cargo_args[@]}"})

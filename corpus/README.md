@@ -1,12 +1,12 @@
 # Phase 5 corpus
 
-Each batch in `manifest.json` belongs to the named lane. A scene starting with
-`examples/` is a source path at `examples_rev` (`git show REV:PATH`).
-A seed is `SET/ID`. Split at the first slash and look up the complete ID in
-the JSONL pinned for that set by `tools/parity/corpus.json`.
-The order is R0's sorted example paths followed by the two pinned files in row order.
+The Cargo workspace compiles the ported `.loft` scenes. The grammar gate checks their source,
+including quarantined entries. The bead gate renders `l5c/bead.loft` against nine frozen observations.
 
-From a lane workspace, use `~/git/loft/target/release/loft build SCENE.loft`
-for a CPU build. The integrator runs the training command from 06 §17 under
-`tools/gpu_lock.sh`. Clip directories are published by rename to a new or empty
-destination. Frame percentiles use nearest rank across all requested frames.
+`manifest.json` assigns the original 295 identities to 20 batches. For an example, read its
+source with `git show REV:PATH` at `examples_rev`. For a seed, split the identity at the first
+slash and look up the remaining ID in the JSONL file pinned in `sources.json`.
+Run `uv run --no-project python tools/check_corpus.py` to verify the partition.
+
+From the repository root, build a port with
+`tools/dev.sh run loft-cli -- build corpus/l5c/bead.loft -o out/bead.loftb`.

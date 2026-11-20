@@ -1,98 +1,38 @@
 # Loft
 
-**3D things written as functions, drawn by WebGPU, and measurable without drawing.**
+Loft compiles `.loft` scenes into GPU programs. The Rust workspace at the repository root
+contains the compiler, native CLI and embeddable wgpu runner. The runner also builds for WebAssembly.
 
-Loft exists for one job: animated, stylised 3D that is authored entirely in code, by a person or a model. There are no
-assets and no scene graph. A shape is a function, motion is a function of time, a look is a value you can swap, and
-everything is drawn and animated on the GPU. The same description can also be evaluated on the CPU on demand, so a
-scene is checked ("does it land", "is the face in view") by arithmetic
-instead of by looking.
+## Render a scene
 
-- **One representation** for shape, motion and paint: an idea is written once, where the shape is written.
-- **Time is an argument**: any frame draws alone, and a fresh process gives the same pixels every time.
-- **Open at every level**: a function wherever a number goes; raw WGSL, your own drawable and your own host underneath.
-- **Made to be written by a model**: a refusal names the fix, and `loft context` says what an author needs in about
-  2,200 words.
-
-It is not a general engine: no mesh import, no physically based rendering, WebGPU only. If you have assets, use
-three.js ([how the two compare](docs/vs_threejs.md)). How it stays small and open: [docs/open_design.md](docs/open_design.md).
-
-```ts run
-// examples/reed.ts
-import { add, mul, scene, plane, sin, strand, time, toon, vec3, type F } from "../src/index.ts";
-
-const reed = strand({
-  name: "reed",
-  spine: (m: F) => vec3(mul(mul(m, m), mul(sin(time), 0.6)), mul(m, 4), 0), // m runs root (0) to tip (1)
-  girth: (m: F) => add(0.25, mul(m, -0.2)),
-  tips: ["open", "point"],
-  paint: [0.85, 0.55, 0.2],
-});
-
-export default scene({
-  ground: plane,
-  things: [reed],
-  style: toon(),
-  sun: [-0.4, 0.8, 0.45],
-  cameras: { three: { kind: "perspective", eye: [6, 4, 8], target: [0, 2, 0], fovY: 0.6 } },
-});
-```
-
-## Install
-
-Needs [bun](https://bun.sh) and pnpm; `cwebp` for stills and `ffmpeg` for clips. Pictures render headless; no browser.
+Install rustup and the toolchain pinned in `rust-toolchain.toml`. From the checkout, run
 
 ```sh
-pnpm install
-alias loft="bun src/cli/main.ts"
-loft render examples/reed.ts --out out/reed.webp --views three
+tools/dev.sh build loft-cli --fast
+tools/gpu_lock.sh target/lab/loft still engines/capsules.loft out/capsules.png --t 4 --set count=20
 ```
 
-## Commands
+`loft show engines/capsules.loft` prints the generated WGSL. `loft build` produces a bundle
+for the runner. Start authoring with the [language card](AGENT_CARD.md) and the [v1 specification](docs/spec/README.md).
 
-```sh
-loft render   examples/serpent.ts --out out/a.webp --views front,side,top,three   # one picture per camera, one sheet
-loft frames   examples/serpent.ts --out out/b.webp --times 0,0.5,1,1.5             # one camera, several times
-loft clip     examples/serpent.ts --out out/c.mp4 --seconds 8                      # H.264 through ffmpeg
-loft dev      examples/serpent.ts                                                   # live page: orbit, time, sliders
-loft check    examples/strike.ts                                                    # the scene's checks, on the CPU
-loft variants examples/beacon.ts                                                    # every variant of a design (docs/guide.md)
-loft profile  examples/serpent.ts --view three                                      # GPU time per draw
-loft build    examples/serpent.ts --out out/files/serpent                           # the scene as files for any host
-loft serve    --compiles 2 --draw-seconds 120                                        # one warm GPU process: JSON requests on stdin
-loft help
-loft api spiralTube                                                                 # one export, in full
-loft context                                                                        # craft guide and API, to read whole
-```
+## Workspace
 
-`--style`, `--light`, `--variant`, `--input` and `--sweep` change what is drawn without editing the scene; `loft help`
-lists every flag.
+| Directory | Contents |
+| --- | --- |
+| `crates/` | ABI, IR, parser, passes, plan evaluation, bundle format, standard library, runner and CLI |
+| `lib/`, `engines/`, `scenes/` | Authored prelude, rendering engines and runnable scenes |
+| `corpus/` | Phase 5 ports, source identities and grammar inputs |
+| `tests/` | Shared fixtures, frozen reference frames and gate mutants |
+| `examples/` | Read-only Phase 5 source material |
 
-## Exit codes
+## Verification
 
-`render`, `frames`, `clip` and `check` end with one last line on stderr, `loft: <kind>: <message>`, that a script can
-match. A scene refusal names your own thing, what was given, what was expected and the fix (`docs/errors.md` lists them).
+`tools/check.sh full` checks the corpus and grammar, builds the workspace, runs native tests
+including all six mutants, checks the wasm32 runner, scores nine bead observations and runs the
+five GPU gates once. The checks use `uv`, `rg` and a timestamp-capable GPU. Cargo and GPU work
+use separate machine locks. For a focused edit, use `tools/dev.sh check CRATE` or
+`tools/gpu_lock.sh tools/dev.sh test CRATE --test-threads 1` (cargo-nextest).
 
-| Exit | Last line starts | Meaning |
-|---|---|---|
-| 0 | | drew; or every check passed |
-| 1 | `loft: internal` | a bug in Loft, or a mistake no constructor catches yet (a stack is printed) |
-| 2 | `loft: usage:` | the command line asked for something absent (flag, camera, variant, option, input, style) |
-| 3 | `loft: load:` | the module did not load as a scene (syntax, unknown import, a throw at top level, wrong exports) |
-| 4 | `loft: scene:` | a constructor refused the scene: `given ...; expected ... Fix: ... (at file:line)` |
-| 5 | `loft: check:` | the named checks failed or remained undecided |
-| 6 | `loft: environment (not the scene's fault):` | GPU, WebGPU binding, or missing `cwebp`/`ffmpeg`; builds already retried on 3 fresh devices |
-| 7 | `loft: budget:` | (`loft serve` only) a compile deadline, draw deadline, CPU limit, or full pending queue |
-
-## Where to go next
-
-- `docs/guide.md`: the first scene, then one short section per task (a shape, motion, an action with checks, a
-  creature with variants, styles, clips, your own drawable or host), each with code that runs.
-- `docs/craft.md`: how to make shapes and motion that read, and how to get range in shape and style.
-- `docs/api.md`: every export by layer, generated from the source.
-- Examples, short to long: `examples/shell.ts`, `examples/brig.ts`, `examples/pearls.ts`, `examples/coral.ts`,
-  `examples/storm.ts`, `examples/serpent.ts`, `examples/maelstrom.ts`, `examples/scenes/`.
-- `docs/artefact_format.md` and `rust/crates/loft-loader/` for drawing a scene outside this repository. `DESIGN.md` and the
-  rest of `docs/` are the record of how it was designed.
-
-Every snippet in these docs is run by `bun tools/check_snippets.ts`. Typecheck: `pnpm exec tsc --noEmit`.
+The GPU report is `out/meta/gate.json`. The CLI returns a nonzero status for missed gates.
+Main's two outstanding Load verdicts and the Pictures owner queue are recorded in
+[OPEN.md](agent_notes/2026-11-20_v1/OPEN.md). The [project priorities](CORE.md) define how changes are judged.

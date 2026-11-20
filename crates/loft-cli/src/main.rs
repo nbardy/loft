@@ -4,10 +4,12 @@
 //!   loft show SCENE [MODULE] [--set ...]        print the generated WGSL (every module, or the one named)
 //!   loft still SCENE OUT.png [--t SECONDS] [--set ...]
 //!   loft gate [--approve]                       the five gates on every scene in engines/gates.json
+//!   loft diff REFERENCE.png FRAME.png          compare a Phase 5 frame with its reference
 //!   loft load SCENE --nonce N [--set ...]       one load in this process with driver nonce N (cache experiments)
 //!
 //! A scene loads every `lib/*.loft` first (the library prelude), then the scene file.
 
+mod diff;
 mod edit_cmd;
 mod gates;
 mod build;
@@ -129,6 +131,7 @@ fn command(mut args: Vec<String>) -> Result<(), Failure> {
         }
         "build" => build::run(&args[1..], &set),
         "render" => render::run(&args[1..], &set),
+        "diff" => diff::run(&args[1..]),
         "clip" => clip::run(&args[1..], &set),
         "profile" => profile::run(&args[1..], &set),
         "fmt" => fmt::run(&args[1..]),
@@ -206,7 +209,7 @@ fn command(mut args: Vec<String>) -> Result<(), Failure> {
                 t.elapsed().as_secs_f64(), l.stats.pipelines_ms, g.adapter);
             Ok(())
         }
-        _ => Err(Failure::Usage("usage: loft build|check|show|still|clip|gate|load|ir".into())),
+        _ => Err(Failure::Usage("usage: loft build|check|show|still|clip|gate|load|ir|render|profile|fmt|fork|diff".into())),
     }
 }
 

@@ -38,8 +38,8 @@ repo does not say: the owner's words, what is wrong today, and what done looks l
 
 ## Practicalities every brief needs
 
-- Its own worktree: `cd ~/git/loft && git cambium add -b <branch> -name <name> -ephemeral ~/git/_wt/<name>`, then
-  `pnpm install`. Commit everything it wants kept; do not push, merge or remove the worktree.
+- Its own worktree: `cd ~/git/loft && git cambium add -b <branch> -name <name> -ephemeral ~/git/_wt/<name>`.
+  Commit everything it wants kept; do not push, merge or remove the worktree.
 - The shell hook rejects `>` redirects (use `tee`). One scene per process. `echo ====` breaks in zsh.
 - Pictures are WebP under `out/` (ignored by git); final ones are copied to `~/git/loft/out/<topic>/`.
 - Do not run the whole test suite per worker. Under load it times out and the failures are noise; the integrator runs
@@ -48,9 +48,7 @@ repo does not say: the owner's words, what is wrong today, and what done looks l
 
 ## Splitting so branches merge
 
-- Two workers must not own the same file. The crab's registry (`reefback_titan.ts`), `titan/numbers.ts` and
-  `tests/variants.check.test.ts` are shared by every option: tell each worker to keep its edits there small and
-  additive, and expect to merge those by hand.
+- Give shared crate interfaces and gate fixtures a single owner.
 - When one worker's output is another's input (the face follows `rig.shipNow`; the throw extends it), name the one
   readout both must use, so the merge needs no change on either side.
 - When main moves, tell running workers what changed that touches them, and to merge main before they finish.
@@ -58,8 +56,7 @@ repo does not say: the owner's words, what is wrong today, and what done looks l
 ## Integrating
 
 1. Look at the pictures yourself before reading the numbers.
-2. Merge with `--no-ff`; typecheck (`rtk proxy pnpm exec tsc --noEmit`); `check` every variant; confirm the hashes that
-   should not have changed.
+2. Run `tools/check.sh full` on the combined revision and compare the RGBA hashes with main before merging.
 3. Push as its own step, after the checks. Then `git cambium remove --safe --require-merged main --delete-branch <name>`.
    If it refuses for uncommitted changes, read the diff: if it is not plainly the worker's own scrap, keep it with
    `--salvage-ref refs/salvage/<name>-<date>` and say so. Never discard it.
