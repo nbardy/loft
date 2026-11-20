@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Build both revisions, then compare their native Metal capsules at 1280x800.
-# Usage: tools/ab_legacy.sh LEGACY_WORKTREE NEW_OUTPUT_DIRECTORY
+# Usage: tools/ab_legacy.sh LEGACY_WORKTREE NEW_OUTPUT_DIRECTORY [--matched]
 set -euo pipefail
-[[ $# == 2 ]] || { echo "usage: $0 LEGACY_WORKTREE NEW_OUTPUT_DIRECTORY" >&2; exit 2; }
+[[ $# == 2 || ( $# == 3 && $3 == --matched ) ]] ||
+  { echo "usage: $0 LEGACY_WORKTREE NEW_OUTPUT_DIRECTORY [--matched]" >&2; exit 2; }
+matched=${3:-}
 root="$(cd "$(dirname "$0")/.." && pwd -P)"
 legacy="$(cd "$1" && pwd -P)"
 out="$(mkdir "$2" && cd "$2" && pwd -P)"
@@ -98,16 +100,64 @@ export default scene({
 });
 TS
 
-# Keep the gate's scratch report separate even when this is run from the primary checkout.
-mkdir -p "$out/gate/tests/fixtures"
-ln -s "$root/engines" "$out/gate/engines"
-ln -s "$root/tests/fixtures/gate-refs" "$out/gate/tests/fixtures/gate-refs"
+if [[ $matched == --matched ]]; then
+  # Keep the capsule rows, count and orbit in the shipped fixture. Fork its
+  # material and substitute the experimental library schedule in a scratch scene.
+  mkdir -p "$out/fixture/engines"
+  ln -s "$root/lib" "$out/fixture/lib"
+  ln -s "$root/Cargo.toml" "$out/fixture/Cargo.toml"
+  cp "$root/engines/capsules.loft" "$out/fixture/engines/"
+  awk '/^schedule Main/{exit} {sub(/ggx\(albedo, 0.55, 0\)/,"lambert(albedo)"); sub(/ray_capsule\(/,"matched_capsule("); print}' \
+    "$root/engines/capsules.loft" >"$out/fixture/engines/capsules-matched.loft"
+  orbit=$(awk '/^  orbit\(/{print; exit}' "$root/engines/capsules.loft")
+  [[ -n $orbit ]]
+  awk -v orbit="$orbit" '
+    /^  orbit\(/ {print orbit; next}
+    {gsub(/Drawables/, "Capsule"); print}
+  ' "$root/engines/realtime_matched.loft" >>"$out/fixture/engines/capsules-matched.loft"
+  # Recenter closed-form hit arithmetic on both sides of the matched fixture.
+  # From the far camera, the uncentered legacy quadratic can move the secondary
+  # ray origin inside its own capsule, especially on the thin tails and legs.
+  sed \
+    -e 's/  let y=dot(r.o,s.axis);/  let shift=-dot(r.o,r.d); let ro=r.o+shift*r.d; let y=dot(ro,s.axis);/' \
+    -e 's/let o=r.o-y/let o=ro-y/' \
+    -e 's/let p=r.o-side/let p=ro-side/' \
+    -e 's/let q=roots\[i\];/let q=roots[i]; let qt=q+shift;/' \
+    -e 's/q>=r.t0 \&\& q<t/qt>=r.t0 \&\& qt<t/' \
+    -e 's/{t=q;n=/{t=qt;n=/' \
+    "$out/capsules.ts" >"$out/capsules-matched.ts"
+  sed 's@engine: realtime(),@engine: (await import(process.env.LOFT_AB_REDUCED)).reduced,@' \
+    "$out/capsules-matched.ts" >"$out/capsules-reduced.ts"
+else
+  # Keep the gate scratch report separate when run from the primary checkout.
+  mkdir -p "$out/gate/tests/fixtures"
+  ln -s "$root/engines" "$out/gate/engines"
+  ln -s "$root/tests/fixtures/gate-refs" "$out/gate/tests/fixtures/gate-refs"
+fi
 git -C "$root" rev-parse HEAD >"$out/new-revision"
 git -C "$legacy" rev-parse HEAD >"$out/legacy-revision"
 
 tools/dev.sh check loft-cli >"$out/new-check.log" 2>&1
 tools/dev.sh build loft-cli --fast >"$out/new-build.log" 2>&1
 (cd "$legacy" && tools/dev.sh build loft-draw --fast -p loft-node) >"$out/legacy-build.log" 2>&1
+
+if [[ $matched == --matched ]]; then
+  for count in 1 20; do
+    for split in a b; do
+      src="$out/capsules-matched.ts"
+      [[ $split == b ]] || src="$out/capsules-reduced.ts"
+      (
+        cd "$legacy"
+        LOFT_AB_LEGACY="$legacy" LOFT_AB_COUNT="$count" LOFT_ENGINE=ts \
+          LOFT_AB_REDUCED="$root/tools/ab_legacy/reduced.ts" \
+          LOFT_NATIVE="$legacy/rust/target/lab/libloft_node.dylib" \
+          /usr/bin/time -p bun src/cli/main.ts build "$src" --precision f32 --out "$out/$split-$count-bundle"
+      ) >"$out/$split-$count-author-load.log" 2>&1
+    done
+    "$root/target/lab/loft" check "$out/fixture/engines/capsules-matched.loft" --set "count=$count" \
+      >"$out/b-$count-check.log"
+  done
+fi
 
 # Acquire both of the repository's compile slots while holding the shared GPU lock.
 source tools/lib/build_gate.sh
@@ -121,15 +171,72 @@ tools/gpu_lock.sh perl -MFcntl=:flock -e '
   open(my $light, ">>", "$dir/slot.light") or die "light compile lock: $!";
   flock($light, LOCK_EX) or die "light compile lock: $!";
   system(@ARGV) == 0 or die "timed benchmark failed (status $?)\n";
-' "$(keel_gate_dir)" bash -euo pipefail -s "$root" "$legacy" "$out" <<'TIMED'
+' "$(keel_gate_dir)" bash -euo pipefail -s "$root" "$legacy" "$out" "$matched" <<'TIMED'
 root=$1
 legacy=$2
 out=$3
+matched=$4
 new="$root/target/lab/loft"
 old="$legacy/rust/target/lab/loft-draw"
 scene="$root/engines/capsules.loft"
 ps -Ao pid,comm >"$out/processes-before.txt"
 date -u >"$out/gpu-start"
+if [[ $matched == --matched ]]; then
+  size=1280x800
+  old_profile() {
+    "$old" profile "$bundle" --view game --time 0 --size "$size" --frames 300 >"$prefix-old-profile.log"
+  }
+  new_profile() {
+    "$new" profile "$scene" --set "count=$count" --time 0 --size "$size" --frames 300 \
+      --warmup 1 --timestamps immediate --json "$prefix-new-profile.json"
+  }
+  old_load() {
+    "$old" profile "$bundle" --view game --time 0 --size "$size" --frames 1 --loads 2 \
+      --cold-nonce "$nonce" >"$prefix-old-load.log"
+  }
+  new_load() {
+    "$new" profile "$scene" --set "count=$count" --time 0 --size "$size" --frames 1 \
+      --warmup 1 --nonce "$nonce" --loads 2 --json "$prefix-new-load.json"
+  }
+  for run in 1 2; do
+    counts=(1 20)
+    splits=(a b)
+    if [[ $run == 2 ]]; then
+      counts=(20 1)
+      splits=(b a)
+    fi
+    for count in "${counts[@]}"; do
+      for split in "${splits[@]}"; do
+        bundle="$out/$split-$count-bundle"
+        scene="$out/fixture/engines/capsules.loft"
+        [[ $split == a ]] || scene="$out/fixture/engines/capsules-matched.loft"
+        prefix="$out/$split-$count-r$run"
+        if [[ $run == 1 ]]; then
+          old_profile
+          new_profile
+        else
+          new_profile
+          old_profile
+        fi
+        nonce=$((16777216 + $(od -An -N4 -tu4 /dev/urandom) % 2000000000))
+        if [[ $run == 1 ]]; then
+          old_load
+          new_load
+        else
+          new_load
+          old_load
+        fi
+        "$old" still "$bundle" --view game --time 0 --size "$size" --out "$prefix-old.png" \
+          >"$prefix-old-still.log" 2>&1
+        "$new" still "$scene" "$prefix-new.png" --set "count=$count" --t 0
+      done
+    done
+  done
+  date -u >"$out/gpu-end"
+  ps -Ao pid,comm >"$out/processes-after.txt"
+  exit
+fi
+
 for count in 1 20; do
   bundle="$out/bundle-$count"
   (
@@ -161,6 +268,16 @@ jq -e 'with_entries(select(.key | startswith("capsules-")) | .value = .value.loa
 date -u >"$out/gpu-end"
 ps -Ao pid,comm >"$out/processes-after.txt"
 TIMED
+
+if [[ $matched == --matched ]]; then
+  uv run --no-project --with tiktoken==0.13.0 --with pillow==12.0.0 \
+    python tools/ab_legacy/score.py "$out" "$root"
+  for split in a b; do
+    cwebp -quiet -q 95 "$out/$split-sheet.png" -o "$out/$split-sheet.webp"
+  done
+  printf 'Evidence: %s\n' "$out"
+  exit
+fi
 
 # Columns are legacy/new. Rows are 1/20 instance groups. Keep RGBA originals in out/.
 ffmpeg -v error -i "$out/legacy-1.png" -i "$out/new-1.png" \

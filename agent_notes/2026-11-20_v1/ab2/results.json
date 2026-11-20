@@ -1,0 +1,310 @@
+{
+  "a": {
+    "1": {
+      "runs": [
+        {
+          "legacy": {
+            "p95_ms": 10.061667,
+            "load_ms": [
+              517.239166,
+              11.811874999999999
+            ],
+            "modules": 5,
+            "pipelines": 5,
+            "commands": 5,
+            "source_tokens": 3608
+          },
+          "native": {
+            "p95_ms": 9.573,
+            "load_ms": [
+              573.663417,
+              3.020209
+            ],
+            "modules": 4,
+            "pipelines": 5,
+            "commands": 5,
+            "source_tokens": 621,
+            "triangle_p50_ms": 0.762333
+          },
+          "pictures": {
+            "psnr_db": 47.52438335268885,
+            "mae_8bit": 0.037084635416666664,
+            "pixels_over_2": 0.0001025390625,
+            "pixels_over_8": 9.1796875e-05
+          }
+        },
+        {
+          "legacy": {
+            "p95_ms": 11.67125,
+            "load_ms": [
+              738.793,
+              20.858125
+            ],
+            "modules": 5,
+            "pipelines": 5,
+            "commands": 5,
+            "source_tokens": 3608
+          },
+          "native": {
+            "p95_ms": 10.605666,
+            "load_ms": [
+              1137.788541,
+              5.013209
+            ],
+            "modules": 4,
+            "pipelines": 5,
+            "commands": 5,
+            "source_tokens": 621,
+            "triangle_p50_ms": 0.973958
+          },
+          "pictures": {
+            "psnr_db": 47.52438335268885,
+            "mae_8bit": 0.037084635416666664,
+            "pixels_over_2": 0.0001025390625,
+            "pixels_over_8": 9.1796875e-05
+          }
+        }
+      ],
+      "rgb_sha256": [
+        [
+          "ede8aebd9bdd1ef914aed5357bea68a9bb3120ac6180e33f59fdfb2b4e40ea0a",
+          "92c52ccc9a4787019e97f26da373b86daecce271157fb766ccba20cf3cce0597"
+        ],
+        [
+          "ede8aebd9bdd1ef914aed5357bea68a9bb3120ac6180e33f59fdfb2b4e40ea0a",
+          "92c52ccc9a4787019e97f26da373b86daecce271157fb766ccba20cf3cce0597"
+        ]
+      ]
+    },
+    "20": {
+      "runs": [
+        {
+          "legacy": {
+            "p95_ms": 10.999792,
+            "load_ms": [
+              376.02000000000004,
+              9.427332999999999
+            ],
+            "modules": 5,
+            "pipelines": 5,
+            "commands": 5,
+            "source_tokens": 3608
+          },
+          "native": {
+            "p95_ms": 10.464583,
+            "load_ms": [
+              495.785125,
+              2.086459
+            ],
+            "modules": 4,
+            "pipelines": 5,
+            "commands": 5,
+            "source_tokens": 621,
+            "triangle_p50_ms": 0.557375
+          },
+          "pictures": {
+            "psnr_db": 55.70389822136644,
+            "mae_8bit": 0.028670572916666668,
+            "pixels_over_2": 0.0001416015625,
+            "pixels_over_8": 3.90625e-05
+          }
+        },
+        {
+          "legacy": {
+            "p95_ms": 11.660083,
+            "load_ms": [
+              714.6932499999999,
+              32.170583
+            ],
+            "modules": 5,
+            "pipelines": 5,
+            "commands": 5,
+            "source_tokens": 3608
+          },
+          "native": {
+            "p95_ms": 12.372541,
+            "load_ms": [
+              1506.9985,
+              3.2075
+            ],
+            "modules": 4,
+            "pipelines": 5,
+            "commands": 5,
+            "source_tokens": 621,
+            "triangle_p50_ms": 0.849916
+          },
+          "pictures": {
+            "psnr_db": 55.70389822136644,
+            "mae_8bit": 0.028670572916666668,
+            "pixels_over_2": 0.0001416015625,
+            "pixels_over_8": 3.90625e-05
+          }
+        }
+      ],
+      "rgb_sha256": [
+        [
+          "ae94a45a6f2697e566aad2586baddc152bcda941e69c4068b64ea0f1f43d8546",
+          "e99222ce7443d59b4e9ec581b2bc3745da3a2ba3ecc67bd843c2c10a0fa8f5c1"
+        ],
+        [
+          "ae94a45a6f2697e566aad2586baddc152bcda941e69c4068b64ea0f1f43d8546",
+          "e99222ce7443d59b4e9ec581b2bc3745da3a2ba3ecc67bd843c2c10a0fa8f5c1"
+        ]
+      ]
+    }
+  },
+  "b": {
+    "1": {
+      "runs": [
+        {
+          "legacy": {
+            "p95_ms": 11.202042,
+            "load_ms": [
+              418.100333,
+              8.359
+            ],
+            "modules": 5,
+            "pipelines": 5,
+            "commands": 5,
+            "source_tokens": 1228
+          },
+          "native": {
+            "p95_ms": 14.960208,
+            "load_ms": [
+              536.09675,
+              5.154209
+            ],
+            "modules": 4,
+            "pipelines": 5,
+            "commands": 1,
+            "source_tokens": 2751,
+            "triangle_p50_ms": 0.926041
+          },
+          "pictures": {
+            "psnr_db": 47.26445174052748,
+            "mae_8bit": 0.028028971354166668,
+            "pixels_over_2": 0.00125,
+            "pixels_over_8": 0.0012451171875
+          }
+        },
+        {
+          "legacy": {
+            "p95_ms": 11.738834,
+            "load_ms": [
+              788.057,
+              15.258000000000001
+            ],
+            "modules": 5,
+            "pipelines": 5,
+            "commands": 5,
+            "source_tokens": 1228
+          },
+          "native": {
+            "p95_ms": 14.751667,
+            "load_ms": [
+              1296.020583,
+              8.015792000000001
+            ],
+            "modules": 4,
+            "pipelines": 5,
+            "commands": 1,
+            "source_tokens": 2751,
+            "triangle_p50_ms": 0.670416
+          },
+          "pictures": {
+            "psnr_db": 47.26445174052748,
+            "mae_8bit": 0.028028971354166668,
+            "pixels_over_2": 0.00125,
+            "pixels_over_8": 0.0012451171875
+          }
+        }
+      ],
+      "rgb_sha256": [
+        [
+          "129b6524afdc391d6d00eb69ea8f789b067afeda64eedaa642753eb135817dca",
+          "eef90ae45984be064984b247ecc60dc76d5584679f50c8f990cd858478d711f4"
+        ],
+        [
+          "129b6524afdc391d6d00eb69ea8f789b067afeda64eedaa642753eb135817dca",
+          "eef90ae45984be064984b247ecc60dc76d5584679f50c8f990cd858478d711f4"
+        ]
+      ]
+    },
+    "20": {
+      "runs": [
+        {
+          "legacy": {
+            "p95_ms": 26.60775,
+            "load_ms": [
+              872.956417,
+              30.324625
+            ],
+            "modules": 5,
+            "pipelines": 5,
+            "commands": 5,
+            "source_tokens": 1228
+          },
+          "native": {
+            "p95_ms": 58.268667,
+            "load_ms": [
+              2368.124875,
+              14.338417
+            ],
+            "modules": 4,
+            "pipelines": 5,
+            "commands": 1,
+            "source_tokens": 2751,
+            "triangle_p50_ms": 0.315416
+          },
+          "pictures": {
+            "psnr_db": 37.040329038222374,
+            "mae_8bit": 0.23543131510416668,
+            "pixels_over_2": 0.00965625,
+            "pixels_over_8": 0.0092763671875
+          }
+        },
+        {
+          "legacy": {
+            "p95_ms": 28.903125,
+            "load_ms": [
+              816.6346249999999,
+              30.42125
+            ],
+            "modules": 5,
+            "pipelines": 5,
+            "commands": 5,
+            "source_tokens": 1228
+          },
+          "native": {
+            "p95_ms": 56.205459,
+            "load_ms": [
+              2082.091041,
+              13.083625
+            ],
+            "modules": 4,
+            "pipelines": 5,
+            "commands": 1,
+            "source_tokens": 2751,
+            "triangle_p50_ms": 0.611959
+          },
+          "pictures": {
+            "psnr_db": 37.040329038222374,
+            "mae_8bit": 0.23543131510416668,
+            "pixels_over_2": 0.00965625,
+            "pixels_over_8": 0.0092763671875
+          }
+        }
+      ],
+      "rgb_sha256": [
+        [
+          "be908f79a36255ec30078dca5eaf14ff5bf4ef34137db76521a12c2ed4cd345b",
+          "b93e29a45e1e870e45184217f3d96bed835039a4c9518e68da9ccbf1fd7aa83e"
+        ],
+        [
+          "be908f79a36255ec30078dca5eaf14ff5bf4ef34137db76521a12c2ed4cd345b",
+          "b93e29a45e1e870e45184217f3d96bed835039a4c9518e68da9ccbf1fd7aa83e"
+        ]
+      ]
+    }
+  }
+}

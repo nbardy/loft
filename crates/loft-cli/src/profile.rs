@@ -4,13 +4,17 @@ use loft_passes::program::Program;
 use loft_passes::telemetry::{self, ModuleTelemetry};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use std::path::Path;
+use std::{path::Path, time::Instant};
 
 #[derive(Serialize)]
 struct Profile {
     adapter: String,
     modules: Vec<ModuleTelemetry>,
     control_p50_ms: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    device_loads_ms: Option<Vec<f64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pipelines: Option<usize>,
     passes: Vec<String>,
     gpu_frame_ms: Vec<f64>,
     gpu_pass_ms: Vec<Vec<f64>>,
@@ -62,9 +66,12 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
     let nonce = flag(&mut args, "--nonce")?
         .map(|s| count(&s).ok_or_else(|| Failure::Usage("--nonce takes a nonzero u32".into())))
         .transpose()?;
+    let loads = flag(&mut args, "--loads")?
+        .map(|s| count(&s).ok_or_else(|| Failure::Usage("--loads takes a positive count".into())))
+        .transpose()?;
     let [scene] = args.as_slice() else {
         return Err(Failure::Usage(
-            "usage: loft profile SCENE --size WxH [--frames N] [--nonce N] [--timestamps immediate|ring|ab] [--json OUT]".into(),
+            "usage: loft profile SCENE --size WxH [--frames N] [--nonce N] [--loads N] [--timestamps immediate|ring|ab] [--json OUT]".into(),
         ));
     };
     let path = Path::new(scene);
@@ -80,7 +87,15 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
     };
     let gpu = native::gpu().map_err(Failure::Device)?;
     crate::budget::timestamps(gpu.timestamps)?;
-    let loaded = Loaded::new(&gpu, &program, size, nonce).map_err(Failure::Device)?;
+    // Keep the device and driver compilation key fixed across the warm loads.
+    let mut device_loads_ms = Vec::new();
+    let mut loaded = None;
+    for _ in 0..loads.unwrap_or(1) {
+        let started = Instant::now();
+        loaded = Some(Loaded::new(&gpu, &program, size, nonce).map_err(Failure::Device)?);
+        device_loads_ms.push(started.elapsed().as_secs_f64() * 1e3);
+    }
+    let loaded = loaded.expect("at least one device load");
     let times = (0..warmup).map(|i| time.unwrap_or(i as f32 / 30.0))
         .chain((0..frames).map(|i| time.unwrap_or(i as f32 * (1.0 / 60.0))))
         .collect::<Vec<_>>();
@@ -92,6 +107,8 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
             adapter: gpu.adapter.clone(),
             modules: telemetry::collect(&program),
             control_p50_ms,
+            device_loads_ms: loads.map(|_| device_loads_ms.clone()),
+            pipelines: loads.map(|_| loaded.stats.compute_pipelines + loaded.stats.render_pipelines),
             passes: program.passes.iter().map(|p| format!("{p:?}")).collect(),
             gpu_frame_ms: frame_stamps.iter().map(|f| f.gpu_ms).collect(),
             gpu_pass_ms: frame_stamps.iter().map(|f| f.pass_ms.clone()).collect(),
@@ -109,6 +126,9 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
     if let Some(path) = json {
         write_json(&path, &report)
     } else {
+        if let Some(ms) = &report.device_loads_ms {
+            println!("device loads (ms): {ms:.3?}");
+        }
         let mut times = report.gpu_frame_ms;
         times.sort_by(f64::total_cmp);
         println!(
