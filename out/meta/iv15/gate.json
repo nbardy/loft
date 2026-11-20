@@ -1,0 +1,1770 @@
+{
+  "scored_sha": "faba0615b6bdc33f105d51939ecf3af25c5decea",
+  "implementation_baseline": "faba0615b6bdc33f105d51939ecf3af25c5decea",
+  "adapter": "Apple M4 (Metal)",
+  "size": [
+    1280,
+    800
+  ],
+  "gpu_lock_holder": 6466,
+  "workspace_builds": 1,
+  "five_gate_runs": 1,
+  "gates": {
+    "Pictures": {
+      "held": 19,
+      "total": 19,
+      "contended": 0
+    },
+    "Twin": {
+      "held": 36,
+      "total": 36,
+      "contended": 0
+    },
+    "Speed": {
+      "held": 6,
+      "total": 12,
+      "contended": 6
+    },
+    "Load": {
+      "held": 23,
+      "total": 33,
+      "contended": 0
+    },
+    "Truth": {
+      "held": 34,
+      "total": 34,
+      "contended": 0
+    }
+  },
+  "gate_checks": {
+    "Pictures": [
+      {
+        "result": "ok",
+        "scene": "capsules-1",
+        "check": "frame t=0",
+        "verdict": "Held(margin 1.000e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-1",
+        "check": "frame t=4",
+        "verdict": "Held(margin 1.000e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-1",
+        "check": "frame t=9",
+        "verdict": "Held(margin 1.000e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-20",
+        "check": "frame t=0",
+        "verdict": "Held(margin 1.000e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-20",
+        "check": "frame t=4",
+        "verdict": "Held(margin 1.000e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-20",
+        "check": "frame t=9",
+        "verdict": "Held(margin 1.000e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-1",
+        "check": "frame t=0",
+        "verdict": "Held(margin 1.000e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-1",
+        "check": "frame t=4",
+        "verdict": "Held(margin 1.000e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-1",
+        "check": "frame t=9",
+        "verdict": "Held(margin 1.000e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-20",
+        "check": "frame t=0",
+        "verdict": "Held(margin 9.990e-4)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-20",
+        "check": "frame t=4",
+        "verdict": "Held(margin 1.000e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-20",
+        "check": "frame t=9",
+        "verdict": "Held(margin 1.000e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "frame t=0",
+        "verdict": "Held(margin 1.000e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "frame t=4",
+        "verdict": "Held(margin 1.000e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "frame t=9",
+        "verdict": "Held(margin 1.000e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "frame t=0",
+        "verdict": "Held(margin 1.000e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "frame t=4",
+        "verdict": "Held(margin 1.000e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "frame t=9",
+        "verdict": "Held(margin 1.000e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "coral_shrine",
+        "check": "frame t=0",
+        "verdict": "Held(margin 9.268e-4)"
+      }
+    ],
+    "Twin": [
+      {
+        "result": "ok",
+        "scene": "capsules-1",
+        "check": "Capsule.trace (max err 2.98e-8, 224 samples)",
+        "verdict": "Held(margin 9.970e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-1",
+        "check": "Capsule.visible (max err 3.43e-7, 224 samples)",
+        "verdict": "Held(margin 9.657e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-1",
+        "check": "Capsule.material (max err 6.71e-8, 224 samples)",
+        "verdict": "Held(margin 1.993e-5)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-20",
+        "check": "Capsule.trace (max err 5.96e-8, 640 samples)",
+        "verdict": "Held(margin 9.940e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-20",
+        "check": "Capsule.visible (max err 7.75e-7, 640 samples)",
+        "verdict": "Held(margin 9.225e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-20",
+        "check": "Capsule.material (max err 6.71e-8, 640 samples)",
+        "verdict": "Held(margin 1.993e-5)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-1",
+        "check": "Blob.trace (max err 4.47e-8, 32 samples)",
+        "verdict": "Held(margin 9.955e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-1",
+        "check": "Blob.material (max err 4.47e-8, 32 samples)",
+        "verdict": "Held(margin 1.996e-5)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-20",
+        "check": "Blob.trace (max err 9.46e-7, 640 samples)",
+        "verdict": "Held(margin 9.054e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-20",
+        "check": "Blob.material (max err 9.98e-7, 640 samples)",
+        "verdict": "Held(margin 1.900e-5)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "Ground.trace (max err 2.38e-7, 32 samples)",
+        "verdict": "Held(margin 9.762e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "Ground.visible (max err 2.38e-7, 32 samples)",
+        "verdict": "Held(margin 9.762e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "Ground.material (max err 2.91e-7, 32 samples)",
+        "verdict": "Held(margin 1.971e-5)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "HermitShell.material (max err 6.33e-8, 32 samples)",
+        "verdict": "Held(margin 1.994e-5)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "HermitShell.surface point (max err 2.68e-7, 32 samples)",
+        "verdict": "Held(margin 9.732e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "HermitShell.surface normal (max err 1.04e-5, 32 samples)",
+        "verdict": "Held(margin 8.963e-5)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "CrabFace.trace (max err 5.96e-8, 32 samples)",
+        "verdict": "Held(margin 9.940e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "CrabFace.material (max err 7.45e-8, 32 samples)",
+        "verdict": "Held(margin 1.993e-5)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "CrusherClaw.trace (max err 1.79e-7, 64 samples)",
+        "verdict": "Held(margin 9.821e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "CrusherClaw.material (max err 1.79e-7, 64 samples)",
+        "verdict": "Held(margin 1.982e-5)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "CrabLeg.trace (max err 1.64e-7, 384 samples)",
+        "verdict": "Held(margin 9.836e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "CrabLeg.visible (max err 8.64e-7, 384 samples)",
+        "verdict": "Held(margin 9.136e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "CrabLeg.material (max err 6.71e-8, 384 samples)",
+        "verdict": "Held(margin 1.993e-5)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "Ground.trace (max err 2.38e-7, 32 samples)",
+        "verdict": "Held(margin 9.762e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "Ground.visible (max err 2.38e-7, 32 samples)",
+        "verdict": "Held(margin 9.762e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "Ground.material (max err 2.91e-7, 32 samples)",
+        "verdict": "Held(margin 1.971e-5)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "HermitShell.material (max err 1.27e-7, 640 samples)",
+        "verdict": "Held(margin 1.987e-5)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "HermitShell.surface point (max err 4.77e-7, 640 samples)",
+        "verdict": "Held(margin 9.523e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "HermitShell.surface normal (max err 1.66e-5, 640 samples)",
+        "verdict": "Held(margin 8.337e-5)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "CrabFace.trace (max err 8.64e-7, 640 samples)",
+        "verdict": "Held(margin 9.136e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "CrabFace.material (max err 2.68e-7, 640 samples)",
+        "verdict": "Held(margin 1.973e-5)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "CrusherClaw.trace (max err 6.93e-7, 640 samples)",
+        "verdict": "Held(margin 9.307e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "CrusherClaw.material (max err 1.15e-5, 640 samples)",
+        "verdict": "Held(margin 8.496e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "CrabLeg.trace (max err 9.69e-7, 640 samples)",
+        "verdict": "Held(margin 9.031e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "CrabLeg.visible (max err 2.07e-6, 640 samples)",
+        "verdict": "Held(margin 7.929e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "CrabLeg.material (max err 3.61e-7, 640 samples)",
+        "verdict": "Held(margin 1.964e-5)"
+      }
+    ],
+    "Speed": [
+      {
+        "result": "ok",
+        "scene": "capsules-1",
+        "check": "5 GPU commands == 5",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "CONTENDED",
+        "scene": "capsules-1",
+        "check": "p95 7.467 ms <= 0.8 ms (control p50 0.943 ms)",
+        "verdict": "Missed(by 6.667e0)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-20",
+        "check": "5 GPU commands == 5",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "CONTENDED",
+        "scene": "capsules-20",
+        "check": "p95 8.093 ms <= 1.1 ms (control p50 0.880 ms)",
+        "verdict": "Missed(by 6.993e0)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-1",
+        "check": "5 GPU commands == 5",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "CONTENDED",
+        "scene": "blobs-1",
+        "check": "p95 7.333 ms <= 1.1 ms (control p50 1.050 ms)",
+        "verdict": "Missed(by 6.233e0)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-20",
+        "check": "5 GPU commands == 5",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "CONTENDED",
+        "scene": "blobs-20",
+        "check": "p95 8.915 ms <= 2.4 ms (control p50 1.212 ms)",
+        "verdict": "Missed(by 6.515e0)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "13 GPU commands == 13",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "CONTENDED",
+        "scene": "hermit-1",
+        "check": "p95 11.645 ms <= 5 ms (control p50 0.598 ms)",
+        "verdict": "Missed(by 6.645e0)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "13 GPU commands == 13",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "CONTENDED",
+        "scene": "hermit-20",
+        "check": "p95 14.876 ms <= 5.6 ms (control p50 0.745 ms)",
+        "verdict": "Missed(by 9.276e0)"
+      }
+    ],
+    "Load": [
+      {
+        "result": "ok",
+        "scene": "capsules-1",
+        "check": "4 modules == 4",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-1",
+        "check": "5 pipelines == 5",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "FAIL",
+        "scene": "capsules-1",
+        "check": "cold 1.227 s <= 0.5 s",
+        "verdict": "Missed(by 7.275e-1)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-1",
+        "check": "warm 0.020 s <= 0.2 s",
+        "verdict": "Held(margin 1.804e-1)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-1",
+        "check": "7 bound derivations == 7",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-20",
+        "check": "4 modules == 4",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-20",
+        "check": "5 pipelines == 5",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "FAIL",
+        "scene": "capsules-20",
+        "check": "cold 1.418 s <= 0.6 s",
+        "verdict": "Missed(by 8.181e-1)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-20",
+        "check": "warm 0.021 s <= 0.4 s",
+        "verdict": "Held(margin 3.792e-1)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-20",
+        "check": "140 bound derivations == 140",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-20",
+        "check": "modules byte-identical to capsules-1",
+        "verdict": "Held(margin 0.000e0)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-1",
+        "check": "4 modules == 4",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-1",
+        "check": "5 pipelines == 5",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "FAIL",
+        "scene": "blobs-1",
+        "check": "cold 1.309 s <= 0.5 s",
+        "verdict": "Missed(by 8.086e-1)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-1",
+        "check": "warm 0.018 s <= 0.2 s",
+        "verdict": "Held(margin 1.820e-1)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-1",
+        "check": "1 bound derivations == 1",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-20",
+        "check": "4 modules == 4",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-20",
+        "check": "5 pipelines == 5",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "FAIL",
+        "scene": "blobs-20",
+        "check": "cold 2.043 s <= 0.5 s",
+        "verdict": "Missed(by 1.543e0)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-20",
+        "check": "warm 0.026 s <= 0.3 s",
+        "verdict": "Held(margin 2.742e-1)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-20",
+        "check": "20 bound derivations == 20",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-20",
+        "check": "modules byte-identical to blobs-1",
+        "verdict": "Held(margin 0.000e0)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "8 modules == 8",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "FAIL",
+        "scene": "hermit-1",
+        "check": "14 pipelines == 13",
+        "verdict": "Missed(by 1.000e0)"
+      },
+      {
+        "result": "FAIL",
+        "scene": "hermit-1",
+        "check": "cold 4.030 s <= 1.5 s",
+        "verdict": "Missed(by 2.530e0)"
+      },
+      {
+        "result": "FAIL",
+        "scene": "hermit-1",
+        "check": "warm 0.082 s <= 0.06 s",
+        "verdict": "Missed(by 2.186e-2)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "11 bound derivations == 11",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "8 modules == 8",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "FAIL",
+        "scene": "hermit-20",
+        "check": "14 pipelines == 13",
+        "verdict": "Missed(by 1.000e0)"
+      },
+      {
+        "result": "FAIL",
+        "scene": "hermit-20",
+        "check": "cold 3.576 s <= 1.5 s",
+        "verdict": "Missed(by 2.076e0)"
+      },
+      {
+        "result": "FAIL",
+        "scene": "hermit-20",
+        "check": "warm 0.218 s <= 0.06 s",
+        "verdict": "Missed(by 1.582e-1)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "11 bound derivations == 11",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "modules byte-identical to hermit-1",
+        "verdict": "Held(margin 0.000e0)"
+      }
+    ],
+    "Truth": [
+      {
+        "result": "ok",
+        "scene": "capsules-1",
+        "check": "Capsule: derived L bounds sampled slopes (max 0.9959)",
+        "verdict": "Held(margin 4.104e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-1",
+        "check": "Capsule: field > 0 outside every derived bound",
+        "verdict": "Held(margin 4.972e-2)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-1",
+        "check": "Capsule: visible agrees with trace on 215 hits (|f| <= 1e-3)",
+        "verdict": "Held(margin 9.990e-4)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-20",
+        "check": "Capsule: derived L bounds sampled slopes (max 0.9999)",
+        "verdict": "Held(margin 1.030e-4)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-20",
+        "check": "Capsule: field > 0 outside every derived bound",
+        "verdict": "Held(margin 4.730e-2)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-20",
+        "check": "Capsule: visible agrees with trace on 601 hits (|f| <= 1e-3)",
+        "verdict": "Held(margin 9.976e-4)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-1",
+        "check": "Blob: derived L bounds sampled slopes (max 0.9152)",
+        "verdict": "Held(margin 4.448e-1)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-1",
+        "check": "Blob: field > 0 outside every derived bound",
+        "verdict": "Held(margin 9.503e-2)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-20",
+        "check": "Blob: derived L bounds sampled slopes (max 1.0503)",
+        "verdict": "Held(margin 3.097e-1)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-20",
+        "check": "Blob: field > 0 outside every derived bound",
+        "verdict": "Held(margin 6.140e-2)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "Ground: derived L bounds sampled slopes (max 0.1193)",
+        "verdict": "Held(margin 8.807e-1)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "Ground: field > 0 outside every derived bound",
+        "verdict": "Held(margin 1.914e0)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "Ground: visible agrees with trace on 42 hits (|f| <= 1e-3)",
+        "verdict": "Held(margin 9.998e-4)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "HermitShell: sampled surface points inside every derived bound",
+        "verdict": "Held(margin 1.759e-2)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "HermitShell: AD normal vs differences, worst 6.84e-4 rad <= 1e-2 (256 samples)",
+        "verdict": "Held(margin 9.316e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "CrabFace: derived L bounds sampled slopes (max 0.9807)",
+        "verdict": "Held(margin 1.936e-2)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "CrabFace: field > 0 outside every derived bound",
+        "verdict": "Held(margin 8.483e-2)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "CrusherClaw: derived L bounds sampled slopes (max 0.9668)",
+        "verdict": "Held(margin 4.418e-1)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "CrusherClaw: field > 0 outside every derived bound",
+        "verdict": "Held(margin 4.312e-2)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "CrabLeg: derived L bounds sampled slopes (max 0.9980)",
+        "verdict": "Held(margin 1.987e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "CrabLeg: field > 0 outside every derived bound",
+        "verdict": "Held(margin 8.754e-2)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "CrabLeg: visible agrees with trace on 146 hits (|f| <= 1e-3)",
+        "verdict": "Held(margin 9.988e-4)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "Ground: derived L bounds sampled slopes (max 0.1193)",
+        "verdict": "Held(margin 8.807e-1)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "Ground: field > 0 outside every derived bound",
+        "verdict": "Held(margin 1.914e0)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "Ground: visible agrees with trace on 53 hits (|f| <= 1e-3)",
+        "verdict": "Held(margin 9.990e-4)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "HermitShell: sampled surface points inside every derived bound",
+        "verdict": "Held(margin 1.601e-2)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "HermitShell: AD normal vs differences, worst 3.19e-3 rad <= 1e-2 (1024 samples)",
+        "verdict": "Held(margin 6.815e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "CrabFace: derived L bounds sampled slopes (max 0.9944)",
+        "verdict": "Held(margin 5.567e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "CrabFace: field > 0 outside every derived bound",
+        "verdict": "Held(margin 4.086e-2)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "CrusherClaw: derived L bounds sampled slopes (max 0.9887)",
+        "verdict": "Held(margin 4.199e-1)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "CrusherClaw: field > 0 outside every derived bound",
+        "verdict": "Held(margin 1.611e-2)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "CrabLeg: derived L bounds sampled slopes (max 0.9980)",
+        "verdict": "Held(margin 1.987e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "CrabLeg: field > 0 outside every derived bound",
+        "verdict": "Held(margin 8.754e-2)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "CrabLeg: visible agrees with trace on 237 hits (|f| <= 1e-3)",
+        "verdict": "Held(margin 9.959e-4)"
+      }
+    ]
+  },
+  "stage_exit_codes": {
+    "bead": 0,
+    "doctests": 0,
+    "five-gates": 4,
+    "lines": 0,
+    "native": 1,
+    "pictures": 0,
+    "refs-after": 0,
+    "refs-before": 0,
+    "static": 0,
+    "wasm32": 0
+  },
+  "speed_warmups": 30,
+  "speed": {
+    "capsules-1": {
+      "p95_ms": 7.466791,
+      "p50_ms": 2.122958,
+      "commands": 5,
+      "control_p50_ms": 0.943292,
+      "contended": true,
+      "frames": 300,
+      "set": {
+        "count": 1
+      },
+      "p95_budget_ms": 0.8,
+      "prior_scored_3c9cf67_p95_ms": 6.924916
+    },
+    "capsules-20": {
+      "p95_ms": 8.093291,
+      "p50_ms": 3.705833,
+      "commands": 5,
+      "control_p50_ms": 0.880083,
+      "contended": true,
+      "frames": 300,
+      "set": {
+        "count": 20
+      },
+      "p95_budget_ms": 1.1,
+      "prior_scored_3c9cf67_p95_ms": 10.136125
+    },
+    "blobs-1": {
+      "p95_ms": 7.333042,
+      "p50_ms": 2.386625,
+      "commands": 5,
+      "control_p50_ms": 1.049625,
+      "contended": true,
+      "frames": 300,
+      "set": {
+        "count": 1
+      },
+      "p95_budget_ms": 1.1,
+      "prior_scored_3c9cf67_p95_ms": 7.247041
+    },
+    "blobs-20": {
+      "p95_ms": 8.915084,
+      "p50_ms": 4.281791,
+      "commands": 5,
+      "control_p50_ms": 1.212333,
+      "contended": true,
+      "frames": 300,
+      "set": {
+        "count": 20
+      },
+      "p95_budget_ms": 2.4,
+      "prior_scored_3c9cf67_p95_ms": 8.772375
+    },
+    "hermit-1": {
+      "p95_ms": 11.644667,
+      "p50_ms": 7.375417,
+      "commands": 13,
+      "control_p50_ms": 0.59775,
+      "contended": true,
+      "frames": 300,
+      "set": {
+        "count": 1
+      },
+      "p95_budget_ms": 5.0,
+      "prior_scored_3c9cf67_p95_ms": 12.019459
+    },
+    "hermit-20": {
+      "p95_ms": 14.875625,
+      "p50_ms": 10.383834,
+      "commands": 13,
+      "control_p50_ms": 0.745375,
+      "contended": true,
+      "frames": 300,
+      "set": {
+        "count": 20
+      },
+      "p95_budget_ms": 5.6,
+      "prior_scored_3c9cf67_p95_ms": 15.264416
+    }
+  },
+  "triangle_p95_ms": {
+    "before": 9.324041,
+    "after": 7.016292
+  },
+  "quiet_limit_ms_exclusive": 0.15,
+  "speed_comparison": "Retained main, identical implementation. Single gate diagnostics only; no paired timing CI.",
+  "load": {
+    "blobs-1": {
+      "cache_bytes": 0,
+      "cold_s": 1.308586375,
+      "derivation_hits": [
+        0,
+        1
+      ],
+      "device_ms": [
+        1180.9622499999998,
+        3.7951669999999997
+      ],
+      "each_cold_ms": [
+        [
+          "Blob vis",
+          466.347625
+        ],
+        [
+          "Blob shade",
+          921.677709
+        ],
+        [
+          "cull",
+          232.331916
+        ],
+        [
+          "classify",
+          409.726333
+        ],
+        [
+          "present",
+          1179.102334
+        ]
+      ],
+      "front_ms": [
+        127.624125,
+        14.169833
+      ],
+      "modules": 4,
+      "pipelines": 5,
+      "pipelines_ms": [
+        1179.376834,
+        2.38075
+      ],
+      "shapes": [
+        1
+      ],
+      "warm_s": 0.017965
+    },
+    "blobs-20": {
+      "cache_bytes": 0,
+      "cold_s": 2.0434373740000003,
+      "derivation_hits": [
+        0,
+        20
+      ],
+      "device_ms": [
+        1141.589291,
+        8.203875
+      ],
+      "each_cold_ms": [
+        [
+          "Blob vis",
+          752.6006669999999
+        ],
+        [
+          "Blob shade",
+          834.3808329999999
+        ],
+        [
+          "cull",
+          1130.239084
+        ],
+        [
+          "classify",
+          501.769333
+        ],
+        [
+          "present",
+          1138.7775
+        ]
+      ],
+      "front_ms": [
+        901.848083,
+        17.549292
+      ],
+      "modules": 4,
+      "pipelines": 5,
+      "pipelines_ms": [
+        1139.003709,
+        3.045
+      ],
+      "shapes": [
+        20
+      ],
+      "warm_s": 0.025753167
+    },
+    "capsules-1": {
+      "cache_bytes": 0,
+      "cold_s": 1.227484707,
+      "derivation_hits": [
+        0,
+        7
+      ],
+      "device_ms": [
+        1179.6824159999999,
+        4.814125
+      ],
+      "each_cold_ms": [
+        [
+          "Capsule vis",
+          472.55512500000003
+        ],
+        [
+          "Capsule shade",
+          910.740583
+        ],
+        [
+          "cull",
+          269.183083
+        ],
+        [
+          "classify",
+          444.26354200000003
+        ],
+        [
+          "present",
+          1176.932292
+        ]
+      ],
+      "front_ms": [
+        47.802291,
+        14.825916
+      ],
+      "modules": 4,
+      "pipelines": 5,
+      "pipelines_ms": [
+        1177.22325,
+        2.417708
+      ],
+      "shapes": [
+        7
+      ],
+      "warm_s": 0.019640041
+    },
+    "capsules-20": {
+      "cache_bytes": 0,
+      "cold_s": 1.4181154999999999,
+      "derivation_hits": [
+        0,
+        140
+      ],
+      "device_ms": [
+        925.0342919999999,
+        3.716291
+      ],
+      "each_cold_ms": [
+        [
+          "Capsule vis",
+          922.942583
+        ],
+        [
+          "Capsule shade",
+          818.304625
+        ],
+        [
+          "cull",
+          781.600375
+        ],
+        [
+          "classify",
+          316.868833
+        ],
+        [
+          "present",
+          705.732042
+        ]
+      ],
+      "front_ms": [
+        493.081208,
+        17.068458000000003
+      ],
+      "modules": 4,
+      "pipelines": 5,
+      "pipelines_ms": [
+        923.1197500000001,
+        2.122541
+      ],
+      "shapes": [
+        140
+      ],
+      "warm_s": 0.020784749000000005
+    },
+    "hermit-1": {
+      "cache_bytes": 0,
+      "cold_s": 4.030414541,
+      "derivation_hits": [
+        0,
+        11
+      ],
+      "device_ms": [
+        3271.539125,
+        16.532375
+      ],
+      "each_cold_ms": [
+        [
+          "Ground vis",
+          2652.7153329999996
+        ],
+        [
+          "Ground shade",
+          2709.011583
+        ],
+        [
+          "HermitShell vis",
+          1962.46925
+        ],
+        [
+          "HermitShell shade",
+          2828.309542
+        ],
+        [
+          "CrabFace vis",
+          2023.0038330000002
+        ],
+        [
+          "CrabFace shade",
+          2922.856334
+        ],
+        [
+          "CrusherClaw vis",
+          2096.789292
+        ],
+        [
+          "CrusherClaw shade",
+          1908.680041
+        ],
+        [
+          "CrabLeg vis",
+          2320.4412909999996
+        ],
+        [
+          "CrabLeg shade",
+          2587.4747500000003
+        ],
+        [
+          "cull",
+          1926.5380840000003
+        ],
+        [
+          "classify",
+          1946.01925
+        ],
+        [
+          "present",
+          3184.7361250000004
+        ],
+        [
+          "HermitShell bake surface",
+          64.401291
+        ]
+      ],
+      "front_ms": [
+        758.875416,
+        65.327042
+      ],
+      "modules": 8,
+      "pipelines": 14,
+      "pipelines_ms": [
+        3190.664875,
+        5.239332999999999
+      ],
+      "shapes": [
+        1,
+        1,
+        1,
+        2,
+        6
+      ],
+      "warm_s": 0.081859417
+    },
+    "hermit-20": {
+      "cache_bytes": 0,
+      "cold_s": 3.575625043,
+      "derivation_hits": [
+        0,
+        11
+      ],
+      "device_ms": [
+        2888.932334,
+        133.92325
+      ],
+      "each_cold_ms": [
+        [
+          "Ground vis",
+          2263.471
+        ],
+        [
+          "Ground shade",
+          2245.921583
+        ],
+        [
+          "HermitShell vis",
+          2156.9865830000003
+        ],
+        [
+          "HermitShell shade",
+          1961.4541669999999
+        ],
+        [
+          "CrabFace vis",
+          2090.0807499999996
+        ],
+        [
+          "CrabFace shade",
+          2780.35225
+        ],
+        [
+          "CrusherClaw vis",
+          2146.259417
+        ],
+        [
+          "CrusherClaw shade",
+          2596.8982499999997
+        ],
+        [
+          "CrabLeg vis",
+          2299.218792
+        ],
+        [
+          "CrabLeg shade",
+          2036.6632089999998
+        ],
+        [
+          "cull",
+          1782.20475
+        ],
+        [
+          "classify",
+          2253.633917
+        ],
+        [
+          "present",
+          2517.529583
+        ],
+        [
+          "HermitShell bake surface",
+          91.900625
+        ]
+      ],
+      "front_ms": [
+        686.692709,
+        84.266833
+      ],
+      "modules": 8,
+      "pipelines": 14,
+      "pipelines_ms": [
+        2780.7242089999995,
+        19.378875
+      ],
+      "shapes": [
+        1,
+        1,
+        1,
+        2,
+        6
+      ],
+      "warm_s": 0.218190083
+    }
+  },
+  "frozen_pictures": {
+    "capsules-1": {
+      "0": {
+        "max_diff": 0,
+        "over_2": 0,
+        "rgba_sha256": "df19eaba565023913e4a2c2c18460fd46af3c30d9223d42ed91ea3998d591883"
+      },
+      "4": {
+        "max_diff": 0,
+        "over_2": 0,
+        "rgba_sha256": "5a97b44bdaa0a64865533c745509cd50fcf6b039d393c2dd6961a42f54fba394"
+      },
+      "9": {
+        "max_diff": 0,
+        "over_2": 0,
+        "rgba_sha256": "f4f8105ec1d4f4553d49b3c0cf0dc480bd69a30f4c8ca3cb418ee0c5a38b5774"
+      }
+    },
+    "capsules-20": {
+      "0": {
+        "max_diff": 0,
+        "over_2": 0,
+        "rgba_sha256": "bb456f08db310fdebbc5a028a6d4e79bb65be3304a45f0285c03e044d4dd36a1"
+      },
+      "4": {
+        "max_diff": 0,
+        "over_2": 0,
+        "rgba_sha256": "3a7f9fd080ac3d3d80c1387ca79d429b3a571bb7c6fd2b8e6776e522ca3e59eb"
+      },
+      "9": {
+        "max_diff": 0,
+        "over_2": 0,
+        "rgba_sha256": "23fc19befa510dc8e8c82897212c1fbd09169018b34b4bcca24e696d79e2ce38"
+      }
+    },
+    "blobs-1": {
+      "0": {
+        "max_diff": 2,
+        "over_2": 0,
+        "rgba_sha256": "0334bad5bd1ed1e57fbdb3aac9baa6769005a1e59cc8b73aca88a5ae727f345d"
+      },
+      "4": {
+        "max_diff": 1,
+        "over_2": 0,
+        "rgba_sha256": "c1d619767cd9f4c3d30f16cb1e473f1e788d07840b1eb806c7ecc58a13bf8b7e"
+      },
+      "9": {
+        "max_diff": 1,
+        "over_2": 0,
+        "rgba_sha256": "d4ed9551463f394042e9a8a8cdba1bfdf5bd75dd3c1b1497d96c9d7513ea4a15"
+      }
+    },
+    "blobs-20": {
+      "0": {
+        "max_diff": 4,
+        "over_2": 1,
+        "rgba_sha256": "e836152e71f228aaa5b3a1ff19f99740d9ab443dd56d66140088ff7e635c9d5f"
+      },
+      "4": {
+        "max_diff": 1,
+        "over_2": 0,
+        "rgba_sha256": "592c8d362888718d9f07cd72c0241ecd80e143290683164e9579881b7ccd4e44"
+      },
+      "9": {
+        "max_diff": 1,
+        "over_2": 0,
+        "rgba_sha256": "23695982d231c4faf19714251b74b00458715d217b822a9c3887bd8ac6f167d9"
+      }
+    },
+    "hermit-1": {
+      "0": {
+        "max_diff": 0,
+        "over_2": 0,
+        "rgba_sha256": "845f0d8fd03063e936ba6b95e74ae22634581efefe7316413710f84fcf15ebb8"
+      },
+      "4": {
+        "max_diff": 0,
+        "over_2": 0,
+        "rgba_sha256": "c9d6f1810e7f2d2e32c7377cd927b58c82a115d6bea0c13bcb39c4de2010d166"
+      },
+      "9": {
+        "max_diff": 0,
+        "over_2": 0,
+        "rgba_sha256": "9d20f01bd50e523f72f8d116ad3908eff55eda94a00f01bbfa642b1d5783804b"
+      }
+    },
+    "hermit-20": {
+      "0": {
+        "max_diff": 0,
+        "over_2": 0,
+        "rgba_sha256": "ac0a9a8c83532f84efd30d819ae5189c1fa5ec3ec377ae4ae40cadfbbb737145"
+      },
+      "4": {
+        "max_diff": 0,
+        "over_2": 0,
+        "rgba_sha256": "5aafcc4890c6296858deac4a759976006ad3c3040b071cad136a283478ec4a4e"
+      },
+      "9": {
+        "max_diff": 0,
+        "over_2": 0,
+        "rgba_sha256": "43339a6a75a04a46f25b86107e09fe35a7bb100a5798c2eeb0f77c50a297bb8d"
+      }
+    },
+    "coral_shrine": {
+      "0": {
+        "max_diff": 142,
+        "over_2": 75,
+        "rgba_sha256": "bb6007f54635e9adb1b5848b7b5c208f73b0a4c217135fe2176fe30270380c07"
+      }
+    }
+  },
+  "frozen_reference_inventory": {
+    "unchanged": true,
+    "pictures": 19,
+    "bead": 9,
+    "phase5": 1510
+  },
+  "bead": {
+    "held": 9,
+    "total": 9
+  },
+  "native_tests": {
+    "passed": 159,
+    "failed": 2,
+    "ignored": 0
+  },
+  "mutants": {
+    "core_domain_word_leak": true,
+    "fake_foot_20mm": true,
+    "missing_frame": true,
+    "one_vs_20_module_drift": true,
+    "over_budget_51ms": true,
+    "five_inline_bsdf_copies": true
+  },
+  "native_failure_details": {
+    "all_authored_files_replay_verbatim": "Retained main opens the retired lib/ directory at crates/loft-parse/src/cst.rs:332.",
+    "time_edit_and_compare_native_promotion": {
+      "upload_ms": 0.137792,
+      "overhead_p95_ms": 0.755833,
+      "limit_ms": 0.5,
+      "pixels_over_1_of_140000": 0
+    }
+  },
+  "speed_historical": {
+    "revision": "3c9cf678348ebded0c7e14e36142d59424c4b347",
+    "held": 6,
+    "total": 12,
+    "contended": 6
+  },
+  "structural_comparison": "Stock Shrine has 15 isolated foreground ID changes in a repeat of the same implementation. Encoded depth and silhouette match. Raw full-plane ID equality is not established.",
+  "native_failures": [
+    "cst::corpus::all_authored_files_replay_verbatim",
+    "encode::edit_gate::time_edit_and_compare_native_promotion"
+  ],
+  "grammar": {
+    "recognizers": [
+      "Earley",
+      "llguidance"
+    ],
+    "correct_each": 283,
+    "total_each": 283
+  },
+  "source_counts_per_crate": {
+    "loft-abi": {
+      "src_physical_rust_wgsl": 498,
+      "scc_rust_code_excluding_tests_dirs": 372
+    },
+    "loft-cli": {
+      "src_physical_rust_wgsl": 6782,
+      "scc_rust_code_excluding_tests_dirs": 6869
+    },
+    "loft-format": {
+      "src_physical_rust_wgsl": 815,
+      "scc_rust_code_excluding_tests_dirs": 740
+    },
+    "loft-ir": {
+      "src_physical_rust_wgsl": 548,
+      "scc_rust_code_excluding_tests_dirs": 456
+    },
+    "loft-parse": {
+      "src_physical_rust_wgsl": 2798,
+      "scc_rust_code_excluding_tests_dirs": 2652
+    },
+    "loft-passes": {
+      "src_physical_rust_wgsl": 18030,
+      "scc_rust_code_excluding_tests_dirs": 16146
+    },
+    "loft-plan": {
+      "src_physical_rust_wgsl": 949,
+      "scc_rust_code_excluding_tests_dirs": 859
+    },
+    "loft-runner": {
+      "src_physical_rust_wgsl": 1630,
+      "scc_rust_code_excluding_tests_dirs": 1787
+    },
+    "loft-std": {
+      "src_physical_rust_wgsl": 4536,
+      "scc_rust_code_excluding_tests_dirs": 4305
+    }
+  },
+  "main_pixel_comparison": {
+    "baseline_capture": "v15b/main at faba061",
+    "frames": {
+      "capsules-1@0": {
+        "pixels": 1024000,
+        "changed": 0,
+        "over_2": 0,
+        "max_delta": 0,
+        "largest_8_connected_over_2": 0,
+        "capture_sha256": "df19eaba565023913e4a2c2c18460fd46af3c30d9223d42ed91ea3998d591883",
+        "gate_sha256": "df19eaba565023913e4a2c2c18460fd46af3c30d9223d42ed91ea3998d591883",
+        "baseline_sha256": "df19eaba565023913e4a2c2c18460fd46af3c30d9223d42ed91ea3998d591883",
+        "within_2_fraction": 1.0
+      },
+      "capsules-1@4": {
+        "pixels": 1024000,
+        "changed": 0,
+        "over_2": 0,
+        "max_delta": 0,
+        "largest_8_connected_over_2": 0,
+        "capture_sha256": "5a97b44bdaa0a64865533c745509cd50fcf6b039d393c2dd6961a42f54fba394",
+        "gate_sha256": "5a97b44bdaa0a64865533c745509cd50fcf6b039d393c2dd6961a42f54fba394",
+        "baseline_sha256": "5a97b44bdaa0a64865533c745509cd50fcf6b039d393c2dd6961a42f54fba394",
+        "within_2_fraction": 1.0
+      },
+      "capsules-1@9": {
+        "pixels": 1024000,
+        "changed": 0,
+        "over_2": 0,
+        "max_delta": 0,
+        "largest_8_connected_over_2": 0,
+        "capture_sha256": "f4f8105ec1d4f4553d49b3c0cf0dc480bd69a30f4c8ca3cb418ee0c5a38b5774",
+        "gate_sha256": "f4f8105ec1d4f4553d49b3c0cf0dc480bd69a30f4c8ca3cb418ee0c5a38b5774",
+        "baseline_sha256": "f4f8105ec1d4f4553d49b3c0cf0dc480bd69a30f4c8ca3cb418ee0c5a38b5774",
+        "within_2_fraction": 1.0
+      },
+      "capsules-20@0": {
+        "pixels": 1024000,
+        "changed": 0,
+        "over_2": 0,
+        "max_delta": 0,
+        "largest_8_connected_over_2": 0,
+        "capture_sha256": "bb456f08db310fdebbc5a028a6d4e79bb65be3304a45f0285c03e044d4dd36a1",
+        "gate_sha256": "bb456f08db310fdebbc5a028a6d4e79bb65be3304a45f0285c03e044d4dd36a1",
+        "baseline_sha256": "bb456f08db310fdebbc5a028a6d4e79bb65be3304a45f0285c03e044d4dd36a1",
+        "within_2_fraction": 1.0
+      },
+      "capsules-20@4": {
+        "pixels": 1024000,
+        "changed": 0,
+        "over_2": 0,
+        "max_delta": 0,
+        "largest_8_connected_over_2": 0,
+        "capture_sha256": "3a7f9fd080ac3d3d80c1387ca79d429b3a571bb7c6fd2b8e6776e522ca3e59eb",
+        "gate_sha256": "3a7f9fd080ac3d3d80c1387ca79d429b3a571bb7c6fd2b8e6776e522ca3e59eb",
+        "baseline_sha256": "3a7f9fd080ac3d3d80c1387ca79d429b3a571bb7c6fd2b8e6776e522ca3e59eb",
+        "within_2_fraction": 1.0
+      },
+      "capsules-20@9": {
+        "pixels": 1024000,
+        "changed": 0,
+        "over_2": 0,
+        "max_delta": 0,
+        "largest_8_connected_over_2": 0,
+        "capture_sha256": "23fc19befa510dc8e8c82897212c1fbd09169018b34b4bcca24e696d79e2ce38",
+        "gate_sha256": "23fc19befa510dc8e8c82897212c1fbd09169018b34b4bcca24e696d79e2ce38",
+        "baseline_sha256": "23fc19befa510dc8e8c82897212c1fbd09169018b34b4bcca24e696d79e2ce38",
+        "within_2_fraction": 1.0
+      },
+      "blobs-1@0": {
+        "pixels": 1024000,
+        "changed": 0,
+        "over_2": 0,
+        "max_delta": 0,
+        "largest_8_connected_over_2": 0,
+        "capture_sha256": "0334bad5bd1ed1e57fbdb3aac9baa6769005a1e59cc8b73aca88a5ae727f345d",
+        "gate_sha256": "0334bad5bd1ed1e57fbdb3aac9baa6769005a1e59cc8b73aca88a5ae727f345d",
+        "baseline_sha256": "0334bad5bd1ed1e57fbdb3aac9baa6769005a1e59cc8b73aca88a5ae727f345d",
+        "within_2_fraction": 1.0
+      },
+      "blobs-1@4": {
+        "pixels": 1024000,
+        "changed": 0,
+        "over_2": 0,
+        "max_delta": 0,
+        "largest_8_connected_over_2": 0,
+        "capture_sha256": "c1d619767cd9f4c3d30f16cb1e473f1e788d07840b1eb806c7ecc58a13bf8b7e",
+        "gate_sha256": "c1d619767cd9f4c3d30f16cb1e473f1e788d07840b1eb806c7ecc58a13bf8b7e",
+        "baseline_sha256": "c1d619767cd9f4c3d30f16cb1e473f1e788d07840b1eb806c7ecc58a13bf8b7e",
+        "within_2_fraction": 1.0
+      },
+      "blobs-1@9": {
+        "pixels": 1024000,
+        "changed": 0,
+        "over_2": 0,
+        "max_delta": 0,
+        "largest_8_connected_over_2": 0,
+        "capture_sha256": "d4ed9551463f394042e9a8a8cdba1bfdf5bd75dd3c1b1497d96c9d7513ea4a15",
+        "gate_sha256": "d4ed9551463f394042e9a8a8cdba1bfdf5bd75dd3c1b1497d96c9d7513ea4a15",
+        "baseline_sha256": "d4ed9551463f394042e9a8a8cdba1bfdf5bd75dd3c1b1497d96c9d7513ea4a15",
+        "within_2_fraction": 1.0
+      },
+      "blobs-20@0": {
+        "pixels": 1024000,
+        "changed": 0,
+        "over_2": 0,
+        "max_delta": 0,
+        "largest_8_connected_over_2": 0,
+        "capture_sha256": "e836152e71f228aaa5b3a1ff19f99740d9ab443dd56d66140088ff7e635c9d5f",
+        "gate_sha256": "e836152e71f228aaa5b3a1ff19f99740d9ab443dd56d66140088ff7e635c9d5f",
+        "baseline_sha256": "e836152e71f228aaa5b3a1ff19f99740d9ab443dd56d66140088ff7e635c9d5f",
+        "within_2_fraction": 1.0
+      },
+      "blobs-20@4": {
+        "pixels": 1024000,
+        "changed": 0,
+        "over_2": 0,
+        "max_delta": 0,
+        "largest_8_connected_over_2": 0,
+        "capture_sha256": "592c8d362888718d9f07cd72c0241ecd80e143290683164e9579881b7ccd4e44",
+        "gate_sha256": "592c8d362888718d9f07cd72c0241ecd80e143290683164e9579881b7ccd4e44",
+        "baseline_sha256": "592c8d362888718d9f07cd72c0241ecd80e143290683164e9579881b7ccd4e44",
+        "within_2_fraction": 1.0
+      },
+      "blobs-20@9": {
+        "pixels": 1024000,
+        "changed": 0,
+        "over_2": 0,
+        "max_delta": 0,
+        "largest_8_connected_over_2": 0,
+        "capture_sha256": "23695982d231c4faf19714251b74b00458715d217b822a9c3887bd8ac6f167d9",
+        "gate_sha256": "23695982d231c4faf19714251b74b00458715d217b822a9c3887bd8ac6f167d9",
+        "baseline_sha256": "23695982d231c4faf19714251b74b00458715d217b822a9c3887bd8ac6f167d9",
+        "within_2_fraction": 1.0
+      },
+      "hermit-1@0": {
+        "pixels": 1024000,
+        "changed": 0,
+        "over_2": 0,
+        "max_delta": 0,
+        "largest_8_connected_over_2": 0,
+        "capture_sha256": "845f0d8fd03063e936ba6b95e74ae22634581efefe7316413710f84fcf15ebb8",
+        "gate_sha256": "845f0d8fd03063e936ba6b95e74ae22634581efefe7316413710f84fcf15ebb8",
+        "baseline_sha256": "845f0d8fd03063e936ba6b95e74ae22634581efefe7316413710f84fcf15ebb8",
+        "within_2_fraction": 1.0
+      },
+      "hermit-1@4": {
+        "pixels": 1024000,
+        "changed": 0,
+        "over_2": 0,
+        "max_delta": 0,
+        "largest_8_connected_over_2": 0,
+        "capture_sha256": "c9d6f1810e7f2d2e32c7377cd927b58c82a115d6bea0c13bcb39c4de2010d166",
+        "gate_sha256": "c9d6f1810e7f2d2e32c7377cd927b58c82a115d6bea0c13bcb39c4de2010d166",
+        "baseline_sha256": "c9d6f1810e7f2d2e32c7377cd927b58c82a115d6bea0c13bcb39c4de2010d166",
+        "within_2_fraction": 1.0
+      },
+      "hermit-1@9": {
+        "pixels": 1024000,
+        "changed": 0,
+        "over_2": 0,
+        "max_delta": 0,
+        "largest_8_connected_over_2": 0,
+        "capture_sha256": "9d20f01bd50e523f72f8d116ad3908eff55eda94a00f01bbfa642b1d5783804b",
+        "gate_sha256": "9d20f01bd50e523f72f8d116ad3908eff55eda94a00f01bbfa642b1d5783804b",
+        "baseline_sha256": "9d20f01bd50e523f72f8d116ad3908eff55eda94a00f01bbfa642b1d5783804b",
+        "within_2_fraction": 1.0
+      },
+      "hermit-20@0": {
+        "pixels": 1024000,
+        "changed": 0,
+        "over_2": 0,
+        "max_delta": 0,
+        "largest_8_connected_over_2": 0,
+        "capture_sha256": "ac0a9a8c83532f84efd30d819ae5189c1fa5ec3ec377ae4ae40cadfbbb737145",
+        "gate_sha256": "ac0a9a8c83532f84efd30d819ae5189c1fa5ec3ec377ae4ae40cadfbbb737145",
+        "baseline_sha256": "ac0a9a8c83532f84efd30d819ae5189c1fa5ec3ec377ae4ae40cadfbbb737145",
+        "within_2_fraction": 1.0
+      },
+      "hermit-20@4": {
+        "pixels": 1024000,
+        "changed": 0,
+        "over_2": 0,
+        "max_delta": 0,
+        "largest_8_connected_over_2": 0,
+        "capture_sha256": "5aafcc4890c6296858deac4a759976006ad3c3040b071cad136a283478ec4a4e",
+        "gate_sha256": "5aafcc4890c6296858deac4a759976006ad3c3040b071cad136a283478ec4a4e",
+        "baseline_sha256": "5aafcc4890c6296858deac4a759976006ad3c3040b071cad136a283478ec4a4e",
+        "within_2_fraction": 1.0
+      },
+      "hermit-20@9": {
+        "pixels": 1024000,
+        "changed": 0,
+        "over_2": 0,
+        "max_delta": 0,
+        "largest_8_connected_over_2": 0,
+        "capture_sha256": "43339a6a75a04a46f25b86107e09fe35a7bb100a5798c2eeb0f77c50a297bb8d",
+        "gate_sha256": "43339a6a75a04a46f25b86107e09fe35a7bb100a5798c2eeb0f77c50a297bb8d",
+        "baseline_sha256": "43339a6a75a04a46f25b86107e09fe35a7bb100a5798c2eeb0f77c50a297bb8d",
+        "within_2_fraction": 1.0
+      },
+      "coral_shrine@0": {
+        "pixels": 1024000,
+        "changed": 103,
+        "over_2": 103,
+        "max_delta": 157,
+        "largest_8_connected_over_2": 9,
+        "capture_sha256": "d22a2cc0dc60e397e8fec57b4bc57482b847fa933a2487dd41fd178f28dafc6f",
+        "gate_sha256": "bb6007f54635e9adb1b5848b7b5c208f73b0a4c217135fe2176fe30270380c07",
+        "id": {
+          "pixels": 1024000,
+          "changed": 15,
+          "over_2": 15,
+          "max_delta": 198,
+          "largest_8_connected_over_2": 1,
+          "silhouette_pixel_differences": 0
+        },
+        "depth": {
+          "pixels": 1024000,
+          "changed": 0,
+          "over_2": 0,
+          "max_delta": 0,
+          "largest_8_connected_over_2": 0
+        },
+        "baseline_sha256": "ea36eb5be9ec024210302ee18ae6e50ab69b6919abb880077c0fd9e0f51968d4",
+        "within_2_fraction": 0.9998994140625
+      }
+    }
+  },
+  "lane_decisions": {
+    "v15a": {
+      "sha": "f83ecd6a59b38ccf87d183e41d9e33b00e7dffa2",
+      "merged": false,
+      "reason": "Hardware World traversal absent. Both A/B preflights exceeded 0.150 ms p95."
+    },
+    "v15b": {
+      "sha": "bf1e54f02b9839fdab7502889dec6d333e8b85be",
+      "merged": false,
+      "reason": "Native sampled StudyInk fails group 3 binding 3. Portable bake export is unavailable."
+    },
+    "v15c": {
+      "sha": "699216e26801d9f9d06c20b3696e023d2a3b55e6",
+      "merged": false,
+      "reason": "Production gate lacks both modes. Timing admits 0.350 ms p50 in place of the required <0.150 ms p95; three replays share one capture."
+    }
+  }
+}

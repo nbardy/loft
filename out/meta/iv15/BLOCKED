@@ -1,0 +1,8 @@
+loft/v15a f83ecd6a59b38ccf87d183e41d9e33b00e7dffa2
+The matched engine consumes raster hits and shades its edges. B-1 and B-20 had 27 and 483 pixels above 2/255 out of 1,024,000, with largest components of one and two pixels. The shadow and bounce still use software BVH traversal on the ray-query-capable M4. Preflight triangle p95s of 5.621 and 7.051 ms exceeded 0.150 ms, so neither matched table has a qualifying pair and B-20 has no sub-15 ms result.
+
+loft/v15b bf1e54f02b9839fdab7502889dec6d333e8b85be
+Both native StudyInk pipelines fail validation on group 3 binding 3, and the portable exporter still rejects baked programs. A two-word raw storage table reports arrayLength 3. The [21, 33] custom-slot readback and the statistical scatter and law checks passed.
+
+loft/v15c 699216e26801d9f9d06c20b3696e023d2a3b55e6
+The production Rust picture gate has one mode. The two-mode Python scorer gets 19/19 exact deterministic captures after substituting ordered culling. Ordinary ordering differed on Shrine IDs. The guard rejects build overlap, but the scorer checks triangle p50 against 0.350 ms and can accept measurements outside the required p95 <0.150 ms window. The one six-pair run reached 1.858 ms and scored all three timing metrics unknown. Three replays used the same observations.

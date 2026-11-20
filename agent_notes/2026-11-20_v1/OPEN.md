@@ -1,5 +1,43 @@
 # Open targets for v1.0-alpha
 
+## Wave 15 integration
+
+**All three implementation lanes remain on their branches.** The single workspace build and locked five-gate run scored retained main `faba061` on Apple M4 Metal at 1280 × 800. [Gate report](../../out/meta/iv15/gate.json) · [19-frame contact sheet](../../out/meta/iv15/sheet.webp) · [Lane decisions](../../out/meta/iv15/BLOCKED)
+
+| Lane | Audit against its brief |
+|---|---|
+| [v15a `f83ecd6`](https://github.com/nbardy/loft/blob/f83ecd6a59b38ccf87d183e41d9e33b00e7dffa2/agent_notes/2026-11-20_v1/lanes/v15a.md) | Matched B shades raster hits in five passes. B-1/B-20 had 27/483 of 1,024,000 pixels above 2/255. The largest connected differences covered one/two pixels. Shadow and bounce rays still use the software BVH on M4. Triangle preflights of 5.621 and 7.051 ms p95 stopped both paired A/B attempts before either table could be timed. The B-20 target is <15 ms. |
+| [v15b `bf1e54f`](https://github.com/nbardy/loft/blob/bf1e54f02b9839fdab7502889dec6d333e8b85be/agent_notes/2026-11-20_v1/lanes/v15b.md) | Integer and float atomic readbacks were 36 and 18. The raw pass returned [21, 33]. For 256 particles across 32 seeds, maximum scatter errors were 7.705e−6 fixed and 1.080e−6 float. Native StudyInk shade and present both failed on missing group 3 binding 3. Export still rejects baked programs, and the raw two-word buffer exposed three words to arrayLength. |
+| [v15c `699216e`](https://github.com/nbardy/loft/blob/699216e26801d9f9d06c20b3696e023d2a3b55e6/agent_notes/2026-11-20_v1/lanes/v15c.md) | The standalone scorer matched all 19 ordered RGBA, ID and D32 captures. Four stochastic frames scored 41.73–42.07 dB and both estimator and flicker mutants failed. The picture instrument substitutes ordered culling. The production Rust gate lacks the two declared modes. The timing scorer admits triangle p50 up to 0.350 ms, while the speed rule requires p95 <0.150 ms. One six-pair capture reached 1.858 ms p50 and yielded three unknown timing metrics. All three replays used those same observations. |
+
+**Pictures 19/19, Twin 36/36, Speed 6/12, Load 23/33, Truth 34/34.** All six command counts held. The triangle controls before and after the gate measured 9.324 and 7.016 ms p95 against the 0.150 ms limit. The last recorded full score on the Std1a implementation also held 6/12 Speed and 23/33 Load. Latency non-regression remains unverified. Load returned exit 4. All six cold loads exceeded budget, and Hermit exceeded its warm and pipeline budgets at both counts.
+
+| Scene | Count | Frame p95 (ms) | Triangle p50 (ms) | Commands |
+|---|---:|---:|---:|---:|
+| capsules | 1 | 7.467 | 0.943 | 5 |
+| capsules | 20 | 8.093 | 0.880 | 5 |
+| blobs | 1 | 7.333 | 1.050 | 5 |
+| blobs | 20 | 8.915 | 1.212 | 5 |
+| hermit | 1 | 11.645 | 0.598 | 13 |
+| hermit | 20 | 14.876 | 0.745 | 13 |
+
+The gate used 30 warmups and 300 timed frames per configuration. In the independent captures against main, all 18 layered frames matched exactly. Shrine had 103 of 1,024,000 pixels above 2/255 (allowance 1,024). Its largest eight-connected group covered 9 pixels. The depth visualization and silhouette matched. The ID visualization differed at 15 isolated foreground pixels, so stock Shrine ID parity remains open even on repeated main captures. The gate's own Shrine readback had 75 pixels above 2/255 versus the frozen picture.
+
+The reference inventory matched before and after scoring across 19 picture pins, nine bead files and 1,510 archived images. All 9/9 bead checks passed. Native tests recorded 159 passed, 2 failed, 0 ignored. The CST replay test still opens the retired `lib/` directory. The Tier 0 promotion test measured 0.756 ms p95 overhead against 0.500 ms, with a 0.138 ms upload and 0/140,000 pixels over 1/255. The six production gate mutants were detected. The wasm32 runner check and workspace doctests passed. Earley and llguidance each classified 283/283 inputs as expected.
+
+| Crate | Physical Rust + WGSL lines under src | Rust code lines (scc, excluding tests directories) |
+|---|---:|---:|
+| loft-abi | 498 | 372 |
+| loft-cli | 6,782 | 6,869 |
+| loft-format | 815 | 740 |
+| loft-ir | 548 | 456 |
+| loft-parse | 2,798 | 2,652 |
+| loft-passes | 18,030 | 16,146 |
+| loft-plan | 949 | 859 |
+| loft-runner | 1,630 | 1,787 |
+| loft-std | 4,536 | 4,305 |
+| **Total** | **36,586** | **34,186** |
+
 ## Wave X3 integration
 
 Merged the rotated-fold Lipschitz fix `871ea94` onto `bf72786`. FoldedLantern’s bound fell from 22.871492 to 1.000000238. The lane’s paired Shrine captures measured a 0.935 ms Vis p50 saving. Raising only the old march cap recovered all 10,172 newly visible lantern hits at t=0. [Lipschitz measurements](lanes/s1_lip.md)
