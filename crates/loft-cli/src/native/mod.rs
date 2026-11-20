@@ -5,11 +5,12 @@ pub use edit::TraceSession;
 mod bakes;
 use loft_runner::mips;
 mod paths;
+mod shadow;
 use loft_runner::command::{self, Dispatch, Stamps, Work};
 use paths::PathGpu;
 use bakes::TextureBake;
 use loft_passes::emit::Aov;
-use std::sync::Mutex;
+use std::sync::{Mutex, atomic::{AtomicU32, Ordering}};
 pub mod ray_query;
 pub use motion::{sample_motion, sample_motion_timed};
 
@@ -128,6 +129,8 @@ struct Shadow {
     view_proj: [[f32; 4]; 4],
     texel: f32,
     dir: [f32; 3],
+    pass: usize,
+    reuse: Mutex<shadow::Reuse>,
 }
 
 /// Timestamps at the start and end of every pass, resolved after the frame.
@@ -137,6 +140,7 @@ struct Clock {
     read: wgpu::Buffer,
     n: u32,
     period_ns: f64,
+    skipped_pass: AtomicU32,
 }
 
 /// One submitted frame's GPU timestamps in pass order.
@@ -146,12 +150,15 @@ pub struct FrameTiming {
     pub commands: u32,
     pub gpu_ms: f64,
     pub pass_ms: Vec<f64>,
+    /// Source-pass order. A reused Shadow pass has the pair `[0, 0]`.
     pub ticks: Vec<u64>,
 }
 
 struct ClockRead {
     submission: wgpu::SubmissionIndex,
     mapped: std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>,
+    skipped_pass: u32,
+    bytes: u64,
 }
 
 fn bytes_of(words: &[u32]) -> Vec<u8> {
@@ -301,44 +308,56 @@ impl Clock {
             resolve: buffer(&g.device, "ts resolve", u64::from(n) * 8, U::QUERY_RESOLVE | U::COPY_SRC),
             read: buffer(&g.device, "ts read", u64::from(n) * 8, U::COPY_DST | U::MAP_READ),
             n, period_ns: f64::from(g.queue.get_timestamp_period()),
+            skipped_pass: AtomicU32::new(u32::MAX),
         }
     }
 
     // Metal exposes stale end samples if the resolve is encoded before the render
     // submission completes. Each slot keeps its own query set until after unmap.
     fn resolve_completed(&self, g: &Gpu) -> ClockRead {
+        let skipped_pass = self.skipped_pass.load(Ordering::Relaxed);
+        let n = self.n - 2 * u32::from(skipped_pass != u32::MAX);
+        let bytes = u64::from(n) * 8;
         let mut enc = g.device.create_command_encoder(&Default::default());
-        enc.resolve_query_set(&self.set, 0..self.n, &self.resolve, 0);
-        enc.copy_buffer_to_buffer(&self.resolve, 0, &self.read, 0, None);
+        enc.resolve_query_set(&self.set, 0..n, &self.resolve, 0);
+        enc.copy_buffer_to_buffer(&self.resolve, 0, &self.read, 0, Some(bytes));
         let submission = g.queue.submit([enc.finish()]);
         let (tx, mapped) = std::sync::mpsc::channel();
-        self.read.map_async(wgpu::MapMode::Read, .., move |result| { let _ = tx.send(result); });
-        ClockRead { submission, mapped }
+        self.read.map_async(wgpu::MapMode::Read, ..bytes, move |result| { let _ = tx.send(result); });
+        ClockRead { submission, mapped, skipped_pass, bytes }
     }
 
     fn collect(&self, g: &Gpu, read: ClockRead) -> Result<Vec<u64>, String> {
         wait_for(g, Some(read.submission))?;
         read.mapped.try_recv().map_err(|e| format!("timestamp callback: {e}"))?
             .map_err(|e| format!("timestamp map: {e}"))?;
-        let ticks = {
-            let view = self.read.get_mapped_range(..).map_err(|e| e.to_string())?;
+        let mut ticks: Vec<u64> = {
+            let view = self.read.get_mapped_range(..read.bytes).map_err(|e| e.to_string())?;
             view.as_chunks::<8>().0.iter().map(|b| u64::from_le_bytes(*b)).collect()
         };
         self.read.unmap();
+        if ticks.contains(&0) {
+            return Err(format!("unusable timestamps {ticks:?}"));
+        }
+        if read.skipped_pass != u32::MAX {
+            // Restore reporting in source pass order after resolving only the executed passes.
+            let at = 2 * read.skipped_pass as usize;
+            ticks.splice(at..at, [0, 0]);
+        }
         Ok(ticks)
     }
 
     fn timing(&self, serial: usize, commands: u32, ticks: Vec<u64>) -> Result<FrameTiming, String> {
         let (first, last) = (ticks[0], ticks[self.n as usize - 1]);
-        if first == 0 || last <= first || ticks.contains(&0) {
+        if first == 0 || last <= first {
             return Err(format!("frame {serial}: unusable timestamps {ticks:?}"));
         }
         let ms = |a: u64, b: u64| b.saturating_sub(a) as f64 * self.period_ns / 1e6;
         // Pass starts can overlap on Metal. Use consecutive ends to attribute
         // costs, and preserve the original pairs so every span can be inspected.
-        let ends = ticks.chunks_exact(2).map(|pair| pair[1]);
-        let pass_ms = std::iter::once(first).chain(ends.clone()).zip(ends)
-            .map(|(a, b)| ms(a, b)).collect();
+        let pass_ms = ticks.chunks_exact(2).scan(first, |end, pair| {
+            Some(if pair[1] == 0 { 0.0 } else { ms(std::mem::replace(end, pair[1]), pair[1]) })
+        }).collect();
         Ok(FrameTiming { serial, commands, gpu_ms: ms(first, last), pass_ms, ticks })
     }
 }
@@ -645,7 +664,10 @@ impl Loaded {
         let view = |t: &wgpu::Texture| t.create_view(&Default::default());
         let (vis, depth, hdr, color_view) = (view(&vis_tex), view(&depth_tex), view(&hdr_tex), view(&color));
         // The sun's view: an orthographic box around every caster row, deep enough to reach the receivers below.
-        let casters: Vec<u32> = p.passes.iter().find_map(|x| if let Pass::Shadow(k) = x { Some(k.clone()) } else { None }).unwrap_or_default();
+        let mut sun_passes = p.passes.iter().enumerate().filter_map(|(i, pass)| {
+            if let Pass::Shadow(casters) = pass { Some((i, casters.as_slice())) } else { None }
+        });
+        let (sun_pass, casters) = sun_passes.next().unwrap_or_default();
         let side = p.shadow_size.max(1);
         let shadow_depth = tex(d, "shadow depth", (side, side), DEPTH, T::RENDER_ATTACHMENT | T::TEXTURE_BINDING);
         let shadow_view = view(&shadow_depth);
@@ -757,11 +779,19 @@ impl Loaded {
         let shadow = (p.shadow_size > 0).then(|| {
             let frame_buf = buffer(d, "sun frame", abi::FRAME_BYTES, U::UNIFORM | U::COPY_DST);
             let g0s = bind(d, &bgl0, &[frame_buf.as_entire_binding(),inputs.as_entire_binding(),params.as_entire_binding()]);
-            let bundle = draw_bundle(d, &g0s, &kinds, &casters, &shadow_args, Some(&g1_sun));
-            let (lo, hi) = caster_bounds(p, &casters);
+            let bundle = draw_bundle(d, &g0s, &kinds, casters, &shadow_args, Some(&g1_sun));
+            let (lo, hi) = caster_bounds(p, casters);
             let (view_proj, texel, dir) = sun_camera(p.sun, lo, hi, side);
             let vis_t = tex(d, "sun vis", (side, side), VIS, T::RENDER_ATTACHMENT);
-            Shadow { frame_buf, bundle, groups: (g0s, g1_sun), args: shadow_args, vis: view(&vis_t), depth: shadow_view.clone(), view_proj, texel, dir }
+            let reuse = if sun_pass > 0 && sun_pass + 1 < p.passes.len() && sun_passes.next().is_none()
+                && !p.passes[..sun_pass].iter().any(|pass| matches!(pass, Pass::Shade(_)))
+            {
+                shadow::Reuse::prepare(p, casters, indexed, edit.map(|(kind, _)| kind))
+            } else {
+                shadow::Reuse::EveryFrame
+            };
+            Shadow { frame_buf, bundle, groups: (g0s, g1_sun), args: shadow_args, vis: view(&vis_t),
+                depth: shadow_view.clone(), view_proj, texel, dir, pass: sun_pass, reuse: Mutex::new(reuse) }
         });
 
         let mut bake_cache = mips::Pipelines::default();
@@ -916,15 +946,22 @@ impl Loaded {
     }
 
     fn submit_frame(&self, g: &Gpu, t: f32, samples: u32, clock: Option<&Clock>) -> (u32, wgpu::SubmissionIndex) {
+        // Hold the submission lock across buffer writes, the reuse decision and queue submission.
+        let mut params = self.param_values.lock().unwrap();
         g.queue.write_buffer(&self.frame_buf, 0, &self.frame_uniform(t, false, samples));
-        if let Some(sh) = &self.shadow {
-            g.queue.write_buffer(&sh.frame_buf, 0, &self.frame_uniform(t, true, samples));
-        }
+        let skip_shadow = self.shadow.as_ref().and_then(|sh| {
+            let uniform = self.frame_uniform(t, true, samples);
+            if sh.reuse.lock().unwrap().needs_draw(&uniform, params.1) {
+                g.queue.write_buffer(&sh.frame_buf, 0, &uniform);
+                None
+            } else {
+                Some(sh.pass)
+            }
+        });
         g.queue.write_buffer(&self.draw_args, 0, &self.draw_reset);
         g.queue.write_buffer(&self.shade_args, 0, &self.shade_reset);
         let mut enc = g.device.create_command_encoder(&Default::default());
         let mut commands = 0;
-        let mut params = self.param_values.lock().unwrap();
         if params.1 {
             g.queue.write_buffer(&self.params, 0, &f32_bytes(&params.0));
             params.1 = false;
@@ -939,8 +976,14 @@ impl Loaded {
             head = photons.record(&mut enc, clock.map(|c| c.stamps(0)));
             commands += head;
         }
+        let skipped_pass = skip_shadow.map_or(u32::MAX, |i| head + i as u32);
         for (i, pass) in self.commands.iter().enumerate() {
-            commands += pass.record(&mut enc, clock.map(|c| c.stamps(head + i as u32)));
+            let stamp = head + i as u32;
+            if stamp == skipped_pass { continue; }
+            commands += pass.record(&mut enc, clock.map(|c| c.stamps(stamp - u32::from(stamp > skipped_pass))));
+        }
+        if let Some(clock) = clock {
+            clock.skipped_pass.store(skipped_pass, Ordering::Relaxed);
         }
         (commands, g.queue.submit([enc.finish()]))
     }
@@ -954,7 +997,7 @@ impl Loaded {
         deferred: bool,
     ) -> Result<Vec<FrameTiming>, String> {
         use std::collections::VecDeque;
-        use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+        use std::sync::{Arc, atomic::AtomicBool};
 
         let clock = self.clock.as_ref().ok_or("GPU timestamps are unavailable")?;
         let depth: usize = if deferred { 8 } else { 1 };
