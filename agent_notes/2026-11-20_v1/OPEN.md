@@ -1,5 +1,46 @@
 # Open targets for v1.0-alpha
 
+## Wave X4 integration
+
+**Merged Std1b and Std1e.** The single Apple M4 Metal run scored `3c24a11` against main `2b3c0b6` at 1280 × 800. Main advanced to `b5f9dc0` with nine orchestration-note changes after scoring. The tested sources and gate inputs match the published revision. [Gate report](../../out/meta/ix4/gate.json) · [19-frame sheet](../../out/meta/ix4/sheet.webp) · [Merged SHAs](../../out/meta/ix4/MERGED) · [Blocked lanes](../../out/meta/ix4/BLOCKED)
+
+| Lane | Audit and decision |
+|---|---|
+| std1b [`bb1f16e`](https://github.com/nbardy/loft/blob/bb1f16ecffa310adc64e76efd6f5d7b0401e8030/agent_notes/2026-11-20_v1/lanes/std1b.md) | Merged. Six showcase scenes held 28/28 Twin and 24/24 Truth checks. The 96-station frame scan occupied 4,608 B with minimum determinant 0.99999988. Growth at 1/20 bodies used 8/160 rows, four modules and five commands. |
+| std1e [`3e46079`](https://github.com/nbardy/loft/blob/3e4607901086b6d1b1d24c08ae34c89784b1d33b/agent_notes/2026-11-20_v1/lanes/std1e.md) | Merged. Three showcase scenes held 16/16 Twin and 20/20 Truth checks. Tidal and Crossing each measured 0 mm planted drift. All 18 CPU/Metal comparisons across the two fixtures agreed at 30, 60 and 120 Hz, including the six-tick stall. The lane used replicated rows for its 1,000-actor timing. |
+| port1 [`3c6f053`](https://github.com/nbardy/loft/blob/3c6f053355e4e7e04069ea5d611c471f18fd0f06/agent_notes/2026-11-20_v1/lanes/port1.md) | Held. Both recognizers accepted 4/7 new files. Both rejected the lineup, Hermit and lineup cast. Five old/new pairs await lead review. Crab Live measured 15.62 ms p95 against 9.05 ms in its legacy comparison. |
+| stdaot1  | Deferred by the lead in `0524740`. No remote branch or measurements were published. |
+| std1c [`012391b`](https://github.com/nbardy/loft/blob/012391bb0d71f47dddb2482dafc52543ceffe72c/agent_notes/2026-11-20_v1/lanes/std1c.md) | Held. Seven styles reached the B/D overlay. The committed Harbor woodblock fails E011 at its lighting/surface import on the candidate. With D it requires a source-rewriting adapter. The reference returned NaN depth at (0,0) at 128/256 spp. |
+| std1d [`c61c9ba`](https://github.com/nbardy/loft/blob/c61c9ba8d58326a2f547f6b8e9e72c342be5f1ed/agent_notes/2026-11-20_v1/lanes/std1d.md) | Held. The 1,024-spp furnace and sphere means were 0.499599 and 0.062594. ID and depth matched across the two import swaps. The required one-argument physical material query is missing. Sampling still bypasses B’s shared counter, and high-sample Harbor depth fails. |
+
+**Pictures 19/19, Twin 36/36, Speed 6/12, Load 23/33, Truth 34/34.** All 18 layered frames matched scored main exactly. Shrine had 88 of 1,024,000 pixels above 2/255 (allowance 1,024), with an eight-pixel largest group. Depth and silhouette matched. Eleven isolated foreground IDs varied. The only emitted Shrine shader difference was the qualification of the `cone_side` helper name. The frozen gate readback had 73 Shrine pixels above 2/255. All 19 pins, nine bead references and 1,510 archived images verified before and after. Bead passed 9/9.
+
+Each Speed case used 30 warmups and 300 measured frames. Main and IX4 held the same six command checks. Their serialized programs, generated WGSL and native submission code are identical across all six configurations. Identical programs and gate verdicts support the Speed merge decision. Each raw p95 rose under contention. Triangle p95 was 7.961 ms before and 7.386 ms after the gate, against the 0.150 ms quiet limit. Uncontended latency remains unverified. The gate returned exit 4 for Load. All six cold loads missed budget. Hermit also missed its pipeline and warm-load budgets at both counts.
+
+| Scene | Main p95 (ms) | IX4 p95 (ms) | Triangle p50 (ms) | Commands | Cold / warm load (s) |
+|---|---:|---:|---:|---:|---:|
+| capsules-1 | 7.467 | 10.868 | 0.660 | 5 | 1.699 / 0.027 |
+| capsules-20 | 8.093 | 9.559 | 1.096 | 5 | 4.610 / 0.086 |
+| blobs-1 | 7.333 | 7.785 | 0.978 | 5 | 2.493 / 0.072 |
+| blobs-20 | 8.915 | 12.449 | 0.977 | 5 | 3.560 / 0.033 |
+| hermit-1 | 11.645 | 15.509 | 2.832 | 13 | 5.605 / 0.131 |
+| hermit-20 | 14.876 | 19.692 | 1.165 | 13 | 5.352 / 0.126 |
+
+All six mutants fired. The wasm32 runner and workspace doctests passed. Earley and llguidance each classified 302/302 inputs as expected. The native suite recorded 159 passed, 2 failed and 0 ignored. The same two tests failed on the previous scored main. CST replay opens the retired lib/ directory. Tier 0 promotion measured 0.606542 ms overhead p95 against 0.500 ms, with 0.137500 ms upload and 0/140,000 pixels over 1/255.
+
+| Crate | Rust + WGSL physical lines under src | Rust code lines excluding tests directories (scc) |
+|---|---:|---:|
+| loft-abi | 498 | 372 |
+| loft-cli | 6,782 | 6,869 |
+| loft-format | 815 | 740 |
+| loft-ir | 548 | 456 |
+| loft-parse | 2,798 | 2,652 |
+| loft-passes | 18,030 | 16,146 |
+| loft-plan | 949 | 859 |
+| loft-runner | 1,630 | 1,787 |
+| loft-std | 4,536 | 4,305 |
+| **Total** | **36,586** | **34,186** |
+
 ## Wave 15 integration
 
 **All three implementation lanes remain on their branches.** The single workspace build and locked five-gate run scored retained main `faba061` on Apple M4 Metal at 1280 × 800. [Gate report](../../out/meta/iv15/gate.json) · [19-frame contact sheet](../../out/meta/iv15/sheet.webp) · [Lane decisions](../../out/meta/iv15/BLOCKED)

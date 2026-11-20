@@ -1,0 +1,1929 @@
+{
+  "base_sha": "2b3c0b6eed82514ba098c1268ea8393ea97b077f",
+  "scored_sha": "3c24a117cb58da4a914396d14842d277a7650f71",
+  "main_capture_sha": "faba0615b6bdc33f105d51939ecf3af25c5decea",
+  "main_capture_directory": "out/meta/iv15/frames",
+  "workspace_builds": 1,
+  "five_gate_runs": 1,
+  "gpu_lock_holder": 64846,
+  "adapter": "Apple M4 (Metal)",
+  "size": [
+    1280,
+    800
+  ],
+  "warmup_frames": 30,
+  "gates": {
+    "Pictures": {
+      "held": 19,
+      "total": 19,
+      "contended": 0
+    },
+    "Twin": {
+      "held": 36,
+      "total": 36,
+      "contended": 0
+    },
+    "Speed": {
+      "held": 6,
+      "total": 12,
+      "contended": 6
+    },
+    "Load": {
+      "held": 23,
+      "total": 33,
+      "contended": 0
+    },
+    "Truth": {
+      "held": 34,
+      "total": 34,
+      "contended": 0
+    }
+  },
+  "gate_checks": {
+    "Pictures": [
+      {
+        "result": "ok",
+        "scene": "capsules-1",
+        "check": "frame t=0",
+        "verdict": "Held(margin 1.000e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-1",
+        "check": "frame t=4",
+        "verdict": "Held(margin 1.000e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-1",
+        "check": "frame t=9",
+        "verdict": "Held(margin 1.000e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-20",
+        "check": "frame t=0",
+        "verdict": "Held(margin 1.000e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-20",
+        "check": "frame t=4",
+        "verdict": "Held(margin 1.000e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-20",
+        "check": "frame t=9",
+        "verdict": "Held(margin 1.000e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-1",
+        "check": "frame t=0",
+        "verdict": "Held(margin 1.000e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-1",
+        "check": "frame t=4",
+        "verdict": "Held(margin 1.000e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-1",
+        "check": "frame t=9",
+        "verdict": "Held(margin 1.000e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-20",
+        "check": "frame t=0",
+        "verdict": "Held(margin 9.990e-4)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-20",
+        "check": "frame t=4",
+        "verdict": "Held(margin 1.000e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-20",
+        "check": "frame t=9",
+        "verdict": "Held(margin 1.000e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "frame t=0",
+        "verdict": "Held(margin 1.000e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "frame t=4",
+        "verdict": "Held(margin 1.000e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "frame t=9",
+        "verdict": "Held(margin 1.000e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "frame t=0",
+        "verdict": "Held(margin 1.000e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "frame t=4",
+        "verdict": "Held(margin 1.000e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "frame t=9",
+        "verdict": "Held(margin 1.000e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "coral_shrine",
+        "check": "frame t=0",
+        "verdict": "Held(margin 9.287e-4)"
+      }
+    ],
+    "Twin": [
+      {
+        "result": "ok",
+        "scene": "capsules-1",
+        "check": "Capsule.trace (max err 2.98e-8, 224 samples)",
+        "verdict": "Held(margin 9.970e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-1",
+        "check": "Capsule.visible (max err 3.43e-7, 224 samples)",
+        "verdict": "Held(margin 9.657e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-1",
+        "check": "Capsule.material (max err 6.71e-8, 224 samples)",
+        "verdict": "Held(margin 1.993e-5)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-20",
+        "check": "Capsule.trace (max err 5.96e-8, 640 samples)",
+        "verdict": "Held(margin 9.940e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-20",
+        "check": "Capsule.visible (max err 7.75e-7, 640 samples)",
+        "verdict": "Held(margin 9.225e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-20",
+        "check": "Capsule.material (max err 6.71e-8, 640 samples)",
+        "verdict": "Held(margin 1.993e-5)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-1",
+        "check": "Blob.trace (max err 4.47e-8, 32 samples)",
+        "verdict": "Held(margin 9.955e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-1",
+        "check": "Blob.material (max err 4.47e-8, 32 samples)",
+        "verdict": "Held(margin 1.996e-5)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-20",
+        "check": "Blob.trace (max err 9.46e-7, 640 samples)",
+        "verdict": "Held(margin 9.054e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-20",
+        "check": "Blob.material (max err 9.98e-7, 640 samples)",
+        "verdict": "Held(margin 1.900e-5)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "Ground.trace (max err 2.38e-7, 32 samples)",
+        "verdict": "Held(margin 9.762e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "Ground.visible (max err 2.38e-7, 32 samples)",
+        "verdict": "Held(margin 9.762e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "Ground.material (max err 2.91e-7, 32 samples)",
+        "verdict": "Held(margin 1.971e-5)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "HermitShell.material (max err 6.33e-8, 32 samples)",
+        "verdict": "Held(margin 1.994e-5)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "HermitShell.surface point (max err 2.68e-7, 32 samples)",
+        "verdict": "Held(margin 9.732e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "HermitShell.surface normal (max err 1.04e-5, 32 samples)",
+        "verdict": "Held(margin 8.963e-5)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "CrabFace.trace (max err 5.96e-8, 32 samples)",
+        "verdict": "Held(margin 9.940e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "CrabFace.material (max err 7.45e-8, 32 samples)",
+        "verdict": "Held(margin 1.993e-5)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "CrusherClaw.trace (max err 1.79e-7, 64 samples)",
+        "verdict": "Held(margin 9.821e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "CrusherClaw.material (max err 1.79e-7, 64 samples)",
+        "verdict": "Held(margin 1.982e-5)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "CrabLeg.trace (max err 1.64e-7, 384 samples)",
+        "verdict": "Held(margin 9.836e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "CrabLeg.visible (max err 8.64e-7, 384 samples)",
+        "verdict": "Held(margin 9.136e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "CrabLeg.material (max err 6.71e-8, 384 samples)",
+        "verdict": "Held(margin 1.993e-5)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "Ground.trace (max err 2.38e-7, 32 samples)",
+        "verdict": "Held(margin 9.762e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "Ground.visible (max err 2.38e-7, 32 samples)",
+        "verdict": "Held(margin 9.762e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "Ground.material (max err 2.91e-7, 32 samples)",
+        "verdict": "Held(margin 1.971e-5)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "HermitShell.material (max err 1.27e-7, 640 samples)",
+        "verdict": "Held(margin 1.987e-5)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "HermitShell.surface point (max err 4.77e-7, 640 samples)",
+        "verdict": "Held(margin 9.523e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "HermitShell.surface normal (max err 1.66e-5, 640 samples)",
+        "verdict": "Held(margin 8.337e-5)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "CrabFace.trace (max err 8.64e-7, 640 samples)",
+        "verdict": "Held(margin 9.136e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "CrabFace.material (max err 2.68e-7, 640 samples)",
+        "verdict": "Held(margin 1.973e-5)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "CrusherClaw.trace (max err 6.93e-7, 640 samples)",
+        "verdict": "Held(margin 9.307e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "CrusherClaw.material (max err 1.15e-5, 640 samples)",
+        "verdict": "Held(margin 8.496e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "CrabLeg.trace (max err 9.69e-7, 640 samples)",
+        "verdict": "Held(margin 9.031e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "CrabLeg.visible (max err 2.07e-6, 640 samples)",
+        "verdict": "Held(margin 7.929e-6)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "CrabLeg.material (max err 3.61e-7, 640 samples)",
+        "verdict": "Held(margin 1.964e-5)"
+      }
+    ],
+    "Speed": [
+      {
+        "result": "ok",
+        "scene": "capsules-1",
+        "check": "5 GPU commands == 5",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "CONTENDED",
+        "scene": "capsules-1",
+        "check": "p95 10.868 ms <= 0.8 ms (control p50 0.660 ms)",
+        "verdict": "Missed(by 1.007e1)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-20",
+        "check": "5 GPU commands == 5",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "CONTENDED",
+        "scene": "capsules-20",
+        "check": "p95 9.559 ms <= 1.1 ms (control p50 1.096 ms)",
+        "verdict": "Missed(by 8.459e0)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-1",
+        "check": "5 GPU commands == 5",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "CONTENDED",
+        "scene": "blobs-1",
+        "check": "p95 7.785 ms <= 1.1 ms (control p50 0.978 ms)",
+        "verdict": "Missed(by 6.685e0)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-20",
+        "check": "5 GPU commands == 5",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "CONTENDED",
+        "scene": "blobs-20",
+        "check": "p95 12.449 ms <= 2.4 ms (control p50 0.977 ms)",
+        "verdict": "Missed(by 1.005e1)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "13 GPU commands == 13",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "CONTENDED",
+        "scene": "hermit-1",
+        "check": "p95 15.509 ms <= 5 ms (control p50 2.832 ms)",
+        "verdict": "Missed(by 1.051e1)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "13 GPU commands == 13",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "CONTENDED",
+        "scene": "hermit-20",
+        "check": "p95 19.692 ms <= 5.6 ms (control p50 1.165 ms)",
+        "verdict": "Missed(by 1.409e1)"
+      }
+    ],
+    "Load": [
+      {
+        "result": "ok",
+        "scene": "capsules-1",
+        "check": "4 modules == 4",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-1",
+        "check": "5 pipelines == 5",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "FAIL",
+        "scene": "capsules-1",
+        "check": "cold 1.699 s <= 0.5 s",
+        "verdict": "Missed(by 1.199e0)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-1",
+        "check": "warm 0.027 s <= 0.2 s",
+        "verdict": "Held(margin 1.727e-1)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-1",
+        "check": "7 bound derivations == 7",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-20",
+        "check": "4 modules == 4",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-20",
+        "check": "5 pipelines == 5",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "FAIL",
+        "scene": "capsules-20",
+        "check": "cold 4.610 s <= 0.6 s",
+        "verdict": "Missed(by 4.010e0)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-20",
+        "check": "warm 0.086 s <= 0.4 s",
+        "verdict": "Held(margin 3.139e-1)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-20",
+        "check": "140 bound derivations == 140",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-20",
+        "check": "modules byte-identical to capsules-1",
+        "verdict": "Held(margin 0.000e0)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-1",
+        "check": "4 modules == 4",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-1",
+        "check": "5 pipelines == 5",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "FAIL",
+        "scene": "blobs-1",
+        "check": "cold 2.493 s <= 0.5 s",
+        "verdict": "Missed(by 1.993e0)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-1",
+        "check": "warm 0.072 s <= 0.2 s",
+        "verdict": "Held(margin 1.277e-1)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-1",
+        "check": "1 bound derivations == 1",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-20",
+        "check": "4 modules == 4",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-20",
+        "check": "5 pipelines == 5",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "FAIL",
+        "scene": "blobs-20",
+        "check": "cold 3.560 s <= 0.5 s",
+        "verdict": "Missed(by 3.060e0)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-20",
+        "check": "warm 0.033 s <= 0.3 s",
+        "verdict": "Held(margin 2.666e-1)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-20",
+        "check": "20 bound derivations == 20",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-20",
+        "check": "modules byte-identical to blobs-1",
+        "verdict": "Held(margin 0.000e0)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "8 modules == 8",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "FAIL",
+        "scene": "hermit-1",
+        "check": "14 pipelines == 13",
+        "verdict": "Missed(by 1.000e0)"
+      },
+      {
+        "result": "FAIL",
+        "scene": "hermit-1",
+        "check": "cold 5.605 s <= 1.5 s",
+        "verdict": "Missed(by 4.105e0)"
+      },
+      {
+        "result": "FAIL",
+        "scene": "hermit-1",
+        "check": "warm 0.131 s <= 0.06 s",
+        "verdict": "Missed(by 7.104e-2)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "11 bound derivations == 11",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "8 modules == 8",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "FAIL",
+        "scene": "hermit-20",
+        "check": "14 pipelines == 13",
+        "verdict": "Missed(by 1.000e0)"
+      },
+      {
+        "result": "FAIL",
+        "scene": "hermit-20",
+        "check": "cold 5.352 s <= 1.5 s",
+        "verdict": "Missed(by 3.852e0)"
+      },
+      {
+        "result": "FAIL",
+        "scene": "hermit-20",
+        "check": "warm 0.126 s <= 0.06 s",
+        "verdict": "Missed(by 6.621e-2)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "11 bound derivations == 11",
+        "verdict": "Held(margin -0.000e0)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "modules byte-identical to hermit-1",
+        "verdict": "Held(margin 0.000e0)"
+      }
+    ],
+    "Truth": [
+      {
+        "result": "ok",
+        "scene": "capsules-1",
+        "check": "Capsule: derived L bounds sampled slopes (max 0.9959)",
+        "verdict": "Held(margin 4.104e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-1",
+        "check": "Capsule: field > 0 outside every derived bound",
+        "verdict": "Held(margin 4.972e-2)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-1",
+        "check": "Capsule: visible agrees with trace on 215 hits (|f| <= 1e-3)",
+        "verdict": "Held(margin 9.990e-4)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-20",
+        "check": "Capsule: derived L bounds sampled slopes (max 0.9999)",
+        "verdict": "Held(margin 1.030e-4)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-20",
+        "check": "Capsule: field > 0 outside every derived bound",
+        "verdict": "Held(margin 4.730e-2)"
+      },
+      {
+        "result": "ok",
+        "scene": "capsules-20",
+        "check": "Capsule: visible agrees with trace on 601 hits (|f| <= 1e-3)",
+        "verdict": "Held(margin 9.976e-4)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-1",
+        "check": "Blob: derived L bounds sampled slopes (max 0.9152)",
+        "verdict": "Held(margin 4.448e-1)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-1",
+        "check": "Blob: field > 0 outside every derived bound",
+        "verdict": "Held(margin 9.503e-2)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-20",
+        "check": "Blob: derived L bounds sampled slopes (max 1.0503)",
+        "verdict": "Held(margin 3.097e-1)"
+      },
+      {
+        "result": "ok",
+        "scene": "blobs-20",
+        "check": "Blob: field > 0 outside every derived bound",
+        "verdict": "Held(margin 6.140e-2)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "Ground: derived L bounds sampled slopes (max 0.1193)",
+        "verdict": "Held(margin 8.807e-1)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "Ground: field > 0 outside every derived bound",
+        "verdict": "Held(margin 1.914e0)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "Ground: visible agrees with trace on 42 hits (|f| <= 1e-3)",
+        "verdict": "Held(margin 9.998e-4)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "HermitShell: sampled surface points inside every derived bound",
+        "verdict": "Held(margin 1.759e-2)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "HermitShell: AD normal vs differences, worst 6.84e-4 rad <= 1e-2 (256 samples)",
+        "verdict": "Held(margin 9.316e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "CrabFace: derived L bounds sampled slopes (max 0.9807)",
+        "verdict": "Held(margin 1.936e-2)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "CrabFace: field > 0 outside every derived bound",
+        "verdict": "Held(margin 8.483e-2)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "CrusherClaw: derived L bounds sampled slopes (max 0.9668)",
+        "verdict": "Held(margin 4.418e-1)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "CrusherClaw: field > 0 outside every derived bound",
+        "verdict": "Held(margin 4.312e-2)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "CrabLeg: derived L bounds sampled slopes (max 0.9980)",
+        "verdict": "Held(margin 1.987e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "CrabLeg: field > 0 outside every derived bound",
+        "verdict": "Held(margin 8.754e-2)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-1",
+        "check": "CrabLeg: visible agrees with trace on 146 hits (|f| <= 1e-3)",
+        "verdict": "Held(margin 9.988e-4)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "Ground: derived L bounds sampled slopes (max 0.1193)",
+        "verdict": "Held(margin 8.807e-1)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "Ground: field > 0 outside every derived bound",
+        "verdict": "Held(margin 1.914e0)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "Ground: visible agrees with trace on 53 hits (|f| <= 1e-3)",
+        "verdict": "Held(margin 9.990e-4)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "HermitShell: sampled surface points inside every derived bound",
+        "verdict": "Held(margin 1.601e-2)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "HermitShell: AD normal vs differences, worst 3.19e-3 rad <= 1e-2 (1024 samples)",
+        "verdict": "Held(margin 6.815e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "CrabFace: derived L bounds sampled slopes (max 0.9944)",
+        "verdict": "Held(margin 5.567e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "CrabFace: field > 0 outside every derived bound",
+        "verdict": "Held(margin 4.086e-2)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "CrusherClaw: derived L bounds sampled slopes (max 0.9887)",
+        "verdict": "Held(margin 4.199e-1)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "CrusherClaw: field > 0 outside every derived bound",
+        "verdict": "Held(margin 1.611e-2)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "CrabLeg: derived L bounds sampled slopes (max 0.9980)",
+        "verdict": "Held(margin 1.987e-3)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "CrabLeg: field > 0 outside every derived bound",
+        "verdict": "Held(margin 8.754e-2)"
+      },
+      {
+        "result": "ok",
+        "scene": "hermit-20",
+        "check": "CrabLeg: visible agrees with trace on 237 hits (|f| <= 1e-3)",
+        "verdict": "Held(margin 9.959e-4)"
+      }
+    ]
+  },
+  "stage_exit_codes": {
+    "grammar-coverage": 0,
+    "triangle-after": 0,
+    "pictures": 0,
+    "geometry": 0,
+    "showcase-crossing": 0,
+    "showcase-tidal": 0,
+    "bead": 0,
+    "refs-before": 0,
+    "native": 1,
+    "showcase-noisy_ink": 0,
+    "showcase-parity_raster": 0,
+    "triangle-before": 0,
+    "programs": 0,
+    "showcase-shell_eye": 0,
+    "doctests": 0,
+    "lines": 0,
+    "showcase-folded_facets": 0,
+    "five-gates": 4,
+    "crossing": 0,
+    "refs-after": 0,
+    "showcase-tidal_fork": 0,
+    "wasm32": 0,
+    "showcase-parity_sdf": 0,
+    "showcase-tapered_growth": 0,
+    "tidal": 0,
+    "showcases": 0,
+    "static": 0
+  },
+  "speed": {
+    "capsules-1": {
+      "p95_ms": 10.868292,
+      "control_p50_ms": 0.65975,
+      "commands": 5,
+      "frames": 300,
+      "contended": true,
+      "main_p95_ms": 7.466791,
+      "budget_ms": 0.8,
+      "overrides": {
+        "count": 1
+      }
+    },
+    "capsules-20": {
+      "p95_ms": 9.558875,
+      "control_p50_ms": 1.09575,
+      "commands": 5,
+      "frames": 300,
+      "contended": true,
+      "main_p95_ms": 8.093291,
+      "budget_ms": 1.1,
+      "overrides": {
+        "count": 20
+      }
+    },
+    "blobs-1": {
+      "p95_ms": 7.78525,
+      "control_p50_ms": 0.978417,
+      "commands": 5,
+      "frames": 300,
+      "contended": true,
+      "main_p95_ms": 7.333042,
+      "budget_ms": 1.1,
+      "overrides": {
+        "count": 1
+      }
+    },
+    "blobs-20": {
+      "p95_ms": 12.449,
+      "control_p50_ms": 0.977,
+      "commands": 5,
+      "frames": 300,
+      "contended": true,
+      "main_p95_ms": 8.915084,
+      "budget_ms": 2.4,
+      "overrides": {
+        "count": 20
+      }
+    },
+    "hermit-1": {
+      "p95_ms": 15.509375,
+      "control_p50_ms": 2.831583,
+      "commands": 13,
+      "frames": 300,
+      "contended": true,
+      "main_p95_ms": 11.644667,
+      "budget_ms": 5.0,
+      "overrides": {
+        "count": 1
+      }
+    },
+    "hermit-20": {
+      "p95_ms": 19.691708,
+      "control_p50_ms": 1.165125,
+      "commands": 13,
+      "frames": 300,
+      "contended": true,
+      "main_p95_ms": 14.875625,
+      "budget_ms": 5.6,
+      "overrides": {
+        "count": 20
+      }
+    }
+  },
+  "triangle_p95_ms": {
+    "before": 7.960917,
+    "after": 7.385584
+  },
+  "previous_speed_score": {
+    "held": 6,
+    "total": 12,
+    "contended": 6
+  },
+  "program_parity": {
+    "capsules-1": {
+      "main_ir_sha256": "aae293eefee79276032cb02604c132707dce1f9173fce761861e7398c820c1a6",
+      "main_wgsl_sha256": [
+        "618d9051e63320058e9602836590f323807e506cf72979615c5dcc6e3b5fb596",
+        "35adf2d719a8144453441a12b583e319b9131a81c16c3ad20dd413fb2b8b1e0b",
+        "d1251152b1fbe4ee7f8b60cd42e82e2e56f429e3293c6b984acfb22097de48a6",
+        "0ae2403bbeb6a5539f1ba5437c087731595d1764f9c19dbe6e5a5974fae1b378"
+      ],
+      "candidate_ir_sha256": "aae293eefee79276032cb02604c132707dce1f9173fce761861e7398c820c1a6",
+      "candidate_wgsl_sha256": [
+        "618d9051e63320058e9602836590f323807e506cf72979615c5dcc6e3b5fb596",
+        "35adf2d719a8144453441a12b583e319b9131a81c16c3ad20dd413fb2b8b1e0b",
+        "d1251152b1fbe4ee7f8b60cd42e82e2e56f429e3293c6b984acfb22097de48a6",
+        "0ae2403bbeb6a5539f1ba5437c087731595d1764f9c19dbe6e5a5974fae1b378"
+      ],
+      "ir_equal": true,
+      "wgsl_equal": true
+    },
+    "capsules-20": {
+      "main_ir_sha256": "56147b38eb5720d280569c0a563a451e7e4bf74075bfd336d485aba4ba041177",
+      "main_wgsl_sha256": [
+        "618d9051e63320058e9602836590f323807e506cf72979615c5dcc6e3b5fb596",
+        "35adf2d719a8144453441a12b583e319b9131a81c16c3ad20dd413fb2b8b1e0b",
+        "d1251152b1fbe4ee7f8b60cd42e82e2e56f429e3293c6b984acfb22097de48a6",
+        "0ae2403bbeb6a5539f1ba5437c087731595d1764f9c19dbe6e5a5974fae1b378"
+      ],
+      "candidate_ir_sha256": "56147b38eb5720d280569c0a563a451e7e4bf74075bfd336d485aba4ba041177",
+      "candidate_wgsl_sha256": [
+        "618d9051e63320058e9602836590f323807e506cf72979615c5dcc6e3b5fb596",
+        "35adf2d719a8144453441a12b583e319b9131a81c16c3ad20dd413fb2b8b1e0b",
+        "d1251152b1fbe4ee7f8b60cd42e82e2e56f429e3293c6b984acfb22097de48a6",
+        "0ae2403bbeb6a5539f1ba5437c087731595d1764f9c19dbe6e5a5974fae1b378"
+      ],
+      "ir_equal": true,
+      "wgsl_equal": true
+    },
+    "blobs-1": {
+      "main_ir_sha256": "baef4216d55379ead6be95226dbdf77b5d802552ce25886abde1e2dfca0e10dc",
+      "main_wgsl_sha256": [
+        "c452c9f64a838c0f3177e9376df544221f5cedd8159cf232b617dba238d6e3ba",
+        "35adf2d719a8144453441a12b583e319b9131a81c16c3ad20dd413fb2b8b1e0b",
+        "d1251152b1fbe4ee7f8b60cd42e82e2e56f429e3293c6b984acfb22097de48a6",
+        "0ae2403bbeb6a5539f1ba5437c087731595d1764f9c19dbe6e5a5974fae1b378"
+      ],
+      "candidate_ir_sha256": "baef4216d55379ead6be95226dbdf77b5d802552ce25886abde1e2dfca0e10dc",
+      "candidate_wgsl_sha256": [
+        "c452c9f64a838c0f3177e9376df544221f5cedd8159cf232b617dba238d6e3ba",
+        "35adf2d719a8144453441a12b583e319b9131a81c16c3ad20dd413fb2b8b1e0b",
+        "d1251152b1fbe4ee7f8b60cd42e82e2e56f429e3293c6b984acfb22097de48a6",
+        "0ae2403bbeb6a5539f1ba5437c087731595d1764f9c19dbe6e5a5974fae1b378"
+      ],
+      "ir_equal": true,
+      "wgsl_equal": true
+    },
+    "blobs-20": {
+      "main_ir_sha256": "4c293cf7b3c1035f098b825d32d952d55f4f8f8e35dc8b0395fdfdf868bdaa3e",
+      "main_wgsl_sha256": [
+        "c452c9f64a838c0f3177e9376df544221f5cedd8159cf232b617dba238d6e3ba",
+        "35adf2d719a8144453441a12b583e319b9131a81c16c3ad20dd413fb2b8b1e0b",
+        "d1251152b1fbe4ee7f8b60cd42e82e2e56f429e3293c6b984acfb22097de48a6",
+        "0ae2403bbeb6a5539f1ba5437c087731595d1764f9c19dbe6e5a5974fae1b378"
+      ],
+      "candidate_ir_sha256": "4c293cf7b3c1035f098b825d32d952d55f4f8f8e35dc8b0395fdfdf868bdaa3e",
+      "candidate_wgsl_sha256": [
+        "c452c9f64a838c0f3177e9376df544221f5cedd8159cf232b617dba238d6e3ba",
+        "35adf2d719a8144453441a12b583e319b9131a81c16c3ad20dd413fb2b8b1e0b",
+        "d1251152b1fbe4ee7f8b60cd42e82e2e56f429e3293c6b984acfb22097de48a6",
+        "0ae2403bbeb6a5539f1ba5437c087731595d1764f9c19dbe6e5a5974fae1b378"
+      ],
+      "ir_equal": true,
+      "wgsl_equal": true
+    },
+    "hermit-1": {
+      "main_ir_sha256": "01bf769370e17aeaaf6f74314865868a4dad0b4269dfe08c07f22604901b4886",
+      "main_wgsl_sha256": [
+        "ed5eb1b4c6f6cd9c9058453996e82ee5e12ecc986e3e9093e72a8895849be75f",
+        "8f80eb0d851afd4fa9f56ff6c4f37fc667235e8abb02510695dddf114d4e2d7b",
+        "6a3b7c2560ea64b3421adda446bfcbe46de9916c6fd7cbddabb4c79591a32bb6",
+        "b2146df95bde2c4b490de0889f810b36debca79929f38fb623542d839df665f6",
+        "80857eb93a6ac7f18f6e9a8a2d6b6d4c33f57f1824824f243442abef94984f36",
+        "72274923beaaa966f6d7cb5cddd0e684677d48318b3940cd87f4e73dd5805456",
+        "d1251152b1fbe4ee7f8b60cd42e82e2e56f429e3293c6b984acfb22097de48a6",
+        "0ae2403bbeb6a5539f1ba5437c087731595d1764f9c19dbe6e5a5974fae1b378"
+      ],
+      "candidate_ir_sha256": "01bf769370e17aeaaf6f74314865868a4dad0b4269dfe08c07f22604901b4886",
+      "candidate_wgsl_sha256": [
+        "ed5eb1b4c6f6cd9c9058453996e82ee5e12ecc986e3e9093e72a8895849be75f",
+        "8f80eb0d851afd4fa9f56ff6c4f37fc667235e8abb02510695dddf114d4e2d7b",
+        "6a3b7c2560ea64b3421adda446bfcbe46de9916c6fd7cbddabb4c79591a32bb6",
+        "b2146df95bde2c4b490de0889f810b36debca79929f38fb623542d839df665f6",
+        "80857eb93a6ac7f18f6e9a8a2d6b6d4c33f57f1824824f243442abef94984f36",
+        "72274923beaaa966f6d7cb5cddd0e684677d48318b3940cd87f4e73dd5805456",
+        "d1251152b1fbe4ee7f8b60cd42e82e2e56f429e3293c6b984acfb22097de48a6",
+        "0ae2403bbeb6a5539f1ba5437c087731595d1764f9c19dbe6e5a5974fae1b378"
+      ],
+      "ir_equal": true,
+      "wgsl_equal": true
+    },
+    "hermit-20": {
+      "main_ir_sha256": "52082d55fde558e2939d4c5e39a89b392c0c4695b2d64648e8e1162a87f7cef3",
+      "main_wgsl_sha256": [
+        "ed5eb1b4c6f6cd9c9058453996e82ee5e12ecc986e3e9093e72a8895849be75f",
+        "8f80eb0d851afd4fa9f56ff6c4f37fc667235e8abb02510695dddf114d4e2d7b",
+        "6a3b7c2560ea64b3421adda446bfcbe46de9916c6fd7cbddabb4c79591a32bb6",
+        "b2146df95bde2c4b490de0889f810b36debca79929f38fb623542d839df665f6",
+        "80857eb93a6ac7f18f6e9a8a2d6b6d4c33f57f1824824f243442abef94984f36",
+        "72274923beaaa966f6d7cb5cddd0e684677d48318b3940cd87f4e73dd5805456",
+        "d1251152b1fbe4ee7f8b60cd42e82e2e56f429e3293c6b984acfb22097de48a6",
+        "0ae2403bbeb6a5539f1ba5437c087731595d1764f9c19dbe6e5a5974fae1b378"
+      ],
+      "candidate_ir_sha256": "52082d55fde558e2939d4c5e39a89b392c0c4695b2d64648e8e1162a87f7cef3",
+      "candidate_wgsl_sha256": [
+        "ed5eb1b4c6f6cd9c9058453996e82ee5e12ecc986e3e9093e72a8895849be75f",
+        "8f80eb0d851afd4fa9f56ff6c4f37fc667235e8abb02510695dddf114d4e2d7b",
+        "6a3b7c2560ea64b3421adda446bfcbe46de9916c6fd7cbddabb4c79591a32bb6",
+        "b2146df95bde2c4b490de0889f810b36debca79929f38fb623542d839df665f6",
+        "80857eb93a6ac7f18f6e9a8a2d6b6d4c33f57f1824824f243442abef94984f36",
+        "72274923beaaa966f6d7cb5cddd0e684677d48318b3940cd87f4e73dd5805456",
+        "d1251152b1fbe4ee7f8b60cd42e82e2e56f429e3293c6b984acfb22097de48a6",
+        "0ae2403bbeb6a5539f1ba5437c087731595d1764f9c19dbe6e5a5974fae1b378"
+      ],
+      "ir_equal": true,
+      "wgsl_equal": true
+    },
+    "coral_shrine": {
+      "main_ir_sha256": "52e9a23fc578001b9d5d23812bd18c94dc27456c322882ef68a43f8b494b81cc",
+      "main_wgsl_sha256": [
+        "6d59bd0ad2de262b4241237ca6de5fb21491c0ad7c0a4a3ee2ccc587ff184c24",
+        "4a1121edd76164bbf043f577d2c66f3d53526b9f2b77370ec68c1755e4298737",
+        "4a7d07a3511b872155f6c5ff9aeaee078298a97c4613d1055ae4bb42ef8307d9",
+        "54018655acc99387ddaaa432079e9ee3fd3b09a88e5c7cc8ace6b701b3d52181",
+        "72274923beaaa966f6d7cb5cddd0e684677d48318b3940cd87f4e73dd5805456",
+        "d1251152b1fbe4ee7f8b60cd42e82e2e56f429e3293c6b984acfb22097de48a6",
+        "66898cb52360208877d52fb28143707805c69089831b4423aabf82b23882f109"
+      ],
+      "candidate_ir_sha256": "a1b7e98df77a0c7e6c6895f705d9285297efcac237d5acd6f545750a9d0d5aed",
+      "candidate_wgsl_sha256": [
+        "6d59bd0ad2de262b4241237ca6de5fb21491c0ad7c0a4a3ee2ccc587ff184c24",
+        "4a1121edd76164bbf043f577d2c66f3d53526b9f2b77370ec68c1755e4298737",
+        "9292042642f6b7444b3906206600e366b193d2fb8d090276d28f257dac4ffa21",
+        "54018655acc99387ddaaa432079e9ee3fd3b09a88e5c7cc8ace6b701b3d52181",
+        "72274923beaaa966f6d7cb5cddd0e684677d48318b3940cd87f4e73dd5805456",
+        "d1251152b1fbe4ee7f8b60cd42e82e2e56f429e3293c6b984acfb22097de48a6",
+        "66898cb52360208877d52fb28143707805c69089831b4423aabf82b23882f109"
+      ],
+      "ir_equal": false,
+      "wgsl_equal": false
+    }
+  },
+  "source_counts_per_crate": {
+    "loft-abi": {
+      "src_physical_rust_wgsl": 498,
+      "scc_rust_code_excluding_tests_dirs": 372
+    },
+    "loft-cli": {
+      "src_physical_rust_wgsl": 6782,
+      "scc_rust_code_excluding_tests_dirs": 6869
+    },
+    "loft-format": {
+      "src_physical_rust_wgsl": 815,
+      "scc_rust_code_excluding_tests_dirs": 740
+    },
+    "loft-ir": {
+      "src_physical_rust_wgsl": 548,
+      "scc_rust_code_excluding_tests_dirs": 456
+    },
+    "loft-parse": {
+      "src_physical_rust_wgsl": 2798,
+      "scc_rust_code_excluding_tests_dirs": 2652
+    },
+    "loft-passes": {
+      "src_physical_rust_wgsl": 18030,
+      "scc_rust_code_excluding_tests_dirs": 16146
+    },
+    "loft-plan": {
+      "src_physical_rust_wgsl": 949,
+      "scc_rust_code_excluding_tests_dirs": 859
+    },
+    "loft-runner": {
+      "src_physical_rust_wgsl": 1630,
+      "scc_rust_code_excluding_tests_dirs": 1787
+    },
+    "loft-std": {
+      "src_physical_rust_wgsl": 4536,
+      "scc_rust_code_excluding_tests_dirs": 4305
+    }
+  },
+  "load": {
+    "capsules-1": {
+      "cold_s": 1.6993042920000003,
+      "warm_s": 0.027328792,
+      "pipelines": 5
+    },
+    "capsules-20": {
+      "cold_s": 4.610383249000001,
+      "warm_s": 0.08611254099999999,
+      "pipelines": 5
+    },
+    "blobs-1": {
+      "cold_s": 2.492608208,
+      "warm_s": 0.072347333,
+      "pipelines": 5
+    },
+    "blobs-20": {
+      "cold_s": 3.559903334,
+      "warm_s": 0.033406125,
+      "pipelines": 5
+    },
+    "hermit-1": {
+      "cold_s": 5.604809917000001,
+      "warm_s": 0.131043083,
+      "pipelines": 14
+    },
+    "hermit-20": {
+      "cold_s": 5.351914751000001,
+      "warm_s": 0.126213375,
+      "pipelines": 14
+    }
+  },
+  "frozen_inventory": {
+    "unchanged": true,
+    "picture_count": 19,
+    "bead_count": 9,
+    "historical_count": 1510
+  },
+  "frozen_pictures": {
+    "capsules-1": {
+      "0": {
+        "max_diff": 0,
+        "over_2": 0,
+        "rgba_sha256": "df19eaba565023913e4a2c2c18460fd46af3c30d9223d42ed91ea3998d591883"
+      },
+      "4": {
+        "max_diff": 0,
+        "over_2": 0,
+        "rgba_sha256": "5a97b44bdaa0a64865533c745509cd50fcf6b039d393c2dd6961a42f54fba394"
+      },
+      "9": {
+        "max_diff": 0,
+        "over_2": 0,
+        "rgba_sha256": "f4f8105ec1d4f4553d49b3c0cf0dc480bd69a30f4c8ca3cb418ee0c5a38b5774"
+      }
+    },
+    "capsules-20": {
+      "0": {
+        "max_diff": 0,
+        "over_2": 0,
+        "rgba_sha256": "bb456f08db310fdebbc5a028a6d4e79bb65be3304a45f0285c03e044d4dd36a1"
+      },
+      "4": {
+        "max_diff": 0,
+        "over_2": 0,
+        "rgba_sha256": "3a7f9fd080ac3d3d80c1387ca79d429b3a571bb7c6fd2b8e6776e522ca3e59eb"
+      },
+      "9": {
+        "max_diff": 0,
+        "over_2": 0,
+        "rgba_sha256": "23fc19befa510dc8e8c82897212c1fbd09169018b34b4bcca24e696d79e2ce38"
+      }
+    },
+    "blobs-1": {
+      "0": {
+        "max_diff": 2,
+        "over_2": 0,
+        "rgba_sha256": "0334bad5bd1ed1e57fbdb3aac9baa6769005a1e59cc8b73aca88a5ae727f345d"
+      },
+      "4": {
+        "max_diff": 1,
+        "over_2": 0,
+        "rgba_sha256": "c1d619767cd9f4c3d30f16cb1e473f1e788d07840b1eb806c7ecc58a13bf8b7e"
+      },
+      "9": {
+        "max_diff": 1,
+        "over_2": 0,
+        "rgba_sha256": "d4ed9551463f394042e9a8a8cdba1bfdf5bd75dd3c1b1497d96c9d7513ea4a15"
+      }
+    },
+    "blobs-20": {
+      "0": {
+        "max_diff": 4,
+        "over_2": 1,
+        "rgba_sha256": "e836152e71f228aaa5b3a1ff19f99740d9ab443dd56d66140088ff7e635c9d5f"
+      },
+      "4": {
+        "max_diff": 1,
+        "over_2": 0,
+        "rgba_sha256": "592c8d362888718d9f07cd72c0241ecd80e143290683164e9579881b7ccd4e44"
+      },
+      "9": {
+        "max_diff": 1,
+        "over_2": 0,
+        "rgba_sha256": "23695982d231c4faf19714251b74b00458715d217b822a9c3887bd8ac6f167d9"
+      }
+    },
+    "hermit-1": {
+      "0": {
+        "max_diff": 0,
+        "over_2": 0,
+        "rgba_sha256": "845f0d8fd03063e936ba6b95e74ae22634581efefe7316413710f84fcf15ebb8"
+      },
+      "4": {
+        "max_diff": 0,
+        "over_2": 0,
+        "rgba_sha256": "c9d6f1810e7f2d2e32c7377cd927b58c82a115d6bea0c13bcb39c4de2010d166"
+      },
+      "9": {
+        "max_diff": 0,
+        "over_2": 0,
+        "rgba_sha256": "9d20f01bd50e523f72f8d116ad3908eff55eda94a00f01bbfa642b1d5783804b"
+      }
+    },
+    "hermit-20": {
+      "0": {
+        "max_diff": 0,
+        "over_2": 0,
+        "rgba_sha256": "ac0a9a8c83532f84efd30d819ae5189c1fa5ec3ec377ae4ae40cadfbbb737145"
+      },
+      "4": {
+        "max_diff": 0,
+        "over_2": 0,
+        "rgba_sha256": "5aafcc4890c6296858deac4a759976006ad3c3040b071cad136a283478ec4a4e"
+      },
+      "9": {
+        "max_diff": 0,
+        "over_2": 0,
+        "rgba_sha256": "43339a6a75a04a46f25b86107e09fe35a7bb100a5798c2eeb0f77c50a297bb8d"
+      }
+    },
+    "coral_shrine": {
+      "0": {
+        "max_diff": 142,
+        "over_2": 73,
+        "rgba_sha256": "b33ea1bef84e2200be42eede2c74ec7f62a9fb2bd63a2b6fdd3752d628bea40f"
+      }
+    }
+  },
+  "bead": {
+    "held": 9,
+    "total": 9
+  },
+  "main_pixel_comparison": {
+    "capsules-1@0": {
+      "pixels": 1024000,
+      "changed": 0,
+      "over_2": 0,
+      "max_delta": 0,
+      "largest_8_connected_over_2": 0,
+      "baseline_sha256": "df19eaba565023913e4a2c2c18460fd46af3c30d9223d42ed91ea3998d591883",
+      "capture_sha256": "df19eaba565023913e4a2c2c18460fd46af3c30d9223d42ed91ea3998d591883",
+      "gate_sha256": "df19eaba565023913e4a2c2c18460fd46af3c30d9223d42ed91ea3998d591883",
+      "fraction_within_2": 1.0
+    },
+    "capsules-1@4": {
+      "pixels": 1024000,
+      "changed": 0,
+      "over_2": 0,
+      "max_delta": 0,
+      "largest_8_connected_over_2": 0,
+      "baseline_sha256": "5a97b44bdaa0a64865533c745509cd50fcf6b039d393c2dd6961a42f54fba394",
+      "capture_sha256": "5a97b44bdaa0a64865533c745509cd50fcf6b039d393c2dd6961a42f54fba394",
+      "gate_sha256": "5a97b44bdaa0a64865533c745509cd50fcf6b039d393c2dd6961a42f54fba394",
+      "fraction_within_2": 1.0
+    },
+    "capsules-1@9": {
+      "pixels": 1024000,
+      "changed": 0,
+      "over_2": 0,
+      "max_delta": 0,
+      "largest_8_connected_over_2": 0,
+      "baseline_sha256": "f4f8105ec1d4f4553d49b3c0cf0dc480bd69a30f4c8ca3cb418ee0c5a38b5774",
+      "capture_sha256": "f4f8105ec1d4f4553d49b3c0cf0dc480bd69a30f4c8ca3cb418ee0c5a38b5774",
+      "gate_sha256": "f4f8105ec1d4f4553d49b3c0cf0dc480bd69a30f4c8ca3cb418ee0c5a38b5774",
+      "fraction_within_2": 1.0
+    },
+    "capsules-20@0": {
+      "pixels": 1024000,
+      "changed": 0,
+      "over_2": 0,
+      "max_delta": 0,
+      "largest_8_connected_over_2": 0,
+      "baseline_sha256": "bb456f08db310fdebbc5a028a6d4e79bb65be3304a45f0285c03e044d4dd36a1",
+      "capture_sha256": "bb456f08db310fdebbc5a028a6d4e79bb65be3304a45f0285c03e044d4dd36a1",
+      "gate_sha256": "bb456f08db310fdebbc5a028a6d4e79bb65be3304a45f0285c03e044d4dd36a1",
+      "fraction_within_2": 1.0
+    },
+    "capsules-20@4": {
+      "pixels": 1024000,
+      "changed": 0,
+      "over_2": 0,
+      "max_delta": 0,
+      "largest_8_connected_over_2": 0,
+      "baseline_sha256": "3a7f9fd080ac3d3d80c1387ca79d429b3a571bb7c6fd2b8e6776e522ca3e59eb",
+      "capture_sha256": "3a7f9fd080ac3d3d80c1387ca79d429b3a571bb7c6fd2b8e6776e522ca3e59eb",
+      "gate_sha256": "3a7f9fd080ac3d3d80c1387ca79d429b3a571bb7c6fd2b8e6776e522ca3e59eb",
+      "fraction_within_2": 1.0
+    },
+    "capsules-20@9": {
+      "pixels": 1024000,
+      "changed": 0,
+      "over_2": 0,
+      "max_delta": 0,
+      "largest_8_connected_over_2": 0,
+      "baseline_sha256": "23fc19befa510dc8e8c82897212c1fbd09169018b34b4bcca24e696d79e2ce38",
+      "capture_sha256": "23fc19befa510dc8e8c82897212c1fbd09169018b34b4bcca24e696d79e2ce38",
+      "gate_sha256": "23fc19befa510dc8e8c82897212c1fbd09169018b34b4bcca24e696d79e2ce38",
+      "fraction_within_2": 1.0
+    },
+    "blobs-1@0": {
+      "pixels": 1024000,
+      "changed": 0,
+      "over_2": 0,
+      "max_delta": 0,
+      "largest_8_connected_over_2": 0,
+      "baseline_sha256": "0334bad5bd1ed1e57fbdb3aac9baa6769005a1e59cc8b73aca88a5ae727f345d",
+      "capture_sha256": "0334bad5bd1ed1e57fbdb3aac9baa6769005a1e59cc8b73aca88a5ae727f345d",
+      "gate_sha256": "0334bad5bd1ed1e57fbdb3aac9baa6769005a1e59cc8b73aca88a5ae727f345d",
+      "fraction_within_2": 1.0
+    },
+    "blobs-1@4": {
+      "pixels": 1024000,
+      "changed": 0,
+      "over_2": 0,
+      "max_delta": 0,
+      "largest_8_connected_over_2": 0,
+      "baseline_sha256": "c1d619767cd9f4c3d30f16cb1e473f1e788d07840b1eb806c7ecc58a13bf8b7e",
+      "capture_sha256": "c1d619767cd9f4c3d30f16cb1e473f1e788d07840b1eb806c7ecc58a13bf8b7e",
+      "gate_sha256": "c1d619767cd9f4c3d30f16cb1e473f1e788d07840b1eb806c7ecc58a13bf8b7e",
+      "fraction_within_2": 1.0
+    },
+    "blobs-1@9": {
+      "pixels": 1024000,
+      "changed": 0,
+      "over_2": 0,
+      "max_delta": 0,
+      "largest_8_connected_over_2": 0,
+      "baseline_sha256": "d4ed9551463f394042e9a8a8cdba1bfdf5bd75dd3c1b1497d96c9d7513ea4a15",
+      "capture_sha256": "d4ed9551463f394042e9a8a8cdba1bfdf5bd75dd3c1b1497d96c9d7513ea4a15",
+      "gate_sha256": "d4ed9551463f394042e9a8a8cdba1bfdf5bd75dd3c1b1497d96c9d7513ea4a15",
+      "fraction_within_2": 1.0
+    },
+    "blobs-20@0": {
+      "pixels": 1024000,
+      "changed": 0,
+      "over_2": 0,
+      "max_delta": 0,
+      "largest_8_connected_over_2": 0,
+      "baseline_sha256": "e836152e71f228aaa5b3a1ff19f99740d9ab443dd56d66140088ff7e635c9d5f",
+      "capture_sha256": "e836152e71f228aaa5b3a1ff19f99740d9ab443dd56d66140088ff7e635c9d5f",
+      "gate_sha256": "e836152e71f228aaa5b3a1ff19f99740d9ab443dd56d66140088ff7e635c9d5f",
+      "fraction_within_2": 1.0
+    },
+    "blobs-20@4": {
+      "pixels": 1024000,
+      "changed": 0,
+      "over_2": 0,
+      "max_delta": 0,
+      "largest_8_connected_over_2": 0,
+      "baseline_sha256": "592c8d362888718d9f07cd72c0241ecd80e143290683164e9579881b7ccd4e44",
+      "capture_sha256": "592c8d362888718d9f07cd72c0241ecd80e143290683164e9579881b7ccd4e44",
+      "gate_sha256": "592c8d362888718d9f07cd72c0241ecd80e143290683164e9579881b7ccd4e44",
+      "fraction_within_2": 1.0
+    },
+    "blobs-20@9": {
+      "pixels": 1024000,
+      "changed": 0,
+      "over_2": 0,
+      "max_delta": 0,
+      "largest_8_connected_over_2": 0,
+      "baseline_sha256": "23695982d231c4faf19714251b74b00458715d217b822a9c3887bd8ac6f167d9",
+      "capture_sha256": "23695982d231c4faf19714251b74b00458715d217b822a9c3887bd8ac6f167d9",
+      "gate_sha256": "23695982d231c4faf19714251b74b00458715d217b822a9c3887bd8ac6f167d9",
+      "fraction_within_2": 1.0
+    },
+    "hermit-1@0": {
+      "pixels": 1024000,
+      "changed": 0,
+      "over_2": 0,
+      "max_delta": 0,
+      "largest_8_connected_over_2": 0,
+      "baseline_sha256": "845f0d8fd03063e936ba6b95e74ae22634581efefe7316413710f84fcf15ebb8",
+      "capture_sha256": "845f0d8fd03063e936ba6b95e74ae22634581efefe7316413710f84fcf15ebb8",
+      "gate_sha256": "845f0d8fd03063e936ba6b95e74ae22634581efefe7316413710f84fcf15ebb8",
+      "fraction_within_2": 1.0
+    },
+    "hermit-1@4": {
+      "pixels": 1024000,
+      "changed": 0,
+      "over_2": 0,
+      "max_delta": 0,
+      "largest_8_connected_over_2": 0,
+      "baseline_sha256": "c9d6f1810e7f2d2e32c7377cd927b58c82a115d6bea0c13bcb39c4de2010d166",
+      "capture_sha256": "c9d6f1810e7f2d2e32c7377cd927b58c82a115d6bea0c13bcb39c4de2010d166",
+      "gate_sha256": "c9d6f1810e7f2d2e32c7377cd927b58c82a115d6bea0c13bcb39c4de2010d166",
+      "fraction_within_2": 1.0
+    },
+    "hermit-1@9": {
+      "pixels": 1024000,
+      "changed": 0,
+      "over_2": 0,
+      "max_delta": 0,
+      "largest_8_connected_over_2": 0,
+      "baseline_sha256": "9d20f01bd50e523f72f8d116ad3908eff55eda94a00f01bbfa642b1d5783804b",
+      "capture_sha256": "9d20f01bd50e523f72f8d116ad3908eff55eda94a00f01bbfa642b1d5783804b",
+      "gate_sha256": "9d20f01bd50e523f72f8d116ad3908eff55eda94a00f01bbfa642b1d5783804b",
+      "fraction_within_2": 1.0
+    },
+    "hermit-20@0": {
+      "pixels": 1024000,
+      "changed": 0,
+      "over_2": 0,
+      "max_delta": 0,
+      "largest_8_connected_over_2": 0,
+      "baseline_sha256": "ac0a9a8c83532f84efd30d819ae5189c1fa5ec3ec377ae4ae40cadfbbb737145",
+      "capture_sha256": "ac0a9a8c83532f84efd30d819ae5189c1fa5ec3ec377ae4ae40cadfbbb737145",
+      "gate_sha256": "ac0a9a8c83532f84efd30d819ae5189c1fa5ec3ec377ae4ae40cadfbbb737145",
+      "fraction_within_2": 1.0
+    },
+    "hermit-20@4": {
+      "pixels": 1024000,
+      "changed": 0,
+      "over_2": 0,
+      "max_delta": 0,
+      "largest_8_connected_over_2": 0,
+      "baseline_sha256": "5aafcc4890c6296858deac4a759976006ad3c3040b071cad136a283478ec4a4e",
+      "capture_sha256": "5aafcc4890c6296858deac4a759976006ad3c3040b071cad136a283478ec4a4e",
+      "gate_sha256": "5aafcc4890c6296858deac4a759976006ad3c3040b071cad136a283478ec4a4e",
+      "fraction_within_2": 1.0
+    },
+    "hermit-20@9": {
+      "pixels": 1024000,
+      "changed": 0,
+      "over_2": 0,
+      "max_delta": 0,
+      "largest_8_connected_over_2": 0,
+      "baseline_sha256": "43339a6a75a04a46f25b86107e09fe35a7bb100a5798c2eeb0f77c50a297bb8d",
+      "capture_sha256": "43339a6a75a04a46f25b86107e09fe35a7bb100a5798c2eeb0f77c50a297bb8d",
+      "gate_sha256": "43339a6a75a04a46f25b86107e09fe35a7bb100a5798c2eeb0f77c50a297bb8d",
+      "fraction_within_2": 1.0
+    },
+    "coral_shrine@0": {
+      "pixels": 1024000,
+      "changed": 88,
+      "over_2": 88,
+      "max_delta": 157,
+      "largest_8_connected_over_2": 8,
+      "baseline_sha256": "d22a2cc0dc60e397e8fec57b4bc57482b847fa933a2487dd41fd178f28dafc6f",
+      "capture_sha256": "46a33d08d7f28378e90594a8edc9fab02263f69aee915695e9e5ed73fe40a74c",
+      "gate_sha256": "b33ea1bef84e2200be42eede2c74ec7f62a9fb2bd63a2b6fdd3752d628bea40f",
+      "id": {
+        "pixels": 1024000,
+        "changed": 11,
+        "over_2": 11,
+        "max_delta": 178,
+        "largest_8_connected_over_2": 1,
+        "silhouette_changes": 0
+      },
+      "depth": {
+        "pixels": 1024000,
+        "changed": 0,
+        "over_2": 0,
+        "max_delta": 0,
+        "largest_8_connected_over_2": 0
+      },
+      "fraction_within_2": 0.9999140625
+    }
+  },
+  "mutants": {
+    "core_domain_word_leak": true,
+    "fake_foot_20mm": true,
+    "missing_frame": true,
+    "one_vs_20_module_drift": true,
+    "over_budget_51ms": true,
+    "five_inline_bsdf_copies": true
+  },
+  "grammar": {
+    "recognizers": [
+      "Earley",
+      "llguidance"
+    ],
+    "passed_each": 302,
+    "total_each": 302,
+    "changed_or_new_inputs_checked_separately": 23,
+    "byte_identical_inputs_from_previous_score": 279,
+    "full_integrated_sweep": true,
+    "verification": "The CPU-only static suite resumed after the locked run and completed on the integrated tree. Both recognizers classified all 302 inputs as expected."
+  },
+  "native_tests": {
+    "passed": 159,
+    "failed": 2,
+    "ignored": 0
+  },
+  "native_failures": [
+    "cst::corpus::all_authored_files_replay_verbatim",
+    "encode::edit_gate::time_edit_and_compare_native_promotion"
+  ],
+  "gait": {
+    "tidal": {
+      "comparisons": 6,
+      "max_drift_mm": 0.0,
+      "failed_check_records": 0,
+      "mismatched_words": 0
+    },
+    "crossing": {
+      "comparisons": 12,
+      "max_drift_mm": 0.0,
+      "failed_check_records": 0,
+      "mismatched_words": 0
+    }
+  },
+  "showcase_checks": {
+    "crossing": {
+      "exit": 0,
+      "checks": {
+        "Twin": {
+          "held": 8,
+          "total": 8,
+          "misses": []
+        },
+        "Truth": {
+          "held": 10,
+          "total": 10,
+          "misses": []
+        }
+      }
+    },
+    "folded_facets": {
+      "exit": 0,
+      "checks": {
+        "Twin": {
+          "held": 4,
+          "total": 4,
+          "misses": []
+        },
+        "Truth": {
+          "held": 4,
+          "total": 4,
+          "misses": []
+        }
+      }
+    },
+    "noisy_ink": {
+      "exit": 0,
+      "checks": {
+        "Twin": {
+          "held": 2,
+          "total": 2,
+          "misses": []
+        },
+        "Truth": {
+          "held": 2,
+          "total": 2,
+          "misses": []
+        }
+      }
+    },
+    "parity_raster": {
+      "exit": 0,
+      "checks": {
+        "Twin": {
+          "held": 3,
+          "total": 3,
+          "misses": []
+        },
+        "Truth": {
+          "held": 2,
+          "total": 2,
+          "misses": []
+        }
+      }
+    },
+    "parity_sdf": {
+      "exit": 0,
+      "checks": {
+        "Twin": {
+          "held": 2,
+          "total": 2,
+          "misses": []
+        },
+        "Truth": {
+          "held": 2,
+          "total": 2,
+          "misses": []
+        }
+      }
+    },
+    "shell_eye": {
+      "exit": 0,
+      "checks": {
+        "Twin": {
+          "held": 14,
+          "total": 14,
+          "misses": []
+        },
+        "Truth": {
+          "held": 11,
+          "total": 11,
+          "misses": []
+        }
+      }
+    },
+    "tapered_growth": {
+      "exit": 0,
+      "checks": {
+        "Twin": {
+          "held": 3,
+          "total": 3,
+          "misses": []
+        },
+        "Truth": {
+          "held": 3,
+          "total": 3,
+          "misses": []
+        }
+      }
+    },
+    "tidal": {
+      "exit": 0,
+      "checks": {
+        "Twin": {
+          "held": 4,
+          "total": 4,
+          "misses": []
+        },
+        "Truth": {
+          "held": 5,
+          "total": 5,
+          "misses": []
+        }
+      }
+    },
+    "tidal_fork": {
+      "exit": 0,
+      "checks": {
+        "Twin": {
+          "held": 4,
+          "total": 4,
+          "misses": []
+        },
+        "Truth": {
+          "held": 5,
+          "total": 5,
+          "misses": []
+        }
+      }
+    }
+  },
+  "lane_audit": {
+    "port1": {
+      "finding": "Both recognizers rejected scenes/crab_lineup.loft, scenes/hermit.loft and scenes/lineup/cast.loft. Four of seven changed files passed. The five old/new pairs await lead review. Crab Live p95 rose from 9.05 to 15.62 ms in the lane comparison. The lineup and Hermit measurements predate final polish.",
+      "evidence": [
+        "out/meta/ix4/port1-grammar.log",
+        "out/meta/port1/approval/",
+        "agent_notes/2026-11-20_v1/APPROVALS.md"
+      ],
+      "branch_sha": "3c6f053355e4e7e04069ea5d611c471f18fd0f06",
+      "merged": false
+    },
+    "stdaot1": {
+      "finding": "Deferred by the lead at 0524740. The remote has no loft/stdaot1 branch. The lane final records that no measurement or implementation ran.",
+      "evidence": [
+        "agent_notes/2026-11-20_codex/stdaot1.final.md"
+      ],
+      "branch_sha": null,
+      "merged": false
+    },
+    "std1b": {
+      "finding": "Forkable geometry, bounded noise, sampled frames, growth and eye rows landed on the lane. The export audit retained sub-threshold sweep and placement expressions in scene source. The lane measured 8/160 growth rows at 1/20 bodies, four modules, five commands, and a minimum frame determinant of 0.99999988. The shared counter is available to transport authors.",
+      "evidence": [
+        "out/meta/std1b/token-admission.md",
+        "out/meta/std1b/score.json",
+        "out/meta/ix4/geometry.log"
+      ],
+      "branch_sha": "bb1f16ecffa310adc64e76efd6f5d7b0401e8030",
+      "showcase_failures": [],
+      "meets_showcase_rule": true,
+      "merged": true
+    },
+    "std1c": {
+      "finding": "Seven styles and nine stills were delivered. The committed Harbor woodblock fails E011 on the integrated B/E source because lighting/surface.loft requires D. Even with D, the branch README requires a source-rewriting adapter. The 128/256-spp reference study returned NaN depth at (0,0).",
+      "evidence": [
+        "out/meta/ix4/std1c-audit.log",
+        "out/meta/std1c/measurements.json",
+        "out/meta/std1c/approval/"
+      ],
+      "branch_sha": "012391bb0d71f47dddb2482dafc52543ceffe72c",
+      "merged": false
+    },
+    "std1d": {
+      "finding": "Vis, forward and path callbacks shipped on the branch. ID/depth matched across swaps, and the 1024-spp furnace and sphere means were 0.499599 and 0.062594. The required material(hit: SurfaceHit) -> Bsdf query is missing. Transport still calls path_random instead of the shared counter. High-sample Harbor depth failed on this renderer. Mip bloom, texture sky baking and mixed-lobe separation remain open.",
+      "evidence": [
+        "out/meta/std1d/cpu-numeric.json",
+        "out/meta/std1d/readback.json",
+        "out/meta/std1b/D-HANDOFF.md",
+        "out/meta/std1c/measurements.json"
+      ],
+      "branch_sha": "c61c9ba8d58326a2f547f6b8e9e72c342be5f1ed",
+      "merged": false
+    },
+    "std1e": {
+      "finding": "Typed deck-local gait, bounded rest plans, a selected local gait fork and posed endpoint checks shipped. The lane saw zero planted drift and matching CPU/Metal state at 30/60/120 Hz with a six-tick stall. Its 1000-actor timing used replicated rows. Tidal and Crossing finished 10 and 8 steps.",
+      "evidence": [
+        "out/meta/std1e/constraints.json",
+        "out/meta/std1e/exports.txt",
+        "out/meta/ix4/tidal.log",
+        "out/meta/ix4/crossing.log"
+      ],
+      "branch_sha": "3e4607901086b6d1b1d24c08ae34c89784b1d33b",
+      "showcase_failures": [],
+      "meets_showcase_rule": true,
+      "merged": true
+    }
+  },
+  "geometry_probe": [
+    "adapter Apple M4 (Metal)",
+    "cone big cap: t=0.50000000/0.50000000, normal cosine=1.00000000",
+    "cone small cap: t=1.50000000/1.50000000, normal cosine=1.00000000",
+    "cone side: t=1.22540331/1.22540331, normal cosine=1.00000000",
+    "cone tangent: t=2.00000000/2.00000000, normal cosine=1.00000000",
+    "cone tangent miss: miss",
+    "cone inside exit: t=0.50000000/0.50000000, normal cosine=1.00000000",
+    "cone coincident endpoints: t=1.25000000/1.25000000, normal cosine=1.00000000",
+    "cone contained first ball: t=1.29999995/1.30000007, normal cosine=1.00000000",
+    "cone cap/side join: t=1.03175414/1.03175414, normal cosine=0.99999994",
+    "cone surface start: t=0.00000000/0.00000000, normal cosine=1.00000000",
+    "cone remote camera: t=59.22540283/59.22540283, normal cosine=1.00000000",
+    "cone maximum twin hit delta=0.00000012 m, maximum absolute field at hit=0.00000048 m, minimum normal cosine=0.99999994",
+    "lattice seam channel 4: slopes CPU -0.881104/-0.880371, GPU -0.880127/-0.880127",
+    "lattice seam channel 5: slopes CPU -0.881104/-0.880371, GPU -0.880127/-0.880127",
+    "lattice seam channel 6: slopes CPU 0.000000/0.000000, GPU 0.000000/0.000000",
+    "lattice seam channel 4: slopes CPU -0.881104/-0.880371, GPU -0.880127/-0.880127",
+    "lattice seam channel 5: slopes CPU 0.792236/0.767578, GPU 0.792725/0.768066",
+    "lattice seam channel 6: slopes CPU -0.826660/-0.827148, GPU -0.827148/-0.826904",
+    "lattice/cellular maximum twin component delta = 0.00000012",
+    "signed mark, collapsed triangle/segment/point held",
+    "display counter bits and cosine weights held on X, Y and Z",
+    "frames=16, sampled bytes=768, minimum determinant=0.99999994",
+    "Ring: max position/normal twin component delta 0.00000012, minimum finite-diff cosine 1.00000000",
+    "FrameSample: max position/normal twin component delta 0.00000012, minimum finite-diff cosine 0.99999988",
+    "Lid: max position/normal twin component delta 0.00000012, minimum finite-diff cosine 0.99999994",
+    "frames=96, sampled bytes=4608, minimum determinant=0.99999988",
+    "Carapace: max position/normal twin component delta 0.00000036, minimum finite-diff cosine 0.99999946",
+    "Mantle: max position/normal twin component delta 0.00000009, minimum finite-diff cosine 0.99999994",
+    "Eyelid: max position/normal twin component delta 0.00000015, minimum finite-diff cosine 0.99999928"
+  ],
+  "native_failures_output": {
+    "cst::corpus::all_authored_files_replay_verbatim": "---- cst::corpus::all_authored_files_replay_verbatim stdout ----\n\nthread 'cst::corpus::all_authored_files_replay_verbatim' (617221) panicked at crates/loft-parse/src/cst.rs:332:55:\ncalled `Result::unwrap()` on an `Err` value: Os { code: 2, kind: NotFound, message: \"No such file or directory\" }\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n",
+    "encode::edit_gate::time_edit_and_compare_native_promotion": "---- encode::edit_gate::time_edit_and_compare_native_promotion stdout ----\nTier 0 bucket: hot upload 0.137500 ms, overhead p95 0.606542 ms, 0/140000 pixels over 1/255\n\nthread 'encode::edit_gate::time_edit_and_compare_native_promotion' (617275) panicked at crates/loft-runner/src/encode/edit_gate.rs:209:5:\nassertion failed: hot_ms <= 2. && delta[94] <= 0.5 && over <= PIXELS as usize / 1000\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n"
+  },
+  "native_note": "The same two tests failed on the previous scored main. CST replay opens the retired lib/ directory. Tier 0 promotion measured 0.606542 ms overhead p95 against 0.500 ms, with 0.137500 ms upload and 0/140,000 pixels over 1/255.",
+  "historical_speed_details": {
+    "capsules-1": {
+      "p95_ms": 7.466791,
+      "p50_ms": 2.122958,
+      "commands": 5,
+      "control_p50_ms": 0.943292,
+      "contended": true,
+      "frames": 300,
+      "set": {
+        "count": 1
+      },
+      "p95_budget_ms": 0.8,
+      "prior_scored_3c9cf67_p95_ms": 6.924916
+    },
+    "capsules-20": {
+      "p95_ms": 8.093291,
+      "p50_ms": 3.705833,
+      "commands": 5,
+      "control_p50_ms": 0.880083,
+      "contended": true,
+      "frames": 300,
+      "set": {
+        "count": 20
+      },
+      "p95_budget_ms": 1.1,
+      "prior_scored_3c9cf67_p95_ms": 10.136125
+    },
+    "blobs-1": {
+      "p95_ms": 7.333042,
+      "p50_ms": 2.386625,
+      "commands": 5,
+      "control_p50_ms": 1.049625,
+      "contended": true,
+      "frames": 300,
+      "set": {
+        "count": 1
+      },
+      "p95_budget_ms": 1.1,
+      "prior_scored_3c9cf67_p95_ms": 7.247041
+    },
+    "blobs-20": {
+      "p95_ms": 8.915084,
+      "p50_ms": 4.281791,
+      "commands": 5,
+      "control_p50_ms": 1.212333,
+      "contended": true,
+      "frames": 300,
+      "set": {
+        "count": 20
+      },
+      "p95_budget_ms": 2.4,
+      "prior_scored_3c9cf67_p95_ms": 8.772375
+    },
+    "hermit-1": {
+      "p95_ms": 11.644667,
+      "p50_ms": 7.375417,
+      "commands": 13,
+      "control_p50_ms": 0.59775,
+      "contended": true,
+      "frames": 300,
+      "set": {
+        "count": 1
+      },
+      "p95_budget_ms": 5.0,
+      "prior_scored_3c9cf67_p95_ms": 12.019459
+    },
+    "hermit-20": {
+      "p95_ms": 14.875625,
+      "p50_ms": 10.383834,
+      "commands": 13,
+      "control_p50_ms": 0.745375,
+      "contended": true,
+      "frames": 300,
+      "set": {
+        "count": 20
+      },
+      "p95_budget_ms": 5.6,
+      "prior_scored_3c9cf67_p95_ms": 15.264416
+    }
+  },
+  "shader_qualification_changes": {
+    "scene": "coral_shrine",
+    "module": "CoralBranch",
+    "symbol": "cone_side",
+    "occurrences": 4
+  },
+  "speed_decision": "The Speed score held at 6/12. All six serialized programs, shaders, command counts and native submission sources matched main. All six raw p95s rose under contention. Program identity and identical gate verdicts support non-regression for the merge. This run leaves uncontended latency unresolved.",
+  "showcase_method": "Nine new scenes scored by the production Twin and Truth gate functions in a measurement-only example from the same workspace build. Each lane probe also compiled the combined authored scene source at runtime.",
+  "structural_comparison": "All 18 layered frames matched exactly. Shrine has 88 over-tolerance pixels, largest eight-connected group 8. Encoded depth and silhouette matched and 11 isolated foreground ID pixels differed. Only the generated cone_side symbol name changed in Shrine WGSL.",
+  "raw_report": "five-gates.json",
+  "prediction": "Std1b and Std1e change authored modules and fixtures. Predict 19/19 frozen Pictures, 36/36 Twin, 34/34 Truth, six unchanged speed-command counts (5/5, 5/5, 13/13), six detected mutants, wasm32 and both recognizers passing. Predict byte-identical execution inputs for the six speed cases. The historical main scored 6/12 Speed under contention and 23/33 Load. Expect exact layered pictures and fewer than 1,025 out-of-tolerance pixels with no coherent shape change on Shrine. Existing main opens retired lib/ in the CST test. Its Tier 0 timing test was previously above budget.",
+  "integration_parent_main": "b5f9dc00e84da3ec197813a12cc6c18db6ef1b06",
+  "post_score_main_changes": [
+    "agent_notes/2026-11-20_codex/cam2.brief.md",
+    "agent_notes/2026-11-20_codex/cl1.brief.md",
+    "agent_notes/2026-11-20_codex/final.sh",
+    "agent_notes/2026-11-20_codex/fs2.brief.md",
+    "agent_notes/2026-11-20_codex/fs2wait.sh",
+    "agent_notes/2026-11-20_codex/p2.done",
+    "agent_notes/2026-11-20_codex/p2.final.md",
+    "agent_notes/2026-11-20_codex/wrap1.brief.md",
+    "agent_notes/2026-11-20_codex/wrapup.sh"
+  ],
+  "pixel_rule": {
+    "maximum_channel_error": 2,
+    "range_max": 255,
+    "minimum_fraction_within_error": 0.999,
+    "exceptions_used": []
+  }
+}
