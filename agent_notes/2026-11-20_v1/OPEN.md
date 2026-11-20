@@ -1,5 +1,29 @@
 # Open targets for v1.0-alpha
 
+## Wave X3 integration
+
+Merged the rotated-fold Lipschitz fix `871ea94` onto `bf72786`. FoldedLantern’s bound fell from 22.871492 to 1.000000238. The lane’s paired Shrine captures measured a 0.935 ms Vis p50 saving. Raising only the old march cap recovered all 10,172 newly visible lantern hits at t=0. [Lipschitz measurements](lanes/s1_lip.md)
+
+The separate reference commit `e6cf82e` applies the two existing lead approvals. All 18 layered frames match retained main’s decoded RGBA exactly. The new Shrine pin comes from the lossless t=0 beauty used in the lead’s review. Pictures now scores that frame alongside the original 18. Shrine differed from the reviewed frame by more than 2/255 at 75 of 1,024,000 pixels, within the existing 1,024-pixel allowance. All nine bead comparisons passed and matched main. All 1,510 archived beauty hashes verified. [Approval record](APPROVALS.md) · [Shrine approval](../../out/meta/s1_lip/OWNER_APPROVAL)
+
+One locked five-gate run on the Apple M4 (Metal) scored **Pictures 19/19, Twin 36/36, Speed 6/12, Load 23/33 and Truth 34/34** at 1280 × 800. Speed retained the same six command-count verdicts as the latest scored main (`6e30111`). All six timing controls exceeded 0.350 ms. The non-regression decision rests on the matching Speed score, identical full serialized GPU programs for all six configurations, and identical native submission code. The timing run leaves the latency comparison unresolved. X2’s earlier uncontended Speed score was 12/12.
+
+| Scene | Retained main p95 (ms) | X3 p95 (ms, contended) | Triangle p50 (ms) | Commands |
+| --- | ---: | ---: | ---: | ---: |
+| capsules-1 | 3.647 | 6.492 | 0.867 | 5 |
+| capsules-20 | 5.608 | 6.838 | 0.682 | 5 |
+| blobs-1 | 5.881 | 6.411 | 0.938 | 5 |
+| blobs-20 | 6.614 | 7.328 | 0.615 | 5 |
+| hermit-1 | 13.831 | 9.995 | 1.016 | 13 |
+| hermit-20 | 15.067 | 11.562 | 0.404 | 13 |
+
+Each scene used 30 warmups and 300 timed frames with the manifest’s count override. Load returned exit 4. All six cold loads exceeded budget, and both Hermit counts also exceeded the warm-load and pipeline budgets. One workspace build supplied 26 native test executables. All 157 native tests, six mutants, workspace doctests and the wasm32 web-sys check passed. Earley and llguidance each classified 282/282 inputs correctly. [Gate measurements](../../out/meta/ix3/gate.json) · [Five-gate verdicts](../../out/meta/ix3/five-gates.log)
+
+| Held branch | Reason |
+| --- | --- |
+| [Escapes `11602c1`](https://github.com/nbardy/loft/blob/11602c1/agent_notes/2026-11-20_v1/lanes/s1_escapes.md) | Atomic kernels, the raw WGSL table pass and the opted-out normal probe produced their expected readbacks. The baked sample used an external binding. StudyPaper still evaluates procedural ink, the bundle exporter rejects renderer bakes, and the CLI lacks the requested truth report. |
+| [Controls `ce13a99`](https://github.com/nbardy/loft/blob/ce13a99/agent_notes/2026-11-20_v1/lanes/s1_controls_fix.md) | Shrine attachments matched. Hermit HDR differed by up to 73 half-float ULPs, with display differences at 183/158/162 pixels. Both GPU slowdown runs returned contention exit 6. The parity gate stays on the candidate branch. |
+
 ## Lean 1 integration
 
 **No Lean 1 lane merged.** Lean1a was the only implementation branch on origin. The integrator built and scored retained main `6e30111`. Its only change since the X2 score at `180c708` was the integration note in OPEN.md. [Gate report](../../out/meta/ilean/gate.json) · [18-frame contact sheet](../../out/meta/ilean/sheet.webp)
@@ -438,9 +462,7 @@ Items 1 and 2 come first.
 The X2f size audit and four proposed cuts are recorded in [the lean-down plan](design/lean1.md).
 
 ## Chief scientist's handoff (20 Nov, scientist_handoff_2.md): routing
-- loft/s1-lip: Lipschitz fix, Shrine Vis 0.94 ms faster. **Owner approval needed** for out/meta/s1_lip/shrine-review.webp (the old picture was a truncated march). Merged by ix3 once approved.
-- loft/s1-controls: parity gate prototype; polished by s1_controls_fix (wave x3).
-- s1_escapes: the four front-end v1.2 stubs (bake_tex sampling, kernel allow, whole-pass `pass`, unproved). Runs in wave x3.
+- X3 merged the approved Lipschitz fix. Escapes and whole-pass controls remain on their candidate branches. [Wave X3 results](#wave-x3-integration)
 - Lean audit (x2f) and lean lanes must also cover:
   - remove the wgpu dependency from loft-std (~2,429 lines of device/encoder code; a duplicate 1,938-line renderer in loft-cli/src/native/);
   - per-frame create_buffer_init in encode.rs:228–235 and outbox.rs:66–70;

@@ -1,0 +1,7 @@
+loft/s1-escapes 11602c1
+Metal readback passed for arbitrary i32/f32 atomic kernels (36 and 18), externally supplied baked texture (0.375) and the WGSL table pass ([21, 33]). The numeric opt-out produced normals and an AuthorOptOut compiler result. Native StudyPaper still calls study_ink(p.xz), the renderer bundle exporter rejects baked programs, and loft truth --json is unavailable. The test supplies the texture binding itself. No delivered Study fidelity or speed measurement. Hold the whole candidate.
+Evidence: out/meta/s1_escapes and agent_notes/2026-11-20_v1/lanes/s1_escapes.md at 11602c1.
+
+loft/s1-controls-fix ce13a99
+Shrine's attachments matched. Hermit Shade changes display RGBA at 183/158/162 pixels and HDR by up to 73 half-float ULPs. Most outliers remain unexplained. Both submitted GPU slowdown runs returned contention exit 6, leaving the exit-7 GPU witness unverified on this head. The reported 2.074x and 1.637x slowdowns and passing unit test do not establish parity. Hold the whole candidate; omit its opt-in parity command from the combined gate.
+Evidence: out/meta/s1_controls_fix and agent_notes/2026-11-20_v1/lanes/s1_controls_fix.md at ce13a99.

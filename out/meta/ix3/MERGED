@@ -1,0 +1,5 @@
+loft/s1-lip 871ea94f14ceb51f7f6f6f2170fc96f73c97479c
+Integration base bf72786. Candidate merge 21a3ba1. Scored revision e6cf82e.
+Approval: agent_notes/2026-11-20_v1/APPROVALS.md and out/meta/s1_lip/OWNER_APPROVAL. Reference-only commit e6cf82e pins 18 layered frames and the reviewed t=0 Shrine beauty.
+Pictures 19/19, Twin 36/36, Truth 34/34. Speed 6/12, matching retained main. All six time measurements contended; all six complete GPU programs and submission code match main. Load 23/33, exit 4.
+157 native tests, 6 mutants, 9 bead comparisons, doctests, wasm32 and both 282-case grammar checks passed.
