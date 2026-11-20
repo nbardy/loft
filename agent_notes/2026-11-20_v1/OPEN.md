@@ -409,3 +409,11 @@ The X2f size audit and four proposed cuts are recorded in [the lean-down plan](d
 - X2e now runs the Hermit demo schedule on the Three.js device. The browser adapter is scoped to that schedule.
 - Deferred: the native MetalBackend (predicted 0.09–0.19 ms for 2.3–3.8k lines), HDR+Present fusion, f16 shading, ground fBM bake, and consumer Wasm passes until check.rs (86.5 KB) is split.
 - Superseded briefs: s1_exec, s1_motion_fma, s1_web, is1 and sci_chain.sh, which are covered by x2a, x2b and x2e.
+
+## Std library rule and anti-patterns (owner, 20 Nov)
+- A std function earns its place when it replaces a recurring, sufficiently complicated block costing ≥3× the tokens of its call (PHILOSOPHY §4).
+- **Anti-pattern (seen in Buddies expeditions):** re-implementing standard functional patterns (`map`, `await`, filter, fold) as tiny renamed wrappers that cover one or two calls under a new name. That adds names and saves nothing. Std functions are LARGE, real blocks: a leg family, a shell generator, a layered material, a gait law, a camera rig. Never a renamed one-liner.
+- Std today: lib/*.loft, 607 lines and 9.5k tokens (the scene-side std); crates/loft-std (Rust host side, 4.3k lines). Every build re-parses all of lib/ (cost within the 20–37 ms build). AOT plan: stdaot1.
+
+## Flagship scenes not yet ported (owner, 20 Nov)
+- The 5-crab idol lineup dance (examples/bosses/crab_lineup.ts, lineup_shots.ts; song score crab_song.ts), the crab_live motion (examples/motion/crab_live.ts, stage.ts), the bosses (wreckers_lamp, reefback_titan, maelstrom_wyrm, thundermaw, tithe_fleet), and the first lanterns. engines/hermit.loft exists; the "nice hermit" look must match the best old render. Lane: port1.
