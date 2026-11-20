@@ -101,6 +101,7 @@ fn loft_authored_volume(world: u32, ray: loft_type_Ray, limit: f32, steps: u32, 
     let mut eval_cases = Vec::new();
     let mut intersect_cases = Vec::new();
     let mut optics_cases = Vec::new();
+    let mut sampled_bakes = BTreeSet::new();
     for (i, (kind, (_, whole))) in kinds.iter().zip(queries).enumerate() {
         let decl = p.kinds[kind.name.as_str()];
         if matches!(kind.draw, Draw::Surface { .. } | Draw::Mesh { .. }) {
@@ -109,6 +110,16 @@ fn loft_authored_volume(world: u32, ray: loft_type_Ray, limit: f32, steps: u32, 
         }
         let (head, _) = whole.split_once(QUERIES_END).expect("kind query section");
         let body = row_arena_source(&head[prefix_len..]);
+        let body = body.lines().filter(|line| {
+            if let Some((_, global)) = line.split_once(" var ") && line.starts_with("@group(3)") {
+                if let Some((name, _)) = global.strip_prefix(crate::bake_tex::SAMPLE_TEXTURE_PREFIX).and_then(|s| s.split_once(':')) {
+                    sampled_bakes.insert(name.to_owned());
+                    return false;
+                }
+                if global.starts_with(crate::bake_tex::SAMPLE_SAMPLER) { return false; }
+            }
+            true
+        }).collect::<Vec<_>>().join("\n");
         em.out.push_str(&namespace(&body, i));
         em.out.push('\n');
         local_cases.push(format!(r"
@@ -154,6 +165,10 @@ fn loft_authored_volume(world: u32, ray: loft_type_Ray, limit: f32, steps: u32, 
     }}"));
             }
         }
+    }
+    let shared = crate::bake_tex::sampled_declarations(p, &sampled_bakes, false);
+    for line in shared.lines().filter(|line| line.starts_with("@group(3)")) {
+        let _ = writeln!(em.out, "{line}");
     }
     let _ = writeln!(em.out, r"
 fn world_local(kind: u32, at: u32, point: vec3<f32>) -> vec3<f32> {{

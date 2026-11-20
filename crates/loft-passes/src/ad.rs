@@ -94,7 +94,9 @@ impl Ad<'_> {
         let sp = x.span;
         let refuse = |what: &str| Diag::new(Code::E405, sp, format!("`diff` through {what} is not lowered yet"), "differentiate a fn written with arithmetic, calls and the smooth builtins");
         Ok(match &x.kind {
-            ExprKind::Unproved { .. } | ExprKind::FiniteDiff { .. } => return Err(refuse("an author opt-out")),
+            ExprKind::Unproved { .. } | ExprKind::FiniteDiff { .. } => return Err(Diag::new(
+                Code::E307, sp, "automatic differentiation crosses a numerical derivative boundary",
+                "use finite differences inside unproved geometry")),
             ExprKind::If { .. } => return Err(Diag::new(Code::E307, x.span, "conditional expression has no smooth derivative", "use a smooth blend")),
             ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::String(_) => None,
             ExprKind::Name(n) => self.live.contains(n).then(|| self.name(&format!("{n}__t"), sp)),
