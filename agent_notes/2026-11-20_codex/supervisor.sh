@@ -15,9 +15,11 @@ log_status() {
     for w in wave15 wave4 wave15_2; do
       [ -f "$DIR/${w}.finished" ] && echo "  $w: FINISHED" || echo "  $w: running/waiting"
     done
+    local done_list=""
     for s in build1 cam1 v15a v15b v15c iv15 std1b std1c std1d std1e port1 ix4 v15_exec v15_sky v15_fma cap1b cap1c cap1d v15_bloat v15_metalfx iv15_2; do
-      [ -f "$DIR/${s}.done" ] && printf "  done: %s\n" "$s"
-    done | paste -sd ' ' - | sed 's/^/  /'
+      if [ -f "$DIR/${s}.done" ]; then done_list="${done_list} ${s}"; fi
+    done
+    echo "  done:${done_list:- (none yet)}"
     if [ -n "$active" ]; then
       echo "  active codex:"
       echo "$active" | sed 's/^/    /'
