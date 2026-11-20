@@ -1,0 +1,19 @@
+# Std1b · Geometry, noise and frames
+
+Base `faba0615b6bdc33f105d51939ecf3af25c5decea` includes the scored std1a merge `f8fc612`. Implementation `44cc658e03b3d95057e39af8b347a8171e91fc4f`. Legacy sources were read at `legacy/2026-11-19`. [Predictions made before implementation](../../../out/meta/std1b/prediction.md)
+
+[Value and planar noise](../../../stdlib/noise/value.loft) uses the stock integer lattice and a runtime octave loop with 4/8 corners per planar/volume octave. [Cell sites](../../../stdlib/noise/cellular.loft) visit 9/27 candidates. [Planar marks](../../../stdlib/sdf/marks.loft) handle collapsed triangles. [Cone field](../../../stdlib/sdf/solid.loft) and [cone hits](../../../stdlib/geometry/analytic.loft) share the two-ball hull with one side and at most two cap equations. The hit handles inside starts and coincident or nested endpoints.
+
+[Frame transport](../../../stdlib/frames/transport.loft) keeps double reflection. [Raup coil](../../../stdlib/geometry/shell.loft) supplies an analytic tangent; the sweep scan bakes 96 stations in a linear walk, 4,608 B, minimum determinant 0.99999988. The [shell sweep](../../../scenes/showcase/std1b/shell_eye.loft) keeps section power in the differentiable surface. Stage 0 emits tapered and eye rows from [shoot](../../../stdlib/geometry/growth.loft) and [lid and eye geometry](../../../stdlib/geometry/eyes.loft). Placement uses existing `place` and `grid_spot`. Stage 0 cannot construct the proposed result structs, so typed points and frames feed the scene's explicit rows.
+
+[Export ledger](../../../out/meta/std1b/token-admission.md) records E+ blocks, full call costs and legacy antecedents. The swept-section and pivot helpers missed the cutoff and stayed in ordinary surface and layout expressions. [Sampling for D](../../../stdlib/math/sampling.loft) exposes `sample_key(px, py, sample, bounce, dimension)` with legacy PCG; use dimensions 0–2 for light, 3–4 for the cosine pair. D's transport wiring is assigned to D.
+
+[Twin and field evidence](../../../out/meta/std1b/twin-score.log) on Apple M4 Metal covers seam/negative cells, 11 cone rays, marks and six surface kinds. Lattice/cell delta ≤1.2e-7, cone hit delta ≤1.2e-7 m, |field at hit| ≤4.8e-7 m, AD normal cosine ≥0.99999928. Three mixed-space probes reject with E104. The counter matches the legacy oracle bitwise. [Verifier](../../../scenes/showcase/std1b/verify.rs) · [Reproduction](../../../out/meta/std1b/reproduce.md)
+
+[Score](../../../out/meta/std1b/score.json) compares base and lane at 1280×800 t=0. Capsules and Hermit each changed 0 decoded RGBA pixels and 0 WGSL modules. At 640×400 t=0 the [raster](../../../scenes/showcase/std1b/parity_raster.loft)/[SDF](../../../scenes/showcase/std1b/parity_sdf.loft) pair differed at 132 ID pixels (0.13 px equivalent radius) and 1,245 beauty pixels over 2/255.
+
+[Growth](../../../scenes/showcase/std1b/tapered_growth.loft) at 1→20 bodies emitted 8→160 rows and 576→11,520 B (72 B stride vs predicted 64). Four modules and five commands held. The single pair sampled 60 frames after 30 warmups at 640×400 t=0. Raw p95 was 7.170→5.956 ms, contended (triangle p50 0.792/0.807 ms). A seed+heading copy changed packed rows and shared all WGSL. The `self::value` copy reproduced the ink RGBA.
+
+[Ink](../../../scenes/showcase/std1b/noisy_ink.loft) · [Folded card](../../../scenes/showcase/std1b/folded_facets.loft) · [Growth](../../../scenes/showcase/std1b/tapered_growth.loft) · [Shell and lids](../../../scenes/showcase/std1b/shell_eye.loft). [Six q95 stills and per-image provenance](../../../out/meta/std1b/approval/metadata.json) await lead review.
+
+[CLI check](../../../out/meta/std1b/cargo-check.log) · [31 focused tests](../../../out/meta/std1b/focused.log) · [17 edited grammar inputs](../../../out/meta/std1b/focused-grammar.log) · [Static suite](../../../out/meta/std1b/static.log). The integrator runs the workspace suite on the combined revision.
