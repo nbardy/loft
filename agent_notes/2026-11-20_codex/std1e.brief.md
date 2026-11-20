@@ -29,3 +29,5 @@ Speed rules (lead, 20 Nov): keep the ceremony small.
 
 Std rule: a lib function must replace a recurring, sufficiently complicated block of ≥3× its call's tokens. NEVER add renamed wrappers for standard patterns (map, await, filter, fold) or one-or-two-call helpers. Code lives in the stdlib/ tree (design/std1.md); forking is copy-paste.
 Base: start from origin/main AFTER the std1a restructure (stdlib/ tree), not the old flat lib/.
+
+**Resume note (after 20:22 restart):** Workspace `~/git/_wt/loft-std1e` already exists on `loft/std1e` with `stdlib/motion/{body,gait}.loft` and `scenes/showcase/` passing motion tests. Continue directly inside `~/git/_wt/loft-std1e`; do NOT delete or recreate the worktree.
