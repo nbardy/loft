@@ -3,16 +3,15 @@
 Run from the Loft checkout root with an available timestamp-capable adapter.
 
 ```sh
-CARGO_BUILD_JOBS=2 tools/dev.sh build loft-cli --fast --bin loft
-target/lab/loft controls --validate
-tools/gpu_lock.sh target/lab/loft controls --out out/meta/s1_controls
-tools/gpu_lock.sh target/lab/loft controls --only hermit_shade --mutant --out out/meta/s1_controls
+tools/check.sh parity --validate
+tools/check.sh parity --out out/meta/s1_controls
+tools/check.sh parity --only hermit_shade --mutant --out out/meta/s1_controls
 ```
 
 The mutant command is expected to exit 7 with a measured slowdown. Its Loft
 arm repeats every Shade dispatch before Present. Shrine's mutant repeats the
-entire primary Vis pass, including its clears. Use `--reverse` to collect
-B/A/A/B under a separate filename.
+entire primary Vis pass, including its clears. `--reverse` starts with
+B/A/A/B.
 
 | Fixture | Scene and replay | Candidate pass |
 | --- | --- | --- |
@@ -24,9 +23,11 @@ block begins with the native triangle control and 30 warmups. The timestamp
 ring reports the selected pass's begin-to-end span and the earliest-to-latest
 frame span. A triangle median over 0.35 ms invalidates the run. The bootstrap
 makes 4,096 circular resamples of 10 adjacent replay indices, shared across
-both repetitions of both arms. The CLI fails when the lower 95% bound exceeds
-1.05 and flags point estimates above 1.05. The report also gives the upper
-bound for callers applying the stricter release rule in bk1.
+both repetitions of both arms. The gate holds when output parity holds and the
+measurement is uncontended with an upper 95% bound of Loft/hand pass p95 at
+most 1.05. An uncontended lower bound above 1.05 exits 7. A crossing interval
+or contended run with matching output triggers one reversed-order measurement.
+A persistent crossing is inconclusive and exits 6.
 
 Parity uses the compiler's indexed cull on both arms to fix the order at
 equal-depth ties. Timed frames use the original compacting cull. Shrine's
@@ -39,9 +40,10 @@ The diagnostic Present writes exact ID, payload, and HDR half words through
 an RGBA8 linear attachment. The depth-only replay writes the fragment depth
 to the auxiliary word, or the interpolated raster depth for the shell.
 Examples, SHA-256 and exact difference counts are reported per attachment.
-Float ULP distance is measured in its stored format. RGBA8 and packed IDs
-are compared separately from float payloads. The FMA check scans the emitted
-WGSL and a Naga MSL translation for forbidden directives. The Metal run also
+Float ULP distance is measured in its stored format. ID, visibility payload,
+D32, and RGBA8 are exact. HDR is exact for Shrine. Hermit HDR allows one half
+ULP. The FMA check scans the emitted WGSL and a Naga MSL translation for
+forbidden directives. The Metal run also
 executes a buffer-fed contraction witness through wgpu's default Naga route.
 
 The fixture table in `crates/loft-cli/src/controls.rs` pins the paths, replay,

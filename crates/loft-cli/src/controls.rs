@@ -859,6 +859,12 @@ fn add_mutant(p: &mut Program, f: Fixture) {
     }
 }
 
+struct Measurement {
+    pass: Ratio,
+    contended: bool,
+    parity_held: bool,
+}
+
 fn execute(
     g: &Gpu,
     f: Fixture,
@@ -866,7 +872,7 @@ fn execute(
     reverse: bool,
     out: &Path,
     witness: u32,
-) -> Result<(), Failure> {
+) -> Result<Measurement, Failure> {
     let start = Instant::now();
     let mut a = program(f)?;
     let mut b = program(f)?;
@@ -879,8 +885,7 @@ fn execute(
     let bb = load(g, &b, Capture::Beauty)?;
     let parity = parity(g, f, mutant)?;
     let parity_held = parity.iter().all(|x| match x.name {
-        "hdr_rg" | "hdr_ba" | "depth32" => x.pixels_over_1_ulp == 0,
-        "visibility_aux" if f == Fixture::Shrine => x.pixels_over_1_ulp == 0,
+        "hdr_rg" | "hdr_ba" if f == Fixture::Hermit => x.pixels_over_1_ulp == 0,
         _ => x.pixels_different == 0,
     });
     let prefix = format!(
@@ -949,33 +954,73 @@ fn execute(
             ""
         }
     );
-    if contended {
-        return Err(Failure::Device(format!(
-            "{}{label}: triangle control exceeds {CONTENDED_MS:.2} ms",
-            f.name()
-        )));
+    Ok(Measurement {
+        pass,
+        contended,
+        parity_held,
+    })
+}
+
+fn score(
+    g: &Gpu,
+    f: Fixture,
+    mutant: bool,
+    reverse: bool,
+    out: &Path,
+    witness: u32,
+) -> Result<(), Failure> {
+    let label = if mutant { " mutant" } else { "" };
+    let name = f.name();
+    let mut measurement = execute(g, f, mutant, reverse, out, witness)?;
+    // Retest only a usable output comparison, and keep both launch orders in the evidence.
+    if measurement.parity_held
+        && (measurement.contended
+            || (measurement.pass.ci_low <= LIMIT && measurement.pass.ci_high > LIMIT))
+    {
+        println!("{name}{label}: repeating in reversed order");
+        measurement = execute(g, f, mutant, !reverse, out, witness)?;
     }
-    if slower {
-        return Err(Failure::Budget(format!(
-            "{}{label}: {:.3}x p95, lower 95% bound {:.3}x exceeds {LIMIT:.2}x",
-            f.name(),
-            pass.ratio,
-            pass.ci_low
-        )));
+    measurement.verdict(f, mutant)
+}
+
+impl Measurement {
+    fn verdict(self, fixture: Fixture, mutant: bool) -> Result<(), Failure> {
+        let name = fixture.name();
+        let label = if mutant { " mutant" } else { "" };
+        let Self {
+            pass,
+            contended,
+            parity_held,
+        } = self;
+        if contended {
+            return Err(Failure::Device(format!(
+                "{name}{label}: triangle control exceeds {CONTENDED_MS:.2} ms"
+            )));
+        }
+        if pass.ci_low > LIMIT {
+            return Err(Failure::Budget(format!(
+                "{name}{label}: {:.3}x p95, lower 95% bound {:.3}x exceeds {LIMIT:.2}x",
+                pass.ratio, pass.ci_low
+            )));
+        }
+        if !parity_held {
+            return Err(Failure::Parity(format!(
+                "{name}{label}: attachment parity failed"
+            )));
+        }
+        if pass.ci_high > LIMIT {
+            return Err(Failure::Device(format!(
+                "{name}{label}: inconclusive after both orders, 95% interval {:.3}x–{:.3}x crosses {LIMIT:.2}x",
+                pass.ci_low, pass.ci_high
+            )));
+        }
+        if mutant {
+            return Err(Failure::Truth(format!(
+                "{name}{label}: slowdown did not cross the threshold"
+            )));
+        }
+        Ok(())
     }
-    if !parity_held {
-        return Err(Failure::Parity(format!(
-            "{}{label}: attachment parity failed",
-            f.name()
-        )));
-    }
-    if mutant {
-        return Err(Failure::Truth(format!(
-            "{}{label}: slowdown did not cross the threshold",
-            f.name()
-        )));
-    }
-    Ok(())
 }
 
 pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure> {
@@ -1023,25 +1068,55 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
     std::fs::create_dir_all(out).map_err(|e| Failure::Usage(format!("{}: {e}", out.display())))?;
     let mut error = None;
     for &fixture in fixtures {
-        if let Err(e) = execute(&g, fixture, mutant, reverse, out, witness) {
-            eprintln!("{}", e.exit().1);
-            // Preserve the individual outcome in the reports and keep scoring the other fixture.
-            error.get_or_insert(fixture);
+        if let Err(e) = score(&g, fixture, mutant, reverse, out, witness) {
+            // A measured budget miss retains exit 7 when another fixture also fails.
+            if error.is_none() || matches!(e, Failure::Budget(_)) {
+                if let Some(previous) = error.replace(e) {
+                    eprintln!("{}", previous.exit().1);
+                }
+            } else {
+                eprintln!("{}", e.exit().1);
+            }
         }
     }
-    match error {
-        Some(fixture) => Err(Failure::Budget(format!(
-            "{}: control gate failed (see {})",
-            fixture.name(),
-            out.display()
-        ))),
-        None => Ok(()),
-    }
+    error.map_or(Ok(()), Err)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_conclusive_slowdown_uses_the_budget_exit() {
+        let verdict = |ci_low, ci_high, contended, parity_held| {
+            let ratio = (ci_low + ci_high) / 2.0;
+            Measurement {
+                pass: Ratio {
+                    loft: Quantiles {
+                        p50_ms: 1.0,
+                        p95_ms: ratio,
+                    },
+                    hand: Quantiles {
+                        p50_ms: 1.0,
+                        p95_ms: 1.0,
+                    },
+                    ratio,
+                    ci_low,
+                    ci_high,
+                },
+                contended,
+                parity_held,
+            }
+            .verdict(Fixture::Shrine, false)
+            .err()
+            .map(|e| e.exit().0)
+        };
+        assert_eq!(verdict(1.04, 1.05, false, true), None);
+        assert_eq!(verdict(1.04, 1.06, false, true), Some(6));
+        assert_eq!(verdict(1.06, 1.07, false, true), Some(7));
+        assert_eq!(verdict(1.06, 1.07, true, true), Some(6));
+        assert_eq!(verdict(1.04, 1.05, false, false), Some(3));
+    }
 
     #[test]
     fn bootstrap_resamples_replay_time_jointly_across_all_four_blocks() {

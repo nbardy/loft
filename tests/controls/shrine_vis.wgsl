@@ -25,16 +25,17 @@ fn shrine_vec(i: u32) -> vec3f {
     return vec3f(shrine_words[i], shrine_words[i + 1u], shrine_words[i + 2u]);
 }
 
+const PROXY_CORNERS = array(1u, 3u, 7u, 1u, 7u, 5u, 0u, 6u, 2u, 0u, 4u, 6u,
+    2u, 6u, 7u, 2u, 7u, 3u, 0u, 1u, 5u, 0u, 5u, 4u,
+    4u, 5u, 7u, 4u, 7u, 6u, 0u, 2u, 3u, 0u, 3u, 1u);
+
 fn proxy(vertex: u32, instance: u32, stride: u32) -> ProxyVertex {
-    const corners = array(1u, 3u, 7u, 1u, 7u, 5u, 0u, 6u, 2u, 0u, 4u, 6u,
-        2u, 6u, 7u, 2u, 7u, 3u, 0u, 1u, 5u, 0u, 5u, 4u,
-        4u, 5u, 7u, 4u, 7u, 6u, 0u, 2u, 3u, 0u, 3u, 1u);
     let row = shrine_visible[shrine_rows.base + instance];
     if row == 0xffffffffu {
         return ProxyVertex(vec4f(2, 2, 2, 1), vec3f(0), row);
     }
     let bounds = row * stride + stride - 7u;
-    let corner = vec3f(vec3u(corners[vertex]) >> vec3u(0, 1, 2) & vec3u(1));
+    let corner = proxy_corner(vertex);
     let world = mix(shrine_vec(bounds), shrine_vec(bounds + 3u), corner);
     return ProxyVertex(shrine_camera.projection * vec4f(world, 1), world, row);
 }
@@ -45,8 +46,37 @@ fn proxy(vertex: u32, instance: u32, stride: u32) -> ProxyVertex {
 @vertex fn lantern_proxy(@builtin(vertex_index) v: u32, @builtin(instance_index) i: u32) -> ProxyVertex {
     return proxy(v, i, 20u);
 }
+fn proxy_corner(vertex: u32) -> vec3f {
+    let c = PROXY_CORNERS[vertex];
+    return vec3f(f32(c & 1u), f32((c >> 1u) & 1u), f32((c >> 2u) & 1u));
+}
+
+struct Branch {
+    rotation: mat3x3f,
+    position: vec3f,
+    length: f32,
+    lo: vec3f,
+    hi: vec3f,
+}
+
+fn load_branch(index: u32) -> Branch {
+    let row = index * 21u;
+    return Branch(
+        mat3x3f(shrine_words[row + 0u], shrine_words[row + 1u], shrine_words[row + 2u],
+            shrine_words[row + 3u], shrine_words[row + 4u], shrine_words[row + 5u],
+            shrine_words[row + 6u], shrine_words[row + 7u], shrine_words[row + 8u]),
+        shrine_vec(row + 9u), shrine_words[row + 12u],
+        shrine_vec(row + 14u), shrine_vec(row + 17u));
+}
+
 @vertex fn branch_proxy(@builtin(vertex_index) v: u32, @builtin(instance_index) i: u32) -> ProxyVertex {
-    return proxy(v, i, 21u);
+    let index = shrine_visible[shrine_rows.base + i];
+    if index == 0xffffffffu {
+        return ProxyVertex(vec4f(2, 2, 2, 1), vec3f(0), index);
+    }
+    let branch = load_branch(index);
+    let world = mix(branch.lo, branch.hi, proxy_corner(v));
+    return ProxyVertex(shrine_camera.projection * vec4f(world, 1.0), world, index);
 }
 
 struct ShrineRay { origin: vec3f, dir: vec3f }
@@ -135,7 +165,9 @@ fn lantern_distance(p: vec3f, solid: bool) -> f32 {
     return primary_hit(ray, v.row, t);
 }
 
-const BRANCH_AXIS = vec3f(0, 0.8660254, 0.5);
+fn branch_axis() -> vec3f {
+    return vec3f(0, 0.8660254, 0.5) - vec3f(0, 0, 0);
+}
 const TAPER: f32 = 0.034375;
 
 fn in_cone(t: f32, lo: f32, hi: f32, y: f32, dy: f32) -> f32 {
@@ -149,13 +181,14 @@ fn cap(o: vec3f, d: vec3f, center: vec3f, radius: f32, end: f32, sign: f32) -> f
     let b = dot(relative, d);
     let h = b * b - dot(relative, relative) + radius * radius;
     if h < 0.0 { return -1.0; }
+    let axis = branch_axis();
     let root = sqrt(h);
     let near = shift - b - root;
-    if near >= 0.0 && sign * (dot(relative + d * (near - shift), BRANCH_AXIS) - end) >= 0.0 {
+    if near >= 0.0 && sign * (dot(relative + d * (near - shift), axis) - end) >= 0.0 {
         return near;
     }
     let far = shift - b + root;
-    if far >= 0.0 && sign * (dot(relative + d * (far - shift), BRANCH_AXIS) - end) >= 0.0 {
+    if far >= 0.0 && sign * (dot(relative + d * (far - shift), axis) - end) >= 0.0 {
         return far;
     }
     return -1.0;
@@ -168,8 +201,8 @@ fn nearest_hit(a: f32, b: f32) -> f32 {
 fn cone_and_caps(ro: vec3f, rd: vec3f, len: f32) -> f32 {
     let ra = 0.171875 * len;
     let rb = ra - TAPER * len;
-    let base = vec3f(0);
-    let axis = BRANCH_AXIS;
+    let base = vec3f(0, 0, 0);
+    let axis = branch_axis();
     let tip = base + axis * len;
     let shift = dot(base + axis * (len * 0.5) - ro, rd);
     let rebased = ro + rd * shift;
@@ -206,22 +239,38 @@ fn cone_and_caps(ro: vec3f, rd: vec3f, len: f32) -> f32 {
     return nearest_hit(side, nearest_hit(bottom, top));
 }
 
+// Keep the inverse translation separate from the point transform. Moving the
+// subtraction inside the matrix product changes the rebased cone roots and D32 ties.
+struct BranchInverse {
+    rotation: mat3x3f,
+    position: vec3f,
+}
+fn branch_inverse(branch: Branch) -> BranchInverse {
+    let rotation = transpose(branch.rotation);
+    return BranchInverse(rotation, -(rotation * branch.position));
+}
+fn branch_local_point(inverse: BranchInverse, p: vec3f) -> vec3f {
+    return inverse.rotation * p + inverse.position;
+}
+fn branch_local_vector(inverse: BranchInverse, v: vec3f) -> vec3f {
+    return inverse.rotation * v;
+}
+
 @fragment fn branch_hit(v: ProxyVertex) -> PrimaryHit {
     if shrine_camera.flags.x == 0xffffffffu { discard; }
-    let row = v.row * 21u;
+    let branch = load_branch(v.row);
     var ro = shrine_camera.eye.xyz;
     var rd = normalize(v.world - ro);
     // Keep the ray in the same arithmetic form for both view conventions.
     // The primary schedule supplies a perspective camera.
     if shrine_camera.flags.y == 1u {
         rd = shrine_camera.eye.xyz;
-        ro = v.world - rd * (2.0 * length(shrine_vec(row + 17u) - shrine_vec(row + 14u)) + 1.0);
+        ro = v.world - rd * (2.0 * length(branch.hi - branch.lo) + 1.0);
     }
-    let inverse = transpose(mat3x3f(shrine_vec(row), shrine_vec(row + 3u), shrine_vec(row + 6u)));
-    let offset = -(inverse * shrine_vec(row + 9u));
-    let origin = inverse * ro + offset;
-    let direction = inverse * rd;
-    let t = cone_and_caps(origin, direction, shrine_words[row + 12u]);
+    let inverse = branch_inverse(branch);
+    let origin = branch_local_point(inverse, ro);
+    let direction = branch_local_vector(inverse, rd);
+    let t = cone_and_caps(origin, direction, branch.length);
     if t < 0.0 { discard; }
     let clip = shrine_camera.projection * vec4f(ro + rd * t, 1.0);
     let depth = clip.z / clip.w;
