@@ -1,0 +1,39 @@
+use stdlib::geometry::layout::{grid_spot}
+use stdlib::geometry::growth::{growth_shoot}
+use stdlib::geometry::analytic::{ray_round_cone}
+use stdlib::frames::transport::{frame}
+use stdlib::sdf::solid::{round_cone}
+use stdlib::materials::bsdf::{ggx}
+use stdlib::engines::woodblock
+
+# Tapered growth: each seeded shoot emits two append-only rows.
+param bodies: u = 1 in 1..20
+param seed: u = 19
+param heading: rad = 0.2
+
+kind Branch @World (a: p3@World, b: p3@World, ra: m > 0, rb: m > 0, tint: rgb) {
+  trace(p) = round_cone(p, a, b, ra, rb)
+  visible(ro, rd) = ray_round_cone(ro, rd, a, b, ra, rb)
+  material(p, n) = ggx(tint, 0.76, 0)
+}
+
+build fn colony(at: p3@World, index: u, spread: rad) {
+  let side = place(at, spread) * [1, 0, 0]@World
+  let upright = dir([0, 1, 0]@World)
+  let site = frame(at, upright, dir(side - at))
+  build for j in 0..4 {
+    let root = growth_shoot(site, 1.1, seed + index, j, 4, 0)
+    let fork = growth_shoot(site, 1.1, seed + index, j, 4, 1)
+    let tip = growth_shoot(site, 1.1, seed + index, j, 4, 2)
+    let width = 0.11 + 0.025 * f32(j)
+    emit Branch(a: root, b: fork, ra: width, rb: 0.66 * width, tint: [0.32, 0.18, 0.14])
+    emit Branch(a: fork, b: tip, ra: 0.66 * width, rb: 0.29 * width, tint: [0.74, 0.31, 0.19])
+  }
+}
+build {
+  build for i in 0..bodies {
+    let spot = grid_spot(i, bodies, 2.0)
+    colony([spot.x, 0.20, spot.z]@World, i, heading)
+  }
+}
+camera Main { at: [0, 0.61, 0]@World, radius: 2.45 * sqrt(f32(bodies)), height: 0.44, period: 24s, fov: 41deg }

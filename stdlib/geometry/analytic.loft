@@ -82,3 +82,94 @@ pub fn capsule_chain[S](p: p3@S, a: p3@S, b: p3@S, c: p3@S, d: p3@S, r: v3) -> m
 
 pub fn ray_capsule_chain[S](p: p3@S, rd: d3@S, a: p3@S, b: p3@S, c: p3@S, d: p3@S, r: v3) -> f =
   hit_min(hit_min(ray_capsule(p, rd, a, b, r.x), ray_capsule(p, rd, b, c, r.y)), ray_capsule(p, rd, c, d, r.z))
+
+# Solve the sphere in its own rebased ray. axis/sign clip to the exposed
+# spherical cap (sign=0 leaves a whole ball). Include exits for inside rays.
+fn cone_cap[S](ro: p3@S, rd: d3@S, center: p3@S, axis: v3@S, radius: m, plane: m, side: f) -> f {
+  let from = ro - center
+  let shift = -dot(from, rd)
+  let close = from + rd * shift
+  let b = dot(close, rd)
+  let h = b * b - dot(close, close) + radius * radius
+  if h < 0 {
+    return -1
+  }
+  let g = sqrt(h)
+  let near = -b - g
+  if shift + near >= 0 && side * (dot(close + rd * near, axis) - plane) >= 0 {
+    return shift + near
+  }
+  let far = -b + g
+  if shift + far >= 0 && side * (dot(close + rd * far, axis) - plane) >= 0 {
+    return shift + far
+  }
+  -1
+}
+
+fn cone_side(t: f, shift: f, y: f, dy: f, lo: m, hi: m) -> f {
+  let axial = y + dy * t
+  if shift + t >= 0 && axial >= lo && axial <= hi {
+    return shift + t
+  }
+  -1
+}
+
+# First forward root against the hull of two balls, with a unit ray in S.
+# -1 is a miss, zero is on the surface, and an inside start returns the exit.
+# Endpoints may coincide and either radius may be zero.
+pub fn ray_round_cone[S](ro: p3@S, rd: d3@S, a: p3@S, b: p3@S, ra: m, rb: m) -> f {
+  let ba = b - a
+  let len = length(ba)
+  let delta = ra - rb
+  if len <= abs(delta) {
+    if delta >= 0 {
+      return cone_cap(ro, rd, a, ba, ra, 0, 0)
+    }
+    return cone_cap(ro, rd, b, ba, rb, 0, 0)
+  }
+
+  let axis = ba / len
+  let shift = dot(mix(a, b, 0.5) - ro, rd)
+  let v = ro - a + rd * shift
+  let y = dot(v, axis)
+  let dy = dot(rd, axis)
+  let radial = v - axis * y
+  let dr = rd - axis * dy
+  let s = delta / len
+  let c2 = (1 - s) * (1 + s)
+  let radius = ra - s * y
+  let qa = c2 * dot(dr, dr) - s * s * dy * dy
+  let qb = c2 * dot(radial, dr) + s * dy * radius
+  let r2 = c2 * dot(radial, radial)
+  let qc = r2 - radius * radius
+  let lo = ra * s
+  let hi = len + rb * s
+
+  var side = -1.0
+  if qa == 0 {
+    if qb != 0 {
+      side = cone_side(-qc / (2 * qb), shift, y, dy, lo, hi)
+    } else {
+      if qc == 0 {
+        side = cone_side(-shift, shift, y, dy, lo, hi)
+      }
+    }
+  } else {
+    let h = qb * qb - qa * qc
+    # Allow the f32 cancellation envelope at tangency. Use the product of
+    # roots for the smaller root, where subtracting sqrt(h) loses digits.
+    let tolerance = 0.00000024 * (qb * qb + abs(qa) * (r2 + radius * radius))
+    if h >= -tolerance {
+      let g = sqrt(max(0, h))
+      let q = -qb - select(g, -g, qb < 0)
+      if g == 0 {
+        side = cone_side(-qb / qa, shift, y, dy, lo, hi)
+      } else {
+        side = hit_min(cone_side(q / qa, shift, y, dy, lo, hi),
+                       cone_side(qc / q, shift, y, dy, lo, hi))
+      }
+    }
+  }
+  hit_min(side, hit_min(cone_cap(ro, rd, a, axis, ra, lo, -1),
+                        cone_cap(ro, rd, b, axis, rb, rb * s, 1)))
+}

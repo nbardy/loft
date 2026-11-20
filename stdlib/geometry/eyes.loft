@@ -1,0 +1,33 @@
+use stdlib::frames::transport::{frame}
+
+# Place an eye at the bent stalk tip and orient it toward the gaze. socket.t points along
+# the stalk, socket.n toward its lean and socket.b across it. Coincident
+# gaze uses the socket's normal. A tilted hinge is shared by both lids.
+pub build fn stalk_eye(socket: frame@World, length: m, radius: m, gaze: p3@World, slant: rad) -> frame@World {
+  let root = socket.o
+  let bend = root + socket.t * (0.55 * length) + socket.n * (0.08 * length)
+  let tip = root + socket.t * (0.91 * length) + socket.n * (0.27 * length)
+  let center = tip + dir(tip - bend) * (0.48 * radius)
+  let aim = gaze - center
+  var front = dir(socket.n)
+  if dot(aim, aim) > 1e-12 {
+    front = dir(aim)
+  }
+  let head = frame(center, front, dir(socket.t))
+  let c = cos(slant)
+  let s = sin(slant)
+  let up = dir(head.n * c - head.b * s)
+  let hinge = dir(head.b * c + head.n * s)
+  frame_axes(center, front, up, hinge)
+}
+
+# A spherical lune. eye.t faces gaze, eye.n is up, eye.b is the hinge.
+# sign=1 / -1 opens the upper / lower lid around the same hinge. The
+# camera-facing edge is at angle; the other edge extends behind the eye.
+pub fn lid_point[S](eye: frame@S, uv: v2, angle: rad, radius: m, side: f) -> p3@S {
+  let a = mix(-0.4, angle, uv.x)
+  # Reverse the lower chart so the winding keeps both normals outward.
+  let c = mix(0.06, 3.08159265, 0.5 + side * (uv.y - 0.5))
+  let ring = eye.n * (cos(a) * side) + eye.t * sin(a)
+  eye.o + (eye.b * cos(c) + ring * sin(c)) * radius
+}

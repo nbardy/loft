@@ -1,0 +1,27 @@
+# The typed increment keeps the full unsigned literal in the CPU twin.
+fn permute(word: u) -> u {
+  let increment: u = 2891336453
+  let state = word * 747796405 + increment
+  let mixed = xor(shr(state, shr(state, 28) + 4), state) * 277803737
+  xor(shr(mixed, 22), mixed)
+}
+
+# The legacy display/transport counter permutation. The five keys nest in
+# order dimension, bounce, sample, pixel y, pixel x. The high 24 bits map
+# exactly to [0,1). The separate std::rand ABI specifies Philox.
+pub fn sample_key(px: u, py: u, sample: u, bounce: u, dimension: u) -> f {
+  let word = permute(xor(px, permute(xor(py, permute(xor(sample, permute(xor(bounce, permute(dimension)))))))))
+  f32(shr(word, 8)) / 16777216.0
+}
+
+# Map two independent uniform samples in [0,1) to a cosine-weighted direction.
+# n is unit length in S; the auxiliary axis stays away from both poles.
+pub fn cosine_sample[S](n: n3@S, xi: v2) -> d3@S {
+  let c = [0, 0, 0]@S
+  let axis = [0, select(0.0, 1.0, abs(n.z) > 0.9), select(1.0, 0.0, abs(n.z) > 0.9)]@S - c
+  let tangent = normalize(cross(axis, n))
+  let bitangent = cross(n, tangent)
+  let phi = TAU * xi.y
+  let r = sqrt(xi.x)
+  dir(tangent * (r * cos(phi)) + bitangent * (r * sin(phi)) + n * sqrt(1 - xi.x))
+}

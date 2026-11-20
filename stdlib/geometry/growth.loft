@@ -1,0 +1,25 @@
+use stdlib::math::sampling::{sample_key}
+
+# One two-segment shoot from a seeded rosette, in its attachment frame.
+# station 0 is the root, 1 the fork, and 2 (or greater) the tip. Emit
+# the two spans in build order. count=0 produces no rows in the caller.
+# size is positive; at.t points along growth. Radii and material belong
+# to the consumer's row schema.
+pub build fn growth_shoot(at: frame@World, size: m, seed: u, shoot: u, count: u, station: u) -> p3@World {
+  let az = TAU * ((f32(shoot) + 0.36 * sample_key(seed, shoot, 0, 0, 0)) / f32(count))
+  let spread = at.n * cos(az) + at.b * sin(az)
+  let across = at.b * cos(az) - at.n * sin(az)
+  let lean = 0.38 + 0.46 * sample_key(seed, shoot, 0, 0, 1)
+  let bend = sample_key(seed, shoot, 0, 0, 2) - 0.5
+  let reach = size * (0.74 + 0.26 * sample_key(seed, shoot, 0, 0, 3))
+  let root = at.o + spread * (0.12 * size) - at.t * (0.08 * size)
+  let fork = root + dir(at.t + spread * lean) * (0.62 * reach)
+  let tip = fork + dir(at.t + spread * (lean + 0.55) + across * bend) * (0.51 * reach)
+  if station == 0 {
+    return root
+  }
+  if station == 1 {
+    return fork
+  }
+  tip
+}

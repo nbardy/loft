@@ -1,0 +1,18 @@
+use stdlib::frames::transport::{frame}
+
+# Raup coil: base.t is the axis, base.n starts the aperture radius, and
+# base.b is the direction of increasing angle. In [-turns*TAU, 0], radius
+# grows from apex to aperture for growth > 0. pitch is the apex's axial
+# offset in metres at zero radius. Use pitch=0 for a planispiral.
+# Returns an analytic tangent with outward normal as the section reference.
+pub fn coil_frame[S](base: frame@S, angle: rad, radius: m, growth: f, pitch: m) -> frame@S {
+  let scale = exp(growth * angle)
+  let ca = cos(angle)
+  let sa = sin(angle)
+  let radial = base.n * ca + base.b * sa
+  let azimuth = base.b * ca - base.n * sa
+  let center = base.o + radial * (radius * scale) + base.t * (pitch * (1 - scale))
+  # The positive scale cancels on normalizing the derivative.
+  let tangent = dir(azimuth * radius + (radial * radius - base.t * pitch) * growth)
+  frame(center, tangent, dir(radial))
+}

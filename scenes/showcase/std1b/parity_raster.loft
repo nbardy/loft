@@ -1,0 +1,17 @@
+use stdlib::materials::bsdf::{ggx}
+
+# Raster half of the fixed-camera sphere control. UV winds outward.
+kind Control @World () {
+  surface(u, v) grid 180x96 {
+    let angle = TAU * u
+    let latitude = 0.5 * TAU * (v - 0.5)
+    let ring = 0.83 * cos(latitude)
+    [ring * cos(angle), 0.84 + 0.83 * sin(latitude), -ring * sin(angle)]@World
+  }
+  material(p, n, uv) = ggx([0.29, 0.48, 0.49], 0.61, 0)
+}
+build {
+  emit Control()
+  emit Sun(dir: dir([-0.38, 0.72, 0.6]@World), color: [2.3, 2.1, 1.9])
+}
+camera Main { at: [0, 0.84, 0]@World, radius: 3.25, height: 0.32, period: 24s, fov: 36deg }
