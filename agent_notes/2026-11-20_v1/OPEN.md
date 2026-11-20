@@ -292,3 +292,16 @@ At 1280 × 800, the 300-frame Hermit-20 orbit measured **5.585 ms p95** and the 
 A scene author should be able to schedule one complete WGSL compute entry against a table they declare. On `fc7b5ed`, `loft render` rejects a valid custom schedule pass with E405 before loading the shader. The same module runs through `Runner::load_bundle_bytes`. Give the existing source `pass` a module path, entry, dispatch and binding-to-table map, then lower it in schedule order to the existing `ModuleBlob` and `PassRun::Compute`. Use the linked pass and explicit logical binding ranges for both CLI execution and .loftb replay. [CLI and runner probe](../../docs/proposals/2026-11-20_backends_and_escape_hatches.md#scientist-checks)
 
 **Acceptance.** From a clean checkout, `loft render` dispatches the authored `stamp` entry once with two zeroed u32s at group 2, binding 5. The GPU returns `[42, 0]` for `answer[0] = 40u + arrayLength(&answer)`. An exported and reloaded bundle returns the same words using a Loft-owned table. The current M4 runner returns `[43, 0]` on that allocation. A second control may replace Classify and all per-kind Shade dispatches with one full-screen launch. Verify the output and charge all dispatches, conversions and intermediate traffic to the whole-pass Speed comparison.
+
+## Integration and hand-off (20 Nov)
+
+Seven lanes, each with an acceptance test, in agent_notes/2026-11-20_v1/INTEGRATION_TODO.md:
+1. Three.js demo
+2. Unity Metal spike
+3. Lighting adapter
+4. glTF export with a loss report
+5. Material export as surface functions
+6. Motion CPU twin as a library
+7. Room Runners merge (owner)
+
+Items 1 and 2 come first.

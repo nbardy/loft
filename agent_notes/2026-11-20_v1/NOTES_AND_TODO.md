@@ -74,6 +74,7 @@ this file holds the reasoning behind them and the follow-ups that are not yet la
   release it.
 
 ## TODO (not yet lanes)
+- [ ] Integration and hand-off lanes: see INTEGRATION_TODO.md (Three.js demo first, then the Unity Metal spike).
 - [ ] bk1, then bk1b (the scientist's three checks), then send bk1 to the chief scientist for a second look at the
       emitted shaders.
 - [ ] Implement the "never slower than hand-written" gate (inner-loop control plus whole-pass control) per bk1.
