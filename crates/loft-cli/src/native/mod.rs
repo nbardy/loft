@@ -330,6 +330,7 @@ impl Loaded {
             }
         }
 
+        let resource_started = Instant::now();
         let stages = runner.load_stage_count(id).map_err(runner_error)?;
         if stages != 0 {
             let clock = g.timestamps.then(|| Clock::new(g, stages * 2));
@@ -370,6 +371,7 @@ impl Loaded {
         }).collect();
         let frame_table = plan.bundle.resources.frame.as_ref().ok_or("missing frame declaration")?.main;
         let instance_bounds = runner.export_buffer(id, plan.instances).ok_or("missing bounds table")?.as_ref().clone();
+        stats.resources_ms = resource_started.elapsed().as_secs_f64() * 1e3;
         Ok(Self { size, camera: p.camera, sun: p.sun, light_view: plan.shadow.map(|(lo, hi, side)| sun_camera(p.sun, lo, hi, side)),
             frame_table, runner: Mutex::new(runner), id, modules: plan.modules, kind_tables,
             twin_sources: p.kinds.iter().map(|k| p.modules[k.module].naga.clone()).collect(),

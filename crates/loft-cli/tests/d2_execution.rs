@@ -238,7 +238,12 @@ fn archive_frames() {
         let text = fs::read_to_string(&scene).unwrap();
         for count in [1, 20] {
             let (p, checked) = compile(&scene, &text, &[("count".into(), f64::from(count))]);
-            let b = lower(&p, &checked, size);
+            let light = std::cell::Cell::new(None);
+            let b = loft_passes::bundle::lower(&p, &checked, size, |sun, alternate| {
+                light.set(alternate.map(|(lo, hi, side)| native::sun_camera(p.sun, lo, hi, side)));
+                native::frame_bytes(p.camera, p.sun, size, 0., sun, light.get())
+            }).unwrap();
+            let frame = b.resources.frame.as_ref().unwrap();
             let bytes = loft_runner::bundle::encode(&b);
             assert_eq!(loft_runner::bundle::encode(&loft_runner::bundle::decode(&bytes).unwrap()), bytes);
             let mut r = host(&d, &q);
@@ -248,11 +253,20 @@ fn archive_frames() {
             for t in [0, 4, 9] {
                 let prefix = format!("{family}-{count}_t{t}");
                 let native_commands = loaded.frame(&g, t as f32);
-                let archive_commands = draw(&mut r, id, &d, &q, &target, f64::from(t));
+                let uniform = |table| {
+                    let mut bytes = native::frame_bytes(p.camera, p.sun, size, t as f32, table != frame.main, light.get());
+                    bytes[188..192].copy_from_slice(&1_u32.to_le_bytes());
+                    bytes
+                };
+                let mut enc = d.create_command_encoder(&Default::default());
+                let options = FrameOptions { uniform: Some(&uniform), ..Default::default() };
+                let archive_commands = r.encode_frame(id, &mut enc, &target.create_view(&Default::default()), f64::from(t), options).unwrap().commands;
+                q.submit([enc.finish()]);
                 let archive = read_texture(&d, &q, &target, 0).unwrap();
                 let native = loaded.pixels(&g).unwrap();
                 fs::write(out.join(format!("{prefix}.native.rgba")), &native).unwrap();
                 fs::write(out.join(format!("{prefix}.archive.rgba")), &archive).unwrap();
+                assert!(archive == native, "{prefix}: native and archive pixels differ with the same host camera");
                 let hp = r.export_texture(id, hdr.table).unwrap();
                 let words = read_texture(&d, &q, &hp, 0).unwrap();
                 let center = 8 * (400 * 1280 + 640);

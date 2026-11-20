@@ -8,6 +8,12 @@ use wgpu::*;
 pub struct Pipelines(HashMap<(Dimension, TextureFormat, Option<[u32; 3]>), ComputePipeline>);
 pub struct Mips(Vec<(Pass, Option<Packed>)>);
 
+enum Packing {
+    Unorm8,
+    HalfNearest,
+    HalfTowardZero,
+}
+
 pub(super) struct Packed {
     pub buffer: Arc<Buffer>,
     texture: Texture,
@@ -15,14 +21,16 @@ pub(super) struct Packed {
     level: u32,
     pitch: u32,
     dim: Dimension,
+    packing: Packing,
 }
 impl Packed {
     pub fn new(device: &Device, texture: &Texture, dim: Dimension, level: u32) -> Result<Self> {
         let [width, height, depth_or_array_layers] = dim.extent(
             [texture.width(), texture.height(), texture.depth_or_array_layers()], level);
-        let bytes = match texture.format() {
-            TextureFormat::R8Unorm => 1,
-            TextureFormat::R16Float => 2,
+        let (bytes, packing) = match (texture.format(), device.adapter_info().backend) {
+            (TextureFormat::R8Unorm, _) => (1, Packing::Unorm8),
+            (TextureFormat::R16Float, Backend::Metal) => (2, Packing::HalfTowardZero),
+            (TextureFormat::R16Float, _) => (2, Packing::HalfNearest),
             _ => return Err(RunnerError::Unsupported("packed bake format")),
         };
         let pitch = width.checked_mul(bytes).and_then(|r| r.checked_next_multiple_of(COPY_BYTES_PER_ROW_ALIGNMENT))
@@ -32,7 +40,7 @@ impl Packed {
         if size > limits.max_buffer_size.min(limits.max_storage_buffer_binding_size) { return Err(RunnerError::Capacity); }
         Ok(Self {
             buffer: super::allocate(device, size, BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::COPY_DST),
-            texture: texture.clone(), extent: Extent3d { width, height, depth_or_array_layers }, level, pitch, dim,
+            texture: texture.clone(), extent: Extent3d { width, height, depth_or_array_layers }, level, pitch, dim, packing,
         })
     }
 
@@ -42,10 +50,15 @@ impl Packed {
             Dimension::Cube => ("p: vec2i, face: i32", "u32(face)", format!("vec2u({}u, {}u)", self.extent.width, self.extent.height)),
             Dimension::D3 => ("p: vec3i", "u32(p.z)", format!("vec3u({}u, {}u, {}u)", self.extent.width, self.extent.height, self.extent.depth_or_array_layers)),
         };
-        let (per_word, mask, value) = match self.texture.format() {
-            TextureFormat::R8Unorm => (4, 255, "pack4x8unorm(vec4f(v.x, 0.0, 0.0, 0.0))"),
-            TextureFormat::R16Float => (2, 65535, "pack2x16float(vec2f(v.x, 0.0))"),
-            _ => return Err(RunnerError::Unsupported("packed bake format")),
+        let (per_word, value) = match self.packing {
+            Packing::Unorm8 => (4, "let bits = pack4x8unorm(vec4f(v.x, 0.0, 0.0, 0.0));"),
+            Packing::HalfNearest => (2, "let bits = pack2x16float(vec2f(v.x, 0.0)) & 65535u;"),
+            // Metal's R16Float texture store truncates the magnitude. The pack builtin
+            // rounds to nearest, so move one half step toward zero if it rounded away.
+            Packing::HalfTowardZero => (2, "
+  let nearest = pack2x16float(vec2f(v.x, 0.0)) & 65535u;
+  let rounded = unpack2x16float(nearest).x;
+  let bits = nearest - select(0u, 1u, abs(rounded) > abs(v.x));"),
         };
         let declaration = format!("var {target}: texture_storage_");
         let begin = source.find(&declaration).ok_or(RunnerError::AbiMismatch)?;
@@ -63,7 +76,8 @@ impl Packed {
 fn loft_pack({args}, v: vec4f) {{
   let x = u32(p.x);
   let i = ({layer} * {h}u + u32(p.y)) * {row}u + x / {per_word}u;
-  atomicOr(&loft_packed[i], ({value} & {mask}u) << ((x % {per_word}u) * {bits}u));
+  {value}
+  atomicOr(&loft_packed[i], bits << ((x % {per_word}u) * {bits}u));
 }}
 ");
         let calls = source[end..].replace(&store, "loft_pack(")
