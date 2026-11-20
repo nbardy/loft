@@ -1,0 +1,5 @@
+Implemented PBR’s swappable `occlusion` slot. The default takes four normal taps plus a hit-distance reference on traced fields. Meshes, copies and custom tracers use the named `unoccluded` fallback. The groove lost **23.2%** display luma at 256×256. The flat face and direct-only control matched exactly. At 512×512, AO added **0.066 ms** median and zero GPU buffer bytes.
+
+Host inputs and `vec3` time expressions now drive the nine RGB sky coefficients. The rough disc shifted from **(115, 55, 18)** to **(20, 49, 119)**. Projection typically took **0.328 ms** and added **160 bytes** of frame storage.
+
+Typecheck, nine PBR tests, both example checks and builds, and the artefact render comparison passed. The isolated pipeline sweep passed in **85 seconds**. Full-suite verification remains pending after two SIGTERM exits. The shared Mac test lock now reserves execution for the suite owner. [Measurements and WebP stills](/Users/nicholasbardy/git/_wt/loft-pbrsky/agent_notes/2026-11-18_pbrsky/NOTE.md)

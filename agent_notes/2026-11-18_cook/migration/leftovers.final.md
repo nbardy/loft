@@ -1,0 +1,25 @@
+- `v1/train-0/0` — Ported with batched strand draws. Four archived frames reviewed. [Ledger](/Users/nicholasbardy/git/_wt/creative-loft-migrate/out/port/v1/sol.jsonl)
+- `v1/train-1/0` — Ported. Four archived frames reviewed.
+- `v1/train-1/1` — Ported with the archived woodblock water treatment restored. Four frames reviewed.
+- `v1/train-1/2` — Ported within the 50 ms draw limit. Four archived frames reviewed.
+- `v1/train-1/3` — Ported. Four archived frames reviewed.
+- `v1/train-10/0` — Ported with batched strand draws. Four archived frames reviewed.
+- `v1/train-10/1` — Ported. Four archived frames reviewed.
+- `v1/train-10/2` — Ported. Four archived frames reviewed.
+- `v1/train-11/0` — Ported. Four archived frames reviewed.
+- `v1/train-11/1` — Ported. Four archived frames reviewed.
+- `v1/train-12/0` — Ported. Four archived frames reviewed.
+- `v1/train-12/1` — Ported. Four archived frames reviewed.
+- `v1/train-12/2` — Ported. Four archived frames reviewed.
+- `v1/train-13/0` — Ported. Four archived frames reviewed.
+- `v1/train-13/1` — Ported with stationary strand poses precomputed. Four archived frames reviewed.
+- `v1/train-13/2` — Ported. Four archived frames reviewed.
+- `v1/train-14/0` — Ported. Four archived frames reviewed.
+- `v1/train-14/1` — Ported. Four archived frames reviewed.
+- `v1/train-14/2` — Ported with shared strand vertex evaluation. Four archived frames reviewed.
+- `v1/train-14/3` — Ported. Four archived frames reviewed.
+- `v1/train-15/0` — Ported with batched strand draws. Four archived frames reviewed.
+- `v1/train-15/1` — Ported with batched strand draws. Four frames reviewed, with minor glow differences.
+- `v1/train-15/2` — Ported. Four archived frames reviewed.
+- `v1/train-15/3` — Ported. Four archived frames reviewed.
+- `v1/train-16/0` — Ported with the archived woodblock water pattern restored. Four frames reviewed.

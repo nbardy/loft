@@ -1,0 +1,7 @@
+Committed the 4,951-word [Rust Loft proposal](/Users/nicholasbardy/git/_wt/loft-rust-core/docs/proposals/2026-11-19_rust_loft.md) as `97bc1eb` on `feat/rust-core`. The commit contains only the proposal. All 288 tests passed.
+
+The design keeps the TypeScript scene API and `wgsl` template. Styles, surfaces, loops, and table callbacks record symbolic bodies into typed arrays. Rust owns interning, folding, lowering, WGSL emission, table layout, the CPU twin, checks, `solve`, and artefact writing. Bun FFI submits each closed program in one native execution. A synchronous `solve()` or explicit numeric read is a separate program so author code can consume the result immediately.
+
+The first lane makes WGSL names independent of creation order, enabling bytecode bundles and warm-worker experiments. After that baseline change, every lane must reproduce all 63 successful builds byte for byte and match the 61 existing failure outcomes. The headless `loft serve` worker moves to wgpu 30 through the game loader once it passes validation and rendering gates.
+
+Projected cold-build CPU times are **83 ms for Owl, 365 ms for Titan, and 204 ms for heron**. Estimated peak RSS is **75–101, 161–187, and 110–136 MiB**, respectively. These projections depend on recorder volume and rest-sample reuse. The proposal specifies how to measure both.
