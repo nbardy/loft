@@ -1,0 +1,15 @@
+--- a/src/metal/device.rs
++++ b/src/metal/device.rs
+@@ -279,0 +280,12 @@
++                // Scratch experiment, recorded before the Metal compiler sees this entry.
++                if std::env::var_os("LOFT_PROBE_SAFE").is_some() {
++                    options.setMathMode(objc2_metal::MTLMathMode::Safe);
++                }
++                if let Some(dest) = std::env::var_os("LOFT_PROBE_MSL") {
++                    use std::hash::{DefaultHasher, Hash, Hasher};
++                    let mut hash = DefaultHasher::new();
++                    source.hash(&mut hash);
++                    let name = format!("{}-{:016x}.metal", stage.entry_point, hash.finish());
++                    std::fs::write(std::path::Path::new(&dest).join(&name), &source).unwrap();
++                    eprintln!("msl {name} mode={} invariance={}", options.mathMode().0, options.preserveInvariance());
++                }

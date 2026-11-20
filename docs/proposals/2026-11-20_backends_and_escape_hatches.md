@@ -142,3 +142,152 @@ Use a paired block bootstrap across corresponding replay times, keeping adjacent
 | Backend codegen, pipeline readiness and editing | wgpu's safe pipeline can insert bounds handling, workgroup initialization and loop protection. Its public encoder lacks Metal tile functions and ICB authoring. Pipeline compilation normally occurs at load, but a first use, edit, cache miss or promotion can enter the interactive path. Tier 0 actually interprets a dirty kind before specialization. An isolated promotion test measured 0.667 ms against a 0.500 ms budget. | Give trusted native variants explicit layouts and bounds contracts. Prewarm pipelines, measure cold/warm load and first-frame stalls separately, and expose promotion state and Tier 0 timing. Isolate native-only scheduling behind the measured backend decision above. [Metal codegen options](https://github.com/gfx-rs/wgpu/blob/40f4a34ebaf56f9a046231f54125ad046239d3f3/wgpu-hal/src/metal/device.rs#L183-L232) · [Tier 0 measurements](../../agent_notes/2026-11-20_v1/OPEN.md) |
 
 Loft is a light transpiler for the measured shading expression, and a substantial compiler for staging, geometry, motion and frame construction. A ceiling exists wherever a faster implementation requires changing the Rust emitter or leaving the pass API. The deliverable that would change that answer is a scene author replacing a whole hot pass, timing it against Loft's default and shipping the faster version with the same resource contract. Most of that work can ship on wgpu. Direct Metal earns its place where the faster implementation needs a different encoder.
+
+## Scientist checks
+
+### 1. Where contraction is allowed
+
+**Shading retains Metal's fast math. Main also permits contraction in ordinary motion arithmetic.** The proposed D2 binary32 fix has not landed. On `fc7b5ed` I compiled Hermit-20 and added just the law below plus `schedule Main { run_laws(pulse) }` to a copy. The shell material already calls `wave`. All eight original WGSL modules compared byte-for-byte equal. The ninth, `CrabFace.advance`, dispatched the law over 20 rows with a 64-wide workgroup. In a separate control, an unmarked raw sine helper built in the material and raised E504 as soon as the law called it. [Hermit](../../engines/hermit.loft) · [Compiler module assembly](../../crates/loft-passes/src/lib.rs) · [E504 check](../../crates/loft-passes/src/check.rs)
+
+```loft
+law pulse(h: CrabFace, dt) writes h.{aggro} { h.aggro = h.aggro + dt * wave(h.aggro) }
+```
+
+These excerpts pair `loft show` WGSL with the Naga 30.0.1 MSL captured immediately before wgpu-hal compiled each library. In Hermit's `CrusherClaw.fs`, the loop takes up to 192 distance samples. In `CrusherClaw.shade`, the 14-direction lighting loop evaluates the prepared BSDF.
+
+```wgsl
+// fs, inside the march
+let d = q_trace(row, lro + lrd * t);
+if d < 1e-4 + 2e-4 * t { hit = true; break; }
+t += d * step;
+
+// shade, GGX denominator and lighting-loop accumulator
+let loft_local_q: f32 = ((1.0 - (loft_local_nh * loft_local_nh)) + ((loft_local_nh * loft_local_nh) * loft_local_a2));
+loft_local_c = (loft_local_c + (loft_eval_prepared(loft_local_b, loft_local_n, loft_local_v, loft_local_l, loft_lighting) * loft_local_e));
+```
+
+```metal
+// fs
+float _e69 = q_trace(_e8, _e49 + (_e51 * _e66));
+float _e70 = t;
+if (_e69 < (0.0001 + (0.0002 * _e70))) {
+    hit = true;
+    break;
+}
+float _e77 = t;
+t = _e77 + (_e69 * step);
+
+// shade
+float loft_local_q = (1.0 - (loft_local_nh * loft_local_nh)) + ((loft_local_nh * loft_local_nh) * loft_local_a2_);
+loft_local_c = _e42 + (_e44 * _e45);
+```
+
+The shell and law each get their own copy of `wave`. The excerpts below are from the two helpers, the range reduction in `det_sin`, and the law store.
+
+```wgsl
+return (0.5 + (0.5 * sin(loft_local_a)));
+return (0.5 + (0.5 * det_sin(loft_local_a)));
+let r = fma(-floor(a / tau + 0.5), tau, a);
+loft_local_h.r_aggro = (loft_local_h.r_aggro + (loft_local_dt * motion_loft_user_wave(loft_local_h.r_aggro)));
+```
+
+```metal
+return 0.5 + (0.5 * metal::sin(loft_local_a));
+float _e1 = det_sin(loft_local_a);
+return 0.5 + (0.5 * _e1);
+float r_2 = metal::fma(-(metal::floor((a_4 / 6.2831855) + 0.5)), 6.2831855, a_4);
+float _e8 = motion_loft_user_wave(_e7);
+loft_local_h.r_aggro = _e5 + (loft_local_dt * _e8);
+```
+
+**Did Metal actually contract?** I rendered a 64×64 sphere whose material reads the row values `a=1+2⁻²³`, `b=1−2⁻²³`, `c=−1`. It selects green for the fused result `−2⁻⁴⁶` (bits `a8800000`) and red for the separately rounded zero. Ordinary `a*b+c` matched explicit `fma(a,b,c)` on all 4,096 pixels. Forcing the product through a runtime integer identity changed 1,804 pixels, including the centre from green to red. This proves contraction occurs on this shading path. The MSL for the march and BSDF establishes eligibility at those sites. Disassembly would be needed to count the instructions there. [Material probe](../../agent_notes/2026-11-20_v1/bk1/witness-mad.loft) · [Full WGSL, captured MSL and witness images](../../agent_notes/2026-11-20_v1/bk1/capture.tar.gz)
+
+`Emitter::new` starts with `motion=false`. Only the row-law and solver emitters enable it and append `DET_WGSL`. The motion call emitter substitutes six fixed transcendentals. Ordinary multiply/add still takes the common operator path. On the archived Crab tick-2 readback, CPU/Metal produced `3c162fca/3c162fcb`. Explicit FMA gave `3c162fcb` on both, and a forced intermediate rounding gave `3c162fca` on both. The Metal HAL compiles each selected entry with `setPreserveInvariance(true)` and leaves its math mode at the language default. At compile time both `shade` and `advance` reported Metal 3.2, Fast (2), with invariance enabled. [Emitter](../../crates/loft-passes/src/emit.rs) · [Law](../../crates/loft-passes/src/motion.rs) · [Solver](../../crates/loft-passes/src/solver.rs) · [Three-way readbacks](../../agent_notes/2026-11-20_v1/design/d2.md) · [Pinned Metal compilation](https://github.com/gfx-rs/wgpu/blob/40f4a34ebaf56f9a046231f54125ad046239d3f3/wgpu-hal/src/metal/device.rs#L257-L286)
+
+**D2 scoping rule.** Root strict lowering at the scheduled fixed-tick entry. Follow the operations that compute state, pose, check verdicts and events, including helpers, raw dependencies and prior interpolation. D2 proposes u32 significand operations in portable WGSL. Round each ordinary binary32 operation and round explicit FMA once in both twins. A native substitute must also reproduce subnormal, signed-zero and exceptional results. D2a calls `det_check::lower` only on the completed motion and solver modules, where its walk starts at entry zero. Preserve that single-entry boundary. A rewrite in shared `naga_module`, an in-place rewrite of a helper shared with a draw, or a device-wide Safe option would reach rendering. Specialize shared helpers by entry and math mode, and key compiled libraries accordingly. Shade is itself a compute entry. Its stage kind cannot select motion semantics. [D2a verifier](https://github.com/nbardy/loft/blob/71b0be06235d4b1fc68e9782b75245a27009ca5a/crates/loft-passes/src/det_check.rs#L481-L558) · [D2a integration status](../../agent_notes/2026-11-20_v1/OPEN.md#d2-integration-on-20-november)
+
+**Frame cost on Apple M4.** I changed only `MTLCompileOptions.mathMode` at wgpu-hal's Naga library compile. A used its observed Fast default, B used Safe. All shader hashes, frame inputs and command counts matched. Each locked 1280×800 ring-timestamp block had 30 warmups. Frame time spans the earliest pass start to the latest pass end. The reported cost is the mean Safe block p95 minus the mean Fast block p95.
+
+| Scene | Frames per block | Fast A1 | Safe B1 | Safe B2 | Fast A2 | Safe frame cost |
+|---|---:|---:|---:|---:|---:|---:|
+| Hermit-20 orbit, 17 commands | 300 | 5.481 ms | 10.244 ms | 10.457 ms | 5.859 ms | **+4.680 ms (+83%)** |
+| Coral Shrine, radius 6.4 m, t=0, 12 commands | 100 | 3.920 ms | 4.388 ms | 4.969 ms | 3.842 ms | **+0.797 ms (+21%)** |
+
+Triangle medians ranged from 0.029 to 0.096 ms, all below the 0.35 ms contention cutoff. At t=0 Safe changed 46,604 Hermit pixels and 2,192 Shrine pixels. Safe changes several optimizer permissions and still gave the fused colour in the material probe. It cannot implement D2's required rounding by itself. The narrower PF1 experiment prefixed **Shade only** with `#pragma METAL fp contract(off)`. Its two order-specific frame-p95 costs were +1.450/+0.274 ms for Hermit and +0.717/−1.028 ms for Shrine. The latter changes sign with order. A uniform 10–15% penalty is unsupported, and neither experiment prices software binary32 in a march. [Capture and math-mode patch](../../agent_notes/2026-11-20_v1/bk1/capture.patch) · [Raw timestamps and RGBA comparisons](../../agent_notes/2026-11-20_v1/bk1/capture.tar.gz) · [Shade-only experiment](../../agent_notes/2026-11-20_v1/design/pf1.md) · [Metal math modes](https://developer.apple.com/documentation/metal/mtlmathmode)
+
+### 2. Generate the Metal signature from the linked pass
+
+On wgpu, wgpu-hal and Naga **30.0.1**, the flat index belongs to a **stage of a pipeline layout**. `PassDecl.bindings` supplies logical group, slot, access and table ID. The generator also needs the fixed group 0 layout and the resolved resource type, array count and stage visibility. Use the same linked layout that creates the wgpu pipeline. For an MSL-only entry, obtain those types and stage uses from its typed resource parameters and table/texture declarations. Generate the `kernel`, `vertex` or `fragment` signature, built-ins, stage inputs/outputs, address spaces, texture access and attributes around the author's body. Supply the compute workgroup size in the passthrough descriptor. [Loft slot schema](../../crates/loft-ir/src/schema.rs) · [Reflection and visibility](../../crates/loft-std/src/bindings.rs) · [Runner pipeline layout](../../crates/loft-runner/src/encode.rs)
+
+1. For each stage, start buffer, texture and sampler counters at zero. Nonzero pipeline immediates take the first buffer slot. Loft currently sets `immediate_size=0`. Walk groups in ascending order and entries in ascending binding order, including visible layout entries unused by this particular entry. Skip entries invisible to the stage. Loft's fixed frame, inputs and params consume buffers 0–2 in the bundle runner.
+2. Uniform/storage buffers consume one buffer slot, sampled/storage textures one texture slot, and samplers one sampler slot. A binding array (`entry.count`) consumes one **argument-buffer** slot, including a texture array. Reject resource classes the Loft linker cannot represent. On a pin change, compare the generated attributes against the new HAL and rerun the sparse-slot and subrange probes. Validate limits and regenerate on layout, stage or backend-version changes. A precompiled metallib must match the generated interface.
+3. After all groups the HAL reserves the next buffer slot for every stage with visible storage buffers, and unconditionally in the vertex stage to support vertex pulling. On the Naga path `_mslBufferSizes` contains u32 **bound byte lengths** in specialized module global-variable order, expanding binding-array elements in order, followed by mapped vertex-buffer lengths. There is one Metal buffer attribute for this table. Field ordinals and Metal resource indices are independent. Use the logical range after offset, and account for the runtime array's member offset, element size and stride. [wgpu-core ordering](https://github.com/gfx-rs/wgpu/blob/40f4a34ebaf56f9a046231f54125ad046239d3f3/wgpu-core/src/device/bgl.rs#L58-L85) · [Metal slot allocation](https://github.com/gfx-rs/wgpu/blob/40f4a34ebaf56f9a046231f54125ad046239d3f3/wgpu-hal/src/metal/device.rs#L796-L967) · [Naga field layout](https://github.com/gfx-rs/wgpu/blob/40f4a34ebaf56f9a046231f54125ad046239d3f3/naga/src/back/msl/writer.rs#L4599-L4651)
+
+**Raw MSL needs Loft to supply the lengths.** Both Metal passthrough stage-construction paths set `sized_bindings: vec![]`. For compute, the encoder's size update is empty and it skips the upload to the reserved slot. In the captured Naga `advance` signature, `rows [[buffer(4)]]` and `loft_advance_args [[buffer(3)]]` are followed by `constant _mslBufferSizes& _buffer_sizes [[buffer(5)]]`. Copying the last parameter into raw compute MSL would read an unbound slot. Where a raw entry needs runtime lengths, add one compiler-owned read-only sizes table at a free group 1 binding before deriving Metal indices. Assign one u32 byte count per runtime binding in logical (group, slot, element) order. Generate the MSL field access and host upload from that same order and the explicit bound ranges. Refresh the table and bindings together on a rebind or resize. Bind it as a normal resource on both MSL text and metallib paths. [Passthrough render stages](https://github.com/gfx-rs/wgpu/blob/40f4a34ebaf56f9a046231f54125ad046239d3f3/wgpu-hal/src/metal/device.rs#L382-L398) · [Passthrough compute](https://github.com/gfx-rs/wgpu/blob/40f4a34ebaf56f9a046231f54125ad046239d3f3/wgpu-hal/src/metal/device.rs#L1809-L1826) · [Encoder upload rule](https://github.com/gfx-rs/wgpu/blob/40f4a34ebaf56f9a046231f54125ad046239d3f3/wgpu-hal/src/metal/command.rs#L443-L473)
+
+A locked M4 passthrough probe generated this signature from the layout. Group 1 slot 7 held the view length, group 2 slot 5 the writable words, and group 3 slot 9 a 40-pixel-wide texture. Metal reserved buffer 5. The shader reads the length from the bound table at buffer 3.
+
+```metal
+kernel void stamp(device const uint& bytes [[buffer(3)]],
+                  device uint* answer [[buffer(4)]],
+                  texture2d<uint, access::read> img [[texture(0)]]) {
+    answer[0] = img.get_width() + bytes/4u;
+}
+```
+
+At byte offset 256 of one 512-byte allocation, WGSL `arrayLength` and raw MSL both returned **42** with an eight-byte view and **41** with a four-byte view. Authors name resources. The linker owns every Metal index. [Executable binding probe](../../agent_notes/2026-11-20_v1/bk1/slots.rs)
+
+### 3. A full WGSL pass from a scene
+
+**The source CLI stops before dispatch.** I used this entire Naga-valid module and a two-u32 zeroed table. Its expected readback after one workgroup is `[42, 0]`.
+
+```wgsl
+@group(2) @binding(5) var<storage, read_write> answer: array<u32>;
+
+@compute @workgroup_size(1)
+fn stamp() {
+    answer[0] = 40u + arrayLength(&answer);
+}
+```
+
+`loft render stamp.wgsl --size 1x1 --out raw.webp` exited 1 with E404 at the first `@`. In a copy of Capsules I inserted `pass stamp reads [] writes [Answer] { dispatch("stamp.wgsl", "stamp", 1) }` before tonemapping. Rendering the scene exited 1 with **E405, “custom entry is outside this phase’s renderer”**. The parser accepts the explicit pass body as a block. Lowering checks read availability and returns E405 unconditionally before resolving the body or opening the file. The CLI’s lowered render plan enumerates Cull, Vis, Shadow, Classify, Shade and Present. Its separate fixed-tick dispatch list binds motion resources. [Native plan](../../crates/loft-passes/src/program.rs) · [Parser](../../crates/loft-parse/src/parser.rs) · [Schedule lowering](../../crates/loft-passes/src/lib.rs) · [Probe inputs and CLI output](../../agent_notes/2026-11-20_v1/bk1/capture.tar.gz)
+
+**Positive control and a range bug.** On the M4 the same shader ran after a host encoded and reloaded a 619-byte bundle with `PassRun::Compute`, fixed dispatch `[1,1,1]`, and table 11 at (2,5). An eight-byte host storage buffer returned `[42, 0]`. The runner's own eight-byte table returned **`[43, 0]`**. It allocates with `VERTEX`, wgpu-core pads 8 to 12 physical bytes, and `as_entire_binding()` leaves the binding size unspecified. The Metal HAL then uses the remaining allocation length. Pass the explicit logical byte length on both shader paths. [Bundle readback probe](../../agent_notes/2026-11-20_v1/bk1/runner.rs) · [WGSL module](../../agent_notes/2026-11-20_v1/bk1/stamp.wgsl) · [Allocator](../../crates/loft-runner/src/lib.rs) · [Binding](../../crates/loft-std/src/interop.rs) · [wgpu-core padding](https://github.com/gfx-rs/wgpu/blob/40f4a34ebaf56f9a046231f54125ad046239d3f3/wgpu-core/src/device/resource.rs#L1081-L1100) · [HAL bound length](https://github.com/gfx-rs/wgpu/blob/40f4a34ebaf56f9a046231f54125ad046239d3f3/wgpu-hal/src/metal/device.rs#L1175-L1185)
+
+**Smallest source change.** Extend the explicit compute pass with one complete WGSL module, entry, dispatch and logical binding-to-table map. For a new output, give the table an element type, capacity and initial value (here, two zeroed u32s). Resolve the module relative to the scene, validate with Naga and reflect the selected entry, check the concrete resources and access against its declarations, then emit existing `ModuleBlob`, `TableDecl` and `PassRun::Compute` records. Route that scheduled pass through the existing runner in the source CLI and preserve its position and producer/consumer edges on export/reload. Executing and reloading the shader above with the runner-owned table is sufficient for the first acceptance case. [Open target](../../agent_notes/2026-11-20_v1/OPEN.md#source-authored-wgsl-compute-passes)
+
+**The hand control owns the whole pass.** For Hermit, let it read the same visibility, shadow and row inputs and produce the same HDR and final pixels using one full-screen launch if that wins. Charge Classify plus all per-kind Shade dispatches to Loft, and charge the control for every launch, clear, conversion, intermediate and barrier it needs. Check output before timing, timestamp each whole alternative and report frame p95 alongside it. Section 5's release limit remains an upper 95% bound of 1.05 on the Loft/hand p95 ratio. Reimplementing an inner BSDF inside the generated 8×8 tile schedule cannot test the cost of choosing that schedule.
+
+<details>
+<summary>Reproduce the CLI rejection and both binding probes</summary>
+
+From the root of a scratch checkout on Metal, build the two probe files as CLI examples. The bundle probe checks the eight-byte host buffer first and then asserts the same result for the runner-owned table.
+
+```sh
+p=agent_notes/2026-11-20_v1/bk1
+mkdir -p out/bk1
+cp "$p/stamp.wgsl" out/bk1/
+awk '/tonemap_aces/ {print "  pass stamp reads [] writes [Answer] { dispatch(\"stamp.wgsl\", \"stamp\", 1) }"}
+     {print}' engines/capsules.loft > out/bk1/stamp.loft
+cp "$p/slots.rs" crates/loft-cli/examples/bk1_slots.rs
+cp "$p/runner.rs" crates/loft-cli/examples/bk1_runner.rs
+cp "$p/stamp.wgsl" crates/loft-cli/examples/
+tools/dev.sh build loft-cli --fast --bin loft --example bk1_slots --example bk1_runner
+naga out/bk1/stamp.wgsl
+tools/gpu_lock.sh target/lab/loft render out/bk1/stamp.loft --size 1x1 --out out/bk1/probe.webp
+tools/gpu_lock.sh target/lab/examples/bk1_slots
+tools/gpu_lock.sh target/lab/examples/bk1_runner
+```
+
+To inspect the shading pair independently, use Naga 30.0.1. This offline command reproduces the arithmetic. For the live capture, I applied the linked patch to a scratch copy of the registry's `wgpu-hal-30.0.1`, selected that copy with Cargo's `patch.crates-io`, and set `LOFT_PROBE_MSL` to an existing output directory. The patch records the source immediately before Metal compilation. Setting `LOFT_PROBE_SAFE=1` selects arm B.
+
+```sh
+target/lab/loft show engines/hermit.loft --kind CrusherClaw --json |
+  jq -r '.modules[0].wgsl' > out/bk1/claw.wgsl
+for entry in fs shade; do
+  naga --compact --entry-point "$entry" --metal-version 3.2 \
+    --index-bounds-check-policy Restrict out/bk1/claw.wgsl "out/bk1/$entry.metal"
+done
+```
+
+</details>
