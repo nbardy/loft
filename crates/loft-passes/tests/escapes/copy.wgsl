@@ -3,6 +3,6 @@
 
 @compute @workgroup_size(1)
 fn copy_rows() {
-    Output[0] = Source[0] + 33u + arrayLength(&Output);
-    Output[1] = Source[1] - 11u;
+    Output[0] = 3u * Source[0];
+    Output[1] = 3u * Source[1];
 }

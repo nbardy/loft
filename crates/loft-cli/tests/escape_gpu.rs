@@ -126,8 +126,8 @@ fn source_compute_bundle_runs_with_gpu_readback() {
             expected,
             (expected as f32 * 0.5).to_bits(),
             0.375f32.to_bits(),
-            42,
-            0
+            21,
+            33
         ]
     );
     eprintln!(

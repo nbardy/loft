@@ -1784,7 +1784,7 @@ pub(crate) fn kernel_uses_float(k: &KernelDecl, types: &[Ty]) -> bool {
 
 pub(crate) fn kernel_module(
     p: &Prog<'_>, types: &[Ty], k: &KernelDecl,
-    arguments: &[String], bindings: &[(&str, &str, loft_ir::PassBinding)], workgroup: [u32; 3],
+    arguments: &[String], bindings: &[(&str, &str, loft_ir::PassBinding, u32)], workgroup: [u32; 3],
     float_atomics: FloatAtomics,
 ) -> (String, Vec<loft_ir::PassBinding>) {
     let mut em = Emitter::new(p, types);
@@ -1802,9 +1802,9 @@ pub(crate) fn kernel_module(
     }
     let (mut encode, mut decode, mut converted) = (String::new(), String::new(), Vec::new());
     let (helpers, consts) = reachable(p, &[&k.f], &[]);
-    nested_table_structs(&mut em, &bindings.iter().map(|(_, row, _)| *row).collect::<Vec<_>>());
+    nested_table_structs(&mut em, &bindings.iter().map(|(_, row, _, _)| *row).collect::<Vec<_>>());
     em.library(&helpers, &consts);
-    for (param, row, binding) in bindings {
+    for (param, row, binding, capacity) in bindings {
         let ty = format!("LoftTable_{param}");
         table_struct(&mut em, &ty, row, Some(param));
         let access = if binding.access == loft_ir::BindAccess::ReadStorage { "read" } else { "read_write" };
@@ -1832,9 +1832,10 @@ fn {function}(index: u32, value: f32) {{
         }
         if !conversions.is_empty() {
             converted.push(*binding);
-            // A separate dispatch changes representation before any concurrent accumulation.
+            // A separate dispatch changes representation before accumulation. Use
+            // logical capacity because a backend may pad the storage allocation.
             for body in [&mut encode, &mut decode] {
-                let _ = writeln!(body, "for (var i = gid.x; i < arrayLength(&{resource}); i += groups.x * 64u) {{");
+                let _ = writeln!(body, "for (var i = gid.x; i < {capacity}u; i += groups.x * 64u) {{");
             }
             for field in conversions {
                 let ptr = format!("&{resource}[i].{field}");

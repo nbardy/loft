@@ -1659,7 +1659,7 @@ impl AuthoredCompute {
                         let slot = &mut slots[group as usize];
                         let binding = loft_ir::PassBinding { group, slot: *slot, resource: id, access };
                         *slot += 1;
-                        table_args.push((name, row.name.as_str(), binding));
+                        table_args.push((name, row.name.as_str(), binding, self.bundle.tables[id.0 as usize].capacity));
                         bindings.push(binding);
                     } else {
                         arguments.push(check::kernel_argument(p, types, kernel, value, ty, overrides)?);
