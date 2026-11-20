@@ -1,5 +1,32 @@
 # Open targets for v1.0-alpha
 
+## Wave X2 integration
+
+X2d’s legacy benchmark and X2e’s Three.js demo merged on top of `7e33f09`. The scored merge was `180c708`. The only crate change is in loft-std’s wasm32-only web module. The native renderer, scenes and gate inputs at the starting revision match PF1’s scored `b0fdb44`. [Gate report](../../out/meta/ix2/gate.json) · [18-frame contact sheet](../../out/meta/ix2/sheet.webp)
+
+One locked Apple M4 Metal run at 1280 × 800, with 30 warmups and 300 timed frames per scene, held Twin **36/36**, Truth **34/34**, Speed **12/12** and Load **31/33**, with zero contended verdicts. All six raw p95s increased from PF1. Both Hermit counts created 14 pipelines against 13. X2d and X2e qualified on their own checks under the tools/demo merge rule.
+
+| Scene | Main p95, ms | X2 p95, ms | Cap, ms | Commands | Triangle p50, ms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| capsules-1 | 0.451 | 0.579 | 0.800 | 5 | 0.096 |
+| capsules-20 | 0.663 | 0.847 | 1.100 | 5 | 0.040 |
+| blobs-1 | 0.406 | 0.540 | 1.100 | 5 | 0.098 |
+| blobs-20 | 1.079 | 1.565 | 2.400 | 5 | 0.096 |
+| hermit-1 | 2.453 | 2.740 | 5.000 | 13 | 0.040 |
+| hermit-20 | 3.752 | 4.803 | 5.600 | 13 | 0.098 |
+
+All 18 gate frames matched main’s decoded RGBA exactly. Pictures held **0/18** against the frozen pins for the previous appearance. The layered-material approval at `7e33f09` assigns re-pinning to IX3. All nine bead comparisons passed and matched main. Before and after inventories verified 18 gate pins, nine bead references and 1,510 historical beauty files. [Raw gate](../../out/meta/ix2/five-gates.json) · [Bead results](../../out/meta/ix2/bead/score.json)
+
+All six mutants fired. The wasm32 runner with web-sys, workspace doctests and both grammar recognizers passed. Earley and llguidance each classified 281/281 cases as expected. The single workspace build produced 25 test executables. Native tests passed **153/154**. The existing Tier 0 promotion test measured 0.520375 ms p95 overhead against 0.500 ms, with 0/140,000 pixels over 1/255. Loft-std grew from 4,321 to 4,536 physical Rust/WGSL source lines (+215). The other eight crate counts matched main. [Native log](../../out/meta/ix2/native.log) · [Per-crate counts](../../out/meta/ix2/lines.json)
+
+| Lane | Disposition and evidence |
+| --- | --- |
+| X2a · `68400b0` | Held. The shared recorder, packed/direct R16 checks, numeric ranges and concurrent cold pipeline preparation worked. All 18 frames matched and Load reached 31/33. Speed fell from 12/12 to 11/12 (Capsules-1 at 0.835 ms against 0.800). Execution used 6,717 lines against 2,500. Subresource views, sampler, index subranges and attachment policies still use defaults. Std still depends directly on wgpu and wgpu-naga-bridge. Frame uploads allocate in runner’s encode.rs and the event header allocates in std’s outbox.rs. The branch does derive vertex usage and export bake/path bundles. [Lane audit](https://github.com/nbardy/loft/blob/68400b0/agent_notes/2026-11-20_v1/lanes/x2a.md) |
+| X2b · `4a364e9` | Held. Crab, Heron and Boss matched 481/481 ticks per scene and the E504 refusal probes passed. Ordinary shading multiply-add matched explicit FMA on 4,096/4,096 pixels and differed from split rounding on 1,804. The integration MSL check found zero strict helpers or contraction bans in 16 Shade entries and detected all three strict motion controls. The branch lacks a committed automated leak guard. The final focused 1,000-Crab dispatch measured 0.179500 ms p95 against 0.150 ms, up from 0.024042 ms on main. [MSL checks](../../out/meta/ix2/x2b-msl.json) · [Motion budget](../../out/meta/x2b/thousand-crab-3.log) |
+| X2c · `b314298` | Held. The branch contains the diagnosis only. Ground’s Shade layout lacks group 2 binding 5 for the sampled cube. The bake-only probe reproduced all three main stills and moved Shade p50 from 2.248 to 2.257 ms against a required 1.000 ms saving. There is no integrated candidate frame for owner approval. [Binding diagnostic](../../out/meta/x2c/binding.log) |
+| X2d · `8461865` | Merged. Both 300-frame comparisons reproduced all four stills and both legacy bundles. At 20 groups the two legacy/native GPU p95 pairs were 9.389/2.798 and 9.326/1.019 ms. Each engine issued five commands. The report documents lighting, sampling and load-scope differences. [A/B report](AB_OLD_VS_NEW.md) |
+| X2e · `d297bc3` | Merged. Headless Chrome shared one device and queue and matched all 151 attachment pairs with zero readbacks. In 18,925 overlapping pixels the front cube won all, the rear cube won none, and the intersecting cube won 6,958. Relighting changed 57,475 crab pixels. Composed queue completion measured 17.215 ms p95. [Browser measurements](../../out/meta/x2e/browser.json) · [Demo](../../web/threejs_demo/README.md) |
+
 ## PF1 integration
 
 PF1a’s native sun-map reuse passed at `b0fdb44`. Hermit-20 used 13 commands on every timed frame and improved from 4.802 to 3.752 ms p95. All six scenes improved on the published del2 p95 measurements at `33cdcbf`. That revision and integration base `bca209d` have identical renderer, engine and fixture sources. [Gate report](../../out/meta/ipf/gate.json) · [18-frame contact sheet](../../out/meta/ipf/sheet.webp)
@@ -367,24 +394,18 @@ Seven lanes, each with an acceptance test, in agent_notes/2026-11-20_v1/INTEGRAT
 
 Items 1 and 2 come first.
 
-## IN FLIGHT (claimed by the lead's wave x2, 20 Nov 11:00): planners must NOT pick these
-- x2a: one execution path (d2.md class 3; builds on loft/d2c)
-- x2b: FMA / binary32 twin determinism for authored solvers (d2.md class 1; builds on loft/d2a)
-- x2c: sky irradiance bake for hermit shading (pf1.md: 12 sky samples = 1.54 ms)
-- x2d: old engine vs new A/B (legacy/2026-11-19 tag)
-- x2e: Three.js end-to-end demo (INTEGRATION_TODO.md §1)
-- x2f: lean-down audit and per-crate line budgets (Astra, docs only)
+The X2f size audit and four proposed cuts are recorded in [the lean-down plan](design/lean1.md).
 
 ## Chief scientist's handoff (20 Nov, scientist_handoff_2.md): routing
 - loft/s1-lip: Lipschitz fix, Shrine Vis 0.94 ms faster. **Owner approval needed** for out/meta/s1_lip/shrine-review.webp (the old picture was a truncated march). Merged by ix3 once approved.
 - loft/s1-controls: parity gate prototype; polished by s1_controls_fix (wave x3).
 - s1_escapes: the four front-end v1.2 stubs (bake_tex sampling, kernel allow, whole-pass `pass`, unproved). Runs in wave x3.
 - Lean audit (x2f) and lean lanes must also cover:
-  - loft-std is wgpu-free (~2,429 lines of device/encoder code; a duplicate 1,938-line renderer in loft-cli/src/native/);
+  - remove the wgpu dependency from loft-std (~2,429 lines of device/encoder code; a duplicate 1,938-line renderer in loft-cli/src/native/);
   - per-frame create_buffer_init in encode.rs:228–235 and outbox.rs:66–70;
   - U::VERTEX on LUTs (lib.rs:47);
   - .loftb export refused for bakes and paths (bundle.rs:325).
 - x2b: keep FMA ON in shading (Fast mode). A shading contraction ban costs +0.18 ms p50 and +0.86 ms p95; global Safe mode costs +4.68 ms. Prefer a scoped motion-only barrier over a soft-float emulator. Add an automated MSL leak check.
-- Browser web.rs is a 93-line allocator with no pipelines or encode (x2e / s1_web).
+- X2e now runs the Hermit demo schedule on the Three.js device. The browser adapter is scoped to that schedule.
 - Deferred: the native MetalBackend (predicted 0.09–0.19 ms for 2.3–3.8k lines), HDR+Present fusion, f16 shading, ground fBM bake, and consumer Wasm passes until check.rs (86.5 KB) is split.
 - Superseded briefs: s1_exec, s1_motion_fma, s1_web, is1 and sci_chain.sh, which are covered by x2a, x2b and x2e.
