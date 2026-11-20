@@ -8,7 +8,7 @@ LOG="$DIR/supervisor.log"
 log_status() {
   local ts active free_pct
   ts="$(date '+%Y-%m-%d %H:%M:%S')"
-  active="$(ps -eo pid,args | grep -E "[c]odex exec.*-C ($HOME/git/loft|$HOME/git/_wt/)" || true)"
+  active="$(pgrep -fl "^codex exec.*-C ($HOME/git/loft|$HOME/git/_wt/)" 2>/dev/null | cut -c1-180 || true)"
   free_pct="$(memory_pressure 2>/dev/null | awk '/System-wide memory free percentage:/ {gsub(/%/,"",$5); print $5}' || echo "?")"
   {
     echo "=== [$ts] free_mem=${free_pct}% ==="
@@ -16,7 +16,7 @@ log_status() {
       [ -f "$DIR/${w}.finished" ] && echo "  $w: FINISHED" || echo "  $w: running/waiting"
     done
     local done_list=""
-    for s in build1 cam1 v15a v15b v15c iv15 std1b std1c std1d std1e port1 ix4 v15_exec v15_sky v15_fma cap1b cap1c cap1d v15_bloat v15_metalfx iv15_2; do
+    for s in build1 cam1 v15a v15b v15c iv15 std1b std1c std1d std1e port1 ix4 v15_exec v15_perf v15_native cap1c v15_bloat cap1b iv15_2; do
       if [ -f "$DIR/${s}.done" ]; then done_list="${done_list} ${s}"; fi
     done
     echo "  done:${done_list:- (none yet)}"

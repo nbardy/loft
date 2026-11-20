@@ -86,8 +86,8 @@ interval. Numbers taken under contention don't count.
 | loft/x2b | Twin FMA fix: 1,000-crab dispatch over budget; MSL leak guard missing |
 | loft/x2c | Sky bake: shading cannot sample the bake (no binding) |
 | loft/s1-escapes | Kernel allow, whole-pass `pass`, bake sampling, unproved: StudyInk integration incomplete |
-| loft/s1-controls-fix | Hermit HDR mismatch in the control pass |
-| loft/pf1b | Grouped long marches: missed its noise band (re-measure under quiet timing) |
+| loft/s1-controls-fix | **Merged** (`tools/check.sh parity`, Shrine 20→0 IDs; Hermit HDR mismatch still tracked) |
+| loft/pf1b | **Merged** (36/36 + 27/27 bit-exact; −0.30 ms Shrine, −0.11 ms Hermit) |
 
 ## Deferred (lead, 20 Nov 14:50)
 - stdaot1 (std AOT and the pipeline cache): std parsing is a few ms. The pipeline cache comes back with the cold-load work.
@@ -119,4 +119,4 @@ All active conductors share one concurrency pool (`LOFT_MAX_STEPS=4`) and the qu
 | **wave4** (`wave4.sh`) | `std1b`, `std1c`, `std1d` (R4 two-contract addendum), `std1e`, `port1` → `ix4` | G6.3, G6.4/R4, G6.5 (`std1a` merged at `f8fc612`) | Parallel now |
 | **wave15** (`wave15.sh`) | `v15a` (R1 #1 + `EXPERIMENTAL_RAY_QUERY`), `v15b` (`kernel allow` + `NonDet` + `StudyInk`), `v15c` (R8+R9 gates & `quiet_gpu.sh`) → `iv15` | G1, G4, G7.2, G8.1, R1 #1, R8, R9 | Parallel now (resuming existing `~/git/_wt/loft-v15{a,b,c}`) |
 | **wave15_2 phase 1** (`wave15_2.sh`) | **`v15_exec`** (solo!) | **R2** (ONE owner merges one execution path + `wgpu`-free `loft-std` + delete duplicate CLI renderer + `tools/check.sh lines` ratchet ≤ 18,000 scc) | Waits for `wave15.finished` & `wave4.finished`; runs **alone** per R2 |
-| **wave15_2 phase 2** (`wave15_2.sh`) | `v15_sky` (R1 #2–3), `v15_fma` (R7), `cap1b` (G8.2/G2 P2G atomics), `cap1c` (R3 6–10 uber-families, no auto-merge), `cap1d` (R6 rung 2 `EXPERIMENTAL_COOPERATIVE_MATRIX`), `v15_bloat` (R5 binary `import_table` + seed corpus + `ad.rs` + `loft lint`), `v15_metalfx` (R6 rung 3 `MetalFX` + `bk1b` MSL slots) → `iv15_2` | R1 #2–3, R3, R5, R6 rungs 2–3, R7, G2, G5.4, G8.2, G8.3 | Starts after `v15_exec` lands; shares `LOFT_MAX_STEPS=4` |
+| **wave15_2 phase 2** (`wave15_2.sh`) | `v15_perf` (R1 #2–3 + R7), `v15_native` (R6 rungs 2–3: `cap1d` coop-matrix + `bk1b` MSL slots + `MetalFX`), `cap1c` (R3 uber-families, no auto-merge), `v15_bloat` (R5 binary `import_table` + seed corpus + `ad.rs` + `loft lint`), `cap1b` (G8.2/G2 P2G atomics) → `iv15_2` | R1 #2–3, R3, R5, R6 rungs 2–3, R7, G2, G5.4, G8.2, G8.3 | Starts after `v15_exec` lands; 5 conflict-free streams sharing `LOFT_MAX_STEPS=4` |

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Wave v1.5-2 conductor: waits for wave15 and wave4, runs R2 v15_exec SOLO first,
-# then fans out the remaining R1-R9 / cap1b-d lanes through the shared LOFT_MAX_STEPS pool,
+# then fans out 5 consolidated conflict-free Phase-2 streams through the shared LOFT_MAX_STEPS pool,
 # and finishes with iv15_2 (Astra).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -18,16 +18,14 @@ if [ ! -f "$DIR/v15_exec.done" ]; then
   "$RUN" v15_exec gpt-6.2-sol high "$ROOT"
 fi
 
-# Phase 2: Parallel R1-R9 + cap1b-d lanes (bounded by LOFT_MAX_STEPS inside run.sh)
+# Phase 2: 5 consolidated R1-R9 + cap1b-d streams (bounded by LOFT_MAX_STEPS inside run.sh)
 PIDS=()
 for lane in \
-  "v15_sky:high" \
-  "v15_fma:high" \
-  "cap1b:high" \
+  "v15_perf:high" \
+  "v15_native:high" \
   "cap1c:high" \
-  "cap1d:high" \
   "v15_bloat:medium" \
-  "v15_metalfx:high"
+  "cap1b:high"
 do
   name="${lane%%:*}"
   effort="${lane##*:}"
