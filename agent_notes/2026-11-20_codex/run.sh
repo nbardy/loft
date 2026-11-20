@@ -14,6 +14,7 @@ while [ "$(pgrep -f "codex exec.*-C ($HOME/git/loft|$HOME/git/_wt/)" 2>/dev/null
 while [ "$(freepct)" -lt 15 ] 2>/dev/null; do sleep 60; done
 f=$(freepct); if [ "${f:-0}" -ge 45 ]; then export CARGO_BUILD_JOBS=3; else export CARGO_BUILD_JOBS=2; fi
 for try in 1 2; do
+  "$D/../../tools/quiet_gpu.sh" --wait || exit $?
   perl -e 'alarm shift; exec @ARGV' $lim codex exec -m "$m" --dangerously-bypass-approvals-and-sandbox -C "$w" \
     -c model_reasoning_effort="$e" -o "$D/$n.final.md" "$(cat "$D/$n.brief.md")" < /dev/null >> "$D/$n.log" 2>&1
   rc=$?; [ $rc -eq 0 ] && break

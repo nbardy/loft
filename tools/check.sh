@@ -71,7 +71,11 @@ parity() {
 }
 
 full_gate() {
-  local out cli
+  local out cli baseline_root picture_status=0
+  : "${LOFT_BASELINE_BIN:?full gate requires a lab Loft binary from the baseline checkout}"
+  : "${LOFT_BASELINE_BUILD_LOG:?full gate requires the baseline Cargo JSON artifact log}"
+  : "${LOFT_TIMING_MARGIN:?full gate requires an allowed paired delta as a fraction of the timing budget}"
+  baseline_root="$(git -C "$(dirname "$LOFT_BASELINE_BIN")" rev-parse --show-toplevel)"
   out="$(mktemp -d "$root/out/check.XXXXXX")"
   tools/dev.sh build --workspace --fast --bins --tests --examples --message-format=json-render-diagnostics >"$out/build.jsonl"
   tools/gpu_lock.sh uv run --no-project python tools/run_native_tests.py "$out/build.jsonl"
@@ -79,7 +83,12 @@ full_gate() {
   wasm
   cli="${CARGO_TARGET_DIR:-$root/target}/lab/loft"
   tools/gpu_lock.sh uv run --script tools/parity/d1d/bead.py full "$(dirname "$cli")/examples/phase5_corpus" "$cli" "$out/bead"
-  tools/gpu_lock.sh "$cli" gate
+  uv run --script tools/gates/pictures.py capture "$LOFT_BASELINE_BUILD_LOG" "$baseline_root" "$out/main-pictures"
+  uv run --script tools/gates/pictures.py capture "$out/build.jsonl" "$root" "$out/candidate-pictures"
+  uv run --script tools/gates/pictures.py deterministic "$out/main-pictures" "$out/candidate-pictures" >"$out/pictures.json" || picture_status=$?
+  tools/gpu_lock.sh uv run --script tools/gates/pictures.py stochastic "$LOFT_BASELINE_BIN" "$cli" "$out/path-pictures" >"$out/stochastic.json" || picture_status=$?
+  uv run --no-project python tools/gates/timing.py "$LOFT_BASELINE_BIN" "$cli" "$out/timing" --margin "$LOFT_TIMING_MARGIN"
+  return "$picture_status"
 }
 
 case "${1:-}" in
