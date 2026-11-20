@@ -92,7 +92,7 @@
     {
       "budget": {
         "cold_s": 1.5,
-        "commands": 17,
+        "commands": 13,
         "modules": 8,
         "p95_ms": 5.0,
         "pipelines": 13,
@@ -108,7 +108,7 @@
     {
       "budget": {
         "cold_s": 1.5,
-        "commands": 17,
+        "commands": 13,
         "modules": 8,
         "p95_ms": 5.6,
         "pipelines": 13,
