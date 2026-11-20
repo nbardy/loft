@@ -12,7 +12,7 @@ The goal is Loft v1.2 fully implemented per docs/spec, every gate green on main,
 2. **Two-strike rule.** For any target that has already failed twice, first PROVE its root cause with a small probe (one GPU probe at a time under tools/gpu_lock.sh) and write a one-page design to agent_notes/2026-11-20_v1/design/c__N__.md. The lane then implements that design, never another patch.
 3. **Lane briefs.** Write each to agent_notes/2026-11-20_codex/c__N__<letter>.brief.md, self-contained, in the shape of agent_notes/2026-11-20_codex/w1.brief.md:
    - a cambium workspace on branch loft/c__N__<letter> from origin/main;
-   - write first, compile once (at most 2 reruns);
+   - write first; iterate `tools/dev.sh check` until it compiles (never ESCALATE on a compile error); at most 2 full test/GPU reruns;
    - never re-approve references;
    - ESCALATE with evidence on a second failed fix;
    - a lane note, measured targets, and the owned files.
