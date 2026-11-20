@@ -19,3 +19,10 @@ Task:
 4. Build small showcase scenes for noisy ink, folded facets, tapered growth and a shell/eye sweep, rendering one labelled treatment per style used. Provide a fixed-camera raster/SDF pair and exact base controls; record resolution, adapter, time, scene SHA and provenance alongside each q95 approval still. Preserve direct source links from the lane note. Exercise copying a foundation file and selecting the copy in a consumer.
 
 Final message ≤120 words.
+
+Speed rules (lead, 20 Nov): keep the ceremony small.
+- Lane note: 30 lines or fewer.
+- No contact sheets unless your task changes a look.
+- ONE paired timing run, if any; the integrator does the final timing.
+- Do not re-read the whole spec. Read only the sections your task names.
+- Iterate cargo check until it compiles, then run your focused tests only. The integrator runs the full suite.

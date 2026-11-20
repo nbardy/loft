@@ -20,3 +20,10 @@ Task:
 5. Render one small showcase per style exercised in this lane, including PBR material/furnace, print sun/sky and a luminous post chain. Record 1 and 20 instances, baseline p95 and commands, every intermediate attachment/traffic cost and cold/warm reuse; give the lead a named q95 still per style and exact paired control hashes. Retain independently runnable CPU numeric controls for energy and light samples.
 
 Final message ≤120 words.
+
+Speed rules (lead, 20 Nov): keep the ceremony small.
+- Lane note: 30 lines or fewer.
+- No contact sheets unless your task changes a look.
+- ONE paired timing run, if any; the integrator does the final timing.
+- Do not re-read the whole spec. Read only the sections your task names.
+- Iterate cargo check until it compiles, then run your focused tests only. The integrator runs the full suite.

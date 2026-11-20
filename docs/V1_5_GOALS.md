@@ -56,7 +56,7 @@ interval. Numbers taken under contention don't count.
 
 | ID | Target | Check | Status |
 |---|---|---|---|
-| G6.1 | Corpus median ≤ 10,000 tokens, with pictures matched | Was 96,204 (tok1) | open (std1f) |
+| G6.1 | Corpus median ≤ 10,000 tokens, with pictures matched | Was 96,204 (tok1) | deferred to a later v1.5 wave (std1f brief ready) |
 | G6.2 | A per-scene token budget gate and a repeated-block lint | Fails a scene with unrolled rows | open |
 | G6.3 | stdlib/ tree with styles, integrators, schedules and engines; copy-paste forking documented | std1a plus the port lanes | in progress (wave x4) |
 | G6.4 | A written **style↔integrator contract**: what a style may read and write, per integrator class | A doc plus woodblock running under realtime and reference | open |
@@ -88,3 +88,7 @@ interval. Numbers taken under contention don't count.
 | loft/s1-escapes | Kernel allow, whole-pass `pass`, bake sampling, unproved: StudyInk integration incomplete |
 | loft/s1-controls-fix | Hermit HDR mismatch in the control pass |
 | loft/pf1b | Grouped long marches: missed its noise band (re-measure under quiet timing) |
+
+## Deferred (lead, 20 Nov 14:50)
+- stdaot1 (std AOT and the pipeline cache): std parsing is a few ms. The pipeline cache comes back with the cold-load work.
+- std1f (corpus regeneration): after the stdlib port lands.

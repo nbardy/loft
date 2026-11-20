@@ -18,3 +18,10 @@ Motion must keep the twin contract: CPU and GPU bit-equal.
 Large recurring blocks that pass the ≥3× rule go into lib/ as std functions; never add renamed one-liners.
 
 Use a cambium workspace on branch loft/port1 from origin/main. Iterate `tools/dev.sh check` until it compiles; at most 2 full test or GPU reruns, under tools/gpu_lock.sh. Push the branch. Write agent_notes/2026-11-20_v1/lanes/port1.md. Commit messages end with "Co-Authored-By: GPT (codex) <noreply@openai.com>". Final message ≤150 words.
+
+Speed rules (lead, 20 Nov): keep the ceremony small.
+- Lane note: 30 lines or fewer.
+- No contact sheets unless your task changes a look.
+- ONE paired timing run, if any; the integrator does the final timing.
+- Do not re-read the whole spec. Read only the sections your task names.
+- Iterate cargo check until it compiles, then run your focused tests only. The integrator runs the full suite.

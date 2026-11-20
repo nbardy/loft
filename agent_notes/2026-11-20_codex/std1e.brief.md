@@ -19,3 +19,10 @@ Task:
 4. Capture one WebP q95 per presentation style in the small gait showcase with stance/lift/land poses, time and camera. Store trajectory/constraint numbers and lossless controls beside the approval stills. Keep current Crab, Heron and Boss controls pixel/twin equal. Leave flagship scene authoring to the scene-port lane.
 
 Final message ≤120 words.
+
+Speed rules (lead, 20 Nov): keep the ceremony small.
+- Lane note: 30 lines or fewer.
+- No contact sheets unless your task changes a look.
+- ONE paired timing run, if any; the integrator does the final timing.
+- Do not re-read the whole spec. Read only the sections your task names.
+- Iterate cargo check until it compiles, then run your focused tests only. The integrator runs the full suite.

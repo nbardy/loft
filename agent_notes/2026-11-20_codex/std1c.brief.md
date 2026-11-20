@@ -19,3 +19,10 @@ Task:
 4. Produce one small runnable scene or explicit variant per style and seven named WebP q95 approval stills; include direct/reference woodblock, the unchanged historical woodblock control, source scene/variant, legacy comparison from the same camera where available and pixel/timing metadata. Check paper AA on a short motion sample and keep the frame sequence for the lead. Report whole shading and post cost separately; mark any unimplemented recipe component or unresolved aesthetic difference. Approval belongs to the lead.
 
 Final message ≤120 words.
+
+Speed rules (lead, 20 Nov): keep the ceremony small.
+- Lane note: 30 lines or fewer.
+- No contact sheets unless your task changes a look.
+- ONE paired timing run, if any; the integrator does the final timing.
+- Do not re-read the whole spec. Read only the sections your task names.
+- Iterate cargo check until it compiles, then run your focused tests only. The integrator runs the full suite.
