@@ -11,7 +11,17 @@ export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
 freepct() { memory_pressure 2>/dev/null | awk -F": " '/free percentage/{gsub("%","",$2); print int($2)}'; }
 game_running() { pgrep -qf "TheBazaar|The Bazaar" 2>/dev/null; }
 # One pool (R9, 20 Nov): default LOFT_MAX_STEPS=1 while interactive; override to 2 overnight/AFK.
-while [ "$(pgrep -f "codex exec.*-C ($HOME/git/loft|$HOME/git/_wt/)" 2>/dev/null | wc -l | tr -d " ")" -ge "${LOFT_MAX_STEPS:-1}" ]; do sleep 60; done
+# Slots are lock files, so no process-table scans (the 20:17 freeze was a kernel process-lookup lock convoy that pgrep/ps/lsof feed).
+# Atomic create with noclobber; a slot whose owner PID is gone (kill -0 on one PID) is freed.
+S="$D/.slots"; mkdir -p "$S"; slot=""
+while [ -z "$slot" ]; do
+  for i in $(seq 1 "${LOFT_MAX_STEPS:-1}"); do
+    if ( set -C; echo $$ > "$S/$i" ) 2>/dev/null; then slot="$S/$i"; break; fi
+    o=$(cat "$S/$i" 2>/dev/null); if [ -n "$o" ] && ! kill -0 "$o" 2>/dev/null; then rm -f "$S/$i"; fi
+  done
+  [ -z "$slot" ] && sleep 60
+done
+trap 'rm -f "$slot"' EXIT
 while [ "$(freepct)" -lt 25 ] 2>/dev/null; do sleep 60; done
 f=$(freepct)
 if game_running || [ "${f:-0}" -lt 35 ]; then
