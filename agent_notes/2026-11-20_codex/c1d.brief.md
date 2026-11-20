@@ -1,0 +1,22 @@
+# c1d · Apply recorded native inputs at their actual ticks
+
+You are a gpt-6.2-sol engineer. Repo ~/git/loft. Implement the c1d decision in agent_notes/2026-11-20_v1/design/c1.md. Read AGENTS.md, AGENT_CARD.md, CORE.md, docs/PHILOSOPHY.md, docs/spec/README.md (07 > PATCH_V1_2 > 06 > 00–05), and agent_notes/2026-11-20_v1/OPEN.md. The probes and archived raw evidence are in the primary checkout under out/meta/c1/.
+
+From ~/git/loft, run `git fetch origin main` and `git cambium add -b loft/c1d -name loft-c1d -ephemeral ~/git/_wt/loft-c1d origin/main`. Work in that workspace. Record the base SHA. Prior lane heads are evidence only.
+
+**Owned files** — `crates/loft-cli/src/build/trace.rs`, its private submodules under `crates/loft-cli/src/build/trace/`, `crates/loft-cli/src/native/motion.rs`, and new replay test inputs under `crates/loft-cli/tests/c1_replay/`. Also own `agent_notes/2026-11-20_v1/lanes/c1d.md`.
+
+**Task.** Implement 07 §8 for same-device scalar Param/Level replay in the existing native render and check commands. The LOFTLOG1 decoder already yields updates before each tick in sequence order. execute_native refuses any post-start input, and sample_motion attaches and reloads from the initial state at each requested time. Retain one runner and loaded instance per compiled dispatch across the trace. Resolve names through metadata, clamp values by the existing contract, apply each update to its bound slot, and submit earlier ticks before updating GPU-visible parameters. A Truth replay checks every tick, including tick zero. Rendering can advance to input boundaries and the final tick. Reuse the existing advance, sample decoding and final state/picture paths. A session constructor on native::Gpu in motion.rs can expose this without editing native/mod.rs. Keep ordinary snapshot/timed clients working.
+
+**Score.** Use the planner's four-tick `x += drive` fixture (default 1, edit to 2) through both public commands. Tick-0 input yields 8 (4-byte BLAKE3 da03dcf104ced4c55c1de902903a431c0c613717d8e389a90c29f286ad9704d3). Tick-2 input currently exits 6. The persistent-runner control yielded 7 (fe3426074932920e93d67e22dbd90a3cd19e3e447260e98bb4ae8a16b7ee9177). Require both exits 0, including verification against these independent identities. Exercise two updates at one tick, update at the end, no updates, an unknown parameter, a wrong bundle/hash, and an intermediate missed Truth check that recovers before the end (check must exit 2). Round-trip fresh binary and JSON logs, reproduce the existing 481-tick same-device Scramble control and lossless image. Report loads per dispatch and simulated steps, 1 and 4 on the small fixture. Preserve historical twin-log behavior, typed unsupported-input outcomes and identity failures on pinned traces. Cross-device tolerances, new host ports and fixture/format re-pins stay outside this lane.
+
+**Execution and handoff**
+
+- Write the prediction, code and focused checks first. Use two jobs. Repair compiler diagnostics with `CARGO_BUILD_JOBS=2 tools/dev.sh check loft-cli --all-targets` until clean. Then build once with `CARGO_BUILD_JOBS=2 tools/dev.sh build loft-cli --fast --tests --bins --examples --message-format=json-render-diagnostics`. Capture Cargo’s artifact JSON and run the emitted executables from their crate directories. Allow at most two test/GPU reruns. After a second failed fix, ESCALATE in the lane note with the SHA, command, input, prediction, actual output and smallest discriminating observation.
+- Classify inputs at the boundary, dispatch variants exhaustively, and preserve typed failures. Keep refs, manifests, tolerances and historical inputs frozen. Never re-approve a reference or re-pin any fixture or dependency. Keep examples/ read-only.
+- Serialize every GPU run under `tools/gpu_lock.sh`. Run focused checks here. The integrator owns the combined full suite and gate. Save commands, exits, adapter, overrides, counts, timing controls, hashes and lossless comparison evidence under ~/git/loft/out/meta/c1d/. Put measured before/after, remaining misses and evidence paths in the lane note. Mark unsupported or unmeasured cases explicitly.
+- Commit only owned paths, push `loft/c1d`, and leave main to the integrator. Once evidence and branch are preserved, remove your lane checkout from the primary repo with `git cambium remove --safe loft-c1d`. End each commit message with the following trailer.
+
+Co-Authored-By: GPT (codex) <noreply@openai.com>
+
+Final message ≤120 words.
