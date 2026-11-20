@@ -2,6 +2,7 @@ Effort: high
 
 You are the final integrator for 20 Nov 2026. The owner says: wrap up, merge, commit and push everything. Work carefully, one repo at a time. Use `~/.local/bin/agent-build` for builds and tests. NEVER run ps, pgrep, lsof or spindump while ~/Library/Logs/FreezeSampler/STALL exists. Do not install binaries or launch daemons (that needs the owner's sudo). Leave the exact install commands instead.
 
+0. **cleanup_tools** (lane cl1, branch runtime-guard in ~/git/_wt/cleanup-guard; note in lanes/cl1.md): the owner approved updating the code. Review the guard (deny list, Mach-O refusal, busy check, batched git). Run the repo's test suite. Merge into its default branch WITHOUT touching the main checkout's uncommitted files (merge in the worktree, or with git -C, and fast-forward only if the main checkout is clean for the touched paths). Push. Add a line to its AGENTS.md (or HELP_CLEAN_SYSTEM.md): 'runtime and toolchain trees are refused by guard.py; --apply runs only when the machine is idle'.
 1. **freeze_sampler** (~/git/freeze_sampler, default branch master; lanes fs1 and fs2 in the worktree ~/git/_wt/freeze-stallmarker; notes in ~/git/loft/agent_notes/2026-11-20_v1/lanes/fs1.md and fs2.md):
    - review the diffs;
    - build and test (`agent-build cargo build --release`, `agent-build cargo test`);
