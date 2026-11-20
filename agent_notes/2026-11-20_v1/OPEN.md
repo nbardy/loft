@@ -366,3 +366,11 @@ Seven lanes, each with an acceptance test, in agent_notes/2026-11-20_v1/INTEGRAT
 7. Room Runners merge (owner)
 
 Items 1 and 2 come first.
+
+## IN FLIGHT (claimed by the lead's wave x2, 20 Nov 11:00): planners must NOT pick these
+- x2a: one execution path (d2.md class 3; builds on loft/d2c)
+- x2b: FMA / binary32 twin determinism for authored solvers (d2.md class 1; builds on loft/d2a)
+- x2c: sky irradiance bake for hermit shading (pf1.md: 12 sky samples = 1.54 ms)
+- x2d: old engine vs new A/B (legacy/2026-11-19 tag)
+- x2e: Three.js end-to-end demo (INTEGRATION_TODO.md §1)
+- x2f: lean-down audit and per-crate line budgets (Astra, docs only)
