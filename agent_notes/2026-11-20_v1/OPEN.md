@@ -1,5 +1,46 @@
 # Open targets for v1.0-alpha
 
+## Lean 1 integration
+
+**No Lean 1 lane merged.** Lean1a was the only implementation branch on origin. The integrator built and scored retained main `6e30111`. Its only change since the X2 score at `180c708` was the integration note in OPEN.md. [Gate report](../../out/meta/ilean/gate.json) · [18-frame contact sheet](../../out/meta/ilean/sheet.webp)
+
+| Lane | Audit against the brief |
+| --- | --- |
+| Lean1a · held · `6d6f25c` | The parser shares its cursor and list parsing. The solver and plan adapters share binding code but each still decodes twice. The checked-call payload for B is missing. Recounting the branch gave 2,544 parser lines (cap 1,650) and 5,079 lines in the nine passes files (cap 2,780), a combined excess of 3,193. All 299 replay records, 18 gate images and nine bead images matched the control. Initial Speed was 11/12 against 12/12. The paired runs both held 6/12 for Speed, with one contended candidate verdict. Load fell from 31/33 to 29/33 in the pair. [Lane note](https://github.com/nbardy/loft/blob/6d6f25c8e94ec50b23fdbe6ba6c6a2fca6e2546c/agent_notes/2026-11-20_v1/lanes/lean1a.md) |
+| Lean1b · undelivered | B recorded preflight counts of 10,460 passes lines and 859 plan lines, against 5,220 and 800. A’s checked-call API and the X3 compiler ownership handoff were pending. No branch delivered ordered executable declarations or plan changes. [Preflight](../../out/meta/lean1b/preflight/README.md) |
+| Lean1c · undelivered | C depended on B’s declarations. Its preflight counted 8,076 lines across runner, std and native CLI against 4,200. No branch delivered shared host/native preparation or CPU stepping. [Preflight](../../out/meta/lean1c/preflight.md) |
+| Lean1d · undelivered | D’s A–C control and X3 CLI handoff were pending. Its scope measured 4,629 lines against 3,330. No branch delivered the replay, wire or permanent per-crate gate changes. [Handoff](../../out/meta/lean1d/HANDOFF.md) |
+
+One locked Apple M4 (Metal) run at 1280 × 800, with 30 warmups and 300 timed frames per scene, measured Pictures **0/18**, Twin **36/36**, Speed **6/12**, Load **25/33**, Truth **34/34**. X2 held 12/12 for Speed and 31/33 for Load. The gate marked zero verdicts contended. All six command counts held. All six p95s and all six cold loads exceeded their caps, and both Hermit counts created 14 pipelines against 13. Both runs used identical renderer sources.
+
+| Scene | X2 p95 (ms) | Lean run p95 (ms) | Delta (ms) | Cap (ms) | Commands | Triangle p50 (ms) | Cold / warm (s) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| capsules-1 | 0.579 | 3.647 | +3.068 | 0.800 | 5 | 0.147 | 0.648 / 0.010 |
+| capsules-20 | 0.847 | 5.608 | +4.761 | 1.100 | 5 | 0.035 | 0.664 / 0.012 |
+| blobs-1 | 0.540 | 5.881 | +5.342 | 1.100 | 5 | 0.118 | 0.612 / 0.010 |
+| blobs-20 | 1.565 | 6.614 | +5.049 | 2.400 | 5 | 0.038 | 0.959 / 0.016 |
+| hermit-1 | 2.740 | 13.831 | +11.091 | 5.000 | 13 | 0.285 | 2.243 / 0.038 |
+| hermit-20 | 4.803 | 15.067 | +10.265 | 5.600 | 13 | 0.033 | 1.657 / 0.034 |
+
+All 18 rendered RGBA hashes matched scored main, including Capsules-20 at each timestamp. All nine bead frames passed the frozen rule and matched main. The 18 picture pins still represent the previous look. The layered-material appearance is approved for IX3 to re-pin. Inventories verified the same 18 gate pins, nine bead references and 1,510 archived beauty files before and after the run. [Picture approval](APPROVALS.md) · [Raw verdicts](../../out/meta/ilean/five-gates.log)
+
+The six mutants, wasm32 runner with web-sys, workspace doctests and both grammar recognizers passed. Earley and llguidance each matched 281/281 cases. The workspace build produced 25 native test executables. The suite passed 153/154 tests. The sole failure, `encode::edit_gate::time_edit_and_compare_native_promotion`, measured 0.636999 ms p95 overhead against a 0.500 ms cap, with 0/140,000 pixels over 1/255. X2 measured 0.520375 ms on this test. [Native test log](../../out/meta/ilean/native.log)
+
+| Crate | SCC Code | Ceiling |
+| --- | ---: | ---: |
+| loft-passes | 15,547 | 8,000 |
+| loft-cli | 5,195 | 2,200 |
+| loft-std | 4,315 | 2,250 |
+| loft-parse | 2,581 | 1,650 |
+| loft-runner | 1,553 | 1,450 |
+| loft-plan | 859 | 800 |
+| loft-format | 740 | 700 |
+| loft-ir | 456 | 480 |
+| loft-abi | 446 | 450 |
+| **Total** | **31,692** | **17,980** |
+
+SCC 3.7.0 counted 132 files, including shared visibility under std. Seven crates exceed their individual ceilings. X2e accounts for the 208-line increase since the Lean audit. In the X2a physical execution ledger the retained renderer uses 6,698 lines against 2,500. [Per-crate inventory and execution ledger](../../out/meta/ilean/lines.json)
+
 ## Wave X2 integration
 
 X2d’s legacy benchmark and X2e’s Three.js demo merged on top of `7e33f09`. The scored merge was `180c708`. The only crate change is in loft-std’s wasm32-only web module. The native renderer, scenes and gate inputs at the starting revision match PF1’s scored `b0fdb44`. [Gate report](../../out/meta/ix2/gate.json) · [18-frame contact sheet](../../out/meta/ix2/sheet.webp)
