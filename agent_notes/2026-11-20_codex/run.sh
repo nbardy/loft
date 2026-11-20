@@ -2,6 +2,8 @@
 # Run one codex step with a wall-clock limit and one retry: run.sh <name> <model> <effort> <dir>. Resumable.
 n=$1; m=$2; e=$3; w=$4; D=$(cd "$(dirname "$0")" && pwd)
 [ -s "$D/$n.done" ] && exit 0
+# A brief may set its own effort with a line "Effort: low|medium|high|xhigh" (overrides the caller).
+o=$(grep -m1 -oE '^Effort: (low|medium|high|xhigh)' "$D/$n.brief.md" | awk '{print $2}'); [ -n "$o" ] && e=$o
 case $m in *astra*) lim=${LIM:-10800};; *) lim=${LIM:-5400};; esac   # 3 h Astra, 90 min Sol (90 min cut Astra design passes mid-probe)
 export RUSTC_WRAPPER=sccache CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=2
 for try in 1 2; do

@@ -96,7 +96,11 @@ The consumer is often a model. The shortest correct program wins.
 
 - Write maths as maths (infix, as a shader writer writes it), not as nested calls. The surface is lean and typed by
   inference; WGSL is what Loft compiles to and the escape hatch for what only the hardware can say.
-- A new name must buy a capability the consumer did not have.
+- A new name must buy a capability the consumer did not have. This rule is about the **core**: keep the meta
+  engine's own surface small and lean. The **standard library** follows a different test (owner, 20 Nov 2026):
+  when a sufficiently complicated block of code recurs and costs **3× or more the tokens** of calling a reusable
+  function, that function belongs in std. A std function is ordinary forkable `.loft` code, so adding one hides
+  nothing and locks nothing in.
 - Every generated program can be printed and read; errors point at the consumer's own line.
 - The documentation a model reads is generated from the code, so it cannot drift.
 

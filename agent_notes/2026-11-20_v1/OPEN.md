@@ -1,8 +1,99 @@
 # Open targets for v1.0-alpha
 
+## Lean 1 integration
+
+**No Lean 1 lane merged.** Lean1a was the only implementation branch on origin. The integrator built and scored retained main `6e30111`. Its only change since the X2 score at `180c708` was the integration note in OPEN.md. [Gate report](../../out/meta/ilean/gate.json) · [18-frame contact sheet](../../out/meta/ilean/sheet.webp)
+
+| Lane | Audit against the brief |
+| --- | --- |
+| Lean1a · held · `6d6f25c` | The parser shares its cursor and list parsing. The solver and plan adapters share binding code but each still decodes twice. The checked-call payload for B is missing. Recounting the branch gave 2,544 parser lines (cap 1,650) and 5,079 lines in the nine passes files (cap 2,780), a combined excess of 3,193. All 299 replay records, 18 gate images and nine bead images matched the control. Initial Speed was 11/12 against 12/12. The paired runs both held 6/12 for Speed, with one contended candidate verdict. Load fell from 31/33 to 29/33 in the pair. [Lane note](https://github.com/nbardy/loft/blob/6d6f25c8e94ec50b23fdbe6ba6c6a2fca6e2546c/agent_notes/2026-11-20_v1/lanes/lean1a.md) |
+| Lean1b · undelivered | B recorded preflight counts of 10,460 passes lines and 859 plan lines, against 5,220 and 800. A’s checked-call API and the X3 compiler ownership handoff were pending. No branch delivered ordered executable declarations or plan changes. [Preflight](../../out/meta/lean1b/preflight/README.md) |
+| Lean1c · undelivered | C depended on B’s declarations. Its preflight counted 8,076 lines across runner, std and native CLI against 4,200. No branch delivered shared host/native preparation or CPU stepping. [Preflight](../../out/meta/lean1c/preflight.md) |
+| Lean1d · undelivered | D’s A–C control and X3 CLI handoff were pending. Its scope measured 4,629 lines against 3,330. No branch delivered the replay, wire or permanent per-crate gate changes. [Handoff](../../out/meta/lean1d/HANDOFF.md) |
+
+One locked Apple M4 (Metal) run at 1280 × 800, with 30 warmups and 300 timed frames per scene, measured Pictures **0/18**, Twin **36/36**, Speed **6/12**, Load **25/33**, Truth **34/34**. X2 held 12/12 for Speed and 31/33 for Load. The gate marked zero verdicts contended. All six command counts held. All six p95s and all six cold loads exceeded their caps, and both Hermit counts created 14 pipelines against 13. Both runs used identical renderer sources.
+
+| Scene | X2 p95 (ms) | Lean run p95 (ms) | Delta (ms) | Cap (ms) | Commands | Triangle p50 (ms) | Cold / warm (s) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| capsules-1 | 0.579 | 3.647 | +3.068 | 0.800 | 5 | 0.147 | 0.648 / 0.010 |
+| capsules-20 | 0.847 | 5.608 | +4.761 | 1.100 | 5 | 0.035 | 0.664 / 0.012 |
+| blobs-1 | 0.540 | 5.881 | +5.342 | 1.100 | 5 | 0.118 | 0.612 / 0.010 |
+| blobs-20 | 1.565 | 6.614 | +5.049 | 2.400 | 5 | 0.038 | 0.959 / 0.016 |
+| hermit-1 | 2.740 | 13.831 | +11.091 | 5.000 | 13 | 0.285 | 2.243 / 0.038 |
+| hermit-20 | 4.803 | 15.067 | +10.265 | 5.600 | 13 | 0.033 | 1.657 / 0.034 |
+
+All 18 rendered RGBA hashes matched scored main, including Capsules-20 at each timestamp. All nine bead frames passed the frozen rule and matched main. The 18 picture pins still represent the previous look. The layered-material appearance is approved for IX3 to re-pin. Inventories verified the same 18 gate pins, nine bead references and 1,510 archived beauty files before and after the run. [Picture approval](APPROVALS.md) · [Raw verdicts](../../out/meta/ilean/five-gates.log)
+
+The six mutants, wasm32 runner with web-sys, workspace doctests and both grammar recognizers passed. Earley and llguidance each matched 281/281 cases. The workspace build produced 25 native test executables. The suite passed 153/154 tests. The sole failure, `encode::edit_gate::time_edit_and_compare_native_promotion`, measured 0.636999 ms p95 overhead against a 0.500 ms cap, with 0/140,000 pixels over 1/255. X2 measured 0.520375 ms on this test. [Native test log](../../out/meta/ilean/native.log)
+
+| Crate | SCC Code | Ceiling |
+| --- | ---: | ---: |
+| loft-passes | 15,547 | 8,000 |
+| loft-cli | 5,195 | 2,200 |
+| loft-std | 4,315 | 2,250 |
+| loft-parse | 2,581 | 1,650 |
+| loft-runner | 1,553 | 1,450 |
+| loft-plan | 859 | 800 |
+| loft-format | 740 | 700 |
+| loft-ir | 456 | 480 |
+| loft-abi | 446 | 450 |
+| **Total** | **31,692** | **17,980** |
+
+SCC 3.7.0 counted 132 files, including shared visibility under std. Seven crates exceed their individual ceilings. X2e accounts for the 208-line increase since the Lean audit. In the X2a physical execution ledger the retained renderer uses 6,698 lines against 2,500. [Per-crate inventory and execution ledger](../../out/meta/ilean/lines.json)
+
+## Wave X2 integration
+
+X2d’s legacy benchmark and X2e’s Three.js demo merged on top of `7e33f09`. The scored merge was `180c708`. The only crate change is in loft-std’s wasm32-only web module. The native renderer, scenes and gate inputs at the starting revision match PF1’s scored `b0fdb44`. [Gate report](../../out/meta/ix2/gate.json) · [18-frame contact sheet](../../out/meta/ix2/sheet.webp)
+
+One locked Apple M4 Metal run at 1280 × 800, with 30 warmups and 300 timed frames per scene, held Twin **36/36**, Truth **34/34**, Speed **12/12** and Load **31/33**, with zero contended verdicts. All six raw p95s increased from PF1. Both Hermit counts created 14 pipelines against 13. X2d and X2e qualified on their own checks under the tools/demo merge rule.
+
+| Scene | Main p95, ms | X2 p95, ms | Cap, ms | Commands | Triangle p50, ms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| capsules-1 | 0.451 | 0.579 | 0.800 | 5 | 0.096 |
+| capsules-20 | 0.663 | 0.847 | 1.100 | 5 | 0.040 |
+| blobs-1 | 0.406 | 0.540 | 1.100 | 5 | 0.098 |
+| blobs-20 | 1.079 | 1.565 | 2.400 | 5 | 0.096 |
+| hermit-1 | 2.453 | 2.740 | 5.000 | 13 | 0.040 |
+| hermit-20 | 3.752 | 4.803 | 5.600 | 13 | 0.098 |
+
+All 18 gate frames matched main’s decoded RGBA exactly. Pictures held **0/18** against the frozen pins for the previous appearance. The layered-material approval at `7e33f09` assigns re-pinning to IX3. All nine bead comparisons passed and matched main. Before and after inventories verified 18 gate pins, nine bead references and 1,510 historical beauty files. [Raw gate](../../out/meta/ix2/five-gates.json) · [Bead results](../../out/meta/ix2/bead/score.json)
+
+All six mutants fired. The wasm32 runner with web-sys, workspace doctests and both grammar recognizers passed. Earley and llguidance each classified 281/281 cases as expected. The single workspace build produced 25 test executables. Native tests passed **153/154**. The existing Tier 0 promotion test measured 0.520375 ms p95 overhead against 0.500 ms, with 0/140,000 pixels over 1/255. Loft-std grew from 4,321 to 4,536 physical Rust/WGSL source lines (+215). The other eight crate counts matched main. [Native log](../../out/meta/ix2/native.log) · [Per-crate counts](../../out/meta/ix2/lines.json)
+
+| Lane | Disposition and evidence |
+| --- | --- |
+| X2a · `68400b0` | Held. The shared recorder, packed/direct R16 checks, numeric ranges and concurrent cold pipeline preparation worked. All 18 frames matched and Load reached 31/33. Speed fell from 12/12 to 11/12 (Capsules-1 at 0.835 ms against 0.800). Execution used 6,717 lines against 2,500. Subresource views, sampler, index subranges and attachment policies still use defaults. Std still depends directly on wgpu and wgpu-naga-bridge. Frame uploads allocate in runner’s encode.rs and the event header allocates in std’s outbox.rs. The branch does derive vertex usage and export bake/path bundles. [Lane audit](https://github.com/nbardy/loft/blob/68400b0/agent_notes/2026-11-20_v1/lanes/x2a.md) |
+| X2b · `4a364e9` | Held. Crab, Heron and Boss matched 481/481 ticks per scene and the E504 refusal probes passed. Ordinary shading multiply-add matched explicit FMA on 4,096/4,096 pixels and differed from split rounding on 1,804. The integration MSL check found zero strict helpers or contraction bans in 16 Shade entries and detected all three strict motion controls. The branch lacks a committed automated leak guard. The final focused 1,000-Crab dispatch measured 0.179500 ms p95 against 0.150 ms, up from 0.024042 ms on main. [MSL checks](../../out/meta/ix2/x2b-msl.json) · [Motion budget](../../out/meta/x2b/thousand-crab-3.log) |
+| X2c · `b314298` | Held. The branch contains the diagnosis only. Ground’s Shade layout lacks group 2 binding 5 for the sampled cube. The bake-only probe reproduced all three main stills and moved Shade p50 from 2.248 to 2.257 ms against a required 1.000 ms saving. There is no integrated candidate frame for owner approval. [Binding diagnostic](../../out/meta/x2c/binding.log) |
+| X2d · `8461865` | Merged. Both 300-frame comparisons reproduced all four stills and both legacy bundles. At 20 groups the two legacy/native GPU p95 pairs were 9.389/2.798 and 9.326/1.019 ms. Each engine issued five commands. The report documents lighting, sampling and load-scope differences. [A/B report](AB_OLD_VS_NEW.md) |
+| X2e · `d297bc3` | Merged. Headless Chrome shared one device and queue and matched all 151 attachment pairs with zero readbacks. In 18,925 overlapping pixels the front cube won all, the rear cube won none, and the intersecting cube won 6,958. Relighting changed 57,475 crab pixels. Composed queue completion measured 17.215 ms p95. [Browser measurements](../../out/meta/x2e/browser.json) · [Demo](../../web/threejs_demo/README.md) |
+
+## PF1 integration
+
+PF1a’s native sun-map reuse passed at `b0fdb44`. Hermit-20 used 13 commands on every timed frame and improved from 4.802 to 3.752 ms p95. All six scenes improved on the published del2 p95 measurements at `33cdcbf`. That revision and integration base `bca209d` have identical renderer, engine and fixture sources. [Gate report](../../out/meta/ipf/gate.json) · [18-frame contact sheet](../../out/meta/ipf/sheet.webp)
+
+| Scene | Main p95, ms | PF1a p95, ms | Cap, ms | Commands | Triangle p50, ms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Capsules-1 | 0.528 | 0.451 | 0.800 | 5 | 0.100 |
+| Capsules-20 | 0.961 | 0.663 | 1.100 | 5 | 0.100 |
+| Blobs-1 | 0.678 | 0.406 | 1.100 | 5 | 0.099 |
+| Blobs-20 | 1.629 | 1.079 | 2.400 | 5 | 0.099 |
+| Hermit-1 | 3.225 | 2.453 | 5.000 | 13 | 0.062 |
+| Hermit-20 | 4.802 | 3.752 | 5.600 | 13 | 0.053 |
+
+One locked Apple M4 Metal run at 1280 × 800, with 30 warmups and 300 timed frames per scene, held Twin **36/36**, Truth **34/34**, Speed **12/12** and Load **31/33**, with zero contended verdicts. Both Hermit counts created 14 pipelines against 13. Pictures held **0/18** against the frozen appearances already queued for owner review. All 18 rendered RGBA hashes matched main exactly. All nine bead frames passed their frozen comparison and matched main exactly. The before and after inventories verified 18 gate references, nine bead references and 1,510 historical beauty files. [Five-gate measurements](../../out/meta/ipf/five-gates.json) · [Bead comparisons](../../out/meta/ipf/bead/score.json)
+
+All six mutants fired. The wasm32 runner with `web-sys`, workspace doctests and both grammar recognizers passed. Earley and llguidance each classified 281/281 fixtures as expected, including the negative sentinel. The workspace build produced 25 native test executables. **153/154** tests passed. The existing runner Tier 0 promotion test measured **0.932 ms** p95 overhead against **0.500 ms**, with 0/140,000 pixels over 1/255. CLI grew from 5,357 to 5,616 physical Rust/WGSL source lines (+259). The other eight crates had zero line delta. [Native test log](../../out/meta/ipf/native.log) · [Per-crate counts](../../out/meta/ipf/lines.json)
+
+| Lane | Audit and disposition |
+| --- | --- |
+| PF1a · `e00e634` | Merged. The final paired run saved 0.709 ms median on Hermit and 0.442 ms on close Shrine. The slower candidate p95 was 4.425 and 3.211 ms respectively. Changing the sun redrew 219,448 shadow texels and produced the expected 13 → 17 → 13 command sequence. All 36 paired beauty, depth, ID and shadow comparisons matched at 0/4/9 s, including both fixed Shrine row orders. [Lane evidence](lanes/pf1a.md) |
+| PF1b · `3606613` | Held out. Two Shrine runs met both targets. The final allowed replay saved 0.236 ms Vis p50 against the 0.250 ms minimum and measured 3.826 ms frame p95 against the 3.800 ms cap. Hermit passed the absolute cap in every run and was 2.08–4.89% faster than control, outside the brief’s literal ±2% band. All 63 decoded comparisons and ten boundary cases matched. [Lane evidence](https://github.com/nbardy/loft/blob/360661374ee02b5045bff30e96cfbb8c87763c8f/agent_notes/2026-11-20_v1/lanes/pf1b.md) |
+| PF1c | Undelivered. The PF1 manifest lists only PF1a and PF1b. Origin supplied no PF1c ref, and the repository supplied no PF1c brief or lane note. [Lane manifest](../2026-11-20_codex/pf1.lanes) |
+
 ## Cook cycle 1 integration
 
-Main retains the del2 engine. C1b and C1d passed their focused promotion and replay measurements. The combined candidate `bb7e43c` missed the publication rule. Cargo discovered C1c’s integration-test target before the integrator removed that lane for a legal-loop regression. The production compiler built after removal. The stale test path stopped the single workspace build with exit 101. Its 11 emitted native test executables passed **81 tests** of 156 expected. 75 tests lack a combined result. [Build diagnostics](../../out/meta/i1/full.stderr) · [Cargo timeline](../../out/meta/i1/build-timeline.json) · [Excluded heads and metrics](../../out/meta/i1/BLOCKED)
+Cook cycle 1 retained the del2 engine. C1b and C1d passed their focused promotion and replay measurements. The combined candidate `bb7e43c` missed the publication rule. Cargo discovered C1c’s integration-test target before the integrator removed that lane for a legal-loop regression. The production compiler built after removal. The stale test path stopped the single workspace build with exit 101. Its 11 emitted native test executables passed **81 tests** of 156 expected. 75 tests lack a combined result. [Build diagnostics](../../out/meta/i1/full.stderr) · [Cargo timeline](../../out/meta/i1/build-timeline.json) · [Excluded heads and metrics](../../out/meta/i1/BLOCKED)
 
 The single Apple M4 Metal gate returned 3. Pictures held **0/18** against the approved frames. **18/18** actual RGBA hashes matched del2. Twin held **36/36**, Speed **9/12**, Load **31/33** and Truth **34/34**. All nine bead renders matched main, and the 18 gate pins, nine bead pins and 1,510 historical beauty hashes verified before and after. Both grammar recognizers passed all 280 original cases including the negative sentinel and all three additions. Doctests and wasm32 with web-sys passed. Five mutants fired in the combined binaries. The sixth, five inlined BSDF copies, fired separately in C1b’s compiler test binary with matching compiler sources. [Gate evidence](../../out/meta/i1/gate.json) · [Frame comparisons](../../out/meta/i1/pixels.json) · [Contact sheet](../../out/meta/i1/sheet.webp)
 
@@ -343,3 +434,32 @@ Seven lanes, each with an acceptance test, in agent_notes/2026-11-20_v1/INTEGRAT
 7. Room Runners merge (owner)
 
 Items 1 and 2 come first.
+
+The X2f size audit and four proposed cuts are recorded in [the lean-down plan](design/lean1.md).
+
+## Chief scientist's handoff (20 Nov, scientist_handoff_2.md): routing
+- loft/s1-lip: Lipschitz fix, Shrine Vis 0.94 ms faster. **Owner approval needed** for out/meta/s1_lip/shrine-review.webp (the old picture was a truncated march). Merged by ix3 once approved.
+- loft/s1-controls: parity gate prototype; polished by s1_controls_fix (wave x3).
+- s1_escapes: the four front-end v1.2 stubs (bake_tex sampling, kernel allow, whole-pass `pass`, unproved). Runs in wave x3.
+- Lean audit (x2f) and lean lanes must also cover:
+  - remove the wgpu dependency from loft-std (~2,429 lines of device/encoder code; a duplicate 1,938-line renderer in loft-cli/src/native/);
+  - per-frame create_buffer_init in encode.rs:228–235 and outbox.rs:66–70;
+  - U::VERTEX on LUTs (lib.rs:47);
+  - .loftb export refused for bakes and paths (bundle.rs:325).
+- x2b: keep FMA ON in shading (Fast mode). A shading contraction ban costs +0.18 ms p50 and +0.86 ms p95; global Safe mode costs +4.68 ms. Prefer a scoped motion-only barrier over a soft-float emulator. Add an automated MSL leak check.
+- X2e now runs the Hermit demo schedule on the Three.js device. The browser adapter is scoped to that schedule.
+- Deferred: the native MetalBackend (predicted 0.09–0.19 ms for 2.3–3.8k lines), HDR+Present fusion, f16 shading, ground fBM bake, and consumer Wasm passes until check.rs (86.5 KB) is split.
+- Superseded briefs: s1_exec, s1_motion_fma, s1_web, is1 and sci_chain.sh, which are covered by x2a, x2b and x2e.
+
+## Std library rule and anti-patterns (owner, 20 Nov)
+- A std function earns its place when it replaces a recurring, sufficiently complicated block costing ≥3× the tokens of its call (PHILOSOPHY §4).
+- **Anti-pattern (seen in Buddies expeditions):** re-implementing standard functional patterns (`map`, `await`, filter, fold) as tiny renamed wrappers that cover one or two calls under a new name. That adds names and saves nothing. Std functions are LARGE, real blocks: a leg family, a shell generator, a layered material, a gait law, a camera rig. Never a renamed one-liner.
+- Std today: lib/*.loft, 607 lines and 9.5k tokens (the scene-side std); crates/loft-std (Rust host side, 4.3k lines). Every build re-parses all of lib/ (cost within the 20–37 ms build). AOT plan: stdaot1.
+
+## Flagship scenes not yet ported (owner, 20 Nov)
+- The 5-crab idol lineup dance (examples/bosses/crab_lineup.ts, lineup_shots.ts; song score crab_song.ts), the crab_live motion (examples/motion/crab_live.ts, stage.ts), the bosses (wreckers_lamp, reefback_titan, maelstrom_wyrm, thundermaw, tithe_fleet), and the first lanterns. engines/hermit.loft exists; the "nice hermit" look must match the best old render. Lane: port1.
+
+## stdlib/ tree (owner, 20 Nov)
+- Port the good parts of the old std (styles: woodblock, toon, sketch, paint, papercraft, neon, biolume, gloss, pbr, sea, whitewater, foam, sky, post; the light transport WGSL; motion body/move/roam; noise/sdf/geometry) into a layered stdlib/ tree: stdlib/noise, stdlib/sdf, stdlib/styles, stdlib/lighting, and so on. Higher layers import lower ones.
+- Forking is copy-paste: copy a std file into your own folder and `use` the copy.
+- Design lane std1, then std1a (restructure), then the port lanes. All in wave x4.

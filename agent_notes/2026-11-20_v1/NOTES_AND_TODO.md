@@ -73,6 +73,8 @@ this file holds the reasoning behind them and the follow-ups that are not yet la
 - Cambium checkpoint collision: fixed in fb755e9 on release/v0.10 and installed locally. TODO (owner): push and
   release it.
 
+## Correction (owner, 20 Nov): "a new name must buy a capability" governs the core only. A std function is justified when it replaces a recurring block of ≥3× its call's tokens (docs/PHILOSOPHY.md §4). Token study: tok1.
+
 ## TODO (not yet lanes)
 - [ ] Integration and hand-off lanes: see INTEGRATION_TODO.md (Three.js demo first, then the Unity Metal spike).
 - [ ] bk1, then bk1b (the scientist's three checks), then send bk1 to the chief scientist for a second look at the

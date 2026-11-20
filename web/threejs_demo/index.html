@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loft × Three.js</title>
+<link rel="icon" href="data:,">
+<style>
+  :root { color-scheme: dark; font: 16px system-ui, sans-serif; background: #171a1e; }
+  body { max-width: 1280px; margin: 24px auto; padding: 0 20px; }
+  h1 { font-size: 1.4rem; margin: 0 0 12px; }
+  canvas { display: block; width: 100%; height: auto; background: #202830; }
+  section { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin-top: 12px; }
+  output { margin-left: auto; font-variant-numeric: tabular-nums; }
+  [role=alert] { color: #ffab96; }
+</style>
+<script type="importmap">
+  {"imports":{"three":"./node_modules/three/build/three.module.js","three/webgpu":"./node_modules/three/build/three.webgpu.js"}}
+</script>
+<h1>Loft × Three.js</h1>
+<canvas aria-label="Loft hermit crab and Three.js cube"></canvas>
+<section aria-label="Scene controls">
+  <label>Cube depth <select id="position">
+    <option value="front">In front</option>
+    <option value="crossing" selected>Intersecting</option>
+    <option value="behind">Behind</option>
+  </select></label>
+  <label>Sun <input id="sun" type="range" min="-100" max="100" value="55" aria-label="Sun azimuth"></label>
+  <output id="time">Loading WebGPU…</output>
+</section>
+<p role="alert" hidden></p>
+<script type="module" src="./demo.js"></script>
+</html>
