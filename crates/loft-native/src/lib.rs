@@ -11,7 +11,7 @@ pub mod ray_query;
 pub use motion::{sample_motion, sample_motion_timed};
 
 use loft_passes::program::{abi, Pass, Program};
-use loft_ir::{HostCaps, GpuFeatures, DepthConvention, InstanceId, TableId, KindId, ParamId, ParamMeta, IrTy};
+use loft_ir::{HostCaps, GpuFeatures, DepthConvention, InstanceId, ModuleId, TableId, KindId, ParamId, ParamMeta, IrTy};
 use loft_runner::{Runner, frame::FrameOptions};
 use std::sync::Arc;
 use std::time::Instant;
@@ -67,7 +67,7 @@ pub struct Loaded {
     runner: Mutex<Runner>,
     id: InstanceId,
     #[cfg(not(target_arch = "wasm32"))]
-    modules: Vec<loft_ir::ModuleId>,
+    modules: Vec<ModuleId>,
     kind_tables: Vec<TableId>,
     twin_sources: Vec<naga::Module>,
     luts: Vec<f32>,
@@ -393,11 +393,13 @@ impl Loaded {
         let instance_bounds = runner.export_buffer(id, plan.instances).ok_or("missing bounds table")?.as_ref().clone();
         stats.resources_ms = resource_started.elapsed().as_secs_f64() * 1e3;
         Ok(Self { size, camera: p.camera, sun: p.sun, light_view: plan.shadow.map(|(lo, hi, side)| sun_camera(p.sun, lo, hi, side)),
-            frame_table, runner: Mutex::new(runner), id, kind_tables,
+            frame_table, runner: Mutex::new(runner), id,
             #[cfg(not(target_arch = "wasm32"))] modules: plan.modules,
+            kind_tables,
             twin_sources: p.kinds.iter().map(|k| p.modules[k.module].naga.clone()).collect(),
-            luts: p.luts.clone(), kind_words, params: Mutex::new((p.params.clone(), false)), shadow,
+            luts: p.luts.clone(), kind_words, params: Mutex::new((p.params.clone(), false)),
             #[cfg(not(target_arch = "wasm32"))] instance_bounds,
+            shadow,
             color, planes: [plan.visibility, plan.depth], color_view, clock, stats })
     }
 
