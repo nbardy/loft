@@ -1,0 +1,10 @@
+use stdlib::engines::woodblock_realtime
+use self::buoys::{Buoy, Water}
+
+camera View { eye: [0, 1.05, 5], at: [0, 0.72, 0], fov: 42deg }
+build {
+  emit Buoy(pose: place([0.5, 0.05, 0]@World), radius: 0.47m, pigment: [0.85, 0.24, 0.06])
+  emit Water(pose: place([0, -0.42, 0]@World))
+  emit Sun(dir: dir([-0.23, 0.12, -1]@World), color: [2.25, 1.65, 1.1])
+  emit Sky(zenith: [0.11, 0.22, 0.45], horizon: [0.65, 0.36, 0.24])
+}

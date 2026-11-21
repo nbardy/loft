@@ -1,0 +1,11 @@
+# Shading normal and view are in World. Anchor is in the hit's row space.
+pub struct SurfaceHit {
+  p: p3@World, anchor: p3@Local, n: n3@World, view: d3@World,
+  uv: v2, pigment: rgb, emitted: rgb
+}
+
+# Scene-linear light and a geometry footprint in metres per pixel.
+pub struct LightSummary {
+  key_dir: d3@World, key_vis: f, key_radiance: rgb,
+  indirect_irradiance: rgb, ao: f, footprint_m: m, depth_m: m, id: u
+}

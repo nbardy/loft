@@ -1,0 +1,10 @@
+use stdlib::lighting::surface::{SurfaceHit, LightSummary}
+use stdlib::lighting::world::{RngKey}
+
+pub schedule Forward(estimate: fn(SurfaceHit, LightSummary, RngKey) -> LightSummary, style: fn(SurfaceHit, LightSummary) -> rgb) {
+  cull_indirect(Drawables)
+  find_shadow_map(Casters, size: 1024)
+  draw_forward(ColorHdr, estimate: estimate, style: style, sun: [0.5, 0.75, 0.35]) {
+    draw_indirect(Drawables)
+  }
+}

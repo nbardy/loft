@@ -15,6 +15,8 @@ pub(crate) enum Visibility {
 #[derive(Clone, Copy)]
 pub(crate) enum Lighting<'a> {
     Bsdf(&'a str),
+    Style(super::Style<'a>),
+    Path,
     World { callback: &'a str, visibility: Visibility },
 }
 
@@ -278,9 +280,9 @@ pub(crate) fn classify_module(visibility: Visibility) -> String {
 }
 
 pub(crate) fn present_module(
-    p: &Prog, types: &[Ty], sky: &str, aov: Aov, paper: Option<&str>, film: Option<&str>, visibility: Visibility,
+    p: &Prog, types: &[Ty], sky: &str, aov: Aov, paper: Option<&str>, film: Option<&str>, visibility: Visibility, background_resolved: bool,
 ) -> String {
-    let mut source = super::emit_present(p, types, sky, aov, paper, film);
+    let mut source = super::emit_present(p, types, sky, aov, paper, film, background_resolved);
     match visibility {
         Visibility::Center => source,
         Visibility::SubpixelEdges => {

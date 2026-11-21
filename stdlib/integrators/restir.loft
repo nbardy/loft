@@ -19,3 +19,31 @@ pub fn reservoir_scale(r: v4) -> f =
     if r.y <= 0.0 || r.z <= 0.0 { return 0.0; }
     return r.x / (r.y * r.z);
   }
+
+use stdlib::lighting::surface::{SurfaceHit, LightSummary}
+use stdlib::lighting::world::{RngKey}
+use stdlib::sky::environment::{sky_patch, sky_dome}
+use stdlib::lighting::emitters
+
+# A fresh reservoir of quadrature directions at this hit. The shadowed key
+# stays separate. Each proposal selects one of twelve equal-area patches.
+pub fn estimate(hit: SurfaceHit, light: LightSummary, rng: RngKey) -> LightSummary =
+  wgsl(hit: SurfaceHit, light: LightSummary, rng: RngKey) -> LightSummary {
+    var r = vec4f(0.0);
+    var bits = rng[0] * 0x9e3779b9u ^ rng[1] * 0x85ebca6bu ^ rng[2] * 0xc2b2ae35u ^ rng[3];
+    for (var i = 0u; i < 8u; i++) {
+      bits = (bits ^ (bits >> 16u)) * 0x7feb352du + 0x9e3779b9u;
+      let patch_id = min(u32(f32(bits >> 8u) * (12.0 / 16777216.0)), 11u);
+      let wi = loft_user_sky_patch(patch_id);
+      let value = loft_user_sky_dome(wi) * (max(dot(hit.n, wi), 0.0) * 1.0471976);
+      let target_value = dot(value, vec3f(0.2126, 0.7152, 0.0722));
+      bits = (bits ^ (bits >> 16u)) * 0x7feb352du + 0x9e3779b9u;
+      let xi = f32(bits >> 8u) / 16777216.0;
+      r = loft_user_reservoir_add(r, patch_id, target_value, target_value * 12.0, 1.0, xi);
+    }
+    var result = light;
+    let wi = loft_user_sky_patch(u32(r.w));
+    result.indirect_irradiance += loft_user_sky_dome(wi)
+      * (max(dot(hit.n, wi), 0.0) * 1.0471976 * loft_user_reservoir_scale(r));
+    return result;
+  }

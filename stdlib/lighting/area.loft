@@ -1,0 +1,35 @@
+use stdlib::sdf::solid::{sphere}
+use stdlib::materials::bsdf::{emit_lobe}
+
+pub kind SphereLamp @World (center: p3@World, radius: m > 0, color: rgb) {
+  trace(p) = sphere(p - center, radius)
+  visible(ro, rd) {
+    let offset = center - ro
+    let along = dot(offset, rd)
+    let across = cross(offset, rd)
+    let disc = radius * radius - dot(across, across)
+    if disc < 0.0 { return -1.0 }
+    let root = sqrt(disc)
+    let near = along - root
+    select(along + root, near, near >= 0.0)
+  }
+  material(p,n) = emit_lobe(color)
+}
+
+# Direction and reciprocal solid-angle PDF. The cancellation-free cap also
+# samples distant emitters. At or inside the surface the support is 4π.
+pub fn sample_sphere(towards: v3, radius: m, xi: v2) -> v4 =
+  wgsl(towards: v3, radius: m, xi: v2) -> v4 {
+    let d2 = dot(towards, towards);
+    let s2 = min(1.0, radius * radius / max(d2, 1e-30));
+    let cap = select(s2 / (1.0 + sqrt(1.0 - s2)), 2.0, d2 <= radius * radius);
+    let polar = xi.x * cap;
+    let z = 1.0 - polar;
+    let r = sqrt(polar * (2.0 - polar));
+    let phi = 6.2831853 * xi.y;
+    let axis = select(vec3f(0.0, 0.0, 1.0), towards * inverseSqrt(max(d2, 1e-30)), d2 > 1e-30);
+    let side = select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(axis.y) > 0.9);
+    let x = normalize(cross(side, axis));
+    let wi = normalize(r * (x * cos(phi) + cross(axis, x) * sin(phi)) + z * axis);
+    return vec4f(wi, 6.2831853 * cap);
+  }

@@ -1,0 +1,10 @@
+use stdlib::schedules::path
+use stdlib::integrators::reference::{reference_sample}
+use stdlib::integrators::sampling::{primary_jitter}
+use stdlib::sky::environment::{sky_color}
+
+pub schedule ReferencePrimary {
+  orbit(at: [0, 0, 0], radius: 4, height: 0.5, fov: 40deg)
+  path::PathPhysical(reference_sample, primary_jitter)
+  tonemap_aces(ColorHdr, sky: sky_color)
+}

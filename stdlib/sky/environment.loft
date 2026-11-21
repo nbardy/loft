@@ -37,3 +37,20 @@ pub fn sky_color(rd: rgb, sun: rgb) -> rgb {
   let s = max(dot(rd, sun), 0.0)
   sky_dome(rd) + [1.0, 0.85, 0.6] * (pow(s, 600.0) * 6.0 + pow(s, 8.0) * 0.2)
 }
+
+# Zonal SH projection of the square-root sky gradient through order two.
+# Cosine convolution supplies multipliers π, 2π/3 and π/4. Preserve the
+# constant term exactly so a uniform sky delivers π times its radiance.
+pub fn sky_irradiance(ny: f) -> rgb {
+  let l2 = (3.0 * ny * ny - 1.0) * (5.0 / 168.0)
+  let up = 1.0 / 3.0 + 0.4 * ny + l2
+  let zenith = sky_zenith() - sky_horizon()
+  if has_sky() {
+    return 3.14159265 * (sky_horizon() + zenith * up)
+  }
+  let down = 1.0 / 3.0 - 0.4 * ny + l2
+  let ground_horizon = [0.24, 0.21, 0.16]
+  let ground_nadir = [0.12, 0.10, 0.08]
+  let horizon = mix(ground_horizon, sky_horizon(), 0.5 + 0.5 * ny)
+  3.14159265 * (horizon + zenith * up + (ground_nadir - ground_horizon) * down)
+}

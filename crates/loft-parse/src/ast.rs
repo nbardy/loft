@@ -327,8 +327,17 @@ pub struct ScheduleDecl {
     pub radiance: Option<(Ident, TyExpr)>,
     pub implicit: bool,
     pub name: Ident,
+    /// Parentheses mark a fragment, including a fragment with no inputs.
+    pub callbacks: Option<Vec<ScheduleCallback>>,
     pub passes: Vec<PassDecl>,
     pub waivers: Vec<(Ident, Ident)>,
+}
+
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct ScheduleCallback {
+    pub name: Ident,
+    pub params: Vec<TyExpr>,
+    pub ret: TyExpr,
 }
 
 /// `pass label: verb(args) { body calls };`

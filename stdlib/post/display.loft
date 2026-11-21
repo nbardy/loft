@@ -23,3 +23,10 @@ pub fn agx_display(c: rgb) -> rgb =
     let y = (((((15.5*x - 40.14)*x + 31.96)*x - 6.868)*x + 0.4298)*x + 0.1191)*x - 0.00232;
     return clamp(pow(max(outset * y, vec3<f32>(0.0)), vec3<f32>(2.2)), vec3<f32>(0.0), vec3<f32>(1.0));
   }
+
+use stdlib::sky::print::{print_sky}
+
+pub schedule PrintPost() {
+  outline_and_paper(ColorHdr)
+  tonemap_aces(ColorHdr, sky: print_sky)
+}

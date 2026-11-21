@@ -107,6 +107,16 @@ fn world_light(id: u32, point: vec3<f32>) -> PathLight {
   return PathLight(v/d, lamp.intensity.xyz/(d*d), d);
 }
 
+fn world_proposal(j: u32, seed: u32, lights: u32, point: vec3f) -> PathLight {
+  let id = min(u32(path_random(seed ^ 0x80c910a9u, j) * f32(lights)), lights - 1u);
+  if id != 0u && world_lamps[id].position.w < 0.0 {
+    let xi = vec2f(path_random(seed ^ 0x30e7a7fcu, j),
+                   path_random(seed ^ 0xd711b3ffu, j));
+    return world_sphere_light(id, point, xi);
+  }
+  return world_light(id, point);
+}
+
 fn world_direct(h: PathHit, wo: vec3<f32>, seed: u32, bounce: u32) -> vec3<f32> {
   var r = vec4<f32>(0.0);
   let lights = arrayLength(&world_lamps);
@@ -116,22 +126,25 @@ fn world_direct(h: PathHit, wo: vec3<f32>, seed: u32, bounce: u32) -> vec3<f32> 
   var previous = vec4<f32>(0.0);
   for (var i = 0u; i < count; i++) {
     let j = bounce*16u + 2u + i;
-    let id = min(u32(path_random(seed ^ 0x80c910a9u, j)*f32(lights)), lights-1u);
-    let lt = world_light(id, h.p);
+    let lt = world_proposal(j, seed, lights, h.p);
     let value = world_eval(h, wo, lt.wi) * lt.l;
     let target_value = max(dot(value, vec3<f32>(0.2126,0.7152,0.0722)),0.0);
     let xi = path_random(seed ^ 0x71a77fc1u, j);
     if (i & 1u)==0u {
-      r = loft_user_reservoir_add(r, id, target_value, target_value*f32(lights), 1.0, xi);
+      r = loft_user_reservoir_add(r, i, target_value, target_value*f32(lights), 1.0, xi);
     } else {
-      previous = loft_user_reservoir_add(previous, id, target_value, target_value*f32(lights), 1.0, xi);
+      previous = loft_user_reservoir_add(previous, i, target_value, target_value*f32(lights), 1.0, xi);
     }
   }
   r = loft_user_reservoir_reuse(r, previous, previous.y, path_random(seed ^ 0x0f6d2b79u, bounce));
   let scale = loft_user_reservoir_scale(r);
   if scale == 0.0 { return vec3<f32>(0.0); }
-  let lt = world_light(u32(r.w), h.p);
-  let start = h.p+h.n*0.0002;
+  let j = bounce*16u + 2u + u32(r.w);
+  let lt = world_proposal(j, seed, lights, h.p);
+  let id = min(u32(path_random(seed ^ 0x80c910a9u, j) * f32(lights)), lights - 1u);
+  // Stay on the sampled line for a finite sphere endpoint. Moving the
+  // origin along the shading normal can turn grazing samples into blockers.
+  let start = select(h.p + h.n*0.0002, h.p, id != 0u && world_lamps[id].position.w < 0.0);
   let vis = world_visibility(0u, LoftRay(start, lt.wi, 0.0001, lt.t-0.0002));
   return world_eval(h, wo, lt.wi) * lt.l * scale * vis;
 }

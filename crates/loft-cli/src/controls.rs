@@ -189,7 +189,7 @@ fn program(fixture: Fixture) -> Result<Program, Failure> {
         .find(|pass| fixture.subject(pass))
         .and_then(|pass| match pass {
             Pass::Shade(ids) | Pass::Vis(ids) => Some(ids),
-            Pass::Cull | Pass::Shadow(_) | Pass::Classify | Pass::Present => None,
+            Pass::Cull | Pass::Shadow(_) | Pass::Classify | Pass::Present | Pass::Forward(_) | Pass::PathPrimary(_) | Pass::Post(_) => None,
         })
         .ok_or_else(|| Failure::Compile("missing timed pass".into()))?;
     if ids.len() != fixture.kinds().len()
@@ -853,7 +853,7 @@ fn add_mutant(p: &mut Program, f: Fixture) {
             let repeat = Pass::Vis(ids.clone());
             p.passes.insert(index + 1, repeat);
         }
-        Pass::Cull | Pass::Shadow(_) | Pass::Classify | Pass::Present => {
+        Pass::Cull | Pass::Shadow(_) | Pass::Classify | Pass::Present | Pass::Forward(_) | Pass::PathPrimary(_) | Pass::Post(_) => {
             unreachable!("checked pass")
         }
     }

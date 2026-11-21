@@ -60,6 +60,7 @@ fn spectral_path(origin: v3, direction: v3, seed: u, bounces: u, nm: f, lane: u)
     var ray = PathRay(origin,direction);
     var throughput = 1.0;
     var radiance = 0.0;
+    var delta = true;
     for (var bounce=0u; bounce<=bounces; bounce++) {
       let h = world_trace(ray.o,ray.d,1e6);
       if h.t < -1.0 { break; }
@@ -75,10 +76,11 @@ fn spectral_path(origin: v3, direction: v3, seed: u, bounces: u, nm: f, lane: u)
         if bend.through { throughput *= bend.eta*bend.eta; }
         ray = bend.ray;
         stack = bend.stack;
+        delta = true;
       } else {
         let wo = -ray.d;
         let direct = world_direct(h,wo,seed,bounce);
-        let glow = world_eval(h,wo,vec3<f32>(0.0));
+        let glow = select(vec3f(0.0), world_eval(h,wo,vec3<f32>(0.0)), delta || h.kind != LOFT_AREA_KIND);
         radiance += throughput * (loft_user_spectral_band(direct+glow,nm) + caustic_gather(h,wo,nm,lane));
         if bounce==bounces { break; }
         let xi = vec2<f32>(path_random(seed,bounce*16u),path_random(seed,bounce*16u+1u));
@@ -87,6 +89,7 @@ fn spectral_path(origin: v3, direction: v3, seed: u, bounces: u, nm: f, lane: u)
         if pdf<=0.0 { break; }
         throughput *= loft_user_spectral_band(world_eval(h,wo,ray.d),nm)/pdf;
         ray.o = h.p+h.n*0.0002;
+        delta = false;
       }
       if throughput<=0.0 { break; }
     }

@@ -1,0 +1,10 @@
+use stdlib::schedules::forward
+use stdlib::integrators::direct as transport
+use stdlib::lighting::print as ink
+use stdlib::post::display
+
+pub schedule Forward {
+  orbit(at: [0, 0, 0], radius: 4, height: 0.5, fov: 40deg)
+  forward::Forward(transport::estimate, ink::shade_style)
+  display::PrintPost()
+}

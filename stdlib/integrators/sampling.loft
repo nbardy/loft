@@ -1,0 +1,10 @@
+# Permute the four strata per pixel and draw independently keyed jitter
+# coordinates inside each of the four primary strata.
+pub fn primary_jitter(seed: u, site: u) -> v2 =
+  wgsl(seed: u, site: u) -> v2 {
+    let cell = vec2u(site & 1u, site >> 1u);
+    let flip = vec2u(seed & 1u, (seed >> 1u) & 1u);
+    let xi = vec2f(path_random(seed, 0xfffffff1u + 2u * site),
+                   path_random(seed, 0xfffffff2u + 2u * site));
+    return (vec2f(cell ^ flip) + xi) * 0.5 - 0.5;
+  }

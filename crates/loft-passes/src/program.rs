@@ -130,6 +130,12 @@ pub enum Pass {
     Shade(Vec<u32>),
     /// Sky, ACES, sRGB to the target.
     Present,
+    /// Per-kind draw writes packed primary identity, HDR and hardware depth.
+    Forward(Vec<u32>),
+    /// Fullscreen primary rays write packed primary identity, HDR and depth.
+    PathPrimary(usize),
+    /// Fullscreen HDR effect reading the previous HDR and the primary depth.
+    Post(usize),
 }
 
 /// A fixed-step dispatch and its packed row and verdict layouts.

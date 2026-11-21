@@ -1,0 +1,25 @@
+use stdlib::lighting::surface::{SurfaceHit, LightSummary}
+
+# The phase lives in the row's coordinates. Widen the transition by the
+# projected footprint and fade the pattern before it exceeds Nyquist.
+pub fn shade_style(hit: SurfaceHit, light: LightSummary) -> rgb {
+  let spacing = 0.075
+  let ink = [0.025, 0.038, 0.061]
+  let paper = [0.08, 0.12, 0.22]
+  let facing = max(dot(hit.n, light.key_dir), 0.0) * light.key_vis
+  let energy = dot(light.key_radiance, [0.2126, 0.7152, 0.0722])
+  let fill = dot(light.indirect_irradiance, [0.2126, 0.7152, 0.0722])
+  let value = facing * energy * 0.46 + fill * 0.12 * light.ao
+  let bands = 0.24 + 0.25 * smoothstep(0.10, 0.14, value) +
+    0.28 * smoothstep(0.42, 0.46, value) + 0.23 * smoothstep(0.75, 0.80, value)
+  let anchor = coords(hit.anchor)
+  let phase = (anchor.x + anchor.y * 0.6 + anchor.z * 0.35) / spacing
+  let filter = clamp(light.footprint_m / spacing, 0.01, 0.5)
+  let distance = abs(fract(phase + 0.5) - 0.5)
+  let hatch = (1.0 - smoothstep(0.08 - filter, 0.08 + filter, distance)) *
+    (1.0 - smoothstep(0.16, 0.5, filter)) * (1.0 - smoothstep(0.18, 0.54, value))
+  let wash = (1.0 - smoothstep(0.1, 0.65, hit.n.y)) * 0.28
+  let bleed = light.indirect_irradiance * (0.08 * light.ao)
+  let pigment = mix(hit.pigment * bands + bleed, paper, wash)
+  mix(pigment, ink, hatch * 0.56) + hit.emitted
+}

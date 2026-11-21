@@ -1,0 +1,17 @@
+# Horizon wash, red sun, then a scalloped cloud and its outline.
+pub fn print_sky(rd: rgb, sun: rgb) -> rgb {
+  let up = rd.y
+  let pale = mix(sky_horizon(), [0.86, 0.51, 0.24], 0.34)
+  let wash = mix(pale, sky_zenith(), smoothstep(-0.04, 0.43, up))
+  let disc = smoothstep(0.994, 0.9955, dot(rd, sun))
+  let under_cloud = mix(wash, [1.8, 0.64, 0.25], disc)
+  let az = clamp((rd.x + 0.8) / 1.32, 0.0, 1.0)
+  let height = sin(3.14159265 * az) * (0.034 + 0.018 * abs(sin(18.849556 * az)))
+  let cloud_y = up - 0.17
+  let bottom = smoothstep(0.0, 0.006, cloud_y)
+  let top = 1.0 - smoothstep(height - 0.005, height, cloud_y)
+  let core = smoothstep(0.007, 0.011, cloud_y) *
+    (1.0 - smoothstep(height - 0.011, height - 0.006, cloud_y))
+  let cloud = mix(mix(under_cloud, [0.15, 0.18, 0.25], bottom * top), [0.66, 0.61, 0.47], core)
+  mix([0.11, 0.19, 0.27], cloud, smoothstep(-0.11, -0.07, up))
+}

@@ -294,7 +294,7 @@ impl Builder {
         module: usize,
         entries: (&str, &str),
         args: (TableId, u32, Option<TableId>),
-        targets: (TableId, Option<TableId>),
+        targets: (&[TableId], Option<TableId>),
         resources: &Resources,
     ) -> Result<()> {
         let module = ModuleId(module as u32);
@@ -310,7 +310,7 @@ impl Builder {
                     vertex: None,
                     index: args.2,
                 }]),
-                color_targets: Box::new([TargetDesc { table: targets.0 }]),
+                color_targets: targets.0.iter().map(|&table| TargetDesc { table }).collect(),
                 depth: targets.1.map(|table| DepthDesc { table, write: true }),
                 msaa: 1,
             },
@@ -407,6 +407,7 @@ pub struct Prepared {
     pub instances: TableId,
     pub visibility: TableId,
     pub depth: TableId,
+    pub hdr: TableId,
     pub modules: Vec<ModuleId>,
     pub shadow: Option<([f32; 3], [f32; 3], u32)>,
     pub shadow_wave: Option<u16>,
@@ -525,6 +526,9 @@ pub fn lower_program(
     let sampler = b.external();
     b.bundle.resources.comparison_samplers.push(sampler);
     let hdr = b.texture(ImageFormat::Rgba16Float, size, opts.overdraw.then_some([0.; 4]));
+    let scratch = program.passes.iter().any(|pass| matches!(pass, Pass::Post(_)))
+        .then(|| b.texture(ImageFormat::Rgba16Float, size, None));
+    let mut resolved = hdr;
     let target = b.external();
     let shadow_bounds = program.passes.iter().find_map(|pass| match pass {
         Pass::Shadow(ids) => {
@@ -607,14 +611,14 @@ pub fn lower_program(
             // Archived Classify calls its (1,1) buffer data. The address is the ABI.
             Pass::Classify => b.compute(program.classify, "classify", DispatchExtent::Fixed(groups),
                 &Resources::from([((1, 0), vis), ((1, 1), shade_args), ((1, 2), tiles)]))?,
-            Pass::Vis(ids) | Pass::Shadow(ids) | Pass::Shade(ids) => {
+            Pass::Vis(ids) | Pass::Shadow(ids) | Pass::Shade(ids) | Pass::Forward(ids) => {
                 for &id in ids {
                     let k = id as usize;
                     let (rows, kp) = kinds[k];
                     let mut resources =
                         Resources::from([((1, 0), rows), ((1, 2), kp), ((1, 3), luts)]);
                     if let Some(&(points, _)) = grid_data.get(&k) { resources.insert((2, 5), points); }
-                    if (matches!(pass, Pass::Vis(_) | Pass::Shadow(_)) || opts.overdraw)
+                    if (matches!(pass, Pass::Vis(_) | Pass::Shadow(_) | Pass::Forward(_)) || opts.overdraw)
                         && matches!(program.kinds[k].draw, Draw::Analytic | Draw::Traced)
                     {
                         b.bundle
@@ -632,7 +636,7 @@ pub fn lower_program(
                                 program.kinds[k].module,
                                 (vs, "fs"),
                                 (draw_args, offset, index),
-                                (vis, Some(depth)),
+                                (&[vis], Some(depth)),
                                 &resources,
                             )?;
                         }
@@ -646,7 +650,7 @@ pub fn lower_program(
                                 program.kinds[k].module,
                                 (vs, "fs"),
                                 (shadow_args, offset, index),
-                                (shadow_vis, Some(shadow)),
+                                (&[shadow_vis], Some(shadow)),
                                 &resources,
                             )?;
                         }
@@ -654,7 +658,7 @@ pub fn lower_program(
                             resources.insert((1, 1), visible);
                             execution.additive.push(PassId(b.bundle.passes.len() as u32));
                             b.draw(program.kinds[k].module, ("vs", "fs_overdraw"),
-                                (draw_args, offset, None), (hdr, None), &resources)?;
+                                (draw_args, offset, None), (&[hdr], None), &resources)?;
                         }
                         Pass::Shade(_) => {
                             resources.extend([
@@ -675,17 +679,33 @@ pub fn lower_program(
                                 &resources,
                             )?;
                         }
-                        Pass::Cull | Pass::Classify | Pass::Present => unreachable!(),
+                        Pass::Forward(_) => {
+                            resources.extend([((1, 1), visible), ((2, 3), shadow), ((2, 4), sampler)]);
+                            b.draw(program.kinds[k].module, ("vs", "fs_forward"), (draw_args, offset, None),
+                                (&[vis, hdr], Some(depth)), &resources)?;
+                        }
+                        Pass::Cull | Pass::Classify | Pass::Present | Pass::PathPrimary(_) | Pass::Post(_) => unreachable!(),
                     }
                 }
             }
-            Pass::Present => b.draw(
-                program.present,
-                ("vs_present", "fs_present"),
-                (present_args, 0, None),
-                (target, None),
-                &present,
-            )?,
+            Pass::Present => {
+                present.insert((1, 0), resolved);
+                b.draw(program.present, ("vs_present", "fs_present"), (present_args, 0, None),
+                    (&[target], None), &present)?;
+            }
+            Pass::PathPrimary(module) => {
+                b.draw(*module, ("vs_primary", "fs_path_visibility"), (present_args, 0, None),
+                    (&[vis], Some(depth)), &present)?;
+                b.wave += 1;
+                b.draw(*module, ("vs_primary", "fs_path_primary"), (present_args, 0, None),
+                    (&[hdr], None), &present)?;
+            }
+            Pass::Post(module) => {
+                let dst = if resolved == hdr { scratch.expect("built HDR scratch") } else { hdr };
+                b.draw(*module, ("vs_post", "fs_post"), (present_args, 0, None), (&[dst], None),
+                    &Resources::from([((1, 0), resolved), ((1, 1), vis), ((1, 2), depth)]))?;
+                resolved = dst;
+            }
         }
         b.wave += 1;
     }
@@ -706,7 +726,7 @@ pub fn lower_program(
             size: (u64::from(table.capacity) * u64::from(table.stride_bytes)).max(4) }
     }).collect();
     b.bundle.tables.extend(execution.table());
-    Ok(Prepared { bundle: b.bundle, instances, visibility: vis, depth, shadow: shadow_bounds, shadow_wave,
+    Ok(Prepared { bundle: b.bundle, instances, visibility: vis, depth, hdr: resolved, shadow: shadow_bounds, shadow_wave,
         modules: program.kinds.iter().map(|k| ModuleId(k.module as u32)).collect() })
 }
 

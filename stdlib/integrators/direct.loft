@@ -1,4 +1,4 @@
-use stdlib::sky::environment::{sky_patch, sky_dome}
+use stdlib::sky::environment::{sky_patch, sky_dome, sky_irradiance}
 use stdlib::lighting::emitters
 
 # The Bsdf under the sun (radiance factor 2.2, 2.0, 1.7, times the shadow map), plus the sky integrated by a fixed
@@ -22,3 +22,15 @@ pub fn sun_sky(b: Bsdf, n: rgb, v: rgb, sun: rgb, shadow: f, ao: f) -> rgb {
   }
   c
 }
+
+use stdlib::lighting::surface::{SurfaceHit, LightSummary}
+use stdlib::lighting::world::{RngKey}
+
+# Evaluate the cosine-convolved sky before ink. The style decides how to use
+# the result independently of the material's lobe.
+pub fn estimate(hit: SurfaceHit, light: LightSummary, rng: RngKey) -> LightSummary =
+  wgsl(hit: SurfaceHit, light: LightSummary, rng: RngKey) -> LightSummary {
+    var result = light;
+    result.indirect_irradiance += loft_user_sky_irradiance(hit.n.y);
+    return result;
+  }
