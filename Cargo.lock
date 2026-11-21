@@ -507,6 +507,7 @@ name = "loft-check"
 version = "0.1.0"
 dependencies = [
  "loft-abi",
+ "loft-builtins",
  "loft-ir",
  "loft-parse",
  "loft-plan",
@@ -524,6 +525,7 @@ dependencies = [
  "loft-passes",
  "loft-runner",
  "loft-tier0",
+ "naga",
  "png",
  "pollster",
  "serde",
@@ -539,6 +541,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "loft-abi",
+ "loft-builtins",
  "loft-check",
  "loft-ir",
  "loft-parse",
@@ -550,6 +553,7 @@ name = "loft-eval"
 version = "0.1.0"
 dependencies = [
  "loft-abi",
+ "loft-builtins",
  "loft-check",
  "loft-ir",
  "loft-parse",
