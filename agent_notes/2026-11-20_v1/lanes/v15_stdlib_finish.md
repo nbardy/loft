@@ -18,6 +18,9 @@ Forward, tiled, ReSTIR, toon and brass matched Vis64 and D32 at 256×160 for bot
 Harbor path at 160×100 matched both planes at 64, 128 and 256 spp. All depths were finite and (0,0) was a miss at 1.0.
 The 256-spp Harbor capture still had 5,120 unwritten HDR pixels. The 1,024-spp area control had 896. High-sample beauty remains open.
 Harbor woodblock at 384×240 and t=0 measured 1.193 ms p95 over 20 frames after 5 warmups. Triangle p95 was 0.035 ms.
-The full grammar replay and native suite, including fresh Crab Live parity, are pending.
+Native suite on Metal ran 32 executables with 183 tests passed, zero failed and one ignored archive capture.
+Crab Live matched all 480 CPU/GPU ticks, with bytes agreeing at each sampled boundary for 1, 2 and 4 ticks per submission.
+Grammar coverage accounts for all 379 tracked sources. The standalone full replay is still running.
+Five compile attempts were required, including the successful lab workspace build and focused rebuild.
 
 [Local evidence](../../../out/meta/v15_stdlib_finish/)
