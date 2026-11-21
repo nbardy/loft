@@ -11,6 +11,7 @@ mod defaults;
 pub mod source;
 mod refine;
 mod provenance;
+mod motion_round;
 mod infer;
 pub mod emit;
 pub mod eval;
@@ -671,7 +672,7 @@ fn pack(row: &[RowVal], out: &mut Vec<f32>) {
     }
 }
 
-fn naga_module(name: &str, text: String, src: &Sources, features: loft_ir::GpuFeatures) -> Res<ShaderModule> {
+fn naga_module(name: &str, text: String, src: &Sources, features: loft_ir::GpuFeatures, det_motion: bool) -> Res<ShaderModule> {
     let mut prelude = quant::wgsl_prelude(&text, features);
     if text.contains("loft_ggx_energy(") {
         let table = if text.contains("var<storage, read> world_luts:") { Some("world_luts") }
@@ -679,16 +680,29 @@ fn naga_module(name: &str, text: String, src: &Sources, features: loft_ir::GpuFe
             else { None };
         prelude.push_str(&bsdf::energy_wgsl(table));
     }
+    if det_motion { prelude.push_str(&motion_round::helpers()); }
     prelude.push_str(&text);
     let map=provenance::Map::new(prelude);
     let diagnostic=|at:Option<Span>,message:String|Diag::new(Code::E701,at.unwrap_or(Span::NONE),format!("WGSL validation in {name}: {message}"),"correct the WGSL expression at this source location");
-    let module=naga::front::wgsl::parse_str(&map.shader).map_err(|e|diagnostic(e.labels().find_map(|(s,_)|map.origin(s)),e.emit_to_string(&map.shader)))?;
+    let mut module=naga::front::wgsl::parse_str(&map.shader).map_err(|e|diagnostic(e.labels().find_map(|(s,_)|map.origin(s)),e.emit_to_string(&map.shader)))?;
     let mut caps = naga::valid::Capabilities::default();
     caps.set(naga::valid::Capabilities::SUBGROUP, features.contains(loft_ir::GpuFeatures::SUBGROUPS));
     caps.set(naga::valid::Capabilities::SHADER_FLOAT32_ATOMIC, features.contains(loft_ir::GpuFeatures::FLOAT32_ATOMICS));
-    naga::valid::Validator::new(naga::valid::ValidationFlags::all(), caps).validate(&module).map_err(|e|diagnostic(e.spans().find_map(|(s,_)|map.origin(*s)),e.emit_to_string(&map.shader)))?;
-    let origins=map.expressions(&module,src);
-    Ok(ShaderModule{name:name.into(),wgsl:map.shader,naga:module,span:None,origins})
+    let validate = |module| naga::valid::Validator::new(naga::valid::ValidationFlags::all(), caps)
+        .validate(module).map_err(|e| diagnostic(e.spans().find_map(|(s,_)| map.origin(*s)), e.emit_to_string(&map.shader)));
+    let info = validate(&module)?;
+    let origins = map.expressions(&module, src);
+    // Lower after provenance markers have been removed. The rewrite preserves
+    // expression handles and does not affect any non-motion module.
+    let wgsl = if det_motion {
+        motion_round::lower(&mut module, &info);
+        let info = validate(&module)?;
+        naga::back::wgsl::write_string(&module, &info, naga::back::wgsl::WriterFlags::empty())
+            .map_err(|e| diagnostic(None, e.to_string()))?
+    } else {
+        map.shader
+    };
+    Ok(ShaderModule { name: name.into(), wgsl, naga: module, span: None, origins })
 }
 
 /// The GPU passes in dependency order; `find_shadow_map` is optional, between the vis bundle and classification.
@@ -1479,8 +1493,9 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
     lap("emit", &mut ms);
     let store_energy = texts.iter().any(|(_, w)| w.contains("loft_ggx_energy(")
         && (w.contains("var<storage, read> luts:") || w.contains("var<storage, read> world_luts:")));
-    let shader_modules = texts.into_iter().map(|(n,w)| {
-        let mut m=naga_module(&n, w, src, features)?;
+    let det_motion: HashSet<_> = dispatches.iter().filter(|d| d.tier.is_det()).map(|d| d.module).collect();
+    let shader_modules = texts.into_iter().enumerate().map(|(i, (n, w))| {
+        let mut m = naga_module(&n, w, src, features, det_motion.contains(&i))?;
         if let Some(k)=p.kinds.get(n.as_str()) {let (file,line,col,_,_)=src.locate(k.name.span); m.span=Some((file,line,col));}
         Ok(m)
     }).collect::<Res<Vec<_>>>()?;
@@ -1743,7 +1758,7 @@ impl AuthoredCompute {
                 }
                 if !named.is_empty() { return Err(bad()); }
                 let (wgsl, converted) = emit::kernel_module(p, types, kernel, &arguments, &table_args, workgroup, float_atomics);
-                let module = naga_module(entry, wgsl, src, features | GpuFeatures::SUBGROUPS)?;
+                let module = naga_module(entry, wgsl, src, features | GpuFeatures::SUBGROUPS, false)?;
                 for (_, global) in module.naga.global_variables.iter() {
                     let Some(name) = global.name.as_deref() else { continue; };
                     let Some(name) = name.strip_prefix(bake_tex::SAMPLE_TEXTURE_PREFIX) else { continue; };

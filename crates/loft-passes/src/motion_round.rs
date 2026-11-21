@@ -1,14 +1,13 @@
 //! Keep binary32 products observable before an ordinary sum can contract them.
 use std::{collections::BTreeMap, fmt::Write};
 
-use loft_ir::{Code, Diag, Res, Span};
 use naga::{Block, Expression as E, Function, Handle, MathFunction as M, Scalar, Statement as S, TypeInner as T};
-use naga::valid::{Capabilities, FunctionInfo, ValidationFlags, Validator};
+use naga::valid::{FunctionInfo, ModuleInfo};
 
 const PREFIX: &str = "loft_motion_round_";
 type Calls = BTreeMap<Handle<E>, (Handle<Function>, Vec<Handle<E>>)>;
 
-fn helpers() -> String {
+pub(super) fn helpers() -> String {
     // A legal row address fits in 31 bits (even a one-word row would otherwise
     // exceed the storage binding limit). Metal must still observe the integer
     // operation because the shader argument itself has all 32 bits.
@@ -115,12 +114,7 @@ fn split_emits(body: &mut Block, calls: &Calls) {
     *body = out;
 }
 
-pub(super) fn lower(source: &str, span: Span) -> Res<String> {
-    let error = |msg: String| Diag::new(Code::E701, span, msg, "correct the fixed-tick shader");
-    let validate = |m: &naga::Module| Validator::new(ValidationFlags::all(), Capabilities::default()).validate(m);
-    let source = helpers() + source;
-    let mut ir = naga::front::wgsl::parse_str(&source).map_err(|e| error(e.emit_to_string(&source)))?;
-    let info = validate(&ir).map_err(|e| error(e.emit_to_string(&source)))?;
+pub(super) fn lower(ir: &mut naga::Module, info: &ModuleInfo) {
     let symbols = ir.functions.iter().filter_map(|(h, f)| {
         let name = f.name.as_ref()?.starts_with(PREFIX).then(|| f.name.clone().unwrap())?;
         Some((name, h))
@@ -133,6 +127,4 @@ pub(super) fn lower(source: &str, span: Span) -> Res<String> {
     for (i, ep) in ir.entry_points.iter_mut().enumerate() {
         rewrite(&mut ep.function, info.get_entry_point(i), &ir.types, &symbols);
     }
-    let info = validate(&ir).map_err(|e| error(format!("{e:?}")))?;
-    naga::back::wgsl::write_string(&ir, &info, naga::back::wgsl::WriterFlags::empty()).map_err(|e| error(e.to_string()))
 }
