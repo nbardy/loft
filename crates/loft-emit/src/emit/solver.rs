@@ -166,7 +166,7 @@ pub fn lower(
     for call in calls {
         has_events |= call.name == "emit_event";
         if !p.fns.contains_key(call.name.as_str())
-            && matches!(motion_math(&call.name), MotionMath::Unavailable)
+            && lookup(&call.name).is_some_and(|spec| spec.motion_math == MotionClass::Unavailable)
         {
             return Err(nondeterministic(call.span));
         }

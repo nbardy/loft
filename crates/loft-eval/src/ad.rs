@@ -340,7 +340,7 @@ impl Ad<'_> {
             Some(Abs | Min | Max | Clamp | Saturate | Floor | Fract | Sign | Step | Select | Round) => {
                 return Err(Diag::new(Code::E307, sp, format!("cannot differentiate a `C0` expression: `{f}` has a kink"), "keep `diff` on the smooth part (smoothstep/smootherstep, sin, exp, ...), or move the kink outside the differentiated fn"));
             }
-            None | Some(Acos | Atan2 | Fma | Log | Asin | Atan | Tan | Exp2 | Log2 | Conditional | Dist
+            None | Some(DSmoothstep | DSmootherstep | Acos | Atan2 | Fma | Log | Asin | Atan | Tan | Exp2 | Log2 | Conditional | Dist
                 | Dir | Coords | Place | Inv | FrameAxes | Sample | SampleLod | SamplePrior | HasSky
                 | SkyZenith | SkyHorizon | SunColor | Held | Missed | Unknown | EvalBsdf | MixBsdf
                 | GgxEnergy | Dot4I8 | Dot4U8 | UnpackBf16x2 | PackBf16x2 | UnpackU4Lo | UnpackU4Hi
