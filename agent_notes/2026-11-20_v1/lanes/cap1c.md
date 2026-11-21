@@ -61,3 +61,45 @@ The driver records the source overrides, per-scene shader text and plans, cold k
 ## Baseline controls
 
 The archived `v15_exec` CLI accepted the ten-kind control and reported 13 modules. It returned E520 for 100 and 1,000 specialized kinds and for 33 kinds with distinct sphere radii. At the proposal's 10 µs scheduling slope and 10 ms serial compile cost, the two uncapped extrapolations are 2.00 ms / 1.00 s and 11.00 ms / 10.00 s for shade p95 / cold shader compilation. Both grammar recognizers accepted the six-family library and all three fixtures after the family function names were put in Loft's lowercase syntax.
+
+## Build and plan observations
+
+The third compile completed the optimized workspace build, including the CLI and test executables. The 10-, 100- and 1,000-material plans each contain 1,000 drawable instances, four shade entries and seven modules. All seven shader hashes agree across the three counts. The PBR/ink scene uses two shade entries for 200 materials. The six-family scene uses six shade entries. The candidate also exported the paged-atlas and two-family transport bundles. The lane includes `origin/main` at `78ef244`. The merge brought in documentation and conductor changes, so these binaries still describe the same renderer and fixtures.
+
+Generated shaders match the archived unified runtime across all seven configurations in `engines/gates.json`. The recipe sources and frozen pictures are intact. Static checks passed, including the Keel dependency pins, corpus provenance and 310/310 cases in both grammar recognizers.
+
+The first locked host texture probe hit a capacity error before binding textures. Its output arena reserved sixteen words with the shared fixture's maximum of eight. The source now sets the maximum to sixteen. The optimized build predates that test-only correction, and the three-compile limit leaves the corrected probe unscored.
+
+## M4 material timings
+
+At 1280 × 800, each paired arm measured 100 frames after 30 warm-up frames. Four AB/BA pairs per comparison used fresh shader nonces for cold loads. All 24 paired arms passed the 0.150 ms triangle p95 limit. The quiet guard reported no build interference. The table pools each matching pair of observations. Intervals resample pairs and ten-frame blocks.
+
+| A → B | Classify p95 Δ, 95% interval (ms) | Shade p95 Δ, 95% interval (ms) | Frame p95 A → B (ms) | Frame p95 Δ, 95% interval (ms) |
+| --- | ---: | ---: | ---: | ---: |
+| 10 → 1,000 materials | −0.017 [−0.030, −0.003] | −0.015 [−0.024, −0.006] | 6.938 → 6.474 | −0.464 [−0.647, −0.192] |
+| Hand WGSL → generated, 1,000 | +0.018 [−0.009, +0.028] | +0.011 [−0.004, +0.021] | 6.918 → 6.933 | +0.015 [−0.435, +0.408] |
+| Sorted → shuffled, 1,000 | −0.013 [−0.022, +0.005] | +0.001 [−0.020, +0.009] | 6.955 → 6.924 | −0.031 [−0.718, +0.280] |
+
+The 10 → 1,000 frame growth interval was −9.30% to −2.77%, within the 10% limit. Generated Shade overhead held below +0.30 ms. At whole-frame scope the interval crosses +0.30 ms. The hand control shares the staged lobe compiler and differs in the hand-written WGSL pigment and band helpers. At 100 rows the standalone profile measured 0.221 ms Classify, 4.552 ms Shade and 6.853 ms whole-frame p95. The ten-kind specialization measured 0.218, 4.900 and 7.041 ms. Its lobe mix differs from the four-family control, so it illustrates the cost of independent specialization and supplies no direct matched delta.
+
+The 1,000-row profiles measured 82 ms median source compilation, 710 ms median cold device load and 72 ms median warm device load. Source compilation plus cold device load ranged from 773 to 827 ms over twelve observations, with a 96.1% sign interval of 778–811 ms for the median. Device acquisition is outside both timers. The eleven device pipelines stayed fixed. Summed creation durations overlap because the runner creates pipelines in parallel. The ten-kind specialization recorded 1,150 ms cold device load and 132 ms source compilation. The 200-row fixture loaded in 528 ms including source compilation. The absolute shade and load predictions underestimated the observed costs.
+
+The isolated budget observations use the seven-module, eleven-pipeline 1,000-row plan. Applying the Capsules-1 module ceiling of four with the pipeline ceiling held at eleven exceeded only modules. Applying the Capsules-1 pipeline ceiling of five with the module ceiling held at seven exceeded only pipelines. E520 still rejects the 33 distinct radii and the 100- and 1,000-kind controls. The plan reports runnable specialized kinds alongside the explicit family entries.
+
+The first measurement invocation captured all 29 timing profiles before this FFmpeg build failed to select a WebP encoder. The capture tool now uses `cwebp -q 95`. The `--reuse-timings` invocation scores the same profiles and renders the stills.
+
+## Host and workspace checks
+
+The optimized workspace suite ran 33 test executables and recorded 180 passed, three failed and one ignored. The portable atlas matched source and host bundle pixels for both ID orders. The two-family path matched source and host pixels with both zero and two bounces, and two bounces increased the center red channel. The cosine proposal and its PDF are shared by both families in the reference integrator. The source compiler refused an invalid path return type with E003 and a numeric material ID with E108. During structural replacement, both queued frames retained their instance and visibility IDs, with a higher resource epoch and different color in the promoted bundle. CPU and GPU material lookup matched.
+
+The live row upload passed the before/after visibility and depth comparison and created zero pipelines. The test observed a changed pixel, then panicked when it addressed the 4-byte packed ID plane as 8-byte Vis64. The corrected test reads one u32 per pixel. That test and the corrected host texture probe postdate the third compile. A separate source-data edit changed 145 pixels at 640 × 400, all on the selected kind and row. Its shader text and ID AOV matched the control exactly. Direct binding-array and array-layer execution remain unverified.
+
+The existing Tier 0 geometry test promoted with 0/140,000 pixels above 1/255 and 0.084 ms hot upload. Its measured +0.564 ms p95 overhead exceeded the +0.500 ms threshold. This test runs a dirty geometry tape in its compute fixture. The family shaders use compiled staged lobes in raster and World.
+
+## Pictures
+
+All ten fixture stills are saved at WebP quality 95. The 10-, 100- and 1,000-row fixtures and the shuffled 1,000-row fixture had identical 1280 × 800 depth AOVs. The hand and generated 1,000-row beauty PNGs were byte-identical.
+
+All 19 frozen image files matched their pinned RGBA hashes. All 19 source renders fit the existing Pictures tolerance of 1,024 pixels above 2/255. Eighteen renders matched the archived `v15_exec` captures exactly. In the remaining Coral Shrine frame, repeated baseline and candidate renders varied by 40 and 35 pixels respectively. Fresh baseline/candidate pairs differed by 24–51 pixels. The largest candidate difference from the frozen Shrine frame was 67 pixels.
+
+[Timing samples, shader plans, bundles, workspace log and stills](../../../out/meta/cap1c/verified/)
