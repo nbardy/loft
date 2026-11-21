@@ -465,6 +465,8 @@ fn texel(id: u32, xy: vec2i, lod: i32) -> u32 { return textureLoad(pages[id], xy
         let mut b = bundle();
         b.state = None;
         b.tables[0].capacity = 16;
+        // This probe needs sixteen output words rather than the two from the shared fixture.
+        b.tables[0].lifetime = TableLifetime::DynamicArena { max_rows: 16 };
         b.tables.push(TableDecl {
             id: data, format: ElemFormat::U32, stride_bytes: 64, capacity: 8,
             lifetime: TableLifetime::DynamicArena { max_rows: 8 }, initial: Box::new([]),
