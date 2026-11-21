@@ -227,7 +227,7 @@ fn queued_frames_keep_their_graph_and_visibility_after_bundle_replacement() {
             .textures
             .iter()
             .find(|texture| {
-                texture.format == loft_ir::ImageFormat::Rg32Uint && texture.extent[0] == size.0
+                matches!(texture.format, loft_ir::ImageFormat::Rg32Uint) && texture.extent[0] == size.0
             })
             .expect("current visibility plane")
             .table
