@@ -1,0 +1,11 @@
+space World
+struct FloatWord { value: f }
+
+schedule Main {
+  table(Features, row: FloatWord, capacity: 2097152)
+  table(Weights, row: FloatWord, capacity: 256)
+  table(Image, row: FloatWord, capacity: 1048576)
+  pass field reads [Features, Weights] writes [Image] {
+    cooperative("field-matrix.wgsl", "field-alu.wgsl", "field", 4096)
+  }
+}

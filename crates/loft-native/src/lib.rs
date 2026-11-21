@@ -6,10 +6,12 @@ pub use edit::TraceSession;
 use loft_passes::emit::Aov;
 use std::sync::{Mutex, atomic::{AtomicU32, Ordering}};
 pub mod ray_query;
+#[cfg(target_os = "macos")]
+pub mod metal_fx;
 pub use motion::{sample_motion, sample_motion_timed};
 
 use loft_passes::program::{abi, Pass, Program};
-use loft_ir::{HostCaps, GpuFeatures, DepthConvention, InstanceId, ModuleId, TableId, KindId, ParamId, ParamMeta, IrTy};
+use loft_ir::{HostCaps, GpuFeatures, InstanceId, ModuleId, TableId, KindId, ParamId, ParamMeta, IrTy};
 use loft_runner::{Runner, frame::FrameOptions};
 use std::sync::Arc;
 use std::time::Instant;
@@ -262,15 +264,35 @@ impl Gpu {
     }
 }
 
+fn cooperative(adapter: &wgpu::Adapter, precision: wgpu::CooperativeScalarType) -> bool {
+    adapter.cooperative_matrix_properties().iter().any(|m| {
+        (m.m_size, m.n_size, m.k_size) == (8, 8, 8) && m.ab_type == precision && m.cr_type == precision
+    })
+}
+
+impl Gpu {
+    pub fn host_caps(&self) -> HostCaps {
+        use wgpu::{Features as F, CooperativeScalarType as Scalar};
+        let granted = self.device.features();
+        let mut features = GpuFeatures::empty();
+        features.set(GpuFeatures::RAY_QUERY, granted.contains(F::EXPERIMENTAL_RAY_QUERY));
+        features.set(GpuFeatures::F16, granted.contains(F::SHADER_F16));
+        features.set(GpuFeatures::COOP_MATRIX, granted.contains(F::EXPERIMENTAL_COOPERATIVE_MATRIX)
+            && cooperative(&self.raw_adapter, Scalar::F32));
+        features.set(GpuFeatures::COOP_MATRIX_F16, granted.contains(F::EXPERIMENTAL_COOPERATIVE_MATRIX | F::SHADER_F16)
+            && cooperative(&self.raw_adapter, Scalar::F16));
+        #[cfg(target_os = "macos")]
+        {
+            features.set(GpuFeatures::PASSTHROUGH_SHADERS, self.raw_adapter.get_info().backend == wgpu::Backend::Metal
+                && granted.contains(F::PASSTHROUGH_SHADERS));
+            features.set(GpuFeatures::METAL_FX, metal_fx::supports(&self.device));
+        }
+        HostCaps { features, ..HostCaps::WEB_BASELINE }
+    }
+}
+
 fn attach_runner(g: &Gpu) -> Runner {
-    Runner::attach(Arc::new(g.device.clone()), Arc::new(g.queue.clone()), HostCaps {
-        depth_convention: DepthConvention::StandardZeroToOne, msaa_samples: 1,
-        features: if g.device.features().contains(wgpu::Features::EXPERIMENTAL_RAY_QUERY) {
-            GpuFeatures::RAY_QUERY
-        } else {
-            GpuFeatures::empty()
-        },
-    }).with_pipeline_clock(|| {
+    Runner::attach(Arc::new(g.device.clone()), Arc::new(g.queue.clone()), g.host_caps()).with_pipeline_clock(|| {
         static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
         START.get_or_init(Instant::now).elapsed()
     })

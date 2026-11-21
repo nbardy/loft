@@ -122,6 +122,13 @@ macro_rules! bundle_schema {
             write: bool,
         });
 
+        $sum!(#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        NativeCompute {
+            0 => CooperativeF32,
+            1 => CooperativeF16,
+            2 => Msl,
+        });
+
         $sum!(#[derive(Clone, Debug)]
         PassRun {
             0 => Compute {
@@ -154,6 +161,18 @@ macro_rules! bundle_schema {
                 entry: String,
                 max_ticks: u32,
                 instances: TableId,
+            },
+            6 => NativeCompute {
+                module: ModuleId,
+                native: ModuleId,
+                kind: NativeCompute,
+                entry: String,
+                dispatch: DispatchExtent,
+            },
+            7 => HostCallback {
+                module: ModuleId,
+                entry: String,
+                dispatch: DispatchExtent,
             },
         });
 

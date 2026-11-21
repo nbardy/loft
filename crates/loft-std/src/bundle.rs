@@ -51,7 +51,9 @@ impl Resources {
                 PassRun::Compute { .. }
                 | PassRun::ComputeFusedTicks { .. }
                 | PassRun::ComputeNonDetTicks { .. }
-                | PassRun::PassLoop { .. } => {}
+                | PassRun::PassLoop { .. }
+                | PassRun::NativeCompute { .. }
+                | PassRun::HostCallback { .. } => {}
                 PassRun::GenerateMips { texture } => {
                     assign(&tables, &mut roles, *texture, Role::Texture)?;
                 }
@@ -163,12 +165,5 @@ pub fn distinct_passes(decls: &[PassDecl]) -> bool {
 }
 
 pub fn children(run: &PassRun) -> &[PassDecl] {
-    match run {
-        PassRun::PassLoop { body, .. } => body,
-        PassRun::Compute { .. }
-        | PassRun::ComputeFusedTicks { .. }
-        | PassRun::ComputeNonDetTicks { .. }
-        | PassRun::RenderBundle { .. }
-        | PassRun::GenerateMips { .. } => &[],
-    }
+    run.children()
 }

@@ -1,0 +1,12 @@
+space World
+struct Word { value: u }
+bake_tex Probe 4x4 r16float on load mips(false) (uv: v2) { uv.x }
+
+schedule Main {
+  table(Source, row: Word, capacity: 2)
+  table(Output, row: Word, capacity: 2)
+  pass seed writes [Source] { dispatch("seed.wgsl", "seed", 1) }
+  pass stamp reads [Source, Probe] writes [Output] {
+    msl("slots.metal", "slots.wgsl", "stamp", 1)
+  }
+}

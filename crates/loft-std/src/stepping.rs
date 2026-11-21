@@ -278,7 +278,8 @@ fn cpu_tick_module(run: &PassRun) -> Result<ModuleId> {
         PassRun::ComputeFusedTicks { module, .. } => Ok(*module),
         PassRun::ComputeNonDetTicks { .. } => Err(Error::Unsupported("NonDet ticks require GPU execution")),
         PassRun::Compute { .. } | PassRun::RenderBundle { .. } | PassRun::PassLoop { .. }
-        | PassRun::GenerateMips { .. } => Err(Error::AbiMismatch),
+        | PassRun::GenerateMips { .. } | PassRun::NativeCompute { .. }
+        | PassRun::HostCallback { .. } => Err(Error::AbiMismatch),
     }
 }
 

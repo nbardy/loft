@@ -177,7 +177,9 @@ pub fn buffer_usage(bundle: &Bundle, table: TableId) -> B {
     for pass in crate::bundle::passes(&bundle.passes) {
         if pass.bindings.iter().any(|b| b.resource == table) { usage |= B::STORAGE; }
         match &pass.run {
-            PassRun::Compute { dispatch: DispatchExtent::Indirect { buf, .. }, .. } if *buf == table => usage |= B::INDIRECT,
+            PassRun::Compute { dispatch: DispatchExtent::Indirect { buf, .. }, .. }
+            | PassRun::NativeCompute { dispatch: DispatchExtent::Indirect { buf, .. }, .. }
+            | PassRun::HostCallback { dispatch: DispatchExtent::Indirect { buf, .. }, .. } if *buf == table => usage |= B::INDIRECT,
             PassRun::RenderBundle { draws, .. } => for draw in draws {
                 if draw.args == table { usage |= B::INDIRECT; }
                 if draw.vertex == Some(table) { usage |= B::VERTEX; }

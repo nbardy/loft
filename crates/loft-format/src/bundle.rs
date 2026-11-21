@@ -212,7 +212,8 @@ fn read_bulk<T: SplitRecord>(entries: Vec<T::Fields>, bytes: &[u8]) -> Result<Ve
 
 /// Validate the portable shader payload without creating a device or a pipeline.
 pub fn validate_wgsl(bundle: &Bundle) -> Result<(), BundleError> {
-    for module in &bundle.modules {
+    let native = bundle.native_modules();
+    for module in bundle.modules.iter().filter(|m| !native.contains(&m.id)) {
         if module.target != ShaderTarget::Wgsl {
             return Err(BundleError::Shader(
                 module.id,

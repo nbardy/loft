@@ -13,6 +13,7 @@ use wgpu::{BindGroupLayoutEntry as Entry, BufferBindingType::Storage, ShaderStag
 pub type Slots = Vec<Vec<(Entry, TableId)>>;
 pub enum Work {
     Dispatch(DispatchExtent),
+    HostCallback(DispatchExtent),
     Ticks(Fused),
 }
 pub struct Draw {
@@ -30,6 +31,7 @@ pub enum Pass {
         entry: String,
         slots: Slots,
         work: Work,
+        msl: Option<(String, [u32; 3])>,
     },
     Draw(Raster, Slots),
     Mips(TableId),
@@ -40,17 +42,18 @@ pub enum Order {
     Repeat(u32, Vec<Order>),
 }
 impl Order {
-    pub fn visit(&self, f: &mut impl FnMut(PassId)) {
+    pub fn visit(&self, f: &mut impl FnMut(PassId) -> Result<()>) -> Result<()> {
         match self {
-            Self::Run(id) => f(*id),
+            Self::Run(id) => return f(*id),
             Self::Repeat(count, children) => {
                 for _ in 0..*count {
                     for child in children {
-                        child.visit(f);
+                        child.visit(f)?;
                     }
                 }
             }
         }
+        Ok(())
     }
 }
 
@@ -58,6 +61,7 @@ pub struct Schedule {
     pub passes: BTreeMap<PassId, Pass>,
     pub order: Vec<Order>,
     pub outbox: Option<TableId>,
+    pub wgsl: BTreeSet<ModuleId>,
 }
 
 struct Shader {
@@ -66,37 +70,28 @@ struct Shader {
 }
 struct Linker<'a> {
     tables: BTreeMap<TableId, &'a TableDecl>,
+    modules: BTreeMap<ModuleId, &'a ModuleBlob>,
+    caps: GpuFeatures,
+    features: wgpu::Features,
+    trusted_msl: bool,
     shaders: BTreeMap<ModuleId, Shader>,
     culling: &'a [PassId],
     passes: BTreeMap<PassId, Pass>,
     outbox: Option<TableId>,
 }
 impl Schedule {
-    pub fn new(b: &Bundle, features: wgpu::Features) -> Result<Self> {
+    pub fn new(b: &Bundle, features: wgpu::Features, caps: GpuFeatures, trusted_msl: bool) -> Result<Self> {
         if !crate::bundle::distinct_passes(&b.passes) {
             return Err(RunnerError::AbiMismatch);
         }
-        let mut shaders = BTreeMap::new();
-        for m in &b.modules {
-            if m.target != ShaderTarget::Wgsl {
-                return Err(RunnerError::Unsupported("shader target"));
-            }
-            let src = std::str::from_utf8(&m.bytes).map_err(|_| RunnerError::AbiMismatch)?;
-            let ir = naga::front::wgsl::parse_str(src).map_err(|e| RunnerError::InvalidShader(e.to_string()))?;
-            let info = wgpu_naga_bridge::create_validator(
-                features,
-                wgpu::DownlevelFlags::all(),
-                naga::valid::ValidationFlags::all(),
-            )
-            .validate(&ir)
-            .map_err(|e| RunnerError::InvalidShader(e.to_string()))?;
-            if shaders.insert(m.id, Shader { ir, info }).is_some() {
-                return Err(RunnerError::AbiMismatch);
-            }
-        }
+        let modules: BTreeMap<_, _> = b.modules.iter().map(|m| (m.id, m)).collect();
+        if modules.len() != b.modules.len() { return Err(RunnerError::AbiMismatch); }
+        let native = b.native_modules();
+        let shaders = modules.values().filter(|m| !native.contains(&m.id))
+            .map(|m| Ok((m.id, Shader::new(m, features)?))).collect::<Result<_>>()?;
         let mut link = Linker {
             tables: b.tables.iter().map(|t| (t.id, t)).collect(),
-            shaders,
+            modules, caps, features, trusted_msl, shaders,
             culling: &b.resources.cull_front,
             passes: BTreeMap::new(),
             outbox: None,
@@ -106,6 +101,7 @@ impl Schedule {
             passes: link.passes,
             order,
             outbox: link.outbox,
+            wgsl: link.shaders.into_keys().collect(),
         })
     }
 }
@@ -125,7 +121,11 @@ impl Linker<'_> {
                 module,
                 entry,
                 dispatch,
-            } => self.dispatch(p, *module, entry, dispatch)?,
+            } => self.dispatch(p, *module, entry, dispatch, Work::Dispatch)?,
+            PassRun::NativeCompute { module, native, kind, entry, dispatch } =>
+                self.native(p, *module, *native, *kind, entry, dispatch)?,
+            PassRun::HostCallback { module, entry, dispatch } =>
+                self.dispatch(p, *module, entry, dispatch, Work::HostCallback)?,
             PassRun::ComputeFusedTicks { module, entry, .. }
             | PassRun::ComputeNonDetTicks { module, entry, .. } => self.ticks(p, *module, entry)?,
             PassRun::RenderBundle {
@@ -152,7 +152,8 @@ impl Linker<'_> {
         self.passes.insert(p.id, pass);
         Ok(Order::Run(p.id))
     }
-    fn dispatch(&mut self, p: &PassDecl, module: ModuleId, entry: &str, extent: &DispatchExtent) -> Result<Pass> {
+    fn dispatch(&mut self, p: &PassDecl, module: ModuleId, entry: &str, extent: &DispatchExtent,
+        work: fn(DispatchExtent) -> Work) -> Result<Pass> {
         let valid = match extent {
             DispatchExtent::Fixed(_) => true,
             DispatchExtent::FromRowCount { table, workgroup_x } => {
@@ -165,7 +166,37 @@ impl Linker<'_> {
         if !valid {
             return Err(RunnerError::AbiMismatch);
         }
-        self.kernel(p, module, entry, Work::Dispatch(extent.clone()))
+        self.kernel(p, module, entry, work(extent.clone()))
+    }
+    fn native(&mut self, p: &PassDecl, portable: ModuleId, native: ModuleId, kind: NativeCompute,
+        entry: &str, extent: &DispatchExtent) -> Result<Pass> {
+        let source = *self.modules.get(&native).ok_or(RunnerError::UnknownResource)?;
+        if native == portable || source.target != kind.target() { return Err(RunnerError::AbiMismatch); }
+        let mut fallback = self.dispatch(p, portable, entry, extent, Work::Dispatch)?;
+        if !self.caps.contains(kind.feature()) { return Ok(fallback); }
+        let Pass::Kernel { slots, module, msl, .. } = &mut fallback else { unreachable!() };
+        match kind {
+            NativeCompute::CooperativeF32 | NativeCompute::CooperativeF16 => {
+                let mut required = wgpu::Features::EXPERIMENTAL_COOPERATIVE_MATRIX;
+                if kind == NativeCompute::CooperativeF16 { required |= wgpu::Features::SHADER_F16; }
+                if !self.features.contains(required) { return Ok(fallback); }
+                let shader = Shader::new(source, self.features)?;
+                let entries = bindings::reflect(&shader.ir, shader.usage(ShaderStage::Compute, entry)?, p)?;
+                if groups(p, entries, S::COMPUTE)? != *slots { return Err(RunnerError::AbiMismatch); }
+                self.shaders.insert(native, shader);
+                *module = native;
+            }
+            NativeCompute::Msl => {
+                if !self.trusted_msl || !self.features.contains(wgpu::Features::PASSTHROUGH_SHADERS) { return Ok(fallback); }
+                let ep = self.shader(portable)?.ir.entry_points.iter().find(|ep| ep.name == entry && ep.stage == ShaderStage::Compute)
+                    .ok_or(RunnerError::AbiMismatch)?;
+                if ep.workgroup_size_overrides.is_some() { return Err(RunnerError::AbiMismatch); }
+                let src = std::str::from_utf8(&source.bytes).map_err(|_| RunnerError::AbiMismatch)?;
+                *msl = Some((msl_source(slots, src)?, ep.workgroup_size));
+                *module = native;
+            }
+        }
+        Ok(fallback)
     }
     fn ticks(&mut self, p: &PassDecl, module: ModuleId, entry: &str) -> Result<Pass> {
         let fused = Fused::reflect(&self.shader(module)?.ir, p)?;
@@ -207,6 +238,7 @@ impl Linker<'_> {
             entry: entry.into(),
             slots: groups(p, entries, S::COMPUTE)?,
             work,
+            msl: None,
         })
     }
     fn draw(
@@ -278,7 +310,41 @@ impl Linker<'_> {
     }
 }
 
+// HAL 30.0.1 assigns independent slot counters in sorted group/binding order.
+fn msl_source(slots: &Slots, source: &str) -> Result<String> {
+    use std::fmt::Write;
+    use wgpu::BindingType::*;
+    let mut text = String::from("#define LOFT_SLOT(group, binding) LOFT_SLOT_##group##_##binding\n");
+    // The compute layout always contains Frame, Inputs and Params in group 0.
+    for slot in 0..3 { writeln!(text, "#define LOFT_SLOT_0_{slot} buffer({slot})").unwrap(); }
+    let (mut buffer, mut texture, mut sampler) = (3, 0, 0);
+    for (group, entries) in (1..).zip(slots) {
+        for (entry, _) in entries {
+            if !entry.visibility.contains(S::COMPUTE) { continue; }
+            let (name, counter) = match (entry.count, entry.ty) {
+                (None, ExternalTexture) => return Err(RunnerError::Unsupported("MSL external texture")),
+                (None, Texture { .. } | StorageTexture { .. }) => ("texture", &mut texture),
+                (None, Sampler(_)) => ("sampler", &mut sampler),
+                _ => ("buffer", &mut buffer),
+            };
+            writeln!(text, "#define LOFT_SLOT_{group}_{} {name}({counter})", entry.binding).unwrap();
+            *counter += 1;
+        }
+    }
+    text.push_str(source);
+    Ok(text)
+}
+
 impl Shader {
+    fn new(module: &ModuleBlob, features: wgpu::Features) -> Result<Self> {
+        if module.target != ShaderTarget::Wgsl { return Err(RunnerError::Unsupported("shader target")); }
+        let src = std::str::from_utf8(&module.bytes).map_err(|_| RunnerError::AbiMismatch)?;
+        let ir = naga::front::wgsl::parse_str(src).map_err(|e| RunnerError::InvalidShader(e.emit_to_string(src)))?;
+        let info = wgpu_naga_bridge::create_validator(features, wgpu::DownlevelFlags::all(), naga::valid::ValidationFlags::all())
+            .validate(&ir).map_err(|e| RunnerError::InvalidShader(e.emit_to_string(src)))?;
+        Ok(Self { ir, info })
+    }
+
     fn usage(&self, stage: ShaderStage, name: &str) -> Result<&naga::valid::FunctionInfo> {
         let i = self
             .ir

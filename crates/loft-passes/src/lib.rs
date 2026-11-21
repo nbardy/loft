@@ -1661,15 +1661,47 @@ impl AuthoredCompute {
                 }
             }
         }
+        use loft_ir::NativeCompute;
+        let mut native = None;
+        let read_shader = |file: &str| {
+            let file = serde_json::from_str::<String>(file).map_err(|e| err(format!("invalid shader file literal: {e}")))?;
+            let path = src.source_path(decl.label.span.file).with_file_name(file);
+            std::fs::read_to_string(&path).map_err(|e| err(format!("{}: {e}", path.display())))
+        };
         let (entry, extent, wgsl, mut bindings, converted, tier) = match (callee.name.as_str(), args.as_slice()) {
+            (op @ ("msl" | "cooperative" | "cooperative_f16"),
+                [Arg { value: Expr { kind: ExprKind::String(fast), .. }, .. },
+                 Arg { value: Expr { kind: ExprKind::String(portable), .. }, .. },
+                 Arg { value: Expr { kind: ExprKind::String(entry), .. }, .. }, extent]) => {
+                let extent = compute_extent(p, types, overrides, &extent.value)?;
+                let entry = serde_json::from_str::<String>(entry).map_err(|e| err(format!("invalid entry literal: {e}")))?;
+                let (wgsl, bindings) = link_raw_compute(&read_shader(portable)?, &entry, &allowed, &self.bundle.tables, None).map_err(err)?;
+                let source = read_shader(fast)?;
+                let kind = match op {
+                    "msl" => NativeCompute::Msl,
+                    "cooperative" => NativeCompute::CooperativeF32,
+                    "cooperative_f16" => NativeCompute::CooperativeF16,
+                    _ => unreachable!(),
+                };
+                let source = match kind {
+                    NativeCompute::Msl => source,
+                    NativeCompute::CooperativeF32 | NativeCompute::CooperativeF16 => {
+                        let (source, mut other) = link_raw_compute(&source, &entry, &allowed, &self.bundle.tables, Some(kind)).map_err(err)?;
+                        other.sort_by_key(|b| (b.group, b.slot));
+                        let mut portable = bindings.clone();
+                        portable.sort_by_key(|b| (b.group, b.slot));
+                        if other != portable { return Err(err("cooperative and portable bindings differ".into())); }
+                        source
+                    }
+                };
+                native = Some((kind, source));
+                (entry, extent, wgsl, bindings, Vec::new(), Determinism::NonDet)
+            }
             ("dispatch", [Arg { value: Expr { kind: ExprKind::String(file), .. }, .. },
                           Arg { value: Expr { kind: ExprKind::String(entry), .. }, .. }, extent]) => {
                 let extent = compute_extent(p, types, overrides, &extent.value)?;
-                let file = serde_json::from_str::<String>(file).map_err(|e| err(format!("invalid WGSL file literal: {e}")))?;
                 let entry = serde_json::from_str::<String>(entry).map_err(|e| err(format!("invalid WGSL entry literal: {e}")))?;
-                let path = src.source_path(decl.label.span.file).with_file_name(file);
-                let file = std::fs::read_to_string(&path).map_err(|e| err(format!("{}: {e}", path.display())))?;
-                let (wgsl, bindings) = link_raw_compute(&file, &entry, &allowed, &self.bundle.tables).map_err(err)?;
+                let (wgsl, bindings) = link_raw_compute(&read_shader(file)?, &entry, &allowed, &self.bundle.tables, None).map_err(err)?;
                 (entry, extent, wgsl, bindings, Vec::new(), Determinism::NonDet)
             }
             ("compute", args) => {
@@ -1754,7 +1786,7 @@ impl AuthoredCompute {
                 if used_tables.len() != allowed.len() { return Err(bad()); }
                 ("main".into(), extent, module.wgsl, bindings, converted, kernel.tier)
             }
-            _ => return Err(err("write dispatch(\"module.wgsl\", \"entry\", extent) or compute(entry: kernel, extent: n, ...)".into())),
+            _ => return Err(err("write dispatch(\"module.wgsl\", \"entry\", extent), compute(entry: kernel, extent: n, ...), or a native pass with a portable WGSL alternative".into())),
         };
         bindings.sort_by_key(|b| (b.group, b.slot));
         for binding in bindings.iter().filter(|b| b.access == BindAccess::ReadWriteStorage) {
@@ -1766,13 +1798,23 @@ impl AuthoredCompute {
             id: module, hash: *blake3::hash(wgsl.as_bytes()).as_bytes(), target: ShaderTarget::Wgsl,
             bytes: wgsl.into_bytes().into_boxed_slice(),
         });
+        let native = native.map(|(kind, source)| {
+            let id = ModuleId(self.bundle.modules.len() as u32);
+            self.bundle.modules.push(ModuleBlob { id, target: kind.target(),
+                hash: *blake3::hash(source.as_bytes()).as_bytes(), bytes: source.into_bytes().into_boxed_slice() });
+            (id, kind)
+        });
         let conversion_groups = converted.iter().map(|b| self.bundle.tables[b.resource.0 as usize].capacity.div_ceil(64))
             .max().map(|groups| [groups.min(65535), 1, 1]);
         let mut append = |entry, extent, bindings: Vec<_>| {
             let wave = self.bundle.passes.len().try_into().map_err(|_| err("too many compute passes".into()))?;
+            let dispatch = DispatchExtent::Fixed(extent);
+            let run = match native {
+                Some((native, kind)) => PassRun::NativeCompute { module, native, kind, entry, dispatch },
+                None => PassRun::Compute { module, entry, dispatch },
+            };
             self.bundle.passes.push(loft_ir::PassDecl {
-                id: PassId(u32::from(wave)), wave, queue: QueueClass::Graphics, bindings: bindings.into_boxed_slice(),
-                run: PassRun::Compute { module, entry, dispatch: DispatchExtent::Fixed(extent) },
+                id: PassId(u32::from(wave)), wave, queue: QueueClass::Graphics, bindings: bindings.into_boxed_slice(), run,
             });
             Ok(())
         };
@@ -1791,11 +1833,15 @@ impl AuthoredCompute {
 
 fn link_raw_compute(
     source: &str, entry: &str, allowed: &BTreeMap<&str, (loft_ir::TableId, loft_ir::BindAccess)>,
-    tables: &[loft_ir::TableDecl],
+    tables: &[loft_ir::TableDecl], native: Option<loft_ir::NativeCompute>,
 ) -> Result<(String, Vec<loft_ir::PassBinding>), String> {
     use naga::{AddressSpace, ShaderStage, StorageAccess, TypeInner, valid};
     let mut ir = naga::front::wgsl::parse_str(source).map_err(|e| e.emit_to_string(source))?;
-    let validate = |ir: &naga::Module| valid::Validator::new(valid::ValidationFlags::all(), valid::Capabilities::default() | valid::Capabilities::SUBGROUP)
+    use valid::Capabilities as Caps;
+    let mut caps = Caps::default() | Caps::SUBGROUP;
+    caps.set(Caps::COOPERATIVE_MATRIX, native.is_some());
+    caps.set(Caps::SHADER_FLOAT16, native == Some(loft_ir::NativeCompute::CooperativeF16));
+    let validate = |ir: &naga::Module| valid::Validator::new(valid::ValidationFlags::all(), caps)
         .validate(ir).map_err(|e| e.emit_to_string(source));
     let entry_index = ir.entry_points.iter().position(|ep| ep.stage == ShaderStage::Compute && ep.name == entry)
         .ok_or_else(|| format!("WGSL has no compute entry {entry}"))?;
@@ -1831,6 +1877,10 @@ fn link_raw_compute(
             return Err(format!("WGSL binding {} must use group {group} for {access:?}", binding.binding));
         }
         bindings.push(loft_ir::PassBinding { group, slot: binding.binding, resource, access });
+    }
+    if native.is_some() {
+        // Naga 30 can omit the cooperative enable when matrices exist only as inferred values.
+        return Ok((source.to_owned(), bindings));
     }
     let info = validate(&ir)?;
     let wgsl = naga::back::wgsl::write_string(&ir, &info, naga::back::wgsl::WriterFlags::empty())

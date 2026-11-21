@@ -1,6 +1,6 @@
 //! Frame entry points for hosts that also own presentation and timestamp readback.
 use super::*;
-pub use encode::{FrameOptions, FrameRecord, ModulePipelines, ModuleRecipe, PipelineCreates};
+pub use encode::{HostCallback, FrameOptions, FrameRecord, ModulePipelines, ModuleRecipe, PipelineCreates};
 
 impl Runner {
     /// Prepare all cold pipeline misses together when the host already has its attachments.

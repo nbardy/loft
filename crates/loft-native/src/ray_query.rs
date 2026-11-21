@@ -166,9 +166,16 @@ fn attach(requirements: Option<Requirements>, optional_ray_query: bool) -> Resul
     {
         requested |= wgpu::Features::EXPERIMENTAL_RAY_QUERY;
     }
+    use wgpu::Features as F;
+    if super::cooperative(&adapter, wgpu::CooperativeScalarType::F32)
+        || super::cooperative(&adapter, wgpu::CooperativeScalarType::F16) {
+        requested |= F::EXPERIMENTAL_COOPERATIVE_MATRIX | F::SHADER_F16;
+    }
+    if cfg!(target_os = "macos") && adapter.get_info().backend == wgpu::Backend::Metal {
+        requested |= F::PASSTHROUGH_SHADERS;
+    }
     let features = adapter_features & requested;
-    // Opt in only for callers that request the unstable native traversal feature.
-    let experimental_features = if features.contains(wgpu::Features::EXPERIMENTAL_RAY_QUERY) {
+    let experimental_features = if features.intersects(F::all_experimental_mask()) {
         #[allow(unsafe_code)]
         unsafe { wgpu::ExperimentalFeatures::enabled() }
     } else {

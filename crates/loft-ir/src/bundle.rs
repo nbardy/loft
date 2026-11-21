@@ -45,6 +45,9 @@ bitflags::bitflags! {
         const PACKED_INT8_DOT = 1 << 8;
         const COOP_MATRIX = 1 << 9;
         const FLOAT32_ATOMICS = 1 << 10;
+        const COOP_MATRIX_F16 = 1 << 11;
+        const PASSTHROUGH_SHADERS = 1 << 12;
+        const METAL_FX = 1 << 13;
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -58,6 +61,31 @@ pub struct HostCaps {
     pub depth_convention: DepthConvention,
     pub msaa_samples: u8,
     pub features: GpuFeatures,
+}
+
+impl HostCaps {
+    pub const WEB_BASELINE: Self = Self {
+        depth_convention: DepthConvention::StandardZeroToOne,
+        msaa_samples: 1,
+        features: GpuFeatures::empty(),
+    };
+}
+
+impl NativeCompute {
+    pub fn feature(self) -> GpuFeatures {
+        match self {
+            Self::CooperativeF32 => GpuFeatures::COOP_MATRIX,
+            Self::CooperativeF16 => GpuFeatures::COOP_MATRIX_F16,
+            Self::Msl => GpuFeatures::PASSTHROUGH_SHADERS,
+        }
+    }
+
+    pub fn target(self) -> ShaderTarget {
+        match self {
+            Self::CooperativeF32 | Self::CooperativeF16 => ShaderTarget::Wgsl,
+            Self::Msl => ShaderTarget::Msl,
+        }
+    }
 }
 
 impl BindAccess {
@@ -127,6 +155,29 @@ pub struct Bundle {
     pub params: Vec<ParamMeta>,
     pub passes: Vec<PassDecl>,
 }
+impl Bundle {
+    pub fn native_modules(&self) -> std::collections::BTreeSet<ModuleId> {
+        let mut remaining: Vec<_> = self.passes.iter().collect();
+        let mut modules = std::collections::BTreeSet::new();
+        while let Some(pass) = remaining.pop() {
+            if let PassRun::NativeCompute { native, .. } = pass.run { modules.insert(native); }
+            remaining.extend(pass.run.children());
+        }
+        modules
+    }
+}
+
+impl PassRun {
+    pub fn children(&self) -> &[PassDecl] {
+        match self {
+            Self::PassLoop { body, .. } => body,
+            Self::Compute { .. } | Self::ComputeFusedTicks { .. } | Self::ComputeNonDetTicks { .. }
+            | Self::RenderBundle { .. } | Self::GenerateMips { .. } | Self::NativeCompute { .. }
+            | Self::HostCallback { .. } => &[],
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum Op {
     Intrinsic { name: SymId, args: Box<[ValId]> },

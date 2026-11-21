@@ -30,6 +30,7 @@ pub struct WgpuBackend {
     pub(super) pipeline_cache: Option<wgpu::PipelineCache>,
     pub(super) pipeline_clock: Option<fn() -> std::time::Duration>,
     pub(super) instances: Vec<Instance>,
+    pub(super) trusted_msl: bool,
 }
 impl ExecutionBackend for WgpuBackend {
     type Device = Arc<wgpu::Device>;

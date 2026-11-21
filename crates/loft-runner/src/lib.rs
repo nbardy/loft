@@ -52,7 +52,7 @@ impl std::ops::Deref for Table {
     fn deref(&self) -> &Resource { &self.resource }
 }
 impl Instance {
-    fn new(device: &wgpu::Device, queue: &wgpu::Queue, decl: &Bundle, adapter: Option<&wgpu::Adapter>, pipeline_cache: Option<&wgpu::PipelineCache>, target: Option<&embed::Target<'_>>, clock: Option<fn() -> std::time::Duration>) -> Result<Self> {
+    fn new(device: &wgpu::Device, queue: &wgpu::Queue, decl: &Bundle, adapter: Option<&wgpu::Adapter>, pipeline_cache: Option<&wgpu::PipelineCache>, target: Option<&embed::Target<'_>>, clock: Option<fn() -> std::time::Duration>, caps: HostCaps, trusted_msl: bool) -> Result<Self> {
         let mut decl = decl.clone();
         let descriptor = decl.tables.iter().position(|t| t.id == execution::DESCRIPTOR);
         let exec = descriptor.map(|i| execution::Execution::read(&decl.tables.remove(i))
@@ -71,7 +71,7 @@ impl Instance {
             Vec::new()
         };
         let initializers = initialize::Initializers::prepare(&exec, &mut decl, &mut tables, device, adapter)?;
-        let compute = encode::ComputeCache::prepare(device, &decl, &exec, adapter, pipeline_cache, target.map(|target| (target, &tables)), clock)?;
+        let compute = encode::ComputeCache::prepare(device, &decl, &exec, adapter, pipeline_cache, target.map(|target| (target, &tables)), clock, caps, trusted_msl)?;
         initializers.check_params(compute.params.bytes().len() / 4)?;
         Ok(Self { tables, decl, execution: exec, compute, initializers, checkpoints, resource_epoch:0,
             uploads: wgpu::util::StagingBelt::new(device.clone(), 4096),
@@ -88,8 +88,21 @@ impl Instance {
 }
 impl Runner {
     pub fn attach(device: Arc<wgpu::Device>, queue: Arc<wgpu::Queue>, caps: HostCaps) -> Self {
-        Self { device, queue, caps, adapter: None, pipeline_cache: None, pipeline_clock: None, instances:Vec::new() }
+        Self { device, queue, caps, adapter: None, pipeline_cache: None, pipeline_clock: None, instances:Vec::new(), trusted_msl: false }
     }
+    /// Enable MSL alternatives on this Metal runner when the device grants passthrough.
+    ///
+    /// # Safety
+    /// Every MSL bundle subsequently loaded or swapped on this runner must be trusted.
+    /// Its entry signature must match the generated slots and portable workgroup, and all
+    /// accesses must stay within the actual bound ranges for every dispatch and resource update.
+    #[cfg(target_os = "macos")]
+    #[allow(unsafe_code)]
+    pub unsafe fn with_trusted_msl(mut self) -> Self {
+        self.trusted_msl = unsafe { self.device.as_hal::<wgpu::hal::api::Metal>() }.is_some();
+        self
+    }
+
     /// Supply the adapter that granted this device and its optional pipeline cache before loading.
     pub fn with_adapter(mut self, adapter: wgpu::Adapter, cache: Option<wgpu::PipelineCache>) -> Self {
         self.adapter = Some(adapter);
@@ -110,7 +123,7 @@ impl Runner {
 
     fn load(&mut self, b: &Bundle, target: Option<embed::Target<'_>>) -> Result<InstanceId> {
         let id = InstanceId(self.instances.len().try_into().map_err(|_| RunnerError::Capacity)?);
-        let mut instance = Instance::new(&self.device, &self.queue, b, self.adapter.as_ref(), self.pipeline_cache.as_ref(), target.as_ref(), self.pipeline_clock)?;
+        let mut instance = Instance::new(&self.device, &self.queue, b, self.adapter.as_ref(), self.pipeline_cache.as_ref(), target.as_ref(), self.pipeline_clock, self.caps, self.trusted_msl)?;
         if let Some(target) = &target { instance.prepare(&self.device, Some(target), 0)?; }
         self.instances.push(instance);
         Ok(id)
@@ -165,7 +178,11 @@ impl Runner {
     }
     pub fn hot_swap_module(&mut self, id: InstanceId, module: ModuleId, wgsl: &str) -> Result<()> {
         let (device, adapter, cache, clock) = (self.device.clone(), self.adapter.clone(), self.pipeline_cache.clone(), self.pipeline_clock);
+        let (caps, trusted_msl) = (self.caps, self.trusted_msl);
         let inst = self.instance(id)?;
+        if inst.decl.native_modules().contains(&module) {
+            return Err(RunnerError::Unsupported("replace native shaders with a bundle swap"));
+        }
         if inst.edits.request(module, wgsl)? {
             return Ok(());
         }
@@ -174,7 +191,7 @@ impl Runner {
         m.bytes = wgsl.as_bytes().into();
         m.target = ShaderTarget::Wgsl;
         m.hash = *blake3::hash(wgsl.as_bytes()).as_bytes();
-        let mut replacement = encode::ComputeCache::prepare(&device, &decl, &inst.execution, adapter.as_ref(), cache.as_ref(), None, clock)?;
+        let mut replacement = encode::ComputeCache::prepare(&device, &decl, &inst.execution, adapter.as_ref(), cache.as_ref(), None, clock, caps, trusted_msl)?;
         replacement.params.copy_from(&inst.compute.params);
         inst.decl = decl;
         inst.compute = replacement;
@@ -182,7 +199,7 @@ impl Runner {
         Ok(())
     }
     pub fn hot_swap_bundle(&mut self, id: InstanceId, b: &Bundle) -> Result<()> {
-        let mut next = Instance::new(&self.device, &self.queue, b, self.adapter.as_ref(), self.pipeline_cache.as_ref(), None, self.pipeline_clock)?;
+        let mut next = Instance::new(&self.device, &self.queue, b, self.adapter.as_ref(), self.pipeline_cache.as_ref(), None, self.pipeline_clock, self.caps, self.trusted_msl)?;
         let old = self.instance(id)?;
         next.resource_epoch = interop::next_epoch(old.resource_epoch)?;
         if let Some((from, state)) = storage::compatible_state(old.decl.state.as_ref(),next.decl.state.as_mut()) {

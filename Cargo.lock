@@ -540,10 +540,12 @@ name = "loft-native"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "half",
  "loft-ir",
  "loft-passes",
  "loft-runner",
  "naga",
+ "objc2",
  "pollster",
  "serde",
  "tempfile",

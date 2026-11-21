@@ -40,6 +40,7 @@ fn pipeline(d: &wgpu::Device, layout: &wgpu::PipelineLayout, module: &wgpu::Shad
 }
 enum Operation {
     Dispatch(Kernel, DispatchExtent),
+    HostCallback(Kernel, DispatchExtent),
     Ticks(Kernel, stepping::Fused),
     Draw(embed::Render),
     Mips(TableId, Option<(u64, mips::Mips)>),
@@ -48,7 +49,7 @@ struct Command { groups: Vec<Group>, op: Operation }
 impl Command {
     fn kernel(&mut self) -> Result<&mut Kernel> {
         match &mut self.op {
-            Operation::Dispatch(k, _) | Operation::Ticks(k, _) => Ok(k),
+            Operation::Dispatch(k, _) | Operation::HostCallback(k, _) | Operation::Ticks(k, _) => Ok(k),
             Operation::Draw(_) | Operation::Mips(..) => Err(RunnerError::UnknownResource),
         }
     }
@@ -105,9 +106,10 @@ fn create_all<T, P>(recipes: Vec<T>, create: impl Fn(T) -> P) -> Result<Vec<P>> 
 impl ComputeCache {
     pub fn prepare(d: &wgpu::Device, b: &Bundle, exec: &execution::Execution,
         adapter: Option<&wgpu::Adapter>, cache: Option<&wgpu::PipelineCache>,
-        canvas: Option<(&embed::Target<'_>, &Tables)>, clock: Option<fn() -> Duration>) -> Result<Self> {
+        canvas: Option<(&embed::Target<'_>, &Tables)>, clock: Option<fn() -> Duration>,
+        caps: HostCaps, trusted_msl: bool) -> Result<Self> {
         use wgpu::{BufferBindingType::{Storage, Uniform}, BufferUsages as U};
-        let schedule = schedule::Schedule::new(b, d.features())?;
+        let schedule = schedule::Schedule::new(b, d.features(), caps.features, trusted_msl)?;
         let mut ranges = BTreeMap::new();
         for range in &exec.ranges {
             if ranges.insert((range.pass, range.group, range.slot), (range.offset, range.size)).is_some() {
@@ -141,7 +143,7 @@ impl ComputeCache {
         }
         if !ranges.is_empty() { return Err(RunnerError::AbiMismatch); }
         let templates = Templates::new(b, 256)?;
-        let sources = b.modules.iter().map(|module| {
+        let sources = b.modules.iter().filter(|m| schedule.wgsl.contains(&m.id)).map(|module| {
             let source = std::str::from_utf8(&module.bytes).map_err(|_| RunnerError::AbiMismatch)?;
             Ok((module.id, source.to_owned()))
         }).collect::<Result<Vec<_>>>()?;
@@ -198,11 +200,11 @@ impl ComputeCache {
                 schedule::Pass::Mips(_) => (vec![], None),
             };
             match pass {
-                schedule::Pass::Kernel { module, entry, work, .. } => {
+                schedule::Pass::Kernel { module, entry, work, msl, .. } => {
                     let layout = layout.expect("kernel layout");
                     let index = *unique.entry((module, entry.clone(), layout.clone())).or_insert_with(|| {
                         let index = recipes.len();
-                        recipes.push((module, entry.clone(), layout.clone()));
+                        recipes.push((module, entry.clone(), layout.clone(), msl));
                         index
                     });
                     linked.push((id, groups, module, entry, layout, work, index));
@@ -232,8 +234,14 @@ impl ComputeCache {
             Kernel(wgpu::ComputePipeline, (String, f64)),
             Raster(embed::RasterRecipe, wgpu::RenderPipeline, f64),
         }
-        let jobs = recipes.into_iter().map(|(m, e, l)| Recipe::Kernel(m, e, l, modules[&m].clone()))
-            .chain(renders.into_iter().map(|(recipe, shader)| Recipe::Raster(recipe, shader))).collect();
+        let jobs = recipes.into_iter().map(|(m, entry, layout, msl)| {
+            let shader = match msl {
+                Some((source, workgroup)) => create_msl(d, &entry, source, workgroup)?,
+                None => modules[&m].clone(),
+            };
+            Ok(Recipe::Kernel(m, entry, layout, shader))
+        }).chain(renders.into_iter().map(|(recipe, shader)| Ok(Recipe::Raster(recipe, shader))))
+            .collect::<Result<Vec<_>>>()?;
         let device = d.clone();
         let pipeline_cache = cache.cloned();
         for built in create_all(jobs, move |recipe| match recipe {
@@ -257,6 +265,7 @@ impl ComputeCache {
         for (id, groups, module, entry, layout, work, index) in linked {
             let k = Kernel { pipeline: kernels[index].clone(), layout, module, entry };
             let op = match work {
+                schedule::Work::HostCallback(extent) => Operation::HostCallback(k, extent),
                 schedule::Work::Dispatch(extent) => Operation::Dispatch(k, extent),
                 schedule::Work::Ticks(fused) => Operation::Ticks(k, fused),
             };
@@ -285,7 +294,7 @@ impl ComputeCache {
     }
     fn kernel(&self, id: PassId) -> Result<&Kernel> {
         match &self.passes.get(&id).ok_or(RunnerError::UnknownResource)?.op {
-            Operation::Dispatch(k,_) | Operation::Ticks(k,_) => Ok(k),
+            Operation::Dispatch(k,_) | Operation::HostCallback(k,_) | Operation::Ticks(k,_) => Ok(k),
             Operation::Draw(_) | Operation::Mips(..) => Err(RunnerError::UnknownResource),
         }
     }
@@ -303,7 +312,32 @@ impl Pipelines for ComputeCache {
         Ok(())
     }
 }
+#[cfg(target_os = "macos")]
+#[allow(unsafe_code)]
+fn create_msl(d: &wgpu::Device, entry: &str, source: String, [x, y, z]: [u32; 3]) -> Result<wgpu::ShaderModule> {
+    // Only the unsafe trusted-MSL opt-in can select this variant on a Metal device.
+    Ok(unsafe { d.create_shader_module_passthrough(wgpu::ShaderModuleDescriptorPassthrough {
+        entry_points: vec![wgpu::PassthroughShaderEntryPoint { name: entry.into(), workgroup_size: (x, y, z) }].into(),
+        msl: Some(source.into()),
+        ..Default::default()
+    }) })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn create_msl(_: &wgpu::Device, _: &str, _: String, _: [u32; 3]) -> Result<wgpu::ShaderModule> {
+    Err(RunnerError::Unsupported("MSL requires macOS"))
+}
+
 pub(super) use loft_wgpu::frame::Clock;
+
+pub struct HostCallback<'a> {
+    pub pass: PassId,
+    /// Record one isolated buffer using the resources of this pass and the runner's device.
+    pub record: &'a mut dyn FnMut() -> Result<wgpu::CommandBuffer>,
+    /// Submit these buffers in order, followed by the caller's encoder, on the runner's queue.
+    /// If frame recording fails, discard the whole frame, including its prefix.
+    pub prefix: &'a mut Vec<wgpu::CommandBuffer>,
+}
 
 #[derive(Default)]
 pub struct FrameOptions<'a> {
@@ -312,6 +346,7 @@ pub struct FrameOptions<'a> {
     pub timestamp_start: u32,
     /// Omit a prepared wave whose output the submitting host has kept valid.
     pub omit_wave: Option<u16>,
+    pub host_callback: Option<HostCallback<'a>>,
 }
 
 #[derive(Default)]
@@ -385,7 +420,7 @@ impl Instance {
         for (&id, cmd) in &mut c.passes {
             for group in &mut cmd.groups { group.resolve(d, tables, self.resource_epoch)?; }
             match &mut cmd.op {
-                Operation::Dispatch(_, extent) => { resolve(d, tables, extent)?; }
+                Operation::Dispatch(_, extent) | Operation::HostCallback(_, extent) => { resolve(d, tables, extent)?; }
                 Operation::Ticks(_, f) => stepping::check_fused(f, id, tables, to, &mut self.history, limit)?,
                 Operation::Draw(draw) => draw.prepare(d, target.ok_or(RunnerError::Unsupported("render attachments are required"))?,
                     &c.fixed, &cmd.groups, tables, self.resource_epoch, &c.rasters)?,
@@ -418,7 +453,13 @@ impl Instance {
     }
 
     fn record_uploaded_frame(&mut self, d: &wgpu::Device, enc: &mut wgpu::CommandEncoder, clock: Clock<'_>,
-        target: Option<&embed::Target<'_>>, options: FrameOptions<'_>) -> Result<FrameRecord> {
+        target: Option<&embed::Target<'_>>, mut options: FrameOptions<'_>) -> Result<FrameRecord> {
+        let mut host = options.host_callback.take().filter(|_| cfg!(target_os = "macos")
+            && target.is_some_and(|t| t.caps.features.contains(GpuFeatures::METAL_FX)));
+        if let Some(host) = &host
+            && !self.compute.passes.get(&host.pass).is_some_and(|c| matches!(c.op, Operation::HostCallback(..))) {
+            return Err(RunnerError::UnknownResource);
+        }
         if options.timestamps.is_some_and(|set| !matches!(set.ty(), wgpu::QueryType::Timestamp) || options.timestamp_start >= set.count()) {
             return Err(RunnerError::AbiMismatch);
         }
@@ -457,7 +498,7 @@ impl Instance {
         let initializers: BTreeSet<_> = self.initializers.clocks.iter().flat_map(|i| &i.passes).copied().collect();
         let mut template = None;
         let mut record = |id| {
-            if initializers.contains(&id) || options.omit_wave == Some(c.waves[&id]) { return; }
+            if initializers.contains(&id) || options.omit_wave == Some(c.waves[&id]) { return Ok(()); }
             if let Some(bytes) = c.templates.change(id, &mut template, clock.time as f32) {
                 batch.flush();
                 let bytes = options.uniform.map_or(bytes, |f| f(template.expect("selected frame table")));
@@ -465,7 +506,31 @@ impl Instance {
             }
             let cmd = &c.passes[&id];
             match &cmd.op {
-                Operation::Dispatch(k, extent) => {
+                Operation::HostCallback(..) if host.as_ref().is_some_and(|h| h.pass == id) => {
+                    let host = host.as_mut().expect("selected callback");
+                    batch.flush();
+                    // The pin forbids wgpu and raw HAL commands in the same command encoder.
+                    let raw = (host.record)()?;
+                    let stamps = batch.stamps();
+                    let marker = |enc: &mut wgpu::CommandEncoder, first: bool| {
+                        if let Some(s) = stamps {
+                            enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: None,
+                                timestamp_writes: Some(wgpu::ComputePassTimestampWrites { query_set: s.set,
+                                    beginning_of_pass_write_index: if first { s.start } else { None },
+                                    end_of_pass_write_index: if first { None } else { s.end },
+                                }),
+                            });
+                        }
+                    };
+                    marker(batch.encoder, true);
+                    self.uploads.finish_and_recall_on_submit(batch.encoder);
+                    let preceding = std::mem::replace(batch.encoder, d.create_command_encoder(&Default::default()));
+                    host.prefix.extend([preceding.finish(), raw]);
+                    marker(batch.encoder, false);
+                    batch.report.commands += 1;
+                    batch.report.stages.push(c.waves[&id].to_string());
+                }
+                Operation::Dispatch(k, extent) | Operation::HostCallback(k, extent) => {
                     let work = resolve(d, tables, extent).expect("validated extent");
                     batch.push(c.waves[&id], cmd.dispatch(&c.fixed,k,work));
                 }
@@ -493,8 +558,9 @@ impl Instance {
                     });
                 }
             }
+            Ok(())
         };
-        for item in &c.order { item.visit(&mut record); }
+        for item in &c.order { item.visit(&mut record)?; }
         batch.flush();
         if batch.stamp_error { return Err(RunnerError::Capacity); }
         if let (Some(buf), Some(events)) = (event_buffer.as_ref(), &mut self.outbox) { events.end(batch.encoder,buf); }
@@ -520,7 +586,7 @@ impl Instance {
                         }
                     },
                     Operation::Mips(_, chain) => chain.as_ref().expect("prepared mip chain").1.encode(enc, timer.map(|set| (set, start))),
-                    Operation::Draw(_) | Operation::Ticks(..) => return Err(RunnerError::AbiMismatch),
+                    Operation::Draw(_) | Operation::Ticks(..) | Operation::HostCallback(..) => return Err(RunnerError::AbiMismatch),
                 };
                 report.stages.push(format!("{} {}", init.name, if i == 0 { "base" } else { "mips" }));
             }

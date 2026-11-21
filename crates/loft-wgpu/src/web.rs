@@ -40,7 +40,8 @@ impl WebGpu {
         source: impl Fn(&str) -> Result<JsValue, JsValue>,
     ) -> Result<WebBundle, JsValue> {
         let mut modules = BTreeMap::new();
-        for module in &decl.modules {
+        let native = decl.native_modules();
+        for module in decl.modules.iter().filter(|m| !native.contains(&m.id)) {
             let code = std::str::from_utf8(&module.bytes)
                 .map_err(|e| JsValue::from_str(&e.to_string()))?;
             let desc = Object::new();
@@ -145,7 +146,9 @@ pub fn load_browser(device: JsValue, bytes: &[u8], source: &Function) -> Result<
                     module,
                     entry,
                     dispatch,
-                } => {
+                }
+                | PassRun::NativeCompute { module, entry, dispatch, .. }
+                | PassRun::HostCallback { module, entry, dispatch } => {
                     let dispatch = match *dispatch {
                         DispatchExtent::Fixed([x, y, z]) => {
                             array(["direct".into(), x.into(), y.into(), z.into()])
