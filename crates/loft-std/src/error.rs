@@ -8,6 +8,7 @@ pub enum RunnerError {
     Capacity,
     InvalidShader(String),
     Unsupported(&'static str),
+    TextureAccess { format: wgpu::TextureFormat, access: wgpu::StorageTextureAccess },
 }
 impl From<crate::bundle::InvalidResources> for RunnerError {
     fn from(error: crate::bundle::InvalidResources) -> Self {

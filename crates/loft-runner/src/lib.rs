@@ -1,10 +1,15 @@
 //! Execution on a caller-owned device.
 pub mod backend;
 mod encode;
+use loft_ir::execution;
+mod initialize;
+pub mod frame;
 pub use loft_std::interop::render_bundle_stale;
 mod interop;
 pub mod mips;
 mod stepping;
+#[cfg(not(target_arch = "wasm32"))]
+pub use stepping::{read_buffer, read_texture};
 mod resources;
 use loft_std::inputs;
 pub use backend::{ExecutionBackend, WgpuBackend};
@@ -31,20 +36,21 @@ struct Table {
 struct Instance {
     tables: BTreeMap<TableId, Table>,
     decl: Bundle,
+    execution: execution::Execution,
     resource_epoch: u64,
     checkpoints: Vec<Arc<wgpu::Buffer>>,
     history: stepping::History,
     outbox: Option<events::Outbox>,
     pick_source: Option<pick::Source>,
     compute: encode::ComputeCache,
+    initializers: initialize::Initializers,
     edits: tier0::Edits,
 }
-fn allocate(d: &wgpu::Device, size: u64) -> Arc<wgpu::Buffer> {
-    use wgpu::BufferUsages as U;
+fn allocate(d: &wgpu::Device, size: u64, usage: wgpu::BufferUsages) -> Arc<wgpu::Buffer> {
     Arc::new(d.create_buffer(&wgpu::BufferDescriptor {
         label: None,
         size: size.max(4),
-        usage: U::STORAGE | U::COPY_DST | U::COPY_SRC | U::INDIRECT | U::VERTEX | U::INDEX,
+        usage,
         mapped_at_creation: false,
     }))
 }
@@ -53,20 +59,27 @@ impl std::ops::Deref for Table {
     fn deref(&self) -> &Resource { &self.resource }
 }
 impl Instance {
-    fn new(device: &wgpu::Device, queue: &wgpu::Queue, decl: &Bundle) -> Result<Self> {
-        let tables = storage::allocations(decl, &device.limits())?.into_iter().map(|(t,active,alloc)| {
-            let resource = resources::create(device,queue,t,alloc)?;
+    fn new(device: &wgpu::Device, queue: &wgpu::Queue, decl: &Bundle, adapter: Option<&wgpu::Adapter>, pipeline_cache: Option<&wgpu::PipelineCache>, target: Option<&embed::Target<'_>>, clock: Option<fn() -> std::time::Duration>) -> Result<Self> {
+        let mut decl = decl.clone();
+        let descriptor = decl.tables.iter().position(|t| t.id == execution::DESCRIPTOR);
+        let exec = descriptor.map(|i| execution::Execution::read(&decl.tables.remove(i))
+            .ok_or(RunnerError::AbiMismatch)).transpose()?.unwrap_or_default();
+        if decl.tables.iter().any(|t| t.id == execution::DESCRIPTOR) { return Err(RunnerError::AbiMismatch); }
+        let mut tables = storage::allocations(&decl, &device.limits())?.into_iter().map(|(t,active,alloc)| {
+            let resource = resources::create(device, queue, t, alloc, interop::buffer_usage(&decl, t.id))?;
             Ok((t.id, Table { decl:t.clone(), resource, active, epoch:0 }))
         }).collect::<Result<BTreeMap<_,_>>>()?;
         let checkpoints = if let Some(s) = &decl.state {
             let table = tables.get(&s.table).ok_or(RunnerError::UnknownResource)?;
             let size = table.bytes()?.size();
-            (0..s.checkpoint_slots).map(|_| allocate(device,size)).collect()
+            (0..s.checkpoint_slots).map(|_| allocate(device, size, wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST)).collect()
         } else {
             Vec::new()
         };
-        let compute = encode::ComputeCache::new(device, decl)?;
-        Ok(Self { tables, decl:decl.clone(), compute, checkpoints, resource_epoch:0,
+        let initializers = initialize::Initializers::prepare(&exec, &mut decl, &mut tables, device, adapter)?;
+        let compute = encode::ComputeCache::prepare(device, &decl, &exec, adapter, pipeline_cache, target.map(|target| (target, &tables)), clock)?;
+        initializers.check_params(compute.params.bytes().len() / 4)?;
+        Ok(Self { tables, decl, execution: exec, compute, initializers, checkpoints, resource_epoch:0,
             edits:Default::default(), history:Default::default(), outbox:None, pick_source:None })
     }
     fn arena(&mut self, k: KindId) -> Result<&mut Table> {
@@ -80,14 +93,31 @@ impl Instance {
 }
 impl Runner {
     pub fn attach(device: Arc<wgpu::Device>, queue: Arc<wgpu::Queue>, caps: HostCaps) -> Self {
-        Self { device, queue, caps, instances:Vec::new() }
+        Self { device, queue, caps, adapter: None, pipeline_cache: None, pipeline_clock: None, instances:Vec::new() }
+    }
+    /// Supply the adapter that granted this device and its optional pipeline cache before loading.
+    pub fn with_adapter(mut self, adapter: wgpu::Adapter, cache: Option<wgpu::PipelineCache>) -> Self {
+        self.adapter = Some(adapter);
+        self.pipeline_cache = cache;
+        self
+    }
+    /// Supply a host monotonic clock for per-pipeline creation measurements.
+    pub fn with_pipeline_clock(mut self, clock: fn() -> std::time::Duration) -> Self {
+        self.pipeline_clock = Some(clock);
+        self
     }
     fn instance(&mut self, id: InstanceId) -> Result<&mut Instance> {
         self.instances.get_mut(id.0 as usize).ok_or(RunnerError::UnknownInstance)
     }
     pub fn load_bundle(&mut self, b: &Bundle) -> Result<InstanceId> {
+        self.load(b, None)
+    }
+
+    fn load(&mut self, b: &Bundle, target: Option<embed::Target<'_>>) -> Result<InstanceId> {
         let id = InstanceId(self.instances.len().try_into().map_err(|_| RunnerError::Capacity)?);
-        self.instances.push(Instance::new(&self.device,&self.queue,b)?);
+        let mut instance = Instance::new(&self.device, &self.queue, b, self.adapter.as_ref(), self.pipeline_cache.as_ref(), target.as_ref(), self.pipeline_clock)?;
+        if let Some(target) = &target { instance.prepare(&self.device, Some(target), 0)?; }
+        self.instances.push(instance);
         Ok(id)
     }
     pub fn upsert_rows(&mut self, id: InstanceId, kind: KindId, start: u32, bytes: &[u8]) -> Result<()> {
@@ -122,7 +152,7 @@ impl Runner {
         let epoch = interop::next_epoch(inst.resource_epoch)?;
         let mut enc = device.create_command_encoder(&Default::default());
         let replace = |enc: &mut wgpu::CommandEncoder, old: &wgpu::Buffer| {
-            let buf = allocate(&device, size);
+            let buf = allocate(&device, size, old.usage());
             enc.copy_buffer_to_buffer(old, 0, &buf, 0, Some(old.size().min(buf.size())));
             buf
         };
@@ -139,7 +169,7 @@ impl Runner {
         Ok(())
     }
     pub fn hot_swap_module(&mut self, id: InstanceId, module: ModuleId, wgsl: &str) -> Result<()> {
-        let device = self.device.clone();
+        let (device, adapter, cache, clock) = (self.device.clone(), self.adapter.clone(), self.pipeline_cache.clone(), self.pipeline_clock);
         let inst = self.instance(id)?;
         if inst.edits.request(module, wgsl)? {
             return Ok(());
@@ -149,7 +179,7 @@ impl Runner {
         m.bytes = wgsl.as_bytes().into();
         m.target = ShaderTarget::Wgsl;
         m.hash = *blake3::hash(wgsl.as_bytes()).as_bytes();
-        let mut replacement = encode::ComputeCache::new(&device, &decl)?;
+        let mut replacement = encode::ComputeCache::prepare(&device, &decl, &inst.execution, adapter.as_ref(), cache.as_ref(), None, clock)?;
         replacement.params.copy_from(&inst.compute.params);
         inst.decl = decl;
         inst.compute = replacement;
@@ -157,7 +187,7 @@ impl Runner {
         Ok(())
     }
     pub fn hot_swap_bundle(&mut self, id: InstanceId, b: &Bundle) -> Result<()> {
-        let mut next = Instance::new(&self.device, &self.queue, b)?;
+        let mut next = Instance::new(&self.device, &self.queue, b, self.adapter.as_ref(), self.pipeline_cache.as_ref(), None, self.pipeline_clock)?;
         let old = self.instance(id)?;
         next.resource_epoch = interop::next_epoch(old.resource_epoch)?;
         if let Some((from, state)) = storage::compatible_state(old.decl.state.as_ref(),next.decl.state.as_mut()) {
@@ -185,12 +215,8 @@ impl Runner {
     /// depth convention. The caller initializes and, for MSAA, resolves the views.
     pub fn encode_into(&mut self, id: InstanceId, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView,
                        depth: Option<&wgpu::TextureView>, time_s: f64, dt_s: f32) -> Result<FrameIdentity> {
-        let d = self.device.clone();
-        let target = embed::Target { color: target, depth, caps: self.caps };
-        let inst = self.instance(id)?;
-        inst.record(&d, encoder, encode::Clock { id, time: time_s, dt: dt_s, to: (time_s * 120.).round() as u32,
-            keep: 0, timer: None }, Some(&target))?;
-        Ok(FrameIdentity { instance:id, resource_epoch:inst.resource_epoch, time_s })
+        self.record_frame(id, encoder, target, depth, time_s, dt_s, Default::default())?;
+        Ok(FrameIdentity { instance: id, resource_epoch: self.instance(id)?.resource_epoch, time_s })
     }
 }
 pub mod bundle;

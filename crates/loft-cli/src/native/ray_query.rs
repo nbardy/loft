@@ -186,19 +186,8 @@ fn attach(requirements: Option<Requirements>) -> Result<Gpu, RayError> {
         required.validate(device.features(), &device.limits())?;
     }
     let info = adapter.get_info();
-    use wgpu::TextureFormat as F;
-    let bake_formats = [F::R8Unorm, F::R16Float, F::R32Float, F::Rgba8Unorm, F::Rgba16Float].into_iter()
-        .filter(|f| {
-            let ff = if features.contains(wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES) {
-                adapter.get_texture_format_features(*f)
-            } else {
-                f.guaranteed_format_features(features)
-            };
-            ff.allowed_usages.contains(wgpu::TextureUsages::STORAGE_BINDING)
-                && ff.flags.contains(wgpu::TextureFormatFeatureFlags::STORAGE_WRITE_ONLY)
-        }).collect();
     Ok(Gpu {
-        bake_formats,
+        raw_adapter: adapter,
         device,
         queue,
         device_signature: format!("{} ({:?}) {} {}", info.name, info.backend, info.driver, info.driver_info),
