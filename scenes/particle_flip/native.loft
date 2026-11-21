@@ -71,6 +71,6 @@ schedule Main {
     dispatch("../../stdlib/physics/particle_flip.wgsl", "update_float", 512)
   }
   pass g2p reads [Control] writes [State, Status, Packed, Nodes] {
-    dispatch("../../stdlib/physics/particle_flip.wgsl", "g2p8", 1024)
+    dispatch("../../stdlib/physics/particle_flip.wgsl", "g2p_linear", 1024)
   }
 }

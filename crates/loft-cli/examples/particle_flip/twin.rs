@@ -58,7 +58,8 @@ pub fn fixture(seed: u32, layout: Distribution) -> Vec<[u32; 4]> {
     (0..COUNT as u32)
         .map(|id| {
             // Seed 0 uses exactly the proposal's input function.
-            let word = |lane| mix((6 * id + lane).wrapping_add(seed.wrapping_mul(0x9e37_79b9)));
+            let word =
+                |lane: u32| mix((6 * id + lane).wrapping_add(seed.wrapping_mul(0x9e37_79b9)));
             packed(
                 [0, 1, 2].map(|lane| word(lane) % (16 * layout.span())),
                 [3, 4, 5].map(|lane| (word(lane) % 127) as i32 - 63),

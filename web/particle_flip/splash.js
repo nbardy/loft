@@ -203,7 +203,7 @@ function summary(plan, timer, rows) {
       solver: s => /^(update_|g2p)/.test(s),
     };
     const sum = (row, test) => timer.stages.reduce((n, s, i) => n + (test(s.name) ? row.pass_ms[i] : 0), 0);
-    const transfer = timer.stages.findIndex(s => /^(gather_sorted8|scatter8)$/.test(s.name));
+    const transfer = timer.stages.findIndex(s => /^(gather_sorted|scatter_linear)$/.test(s.name));
     const transferMs = percentile(rows.map(s => s.pass_ms[transfer]), 0.50);
     const stepMs = percentile(rows.map(s => s.gpu_ms), 0.50);
     report.gpu = {

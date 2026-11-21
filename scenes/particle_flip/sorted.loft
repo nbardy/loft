@@ -62,12 +62,12 @@ schedule Main {
     dispatch("../../stdlib/physics/particle_sort.wgsl", "mark_ranges", 1024)
   }
   pass p2g reads [KeysA, Ranges] writes [Grid, Status, Packed] {
-    dispatch("../../stdlib/physics/particle_flip.wgsl", "gather_sorted8", 512)
+    dispatch("../../stdlib/physics/particle_flip.wgsl", "gather_sorted", 512)
   }
   pass update writes [Grid, Nodes, Status] {
     dispatch("../../stdlib/physics/particle_flip.wgsl", "update_fixed", 512)
   }
   pass g2p reads [Control] writes [State, Status, Packed, Nodes] {
-    dispatch("../../stdlib/physics/particle_flip.wgsl", "g2p8", 1024)
+    dispatch("../../stdlib/physics/particle_flip.wgsl", "g2p_linear", 1024)
   }
 }

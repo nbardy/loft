@@ -141,7 +141,7 @@ impl Plan {
         out.passes.retain(|pass| {
             !matches!(
                 entry(pass),
-                "pack_state" | "update_fixed" | "update_float" | "g2p8" | "g2p27"
+                "pack_state" | "update_fixed" | "update_float" | "g2p_linear" | "g2p_quadratic"
             )
         });
         out.modules.retain(|module| {
@@ -321,7 +321,7 @@ impl Device {
         });
         self.wait()?;
         recv.recv()??;
-        let data = slice.get_mapped_range().to_vec();
+        let data = slice.get_mapped_range()?.to_vec();
         buffer.unmap();
         Ok(data)
     }
@@ -696,7 +696,7 @@ fn summarize(loaded: &mut Loaded<'_>, rows: &[Sample]) -> Result<Value> {
         .position(|e| {
             matches!(
                 e.as_str(),
-                "scatter8" | "scatter27" | "scatter_f32" | "gather_sorted8"
+                "scatter_linear" | "scatter_quadratic" | "scatter_f32" | "gather_sorted"
             )
         })
         .unwrap();

@@ -1,3 +1,4 @@
+// Keep raw entry names letter-final. Naga rewrites names that end in digits.
 // Periodic transfer coordinates are unsigned sixteenths of a cell.
 // The solver's tank boundaries are applied after normalizing the deposit.
 const CAPACITY: u32 = 65536u;
@@ -116,7 +117,7 @@ fn check_capacity() {
 }
 
 @compute @workgroup_size(64)
-fn scatter8(@builtin(global_invocation_id) gid: vec3u) {
+fn scatter_linear(@builtin(global_invocation_id) gid: vec3u) {
     if Status[0] != 0u || gid.x >= Control[0] { return; }
     let p = Packed[gid.x];
     let base = p.xyz >> vec3u(4u);
@@ -128,7 +129,7 @@ fn scatter8(@builtin(global_invocation_id) gid: vec3u) {
 }
 
 @compute @workgroup_size(64)
-fn scatter27(@builtin(global_invocation_id) gid: vec3u) {
+fn scatter_quadratic(@builtin(global_invocation_id) gid: vec3u) {
     if Status[0] != 0u || gid.x >= Control[0] { return; }
     let p = Packed[gid.x];
     let start = quadratic_start(p.xyz);
@@ -156,7 +157,7 @@ fn publish_float(@builtin(global_invocation_id) gid: vec3u) {
 }
 
 @compute @workgroup_size(64)
-fn gather_sorted8(@builtin(global_invocation_id) gid: vec3u) {
+fn gather_sorted(@builtin(global_invocation_id) gid: vec3u) {
     if Status[0] != 0u { return; }
     let c = cell_coords(gid.x);
     var sum = vec4i(0);
@@ -207,7 +208,7 @@ fn integrate(i: u32, pic: vec3f, delta: vec3f) {
 }
 
 @compute @workgroup_size(64)
-fn g2p8(@builtin(global_invocation_id) gid: vec3u) {
+fn g2p_linear(@builtin(global_invocation_id) gid: vec3u) {
     let i = gid.x;
     if Status[0] != 0u || i >= Control[0] { return; }
     let q = Packed[i].xyz;
@@ -225,7 +226,7 @@ fn g2p8(@builtin(global_invocation_id) gid: vec3u) {
 }
 
 @compute @workgroup_size(64)
-fn g2p27(@builtin(global_invocation_id) gid: vec3u) {
+fn g2p_quadratic(@builtin(global_invocation_id) gid: vec3u) {
     let i = gid.x;
     if Status[0] != 0u || i >= Control[0] { return; }
     let q = Packed[i].xyz;

@@ -23,7 +23,7 @@ schedule Main {
     dispatch("../stdlib/physics/particle_flip.wgsl", "clear_fixed", 512)
   }
   pass p2g reads [Control] writes [AtomicGrid, Status, Packed] {
-    dispatch("../stdlib/physics/particle_flip.wgsl", "scatter27", 1024)
+    dispatch("../stdlib/physics/particle_flip.wgsl", "scatter_quadratic", 1024)
   }
   pass publish writes [AtomicGrid, Grid, Status] {
     dispatch("../stdlib/physics/particle_flip.wgsl", "publish_fixed", 512)
@@ -32,6 +32,6 @@ schedule Main {
     dispatch("../stdlib/physics/particle_flip.wgsl", "update_fixed", 512)
   }
   pass g2p reads [Control] writes [State, Status, Packed, Nodes] {
-    dispatch("../stdlib/physics/particle_flip.wgsl", "g2p27", 1024)
+    dispatch("../stdlib/physics/particle_flip.wgsl", "g2p_quadratic", 1024)
   }
 }
