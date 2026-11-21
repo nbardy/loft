@@ -1,0 +1,73 @@
+# Unit-mass FLIP in a 32³ tank. ParticleState and Control are host inputs.
+space World
+
+struct Word { value: u }
+struct PackedParticle { x: u, y: u, z: u, bits: u }
+struct ParticleState { position: v4, velocity: v4 }
+struct Node { before: v4, after: v4 }
+struct FixedCell { mass: i, mx: i, my: i, mz: i }
+struct Key { cell: u, id: u }
+struct Range { first: u, end: u }
+
+schedule Main {
+  table(Control, row: Word, capacity: 1)
+  table(Status, row: Word, capacity: 1)
+  table(State, row: ParticleState, capacity: 65536)
+  table(Packed, row: PackedParticle, capacity: 65536)
+  table(Nodes, row: Node, capacity: 32768)
+  table(Grid, row: FixedCell, capacity: 32768)
+  table(KeysA, row: Key, capacity: 65536)
+  table(KeysB, row: Key, capacity: 65536)
+  table(Histogram, row: Word, capacity: 131072)
+  table(Totals, row: Word, capacity: 256)
+  table(Ranges, row: Range, capacity: 32768)
+
+  pass pack reads [Control] writes [State, Packed] {
+    dispatch("../../stdlib/physics/particle_flip.wgsl", "pack_state", 1024)
+  }
+  pass check reads [Control] writes [Status] {
+    dispatch("../../stdlib/physics/particle_flip.wgsl", "check_capacity", 1)
+  }
+  pass clear writes [Ranges] {
+    dispatch("../../stdlib/physics/particle_sort.wgsl", "clear_ranges", 512)
+  }
+  pass keys reads [Control, Status, Packed] writes [KeysA] {
+    dispatch("../../stdlib/physics/particle_sort.wgsl", "make_keys", 512)
+  }
+  pass count_low writes [KeysA, Histogram] {
+    dispatch("../../stdlib/physics/particle_sort.wgsl", "count_low", 512)
+  }
+  pass scan_tiles_low writes [Histogram, Totals] {
+    dispatch("../../stdlib/physics/particle_sort.wgsl", "scan_tiles", 4)
+  }
+  pass scan_digits_low writes [Totals] {
+    dispatch("../../stdlib/physics/particle_sort.wgsl", "scan_digits", 1)
+  }
+  pass scatter_low writes [KeysA, KeysB, Histogram, Totals] {
+    dispatch("../../stdlib/physics/particle_sort.wgsl", "scatter_low", 512)
+  }
+  pass count_high writes [KeysB, Histogram] {
+    dispatch("../../stdlib/physics/particle_sort.wgsl", "count_high", 512)
+  }
+  pass scan_tiles_high writes [Histogram, Totals] {
+    dispatch("../../stdlib/physics/particle_sort.wgsl", "scan_tiles", 4)
+  }
+  pass scan_digits_high writes [Totals] {
+    dispatch("../../stdlib/physics/particle_sort.wgsl", "scan_digits", 1)
+  }
+  pass scatter_high writes [KeysB, KeysA, Histogram, Totals] {
+    dispatch("../../stdlib/physics/particle_sort.wgsl", "scatter_high", 512)
+  }
+  pass ranges reads [Status, Control] writes [Ranges, KeysA] {
+    dispatch("../../stdlib/physics/particle_sort.wgsl", "mark_ranges", 1024)
+  }
+  pass p2g reads [KeysA, Ranges] writes [Grid, Status, Packed] {
+    dispatch("../../stdlib/physics/particle_flip.wgsl", "gather_sorted8", 512)
+  }
+  pass update writes [Grid, Nodes, Status] {
+    dispatch("../../stdlib/physics/particle_flip.wgsl", "update_fixed", 512)
+  }
+  pass g2p reads [Control] writes [State, Status, Packed, Nodes] {
+    dispatch("../../stdlib/physics/particle_flip.wgsl", "g2p8", 1024)
+  }
+}

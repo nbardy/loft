@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loft · FLIP splash</title>
+<style>
+  body { margin: 0; background: #101821; color: #d4e9ee; font: 15px system-ui, sans-serif }
+  main { width: min(1280px, 100%); margin: auto }
+  header { display: flex; align-items: center; gap: .7rem; padding: .7rem 1rem }
+  h1 { font-size: 1.1rem; margin: 0 auto 0 0 }
+  button { background: #1e3d4c; color: inherit; border: 1px solid #37616d; border-radius: .4rem; padding: .5rem .9rem }
+  canvas { display: block; width: 100%; height: auto }
+  pre { padding: 0 1rem; white-space: pre-wrap }
+</style>
+<main>
+  <header><h1>FLIP splash</h1><button id="play" disabled>Pause</button><button id="reset" disabled>Reset</button></header>
+  <canvas width="1280" height="800"></canvas>
+  <p id="status" role="status">Requesting WebGPU</p>
+  <pre id="result" hidden></pre>
+</main>
+<script type="module" src="splash.js"></script>
+</html>
