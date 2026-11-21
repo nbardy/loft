@@ -88,7 +88,7 @@ fn evaluate_rows(
     p: &Prog<'_>, types: &[Ty], src: &Graph, opts: &CompileOptions<'_>,
     schedule: &mut Schedule<'_>, luts: &[Lut],
 ) -> Res<(Tables, Vec<f32>)> {
-    let CompileOptions { overrides, samples, aov, .. } = *opts;
+    let CompileOptions { overrides, samples, .. } = *opts;
     let rows_fns = &schedule.rows_fns;
     let mut ev: Eval<f32> = Eval::new(p, types, vec![vec![]; p.kind_order.len()], overrides);
     ev.luts = luts;

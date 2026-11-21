@@ -7,12 +7,5 @@ pub fn compile(
     overrides: &[(String, f64)],
     caps: loft_ir::HostCaps,
 ) -> loft_ir::Res<(crate::program::Program, crate::Report, crate::Compiled)> {
-    crate::compile_impl(
-        sources,
-        overrides,
-        &[],
-        std::path::Path::new("target/loft_cache"),
-        crate::emit::Aov::Beauty,
-        caps.features,
-    )
+    crate::compile_for_device(sources, overrides, crate::emit::Aov::Beauty, caps.features)
 }
