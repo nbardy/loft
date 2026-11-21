@@ -1,11 +1,16 @@
 use stdlib::engines::reference_primary
 use stdlib::lighting::area::{SphereLamp}
+use stdlib::lighting::surface::{SurfaceHit}
 use stdlib::materials::bsdf::{lambert}
 use stdlib::sdf::solid::{box_sdf}
 
+fn material(hit: SurfaceHit) -> Bsdf {
+  lambert([1, 1, 1])
+}
+
 kind Receiver @World () {
   trace(p) = box_sdf(p - [0, -0.15, 0]@World, [1.5, 0.15, 1.5])
-  material(p,n) = lambert([1, 1, 1])
+  material(hit: SurfaceHit) = material(hit)
 }
 
 camera View { eye: [0, 3, 4], at: [0, 0, 0], fov: 26deg }

@@ -605,6 +605,22 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                         let i = decl.row.iter().position(|f| f.name.name == m.name).expect("checked field");
                         Ok(Self::lift(&self.tables[k][r][i]))
                     }
+                    // CPU material payloads use contiguous float fields in declaration order.
+                    Val::V(c, l) if matches!(self.ty(base), Ty::Struct(_)) => {
+                        let Ty::Struct(name) = self.ty(base) else { unreachable!() };
+                        let mut types = Vec::new();
+                        let ck = crate::check::Ck::new(self.p, &mut types);
+                        let mut offset = 0;
+                        for field in self.p.structs[name.as_str()].1 {
+                            let words = ck.resolve(&field.ty, true)?.words().expect("float payload") as usize;
+                            if field.name.name == m.name {
+                                let value = &c[offset..offset + words];
+                                return Ok(if words == 1 { Val::S(value[0].clone()) } else { Val::V(value.to_vec(), l) });
+                            }
+                            offset += words;
+                        }
+                        unreachable!("checked payload field")
+                    }
                     Val::V(c, l) if c.len() == 12 => {
                         let o = match frame_field(&m.name) {
                             "origin" => 0,

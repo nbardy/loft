@@ -56,7 +56,7 @@ fn photon_bin(p: vec3<f32>, lane: u32) -> u32 {
     let h = world_trace(ray.o,ray.d,25.0);
     if h.t<0.0 { break; }
     power *= exp(-h.t*stack.absorb[stack.top]);
-    let optical = world_optics(h);
+    let optical = world_optics(h, -ray.d);
     if optical.base<=0.0 {
       let bin = photon_bin(h.p,lane);
       // The map is a horizontal receiver. Other diffuse geometry still shades naturally.

@@ -69,7 +69,7 @@ fn spectral_path(origin: v3, direction: v3, seed: u, bounces: u, nm: f, lane: u)
         break;
       }
       throughput *= exp(-h.t*stack.absorb[stack.top]);
-      let optical = world_optics(h);
+      let optical = world_optics(h, -ray.d);
       if optical.base>0.0 {
         let bend = medium_interface(stack,h,ray.d,optical,nm,path_random(seed,bounce*16u));
         if !bend.valid { break; }

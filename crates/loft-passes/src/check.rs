@@ -567,13 +567,14 @@ impl<'p,'a> Ck<'p,'a> {
                     sig.first(),
                 ),
                 QueryKind::Material => (
-                    if surface { "query material(self, p: Pt[S], n: Norm[S], uv: vec2<f32>) -> Bsdf" } else { "query material(self, p: Pt[S], n: Norm[S]) -> Bsdf" },
+                    "material(hit: SurfaceHit) -> Bsdf, or the point and normal form",
                     match sig.as_slice() {
+                        [Ty::Struct(hit)] => self.p.linked(f.name.span, "SurfaceHit").is_ok_and(|key| key == hit.as_str()),
                         [Ty::Geo(Geo::Pt, a), Ty::Geo(Geo::Norm, b)] => a == b && !surface,
                         [Ty::Geo(Geo::Pt, a), Ty::Geo(Geo::Norm, b), Ty::VecN(2)] => a == b && surface,
                         _ => false,
                     } && matches!(ret, Some((false, Ok(Ty::Bsdf)))),
-                    sig.first(),
+                    sig.first().filter(|ty| matches!(ty, Ty::Geo(..))),
                 ),
                 QueryKind::Surface => {
                     let r = match &ret {
@@ -592,7 +593,9 @@ impl<'p,'a> Ck<'p,'a> {
             if !ok || f.params.first().is_none_or(|p| p.name.name != "self") {
                 return Err(e003(f.name.span, format!("`{}` has the wrong signature", f.name.name), format!("write `{want}`")));
             }
-            let Some(Ty::Geo(_, s)) = space else { unreachable!("checked above") };
+            // A SurfaceHit query receives World and Local fields from the renderer.
+            // Its payload does not select the kind’s geometric query space.
+            let Some(Ty::Geo(_, s)) = space else { continue };
             match &world {
                 Some((w, at)) if w != s => {
                     return Err(e104(

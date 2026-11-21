@@ -3,11 +3,14 @@ use stdlib::lighting::world
 use stdlib::lighting::emitters
 
 use stdlib::sky::environment::*
+use stdlib::math::sampling::{sample_key, cosine_sample}
+use stdlib::lighting::world::{RngKey}
+
 
 # Finite-depth RGB transport. Return primary emission, primary direct,
 # continued paths, primary medium and the total in original summation order.
-fn reference_terms(origin: v3, direction: v3, seed: u, bounces: u) -> array[rgb, 5] =
-  wgsl(origin: v3, direction: v3, seed: u, bounces: u) -> array[rgb, 5] {
+fn reference_terms(origin: v3, direction: v3, rng: RngKey, bounces: u) -> array[rgb, 5] =
+  wgsl(origin: v3, direction: v3, rng: RngKey, bounces: u) -> array[rgb, 5] {
     var ray_o = origin;
     var ray_d = direction;
     var energy = vec3<f32>(1.0);
@@ -30,7 +33,23 @@ fn reference_terms(origin: v3, direction: v3, seed: u, bounces: u) -> array[rgb,
       let emitted = world_eval(hit, wo, vec3<f32>(0.0));
       let unregistered = bounce == 0u || hit.kind != LOFT_AREA_KIND;
       let glow = select(vec3f(0.0), emitted, unregistered);
-      let direct = world_direct(hit, wo, seed, bounce);
+      let counter = bounce + rng[3];
+      let lights = arrayLength(&world_lamps);
+      let pick = loft_user_sample_key(rng[0], rng[1], rng[2], counter, 0u);
+      let id = min(u32(pick * f32(lights)), lights - 1u);
+      let sphere = id != 0u && world_lamps[id].position.w < 0.0;
+      var lt = world_light(id, hit.p);
+      if sphere {
+        let xi = vec2f(loft_user_sample_key(rng[0], rng[1], rng[2], counter, 1u),
+                       loft_user_sample_key(rng[0], rng[1], rng[2], counter, 2u));
+        lt = world_sphere_light(id, hit.p, xi);
+      }
+      var direct = vec3f(0.0);
+      if lt.t > 0.0003 && any(lt.l > vec3f(0.0)) {
+        let start = select(hit.p + hit.n * 0.0002, hit.p, sphere);
+        let vis = world_visibility(0u, LoftRay(start, lt.wi, 0.0001, lt.t - 0.0002));
+        direct = world_eval(hit, wo, lt.wi) * lt.l * (f32(lights) * vis);
+      }
       let lit = energy * (glow + direct);
       if bounce == 0u {
         terms[0] += energy * glow;
@@ -40,8 +59,9 @@ fn reference_terms(origin: v3, direction: v3, seed: u, bounces: u) -> array[rgb,
       }
       terms[4] += lit;
       if bounce == bounces { break; }
-      let xi = vec2<f32>(path_random(seed, bounce * 16u), path_random(seed, bounce * 16u + 1u));
-      ray_d = path_cosine(hit.n, xi);
+      let xi = vec2f(loft_user_sample_key(rng[0], rng[1], rng[2], counter, 3u),
+                     loft_user_sample_key(rng[0], rng[1], rng[2], counter, 4u));
+      ray_d = loft_user_cosine_sample(hit.n, xi);
       let pdf = max(dot(hit.n, ray_d), 0.0) * 0.318309886;
       if pdf <= 0.0 { break; }
       // The staged material's eval returns f*cos. The proposal needs support
@@ -54,27 +74,25 @@ fn reference_terms(origin: v3, direction: v3, seed: u, bounces: u) -> array[rgb,
   }
 
 # The physical resolver consumes the unclipped linear total.
-pub fn reference_sample(origin: v3, direction: v3, seed: u, bounces: u) -> rgb =
-  wgsl(origin: v3, direction: v3, seed: u, bounces: u) -> rgb {
-    return loft_user_reference_terms(origin, direction, seed, bounces)[4];
+pub fn reference_sample(origin: v3, direction: v3, rng: RngKey, bounces: u) -> rgb =
+  wgsl(origin: v3, direction: v3, rng: RngKey, bounces: u) -> rgb {
+    return loft_user_reference_terms(origin, direction, rng, bounces)[4];
   }
 
 use stdlib::lighting::surface::{SurfaceHit, LightSummary}
-use stdlib::lighting::world::{RngKey}
-
 # A cosine proposal at the primary hit estimates incident irradiance.
 # Key visibility is provided by the primary pass as a separate RT query.
 pub fn estimate(hit: SurfaceHit, light: LightSummary, rng: RngKey) -> LightSummary =
   wgsl(hit: SurfaceHit, light: LightSummary, rng: RngKey) -> LightSummary {
     var result = light;
     if rng[3] == 0u { return result; }
-    let key = path_hash(rng[2] ^ 0xf74b75a7u);
-    let xi = vec2f(path_random(key, 0u), path_random(key, 1u));
-    let direction = path_cosine(hit.n, xi);
+    let xi = vec2f(loft_user_sample_key(rng[0], rng[1], rng[2], 0u, 3u),
+                   loft_user_sample_key(rng[0], rng[1], rng[2], 0u, 4u));
+    let direction = loft_user_cosine_sample(hit.n, xi);
     let origin = hit.p + hit.n * 0.0002;
     // The key carries only the sun. Other incident light, including an
     // emissive surface visible from here, belongs to this irradiance sample.
     result.indirect_irradiance +=
-      loft_user_reference_sample(origin, direction, key, rng[3] - 1u) * 3.14159265;
+      loft_user_reference_sample(origin, direction, array<u32, 4>(rng[0], rng[1], rng[2], 1u), rng[3] - 1u) * 3.14159265;
     return result;
   }

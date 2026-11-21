@@ -925,8 +925,9 @@ fn material_layout<'k>(p: &Prog<'k>, k: &'k KindDecl) -> Res<Layout<'k>> {
             }
         }
     }
-    fn resolve<'a>(p: &Prog<'a>, f: &'a FnDecl, stack: &mut BTreeSet<String>) -> Res<Layout<'a>> {
-        if !stack.insert(f.name.name.clone()) {
+    fn resolve<'a>(p: &Prog<'a>, f: &'a FnDecl, stack: &mut BTreeSet<(u16, u32)>) -> Res<Layout<'a>> {
+        let site = (f.name.span.file, f.name.span.lo);
+        if !stack.insert(site) {
             return Err(Diag::new(Code::E405, f.name.span, "recursive material helper", "return a finite lobe stack"));
         }
         let mut rs = vec![];
@@ -947,7 +948,7 @@ fn material_layout<'k>(p: &Prog<'k>, k: &'k KindDecl) -> Res<Layout<'k>> {
             }
             layout = Some(ls);
         }
-        stack.remove(&f.name.name);
+        stack.remove(&site);
         layout.ok_or_else(|| Diag::new(Code::E003, f.name.span, "the material returns nothing", "return a sum of lobes"))
     }
     resolve(p, k.query(QueryKind::Material).expect("checked material"), &mut BTreeSet::new())
@@ -975,8 +976,6 @@ pub(crate) enum Shade<'a> {
     Style(Style<'a>),
     None,
     World,
-}
-
 }
 
 pub(crate) fn kind_module_edit(
@@ -1110,7 +1109,8 @@ pub(crate) fn emit_kind_module(
         lighting::emit_prepared(&mut em, &lobes, &invariants, &body);
         em.prepare_light = true;
     }
-    em.payloads(&lib);
+    let payload_roots: Vec<_> = lib.iter().chain(&roots).copied().collect();
+    em.payloads(&payload_roots);
     em.library(&lib, &consts);
     for f in &k.fns {
         em.func(f, "loft_surface_jvp");
@@ -1332,6 +1332,16 @@ fn loft_box(ro: vec3<f32>, rd: vec3<f32>, lo: vec3<f32>, hi: vec3<f32>) -> vec2<
         }
     };
     let mut twin_geo = twin_geo;
+    if let Some(hit) = crate::surface_material(k) {
+        let (uv, twin_uv, twin_point) = match draw {
+            Draw::Surface { .. } => ("uv", "a.xy", "o2.xyz"),
+            _ => ("vec2f(0.0)", "vec2f(0.0)", "a.xyz"),
+        };
+        let eval = format!("q_material(row, loft_type_{hit}(p, pl, n, -rd, {uv}, vec3f(0.0), vec3f(0.0)))");
+        geometry = geometry.replace("q_material(row, pl, nl, uv)", &eval).replace("q_material(row, pl, nl)", &eval);
+        let twin = format!("q_material(row, loft_type_{hit}({twin_point}, pl, nw, nw, {twin_uv}, vec3f(0.0), vec3f(0.0)))");
+        twin_geo = twin_geo.replace("q_material(row, pl, nl, a.xy)", &twin).replace("q_material(row, pl, nl)", &twin);
+    }
     if matches!(draw, Draw::Surface { .. }) && k.proof != GeometryProof::Required {
         // Four diagonal taps recover the two tangents of the parameterized surface.
         let step = crate::FINITE_DIFF_STEP;
@@ -1357,7 +1367,7 @@ fn loft_box(ro: vec3<f32>, rd: vec3<f32>, lo: vec3<f32>, hi: vec3<f32>) -> vec2<
         Aov::Beauty if matches!(lighting, Shade::Legacy("sun_sky")) && layout.lobes.iter().all(|(name, _)| *name == "emit_lobe") =>
             "eval_bsdf(b, n, -rd, vec3<f32>(0.0))".into(),
         Aov::Beauty => match lighting {
-            Shade::None => "vec3f(0.0)".into(),
+            Shade::None | Shade::World => "vec3<f32>(0.0)".into(),
             Shade::Legacy(light) => format!("{}(b, n, -rd, sun, loft_shadow(p, n), ao)", fn_symbol(light)),
             Shade::Style(style) => {
                 let (anchor, uv) = match draw {
@@ -1681,7 +1691,7 @@ pub fn present_module(p: &Prog, types: &[Ty], sky: &str, aov: Aov, paper: Option
     emit_present(p, types, sky, aov, paper, None, false)
 }
 
-fn emit_present(p: &Prog, types: &[Ty], sky: &str, aov: Aov, paper: Option<&str>, film: Option<&str>, background_resolved: bool) -> String {
+pub(super) fn emit_present(p: &Prog, types: &[Ty], sky: &str, aov: Aov, paper: Option<&str>, film: Option<&str>, background_resolved: bool) -> String {
     let mut em = Emitter::new(p, types);
     em.header(abi::NONCE_PLACEHOLDER);
     let mut roots = vec![sky];

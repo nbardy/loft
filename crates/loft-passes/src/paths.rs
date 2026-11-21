@@ -2,7 +2,7 @@
 use super::{Emitter, LutRef, fn_symbol, reachable};
 use crate::{Prog, program::{Draw, KindTable, abi}};
 use loft_ir::{Code, Diag, Res, Span};
-use loft_parse::ast::{QueryKind, Ty};
+use loft_parse::ast::Ty;
 #[path="path_twin.rs"]
 pub mod cpu;
 use std::{collections::BTreeSet, fmt::Write};
@@ -16,6 +16,7 @@ pub enum Integrator {
 #[derive(Clone, Copy)]
 pub(crate) enum Entry<'a> {
     Legacy(&'a str),
+    Reference(&'a str),
     Primary { transport: Primary<'a>, jitter: &'a str },
 }
 
@@ -77,7 +78,7 @@ fn row_arena_source(text: &str) -> String {
 
 pub(super) fn query_source() -> &'static str {
     // The path estimator is optional for raster authors using World queries.
-    WORLD.split_once("fn world_direct(").expect("World query source").0
+    WORLD.split_once("fn world_proposal(").expect("World query source").0
 }
 
 pub(super) fn emit_world(
@@ -166,13 +167,16 @@ fn loft_authored_volume(world: u32, ray: loft_type_Ray, limit: f32, steps: u32, 
             Draw::Surface { .. } | Draw::Mesh { .. } => unreachable!("raster-only geometry refused above"),
         };
         intersect_cases.push(format!("case {i}u: {{ {intersection} }}"));
-        let mat = decl.query(QueryKind::Material).expect("draw material");
-        let uv = if mat.params.len() == 4 { ", vec2<f32>(0.0)" } else { "" };
+        let material = if let Some(hit) = crate::surface_material(decl) {
+            format!("kind{i}_q_material(row, kind{i}_loft_type_{hit}(h.p, loft_xf_pt(xf, h.p), h.n, wo, vec2f(0.0), vec3f(0.0), vec3f(0.0)))")
+        } else {
+            format!("kind{i}_q_material(row, loft_xf_pt(xf, h.p), loft_xf_vec(xf, select(-h.n, h.n, h.entering)))")
+        };
         eval_cases.push(format!(r"
     case {i}u: {{
       let row = kind{i}_load_row(h.at);
       let xf = loft_xf_inv(kind{i}_loft_pose(row));
-      let b = kind{i}_q_material(row, loft_xf_pt(xf, h.p), loft_xf_vec(xf, select(-h.n, h.n, h.entering)){uv});
+      let b = {material};
       return kind{i}_eval_bsdf(b, h.n, wo, wi);
     }}"));
         if spectral {
@@ -182,7 +186,7 @@ fn loft_authored_volume(world: u32, ray: loft_type_Ray, limit: f32, steps: u32, 
     case {i}u: {{
       let row = kind{i}_load_row(h.at);
       let xf = loft_xf_inv(kind{i}_loft_pose(row));
-      let b = kind{i}_q_material(row, loft_xf_pt(xf, h.p), loft_xf_vec(xf, select(-h.n, h.n, h.entering)){uv});
+      let b = {material};
       return Optics(b.l{slot}_0, b.l{slot}_1, b.l{slot}_2);
     }}"));
             }
@@ -214,7 +218,7 @@ fn world_eval(h: PathHit, wo: vec3<f32>, wi: vec3<f32>) -> vec3<f32> {{
     if spectral {
         let _ = writeln!(em.out, r"
 struct Optics {{ base: f32, dispersion: f32, absorb: vec3<f32> }}
-fn world_optics(h: PathHit) -> Optics {{
+fn world_optics(h: PathHit, wo: vec3f) -> Optics {{
   switch h.kind {{ {} default: {{ return Optics(0.0, 0.0, vec3<f32>(0.0)); }} }}
 }}", optics_cases.join("\n"));
     }
@@ -234,7 +238,7 @@ fn world_library<'a>(p: &Prog<'a>, span: Span) -> Res<(String, Vec<&'a str>)> {
 
 pub(crate) fn module(p: &Prog, types: &[Ty], kinds: &[KindTable], queries: &[(String, String)], luts: &[LutRef], path: &PathTrace, entry: Entry<'_>, sky: &str) -> Res<String> {
     let key = match entry {
-        Entry::Legacy(key) | Entry::Primary { transport: Primary::Physical(key), .. } => key,
+        Entry::Legacy(key) | Entry::Reference(key) | Entry::Primary { transport: Primary::Physical(key), .. } => key,
         Entry::Primary { transport: Primary::Style(style), .. } => style.estimate,
     };
     let f = p.fns[key];
@@ -289,6 +293,15 @@ pub(crate) fn module(p: &Prog, types: &[Ty], kinds: &[KindTable], queries: &[(St
     em.luts = luts;
     em.library(&fns, &consts);
     em.func(f, &fn_symbol(key));
+    let (jitter, counter) = match entry {
+        Entry::Reference(_) => {
+            let sample = fn_symbol(p.linked(f.name.span, "sample_key")?);
+            (format!("vec2f({sample}(u32(pos.x), u32(pos.y), i, 0u, 8u), {sample}(u32(pos.x), u32(pos.y), i, 0u, 9u)) - 0.5"),
+                "array<u32, 4>(u32(pos.x), u32(pos.y), i, 0u)")
+        }
+        Entry::Legacy(_) => ("vec2<f32>(path_random(seed, 0xfffffff1u), path_random(seed, 0xfffffff2u)) - 0.5".into(), "seed"),
+        Entry::Primary { .. } => unreachable!("primary module already emitted"),
+    };
     let bounces = path.bounces;
     let _ = writeln!(em.out, r"
 @vertex fn vs_present(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {{
@@ -301,9 +314,9 @@ pub(crate) fn module(p: &Prog, types: &[Ty], kinds: &[KindTable], queries: &[(St
   var sum = vec3<f32>(0.0);
   for (var i = 0u; i < samples; i++) {{
     let seed = path_hash(u32(pos.x) + u32(pos.y)*frame.size.x) ^ path_hash(i);
-    let jitter = vec2<f32>(path_random(seed, 0xfffffff1u), path_random(seed, 0xfffffff2u)) - 0.5;
+    let jitter = {jitter};
     let primary = path_camera(pos.xy + jitter, seed);
-    sum += {}(primary.o, primary.d, seed, {bounces}u);
+    sum += {}(primary.o, primary.d, {counter}, {bounces}u);
   }}
   return vec4<f32>({convert}, 1.0);
 }}
@@ -314,7 +327,7 @@ pub(crate) fn module(p: &Prog, types: &[Ty], kinds: &[KindTable], queries: &[(St
 fn primary(out: &mut String, transport: Primary<'_>, jitter: &str, sky: &str, bounces: u32) {
     let (groups, estimate, resolve) = match transport {
         Primary::Physical(sample) => (String::new(), format!(
-            "sum += {}(ray.o, ray.d, seed, {bounces}u);", fn_symbol(sample)), String::new()),
+            "sum += {}(ray.o, ray.d, array<u32, 4>(px.x, px.y, i, 0u), {bounces}u);", fn_symbol(sample)), String::new()),
         Primary::Style(super::Style { hit, summary, estimate, shade }) => (
             format!(r"
 struct InkGroup {{
@@ -331,14 +344,14 @@ struct InkGroup {{
       let wo = -ray.d;
       let hit = loft_type_{hit}(h.p, world_local(h.kind, h.at, h.p), h.n, wo, vec2f(0.0),
         world_eval(h, wo, h.n) * 3.14159265, world_eval(h, wo, vec3f(0.0)));
-      let dx = length(path_camera(pixel + vec2f(1.0, 0.0), primary_key).d - ray.d);
-      let dy = length(path_camera(pixel + vec2f(0.0, 1.0), primary_key).d - ray.d);
+      let dx = length(primary_ray(pos.xy + vec2f(1.0, 0.0), px, site).d - ray.d);
+      let dy = length(primary_ray(pos.xy + vec2f(0.0, 1.0), px, site).d - ray.d);
       let footprint = h.t * max(dx, dy) / max(abs(dot(h.n, ray.d)), 0.1);
       let sun = normalize(frame.sun.xyz);
       let visibility = world_visibility(0u, LoftRay(h.p + h.n * 0.0002, sun, 0.0001, 1e6));
       let light = loft_type_{summary}(sun, dot(visibility, vec3f(0.2126, 0.7152, 0.0722)),
         loft_params[0].xyz, vec3f(0.0), 1.0, footprint, h.t, packed);
-      let estimate = {}(hit, light, array<u32, 4>(px.x, px.y, seed, {bounces}u));
+      let estimate = {}(hit, light, array<u32, 4>(px.x, px.y, i, {bounces}u));
       var g = 0u;
       while g < group_count {{
         if bins[g].light.id == packed {{ break; }}
@@ -367,49 +380,62 @@ struct InkGroup {{
     let bins = if groups.is_empty() { "" } else { "var bins: array<InkGroup, 4>; var group_count = 0u;" };
     let _ = writeln!(out, r"
 {groups}
-struct PathPrimaryOut {{
+struct PathVisibility {{
   @location(0) vis: vec2u,
-  @location(1) hdr: vec4f,
   @builtin(frag_depth) depth: f32,
 }}
 @vertex fn vs_primary(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4f {{
   let uv = vec2f(f32((vi << 1u) & 2u), f32(vi & 2u));
   return vec4f(uv * 2.0 - 1.0, 0.0, 1.0);
 }}
-@fragment fn fs_path_primary(@builtin(position) pos: vec4f) -> PathPrimaryOut {{
+fn primary_ray(pos: vec2f, px: vec2u, site: u32) -> PathRay {{
+  let key = path_hash(px.x + px.y * frame.size.x) ^ path_hash(site);
+  return path_camera(pos + {jitter}(px.x, px.y, site), key);
+}}
+// Keep the bounded visibility pass independent of the long radiance loop.
+// Misses retain the visibility and depth attachment clear values.
+@fragment fn fs_path_visibility(@builtin(position) pos: vec4f) -> PathVisibility {{
+  if frame.cold.x == LOFT_NONCE {{ discard; }}
+  let px = vec2u(pos.xy);
+  let sites = clamp(frame.cold.w, 1u, 4u);
+  var nearest = 1e30;
+  var depth = 1.0;
+  var id = LOFT_EMPTY;
+  for (var site = 0u; site < sites; site++) {{
+    let ray = primary_ray(pos.xy, px, site);
+    let h = world_trace(ray.o, ray.d, 1e6);
+    if h.t >= 0.0 && h.t < nearest {{
+      let clip = frame.view_proj * vec4f(h.p, 1.0);
+      let z = clip.z / clip.w;
+      if z >= 0.0 && z < 1.0 {{
+        nearest = h.t;
+        id = (h.kind << 24u) | h.row;
+        depth = z;
+      }}
+    }}
+  }}
+  if id == LOFT_EMPTY {{ discard; }}
+  return PathVisibility(vec2u(id, bitcast<u32>(nearest)), depth);
+}}
+@fragment fn fs_path_primary(@builtin(position) pos: vec4f) -> @location(0) vec4f {{
   if frame.cold.x == LOFT_NONCE {{ discard; }}
   let px = vec2u(pos.xy);
   let samples = max(frame.cold.w, 1u);
   let sites = min(samples, 4u);
-  let key = path_hash(px.x + px.y * frame.size.x);
   var sum = vec3f(0.0);
-  var nearest = 1e30;
-  var depth = 1.0;
-  var id = LOFT_EMPTY;
   {bins}
   for (var site = 0u; site < sites; site++) {{
-    let pixel = pos.xy + {}(key, site);
-    let primary_key = key ^ path_hash(site);
-    let ray = path_camera(pixel, primary_key);
+    let ray = primary_ray(pos.xy, px, site);
     let h = world_trace(ray.o, ray.d, 1e6);
     let packed = (h.kind << 24u) | h.row;
-    if h.t >= 0.0 && h.t < nearest {{
-      nearest = h.t;
-      id = packed;
-      let clip = frame.view_proj * vec4f(h.p, 1.0);
-      depth = clamp(clip.z / clip.w, 0.0, 1.0);
-    }}
-    // Reuse the primary site as spp increases. The sample index changes
-    // the transport dimensions, while at most four row identities need bins.
     for (var i = site; i < samples; i += sites) {{
-      let seed = key ^ path_hash(i);
       {estimate}
     }}
   }}
   {resolve}
-  return PathPrimaryOut(vec2u(id, bitcast<u32>(nearest)), vec4f(sum / f32(samples), 1.0), depth);
+  return vec4f(sum / f32(samples), 1.0);
 }}
-", fn_symbol(jitter));
+", jitter = fn_symbol(jitter));
 }
 
 fn emit_deposit(em: &mut Emitter<'_, '_>, key: &str) -> Res<()> {

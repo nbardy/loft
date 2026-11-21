@@ -33,8 +33,8 @@ kind Littoral @World (radius: f) {
   }
 }
 
+# Use the same world-space ink when the sea is beyond the depth buffer.
 fn coastal_sky(rd: rgb, sun: rgb) -> rgb {
-  # Use the same world-space ink when the sea is beyond the depth buffer.
   if rd.y < 0.0 {
     let p = wgsl(rd: rgb) -> p3@World {
       let distance = -frame.eye.y / min(rd.y, -0.00001);

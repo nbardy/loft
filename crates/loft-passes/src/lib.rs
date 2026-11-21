@@ -277,14 +277,23 @@ pub fn parse_all(src: &Graph) -> Res<Vec<Module>> {
 
 /// The space a kind's queries are asked in: the surface's point, or the first point parameter.
 pub fn kind_space(k: &KindDecl) -> &str {
-    let t = match k.queries.first() {
+    let t = match k.queries.iter().find(|(kind, _)| *kind != QueryKind::Material) {
         Some((QueryKind::Surface, f)) => f.ret.as_ref(),
-        Some((QueryKind::Visible | QueryKind::Trace | QueryKind::Material, f)) => f.params.get(1).and_then(|p| p.ty.as_ref()),
-        None => None,
+        Some((QueryKind::Visible | QueryKind::Trace, f)) => f.params.get(1).and_then(|p| p.ty.as_ref()),
+        Some((QueryKind::Material, _)) | None => None,
     };
     match t {
         Some(TyExpr::Geo(_, s)) => &s.name,
         _ => "World",
+    }
+}
+
+// The checker admits precisely one one-argument material payload.
+fn surface_material(kind: &KindDecl) -> Option<&str> {
+    let material = kind.query(QueryKind::Material)?;
+    match material.params.as_slice() {
+        [_, Param { ty: Some(TyExpr::Name(hit)), .. }] => Some(&hit.name),
+        _ => None,
     }
 }
 
@@ -568,10 +577,16 @@ impl Compiled {
                 (pl, dl, unit(rd), None)
             }
         };
-        let mut args = vec![me, v3(pl), v3(nl)];
-        if let Some(uv) = uv {
-            args.push(Val::V(vec![uv[0], uv[1]], 0.0));
-        }
+        let args = if surface_material(k).is_some() {
+            let world = if uv.is_some() { out.surf_p } else { p };
+            let payload = world.into_iter().chain(pl).chain(nw).chain(nw)
+                .chain(uv.unwrap_or_default()).chain([0.0; 6]).collect();
+            vec![me, Val::V(payload, 0.0)]
+        } else {
+            let mut args = vec![me, v3(pl), v3(nl)];
+            args.extend(uv.map(|uv| Val::V(uv.to_vec(), 0.0)));
+            args
+        };
         let b = ev.call_fn(k.query(QueryKind::Material).expect("checked"), args, sp)?;
         let (a, k) = (unit(TWIN_LIGHT), nw);
         let t = unit([k[1] * a[2] - k[2] * a[1], k[2] * a[0] - k[0] * a[2], k[0] * a[1] - k[1] * a[0]]);
@@ -678,18 +693,24 @@ fn shading<'a>(p: &Prog<'a>, pd: &'a PassDecl, types: &mut Vec<Ty>) -> Res<Light
     }
 }
 
-fn path_sample(p: &Prog, e: &Expr, types: &mut Vec<Ty>) -> Res<()> {
-    let f = match &e.kind {
-        ExprKind::Name(name) => p.fns.get(name.as_str()),
-        _ => None,
-    }.ok_or_else(|| Diag::new(Code::E011, e.span, "expected a path sample function", "name a declared fn"))?;
+fn path_sample<'a>(p: &Prog, e: &'a Expr, types: &mut Vec<Ty>) -> Res<(&'a str, bool)> {
+    let ExprKind::Name(name) = &e.kind else {
+        return Err(Diag::new(Code::E011, e.span, "expected a path sample function", "name a declared fn"));
+    };
+    let f = p.fns.get(name.as_str()).ok_or_else(|| {
+        Diag::new(Code::E011, e.span, "expected a path sample function", "name a declared fn")
+    })?;
     let ck = check::Ck::new(p, types);
     let rgb = Ty::VecN(3);
-    if !ck.runtime_signature(f, &[rgb.clone(), rgb.clone(), Ty::U32, Ty::U32], &rgb)? {
-        return Err(Diag::new(Code::E003, e.span, "invalid path function signature",
-            "write fn sample(origin: v3, direction: v3, seed: u, bounces: u) -> rgb"));
+    let signature = |key| [rgb.clone(), rgb.clone(), key, Ty::U32];
+    if ck.runtime_signature(f, &signature(Ty::Array(Box::new(Ty::U32), 4)), &rgb)? {
+        Ok((name, true))
+    } else if ck.runtime_signature(f, &signature(Ty::U32), &rgb)? {
+        Ok((name, false))
+    } else {
+        Err(Diag::new(Code::E003, e.span, "invalid path function signature",
+            "write fn sample(origin: v3, direction: v3, rng: RngKey, bounces: u) -> rgb"))
     }
-    Ok(())
 }
 
 /// Stage-0 value of a schedule argument.
@@ -756,7 +777,7 @@ fn naga_module(name: &str, text: String, src: &Sources, features: loft_ir::GpuFe
 }
 
 /// The GPU passes in dependency order; `find_shadow_map` is optional, between the vis bundle and classification.
-pub const GPU_ORDER: [&str; 6] = ["cull_indirect", "render_bundle", "find_shadow_map", "tile_classify", "shade_tiles", "tonemap_aces"];
+pub const GPU_ORDER: [&str; 8] = ["cull_indirect", "render_bundle", "find_shadow_map", "tile_classify", "shade_tiles", "draw_forward", "trace_primary", "tonemap_aces"];
 
 /// Front end only: parse, index, check. For `loft check` and the error tests.
 pub fn front(src: &Graph) -> Res<(Vec<Module>, Vec<Ty>)> {
@@ -1040,15 +1061,20 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
                     let s = arg(pd, "sun")?;
                     sun = Some(as_v3(stage0(&p, &mut types, s, overrides)?, s.span)?);
                     let jitter = fn_name_arg(&p, pd, "jitter")?;
-                    if !check::Ck::new(&p, &mut types).runtime_signature(p.fns[jitter], &[Ty::U32, Ty::U32], &Ty::VecN(2))? {
+                    if !check::Ck::new(&p, &mut types).runtime_signature(p.fns[jitter], &[Ty::U32, Ty::U32, Ty::U32], &Ty::VecN(2))? {
                         return Err(Diag::new(Code::E003, arg(pd, "jitter")?.span, "invalid primary jitter callback",
-                            "write fn jitter(seed: u, site: u) -> v2"));
+                            "write fn jitter(px: u, py: u, site: u) -> v2"));
                     }
                     let transport = match (styled, named("sample")) {
                         (true, false) => Primary::Style(style_binding(&p, pd, &mut types)?),
                         (false, true) => {
-                            path_sample(&p, arg(pd, "sample")?, &mut types)?;
-                            Primary::Physical(fn_name_arg(&p, pd, "sample")?)
+                            let e = arg(pd, "sample")?;
+                            let (sample, counter) = path_sample(&p, e, &mut types)?;
+                            if !counter {
+                                return Err(Diag::new(Code::E003, e.span, "primary sampler needs a counter key",
+                                    "accept RngKey as the third argument"));
+                            }
+                            Primary::Physical(sample)
                         }
                         _ => return Err(Diag::new(Code::E520, pd.verb.span, "trace_primary needs one transport contract",
                             "bind sample, or bind both estimate and style")),
@@ -1058,9 +1084,8 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
                 } else {
                     let e = pd.args.first().map(|a| &a.value).ok_or_else(|| Diag::new(Code::E003, pd.verb.span,
                         "screen pass needs a path function", "name a fn with signature (v3, v3, u, u) -> rgb"))?;
-                    path_sample(&p, e, &mut types)?;
-                    let ExprKind::Name(entry) = &e.kind else { unreachable!("checked path callback") };
-                    Entry::Legacy(entry)
+                    let (entry, counter) = path_sample(&p, e, &mut types)?;
+                    if counter { Entry::Reference(entry) } else { Entry::Legacy(entry) }
                 });
                 let e = arg(pd, "bounces")?;
                 let bounces = as_f32(stage0(&p, &mut types, e, overrides)?, e.span)?;
@@ -1153,7 +1178,7 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
         return Err(Diag::new(Code::E505, sched.name.span, "multiple primary producers",
             "choose one primary schedule"));
     }
-    if !post_entries.is_empty() && matches!(path_entry, Some(emit::paths::Entry::Legacy(_))) {
+    if !post_entries.is_empty() && matches!(path_entry, Some(emit::paths::Entry::Legacy(_) | emit::paths::Entry::Reference(_))) {
         return Err(Diag::new(Code::E505, sched.name.span, "post needs a linear HDR primary pass",
             "use trace_primary, draw_forward or shade_tiles"));
     }

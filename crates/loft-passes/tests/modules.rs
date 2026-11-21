@@ -177,3 +177,20 @@ schedule Test {
     assert!(diag.msg.contains("callback `estimate`"));
     assert_eq!(graph.locate(diag.span).0, "scenes/showcase/std1d/contract_probe.loft");
 }
+
+#[test]
+fn physical_surface_hit_drives_path_and_cpu_material() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let scene = Path::new("scenes/showcase/std1d/area_control.loft");
+    let source = std::fs::read_to_string(root.join(scene)).unwrap()
+        .replace("lambert([1, 1, 1])", "lambert([hit.n.y * hit.n.y, 1, 1])");
+    let graph = Graph::text(&root, scene, &source);
+    let (program, _, compiled) = loft_passes::compile(&graph, &[])
+        .unwrap_or_else(|diag| panic!("{}", diag.render(&graph)));
+    let receiver = compiled.drawn.iter().position(|(_, name)| name == "Receiver").unwrap();
+    let a = compiled.cpu_query(receiver, 0, [0.0; 3], [0.0, 1.0, 0.0]).unwrap().material;
+    let b = compiled.cpu_query(receiver, 0, [0.0; 3], [1.0, 0.0, 0.0]).unwrap().material;
+    assert!(a[0] > 0.0);
+    assert_eq!(b[0], 0.0);
+    assert!(program.passes.iter().any(|pass| matches!(pass, loft_passes::program::Pass::PathPrimary(_))));
+}

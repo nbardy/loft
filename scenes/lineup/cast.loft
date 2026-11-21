@@ -65,9 +65,9 @@ pub kind CastPart @World (home: v2, member: f, dancing: bool, dims: v4,
   }
 }
 
+# Cancel the trunk's height and roll at the toe. The intermediate
+# sockets follow the body by their distance from its centerline.
 fn limb_anchor(site: v3, dims: v4, role: f, beat: frame@World) -> v3 {
-  # Cancel the trunk's height and roll at the toe. The intermediate
-  # sockets follow the body by their distance from its centerline.
   if role == 1 {
     let planted = smoothstep(0.85, 2.84, site.z * site.z / (dims.z * dims.z))
     let floor = (site.y - beat.o.y + site.z * sin(beat.b.y)) / (cos(beat.b.y) + 0.001)

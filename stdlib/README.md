@@ -43,7 +43,7 @@ The loader maps `std::geom` to geometry, frames and solid SDF exports, `std::lig
 
 ## Physical materials and styles
 
-Physical transport evaluates the kind's `Bsdf` through realtime, RGB reference or spectral caustic transport. The existing `material(p, n)` kind query supplies that BSDF today. The physical `material(hit: SurfaceHit) -> Bsdf` kind-query spelling remains open.
+Physical transport evaluates the kind's `Bsdf` through realtime, RGB reference or spectral caustic transport. A kind can bind a module function `fn material(hit: SurfaceHit) -> Bsdf` with `material(hit: SurfaceHit) = material(hit)`. The query receives World position, normal and view, local anchor and UV. Pigment and emission are derived from the BSDF after the query, so its input has zeroes in those two fields. The point-and-normal query form remains available.
 
 A style has signature `fn shade_style(hit: SurfaceHit, light: LightSummary) -> rgb`. The hit carries World position, normal and view, a local anchor, UV, pigment and emission. `LightSummary` carries `key_dir`, `key_vis`, `key_radiance`, `indirect_irradiance`, `ao`, `footprint_m`, `depth_m` and packed primary `id`. Use `footprint_m` to filter print marks on both tiled and path schedules. Fragment derivatives are available when the style runs in the forward fragment stage.
 
