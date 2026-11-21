@@ -37,3 +37,23 @@ The fixed camera sees the same 1,000 analytic balls at 1280 × 800 for all count
 The 2.20→2.34 ms prediction is a 6.4% increase. Shader text and cold keys at a common nonce should be identical across row counts for the closed families. Eleven raster, shade and fixed pipelines at 10 ms each predict 110 ms serial device compilation. Stage 0 adds one small record per unique material and always emits 1,000 drawable rows. I expect <1 s for the total cold load. The plan for the 200-material PBR/ink scene should have two shade pipelines. Shuffled IDs preserve coverage. Their incoherence can raise the shade p95 without affecting classify or raster. A quiet paired run should show ≤0.30 ms between generated and hand-written family shading, if both controls use identical data, sampling and closure. A 95% interval crossing a target leaves that target unresolved.
 
 The Tier 0 control is the dirty geometry preview and promotion on a single traced kind. Its prior +0.24 ms measurements motivate a 0.2–0.5 ms prediction on the supported control. The visual comparison requires the same promoted geometry. Tier 0 is outside the material shade stage.
+
+## Compiler and host contract
+
+A query-free kind referenced by a drawable material query gets a storage binding for its packed rows. The kind ID used for `Runner::upsert_rows` is reported in `loft show --plan --json`, along with word offsets. Drawable kind and row IDs retain the Vis64 layout. The native API also accepts the table's name through `Loaded::upsert_materials`. The arena has the capacity of the emitted table. Materials can fill reserved rows with data uploads, and a capacity change currently requires loading a new bundle.
+
+The shader family belongs to the material function called by each drawable's query. The six functions live in `stdlib/materials/families.loft` and use the existing staged lobe compiler. Several drawable kinds can use the same family, with a specialization per draw kind in the current plan. Dielectric transmission uses the spectral integrator's optics path. Direct lighting evaluates a reflective surface response.
+
+Hosts that enable both native texture-array features can provide a complete binding array through `Runner::bind_external_textures`. The runner checks the array length and texture shape before replacing that resource. The portable authored fixture uses two independently mipped atlas pages and caps its sampled LOD at 2. The host fixture uses two `texture_2d_array` pages and the same indexed texels on the binding-array route. Route selection belongs to the host or authored schedule.
+
+The two-family path uses the reference integrator's cosine proposal and PDF with the staged BSDF's cosine-weighted evaluation. The structural edit fixture replaces a bundle between encoded frames, using the runner's resource epoch to identify the replacement. Tier 0 remains the geometry preview and promotion route.
+
+## Reproduction
+
+From the lane checkout, after the lab build, run:
+
+```sh
+tools/gpu_lock.sh tools/quiet_gpu.sh uv run --no-project python tools/cap1c.py target/lab/loft /Users/nicholasbardy/git/loft/out/meta/cap1c
+```
+
+The driver records the source overrides, per-scene shader text and plans, cold keys, raw frame and pass samples, paired intervals, exported bundles and WebP stills. The hand control writes its pigment and band operations in WGSL and uses the same staged lobe compiler for evaluation. The 100/1,000 specialized entries are E520 controls.
