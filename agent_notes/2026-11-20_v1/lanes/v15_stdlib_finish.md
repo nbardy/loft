@@ -13,6 +13,11 @@ Lineup camera cuts, forward-only derivatives and spectral LightSummary refusal p
 
 The lab workspace build and final focused suite passed. All five module tests passed, including the SurfaceHit CPU/path fixture.
 Harbor reference and the physical area-light control both produced portable bundles.
-The full grammar replay, native suite and locked Metal readbacks are pending.
+Apple M4 Metal at 384×240, View, t=0. All seven Harbor looks and the ReSTIR swap matched Vis64 and D32 byte for byte.
+Forward, tiled, ReSTIR, toon and brass matched Vis64 and D32 at 256×160 for both 1 and 20 buoys.
+Harbor path at 160×100 matched both planes at 64, 128 and 256 spp. All depths were finite and (0,0) was a miss at 1.0.
+The 256-spp Harbor capture still had 5,120 unwritten HDR pixels. The 1,024-spp area control had 896. High-sample beauty remains open.
+Harbor woodblock at 384×240 and t=0 measured 1.193 ms p95 over 20 frames after 5 warmups. Triangle p95 was 0.035 ms.
+The full grammar replay and native suite, including fresh Crab Live parity, are pending.
 
 [Local evidence](../../../out/meta/v15_stdlib_finish/)
