@@ -69,5 +69,6 @@ against the v15-exec reference at 41.73–42.07 dB and temporal variance
 
 The optimized native workspace suite had one timing failure. The runner's
 Tier 0 edit-gate overhead measured 0.830 ms p95 against a 0.500 ms cap,
-with zero pixels over 1/255. The v15-exec final suite also recorded a timing
-miss in this test.
+with zero pixels over 1/255. The standalone retry under the GPU lock passed
+at 0.321 ms p95, again with zero pixels over 1/255. The v15-exec final suite
+also recorded a timing miss in this test.
