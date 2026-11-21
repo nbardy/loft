@@ -21,7 +21,7 @@ The release gate rejected v15-perf on Hermit resource counts. Four implementatio
 |---|---|---|
 | Rust core, SCC 3.7.0 | ≤18,000 | Reduced tree 37,984 (+19,984). Tested candidate 38,249. Incoming main 36,303. |
 | Runner / native CLI / loft-std wgpu dependencies | ≤2,200 / ≤450 / 0 | Reduced tree 2,178 / 0 / 0. |
-| Grammar | 100% in both recognizers | Candidate 311/311. Includes the expected rejection. |
+| Grammar | 100% in both recognizers | Merged main and candidate each scored 311/311, including the expected rejection. |
 | Corpus median | ≤10,000 tokens | Reduced tree 3,983 across 187 sources, down from 96,240. p95 7,340. |
 | Workspace native tests | 0 failures | Candidate 183 passed, 0 failed, 1 ignored. The ignored archive case then passed separately. |
 | wasm32-unknown-unknown | Entire workspace compiles | Candidate passed with web-sys enabled. The web dependency tree contains zero Metal or objc packages. |

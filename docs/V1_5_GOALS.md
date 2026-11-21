@@ -9,7 +9,7 @@ only with a dated note giving the reason.
 must be under 0.15 ms p95 and there must be no builds running during timing. Report p95 with a 95% confidence
 interval. Numbers taken under contention don't count.
 
-The 21 November [integration scoreboard](../agent_notes/2026-11-20_v1/V1_5_CLOSEOUT.md) identifies the tested revision, branch decisions and evidence for each number. Named lane measurements were collected before integration.
+The 21 November [integration scoreboard](../agent_notes/2026-11-20_v1/V1_5_CLOSEOUT.md) identifies the tested revision, branch decisions and evidence for each number. Both grammar recognizers passed 311/311 expected cases on merged main. Named lane measurements were collected before integration.
 
 ## P0: fix the heavy-lighting regression (critique #1 / scientist #11)
 
