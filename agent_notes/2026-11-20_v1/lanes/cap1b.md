@@ -118,15 +118,16 @@ medians. Native float clear took 0.029/0.029 ms. The float route had four comput
 pipelines and 2,097,152 B of transfer scratch. Fixed8 had three pipelines and
 524,288 B. Float P2G deposited 66.3/68.8 M particles/s and 531/551 M node
 contributions/s spread/clumped, compared with 66.0/61.0 M particles/s and
-528/488 M contributions/s for fixed8. The authors' 8-tap P2G medians were
+528/488 M contributions/s for fixed8. The authored 8-tap P2G medians were
 about 2× the proposal's 0.46–0.48 ms direct-dispatch medians. The float-minus-fixed
 paired p95 intervals for the complete deposit lists were [0.004, 0.013] ms
 spread and [−0.014, 0.055] ms clumped.
 
 ## Chrome WebGPU
 
-Chrome selected Apple's Metal-3 adapter and granted timestamps. All 1,572,864
-grid words matched the wide integer CPU reference across spread, clumped, boundary and
+Chrome selected Apple's Metal-3 adapter and granted timestamps. Using the
+final Rust-exported pass descriptors and WGSL, all 1,572,864 grid words
+matched the wide integer CPU reference across spread, clumped, boundary and
 cancellation fixtures in both orders and after capacity rejection. All eight
 accepted runs had unique IDs and stable order within each cell. Each rejected
 run returned Capacity and preserved the preceding grid. The quadratic splash
@@ -134,33 +135,38 @@ also ran in the interactive host at 1280 × 800, and Pause stopped it.
 
 The sorted route allocates 1,836,032 B of scratch and creates 16 compute pipelines.
 Deposit-only runs record 13 of those. Apple Metal-3 GPU measurements below are
-p50/p95 in ms, over 64 paired samples per arm.
+p50/p95 in ms over 64 paired samples per arm. The full sorted step uses
+the same 8-tap stencil as the deposit fixture and fixed-atomic control.
 
 | Fixture | Clear + capacity | Sort + ranges | Gather | Grid update + G2P | Full measured dispatch list |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Spread deposit | 0.000/3.015 | 1.638/5.046 | 0.328/0.328 | — | 1.901/5.374 |
-| Clumped deposit | 0.000/2.359 | 0.852/3.670 | 5.112/10.355 | — | 6.160/13.238 |
-| Splash step | 0.066/1.901 | 1.573/1.769 | 0.721/0.852 | 0.131/0.197 | 2.556/4.981 |
+| Spread deposit | 0.000/0.066 | 1.573/1.638 | 0.262/0.328 | — | 1.901/1.966 |
+| Clumped deposit | 0.000/0.066 | 1.573/1.573 | 9.110/9.175 | — | 10.682/10.748 |
+| Splash step | 0.066/0.131 | 1.573/1.573 | 0.721/0.852 | 0.131/0.197 | 2.490/2.687 |
 
 Chrome timestamps quantized at 65.536 µs. Full step CPU encode, submit and
-completion-wait medians were 0.10, 0.00 and 7.10 ms respectively. The sorted
+completion-wait medians were 0.10, 0.00 and 3.90 ms respectively. The sorted
 deposit list processed 34.5 M particles/s and 275.9 M node contributions/s
-spread, and 10.6 M particles/s and 85.1 M node contributions/s clumped.
+spread, and 6.13 M particles/s and 49.1 M node contributions/s clumped.
 The proposal's native scatter medians were 0.46–0.48 ms. The observed browser
-sorted deposit lists took roughly 4× spread and 13× clumped as long, including
+sorted deposit lists took roughly 4× spread and 22× clumped as long, including
 clear, radix sort and ranges. The clumped gather dominates its median because
 a destination thread serially reduces long ranges.
 
-The fixed-atomic browser deposit controls measured 1.049/3.801 ms spread and
-0.590/1.376 ms clumped. The sorted-minus-fixed p95 95% intervals were
-[1.049, 2.294] ms for spread, [10.551, 12.976] ms for clumped, and
-[−0.131, 2.163] ms for the full splash step. Both managed build slots were
-held. Triangle p95 was 0.131 ms before and 2.753 ms after, above the quiet
-limit. The speed verdict is Unknown. Raw timings, pass layouts, fixture inputs
-and GPU grids are under `out/meta/cap1b/`. Browser transport for this run used
-the prebuilt v15_exec CLI's exported bundles and a projection of the same
-pass ABI while the Rust harness was queued. Naga appends an underscore to
-entry names ending in digits, so the authored entries now end in letters.
+The fixed-atomic browser controls measured 1.049/1.049 ms spread,
+1.114/1.180 ms clumped and 1.245/1.376 ms for the full step. The
+sorted-minus-fixed p95 95% intervals were [0.852, 0.983] ms spread,
+[9.503, 9.568] ms clumped and [1.180, 1.442] ms for the full step.
+The speed verdict is Unknown. The final export run reached triangle p95 of
+0.066/0.131 ms and the managed build slots were busy. The earlier run using
+the CLI-exported bundle projection held both slots and measured triangle
+p95 of 0.131/2.753 ms. Its spread and clumped deposit medians were 1.901 and
+6.160 ms. Both runs held the exact grid checks.
+
+Raw timings, pass layouts, fixture inputs, shader hashes and GPU grids are
+under `out/meta/cap1b/`. The final browser run is in `browser-final/`, and
+the earlier CLI-exported run is in `browser/`. Naga appends an underscore
+to entry names ending in digits, so the authored entries end in letters.
 
 ## Workspace verification
 
