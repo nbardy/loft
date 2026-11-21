@@ -20,7 +20,7 @@ fn checked_contract_reaches_lowering() {
     let p = Prog::index(&modules).unwrap();
     let k = p.kernels["scatter"];
     assert_eq!(k.writes.len(), 2);
-    assert_eq!(k.writes["fixed"], Determinism::Det);
+    assert_eq!(k.writes["fixed"], Determinism::NonDet);
     assert_eq!(k.writes["floating"], Determinism::NonDet);
     for name in ["Opted", "Ragged"] {
         assert_eq!(p.kinds[name].proof, GeometryProof::Unproved(UnprovedReason::AuthorOptOut));

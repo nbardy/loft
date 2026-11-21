@@ -214,6 +214,7 @@ pub fn load_browser(device: JsValue, bytes: &[u8], source: &Function) -> Result<
                 }
                 PassRun::RenderBundle { .. }
                 | PassRun::ComputeFusedTicks { .. }
+                | PassRun::ComputeNonDetTicks { .. }
                 | PassRun::PassLoop { .. }
                 | PassRun::GenerateMips { .. } => return Err("unsupported browser pass".into()),
             };

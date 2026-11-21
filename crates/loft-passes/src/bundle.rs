@@ -427,13 +427,9 @@ pub fn lower_program(
             resources.insert((u32::from(original.group), original.slot), id);
         }
         let module = ModuleId(step.module as u32);
+        let rows = row_table.ok_or("fixed-step rows are missing")?;
         b.pass(
-            PassRun::ComputeFusedTicks {
-                module,
-                entry: step.entry.clone(),
-                max_ticks: loft_abi::AdvanceArgs::MAX_TICKS,
-                instances: row_table.ok_or("fixed-step rows are missing")?,
-            },
+            crate::fusion::tick_run(step, module, rows),
             &[(module, &step.entry, ShaderStage::Compute)],
             &resources,
         )?;

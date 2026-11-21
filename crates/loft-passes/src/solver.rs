@@ -280,6 +280,7 @@ pub fn lower(
     Ok((
         em.out,
         crate::program::Dispatch {
+            tier: Determinism::Det,
             module,
             entry: AdvanceArgs::ENTRY.into(),
             workgroup_x: 1,

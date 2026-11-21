@@ -731,6 +731,7 @@ impl<'src> Parser<'src, '_> {
         if self.eat("kernel") {
             let name = self.ident()?;
             let params = self.params()?;
+            let tier = if self.eat("nondet") { Determinism::NonDet } else { Determinism::Det };
             let mut allow = std::collections::BTreeSet::new();
             if self.eat("allow") {
                 self.expect("(")?;
@@ -753,11 +754,12 @@ impl<'src> Parser<'src, '_> {
             }
             let body = self.block(false)?;
             let f = FnDecl { comptime: false, attrs: vec![], name, params, ret: None, body, raw: None };
-            return Ok(Item::Kernel(KernelDecl { f, allow, writes: Default::default() }));
+            return Ok(Item::Kernel(KernelDecl { f, tier, allow, writes: Default::default() }));
         }
         if self.eat("law") {
             let name = self.ident()?;
             let params = self.params()?;
+            let tier = if self.eat("nondet") { Determinism::NonDet } else { Determinism::Det };
             self.seps();
             self.expect("writes")?;
             let owner = self.ident()?;
@@ -782,6 +784,7 @@ impl<'src> Parser<'src, '_> {
             self.seps();
             let body = self.block(false)?;
             return Ok(Item::Law(LawDecl {
+                tier,
                 f: FnDecl {
                     comptime: false,
                     attrs: vec![],

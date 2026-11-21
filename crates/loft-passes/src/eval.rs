@@ -521,8 +521,28 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
 
     fn expr_inner(&mut self, e: &'a Expr) -> Res<Val<S>> {
         match &e.kind {
-            ExprKind::Unproved { .. } | ExprKind::FiniteDiff { .. } => Err(Diag::new(Code::E405,
-                e.span, "finite-difference geometry requires Phase 4 lowering", "use the typed front end")),
+            ExprKind::Unproved { body, .. } => self.expr_arm(body),
+            ExprKind::FiniteDiff { function, parameter, args } => {
+                let f = self.p.fns[function.name.as_str()];
+                let param = crate::finite_diff_parameter(f, parameter);
+                let mut args = args.iter().map(|arg| self.expr(&arg.value)).collect::<Res<Vec<_>>>()?;
+                let Val::S(x) = args[param].clone() else { unreachable!("checked scalar parameter") };
+                let step = S::c(f64::from(crate::FINITE_DIFF_STEP));
+                args[param] = Val::S(x.add(&step));
+                let hi = self.call_fn(f, args.clone(), e.span)?;
+                args[param] = Val::S(x.sub(&step));
+                let lo = self.call_fn(f, args, e.span)?;
+                let width = step.add(&step);
+                Ok(match (hi, lo) {
+                    (Val::S(hi), Val::S(lo)) => Val::S(hi.sub(&lo).div(&width)),
+                    (Val::V(hi, _), Val::V(lo, _)) => {
+                        let lanes: Vec<S> = hi.iter().zip(lo).map(|(hi, lo)| hi.sub(&lo).div(&width)).collect();
+                        let lip = lanes.iter().map(|x| x.lip().powi(2)).sum::<f64>().sqrt();
+                        Val::V(lanes, lip)
+                    }
+                    _ => unreachable!("checked floating result"),
+                })
+            }
             ExprKind::If { condition, then, otherwise } => {
                 match self.expr(condition)? {
                     Val::B(Some(true)) => self.expr_arm(then),
@@ -659,6 +679,16 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                     let exact=|s:&S|s.exact().map(|v|v as f32).ok_or_else(||err(e.span,"placement varies across the query","store it in a row"));
                     let yaw=match args.get(1) {Some(a)=>match self.expr(&a.value)?{Val::S(x)=>exact(&x)?,Val::I(n)=>n as f32,_=>unreachable!("typed yaw")},None=>0.};
                     return Ok(Val::X(Rigid::yaw([exact(&o[0])?,exact(&o[1])?,exact(&o[2])?],yaw)));
+                }
+                if matches!(callee.name.as_str(), "sample" | "sample_lod") && !self.p.fns.contains_key(callee.name.as_str()) {
+                    let ExprKind::Name(name) = &args[0].value.kind else { unreachable!("checked texture name") };
+                    let Val::V(uv, _) = self.expr(&args[1].value)? else { unreachable!("checked sampling coordinate") };
+                    let lod = match args.get(2).map(|arg| self.expr(&arg.value)).transpose()? {
+                        Some(Val::S(lod)) => lod,
+                        None => S::c(0.0),
+                        _ => unreachable!("checked LOD"),
+                    };
+                    return self.sample_bake(self.p.bakes[name.as_str()], &uv, lod, e.span);
                 }
                 if matches!(callee.name.as_str(), "sample_c2" | "loft_dsample") {
                     let ExprKind::Name(n) = &args[0].value.kind else { unreachable!("checked scan name") };
@@ -1254,5 +1284,173 @@ impl Scalar for f32 {
     }
     fn join(&self, _: &f32) -> f32 {
         *self
+    }
+}
+
+impl<'a> Eval<'_, 'a, crate::lip::Iv> {
+    /// Find the proxy from natural intervals alone. An opted-out field's spatial
+    /// derivatives cannot narrow the proxy or certify the march step.
+    pub(crate) fn unproved_bounds(&mut self, trace: &'a FnDecl, kind: usize, row: usize, span: Span) -> Res<crate::lip::Derived> {
+        use crate::lip::{CELL, Derived, Iv, PAD, PAD_REL, REACH};
+        let mut evals = 0;
+        let mut low = [0.0; 3];
+        let mut high = [0.0; 3];
+        for axis in 0..3 {
+            for sign in [-1.0, 1.0] {
+                let mut best = f64::NEG_INFINITY;
+                let mut stack = vec![([-REACH; 3], [REACH; 3])];
+                while let Some((lo, hi)) = stack.pop() {
+                    let end = if sign > 0.0 { hi[axis] } else { -lo[axis] };
+                    if end <= best { continue; }
+                    let point = (0..3).map(|i| Iv { lo: lo[i], hi: hi[i], l: 0.0 }).collect();
+                    let Val::S(value) = self.call_fn(trace, vec![Val::Row(kind, row), Val::V(point, 0.0)], span)?
+                        else { unreachable!("checked trace result") };
+                    evals += 1;
+                    if value.lo > 0.0 { continue; }
+                    let split = (0..3).max_by(|&a, &b| (hi[a] - lo[a]).total_cmp(&(hi[b] - lo[b]))).unwrap();
+                    if value.hi <= 0.0 || hi[split] - lo[split] <= CELL {
+                        best = end;
+                        continue;
+                    }
+                    let center = 0.5 * (lo[split] + hi[split]);
+                    let (mut lower_hi, mut upper_lo) = (hi, lo);
+                    lower_hi[split] = center;
+                    upper_lo[split] = center;
+                    let (lower, upper) = ((lo, lower_hi), (upper_lo, hi));
+                    stack.extend(if sign < 0.0 && split == axis { [upper, lower] } else { [lower, upper] });
+                }
+                if !best.is_finite() || best >= REACH {
+                    return Err(Diag::new(Code::E212, span, format!("row {row}: no bounded negative region for this trace"),
+                        "keep the opted-out field bounded within the proxy search region"));
+                }
+                if sign < 0.0 { low[axis] = -best; } else { high[axis] = best; }
+            }
+        }
+        for i in 0..3 {
+            let pad = PAD + PAD_REL * (high[i] - low[i]);
+            low[i] -= pad;
+            high[i] += pad;
+        }
+        Ok(Derived { lo: low, hi: high, l: 0.0, evals })
+    }
+}
+
+impl<'a, S: Scalar> Eval<'_, 'a, S> {
+    fn sample_bake(&mut self, bake: &'a BakeDecl, uv: &[S], lod: S, span: Span) -> Res<Val<S>> {
+        let size: &[u32] = match bake.dim {
+            TexDim::D2(x, y) => &[x, y],
+            TexDim::D3(x, y, z) => &[x, y, z],
+            TexDim::Cube(_) => return Err(Diag::new(Code::E405, span, "cube texture sampling has no CPU twin",
+                "sample the cube in material shading")),
+        };
+        let format = bake.format.name.as_str();
+        let nearest = format == "r32float";
+        let scalar = !format.starts_with("rgba");
+        let last = if bake.mips { size.iter().copied().max().unwrap().ilog2() } else { 0 };
+        let pack = |lanes: Vec<S>| {
+            if scalar { return Val::S(lanes.into_iter().next().unwrap()); }
+            let lip = lanes.iter().map(|x| x.lip().powi(2)).sum::<f64>().sqrt();
+            Val::V(lanes, lip)
+        };
+        if let (Some(uv), Some(lod)) = (uv.iter().map(Scalar::exact).collect::<Option<Vec<_>>>(), lod.exact()) {
+            let lod = lod.clamp(0.0, f64::from(last));
+            let base = if nearest { lod.round_ties_even() as u32 } else { lod as u32 };
+            let a = self.sample_level(bake, size, &uv, base, nearest, span)?;
+            let fraction = lod.fract();
+            if nearest || base == last || fraction == 0.0 { return Ok(pack(a)); }
+            let b = self.sample_level(bake, size, &uv, base + 1, false, span)?;
+            return Ok(pack(a.iter().zip(b).map(|(a, b)| a.add(&b.sub(a).mul(&S::c(fraction)))).collect()));
+        }
+
+        // A consumed mip value lies between its contributing stored base texels.
+        // Widen by the largest possible texel footprint before evaluating that range.
+        let top = lod.range().1.ceil().clamp(0.0, f64::from(last)) as u32;
+        let coordinates = uv.iter().zip(size).map(|(x, n)| {
+            let (lo, hi) = x.range();
+            let extent = (n >> top).max(1);
+            let pad = 2.0 / f64::from(extent);
+            S::c((lo - pad).clamp(0.0, 1.0)).join(&S::c((hi + pad).clamp(0.0, 1.0)))
+        }).collect();
+        let value = self.call_fn(&bake.texel, vec![Val::V(coordinates, 0.0)], span)?;
+        let gradient = uv.iter().zip(size).map(|(u, n)| u.lip() * f64::from(*n)).sum::<f64>() + lod.lip();
+        let lanes = texel_lanes(value).into_iter().map(|v| {
+            let (lo, hi) = v.range();
+            let (lo, hi) = (texel_store(lo, format), texel_store(hi, format));
+            let lip = if hi == lo || gradient == 0.0 { 0.0 }
+                else if nearest { f64::INFINITY } else { (hi - lo) * gradient };
+            S::c(lo).join(&S::c(hi)).with_lip(lip)
+        }).collect();
+        Ok(pack(lanes))
+    }
+
+    fn sample_level(
+        &mut self, bake: &'a BakeDecl, size: &[u32], uv: &[f64], level: u32, nearest: bool, span: Span,
+    ) -> Res<Vec<S>> {
+        let extent = size.iter().map(|n| (n >> level).max(1)).collect::<Vec<_>>();
+        let p = uv.iter().zip(&extent).map(|(u, n)| u.clamp(0.0, 1.0) * f64::from(*n) - if nearest { 0.0 } else { 0.5 })
+            .collect::<Vec<_>>();
+        let mut sum: Option<Vec<S>> = None;
+        let taps = if nearest { 1 } else { 1 << size.len() };
+        for tap in 0..taps {
+            let mut weight = 1.0;
+            let coord = p.iter().zip(&extent).enumerate().map(|(axis, (&x, &n))| {
+                let offset = (tap >> axis) & 1;
+                if !nearest { weight *= if offset == 0 { 1.0 - (x - x.floor()) } else { x - x.floor() }; }
+                (x.floor() as i32 + offset).clamp(0, n as i32 - 1) as u32
+            }).collect::<Vec<_>>();
+            if weight == 0.0 { continue; }
+            let v = self.bake_texel(bake, size, &coord, level, span)?;
+            let weighted = v.iter().map(|v| v.mul(&S::c(weight)));
+            match &mut sum {
+                Some(sum) => sum.iter_mut().zip(weighted).for_each(|(a, b)| *a = a.add(&b)),
+                None => sum = Some(weighted.collect()),
+            }
+        }
+        Ok(sum.expect("positive sample weight"))
+    }
+
+    fn bake_texel(&mut self, bake: &'a BakeDecl, size: &[u32], coord: &[u32], level: u32, span: Span) -> Res<Vec<S>> {
+        let values = if level == 0 {
+            let uv = coord.iter().zip(size).map(|(&x, &n)| S::c((f64::from(x) + 0.5) / f64::from(n))).collect();
+            texel_lanes(self.call_fn(&bake.texel, vec![Val::V(uv, 0.0)], span)?)
+        } else {
+            let taps = 1 << size.len();
+            let mut sum: Option<Vec<S>> = None;
+            for tap in 0..taps {
+                let coord = coord.iter().zip(size).enumerate().map(|(axis, (&x, &n))|
+                    (2 * x + ((tap >> axis) & 1)).min((n >> (level - 1)).max(1) - 1)).collect::<Vec<_>>();
+                let v = self.bake_texel(bake, size, &coord, level - 1, span)?;
+                match &mut sum {
+                    Some(sum) => sum.iter_mut().zip(v).for_each(|(a, b)| *a = a.add(&b)),
+                    None => sum = Some(v),
+                }
+            }
+            sum.unwrap().iter().map(|v| v.div(&S::c(f64::from(taps)))).collect()
+        };
+        Ok(values.into_iter().map(|v| {
+            let (lo, hi) = v.range();
+            S::c(texel_store(lo, &bake.format.name)).join(&S::c(texel_store(hi, &bake.format.name)))
+        }).collect())
+    }
+}
+
+fn texel_lanes<S: Scalar>(value: Val<S>) -> Vec<S> {
+    match value {
+        Val::S(x) => vec![x],
+        Val::V(x, _) => x,
+        _ => unreachable!("bake returns a scalar or vec4"),
+    }
+}
+
+fn texel_store(x: f64, format: &str) -> f64 {
+    match format {
+        "r8unorm" | "rgba8unorm" => (x.clamp(0.0, 1.0) * 255.0).round_ties_even() / 255.0,
+        "r16float" | "rgba16float" => {
+            if x.abs() >= 65520.0 { return f64::INFINITY.copysign(x); }
+            let exponent = (((x as f32).to_bits() >> 23) & 255) as i32 - 127;
+            let unit = 2.0f64.powi((exponent - 10).max(-24));
+            (x / unit).round_ties_even() * unit
+        }
+        _ => x,
     }
 }

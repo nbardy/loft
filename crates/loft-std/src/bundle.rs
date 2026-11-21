@@ -49,6 +49,7 @@ impl Resources {
             match &pass.run {
                 PassRun::Compute { .. }
                 | PassRun::ComputeFusedTicks { .. }
+                | PassRun::ComputeNonDetTicks { .. }
                 | PassRun::PassLoop { .. } => {}
                 PassRun::GenerateMips { texture } => {
                     assign(&tables, &mut roles, *texture, Role::Texture)?;
@@ -162,6 +163,7 @@ pub fn children(run: &PassRun) -> &[PassDecl] {
         PassRun::PassLoop { body, .. } => body,
         PassRun::Compute { .. }
         | PassRun::ComputeFusedTicks { .. }
+        | PassRun::ComputeNonDetTicks { .. }
         | PassRun::RenderBundle { .. }
         | PassRun::GenerateMips { .. } => &[],
     }

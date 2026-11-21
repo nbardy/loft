@@ -89,17 +89,24 @@ pub fn check(p: &Prog, types: &mut Vec<Ty>) -> Res<CheckedEffects> {
     }
     if let Some(s)=p.schedule {
         let mut owners=HashMap::new();
+        let mut tiers=HashMap::new();
         for pd in s.passes.iter().filter(|pd| pd.verb.name=="run_laws"){
             for a in &pd.args{
                 let ExprKind::Name(n)=&a.value.kind else{return Err(e003(a.value.span,"expected a law name","name a declared law"))};
                 let law=p.laws.get(n.as_str()).ok_or_else(||Diag::new(Code::E011,a.value.span,"unknown scheduled law","declare the law before scheduling it"))?;
                 if let Some(TyExpr::Name(k))=law.f.params.first().and_then(|prm|prm.ty.as_ref()){
+                    if let Some((tier, first)) = tiers.insert(&k.name, (law.tier, law.f.name.span))
+                        && tier != law.tier
+                    {
+                        return Err(Diag::new(Code::E504, law.f.name.span, "Det and NonDet laws share a row table",
+                            "schedule the NonDet laws on their own kind").note(first, "other tier scheduled here"));
+                    }
                     for f in &law.writes{if let Some(prev)=owners.insert((&k.name,&f.name),f.span){return Err(Diag::new(Code::E502,f.span,format!("conflicting writes on {}.{}",k.name,f.name),"give one scheduled law ownership of this field").note(prev,"first writer declared here"));}}
                 }
             }
         }
     }
-    for law in p.laws.values() {
+    for law in p.laws.values().filter(|law| law.tier.is_det()) {
         let (reachable, constants) = crate::emit::reachable(p, &[&law.f], &[]);
         let mut calls = crate::emit::References::default();
         for name in constants {
@@ -150,8 +157,10 @@ fn runtime_read<'a>(p: &Prog<'a>, mut refs: crate::emit::References<'a>) -> Opti
         }
         for call in refs.calls {
             let name = call.name.as_str();
-            if let Some(f) = p.fns.get(name) && visited.insert((true, name)) {
-                next.push(crate::emit::References::function(f));
+            if let Some(f) = p.fns.get(name) {
+                if visited.insert((true, name)) { next.push(crate::emit::References::function(f)); }
+            } else if matches!(name, "sample" | "sample_lod") {
+                return Some(call.span);
             }
         }
         refs = next.pop()?;
@@ -392,7 +401,6 @@ impl<'p,'a> Ck<'p,'a> {
     }
 
     pub(crate) fn kernel(&mut self, k: &'a KernelDecl) -> Res<BTreeMap<String, Determinism>> {
-        self.pending_lowering.get_or_insert(k.f.name.span);
         self.local_units.clear();
         self.expr_units.clear();
         for p in &k.f.params {
@@ -883,7 +891,6 @@ impl<'p,'a> Ck<'p,'a> {
     fn expr_inner(&mut self, e: &Expr) -> Res<Ty> {
         match &e.kind {
             ExprKind::Unproved { step_scale, body } => {
-                self.pending_lowering.get_or_insert(e.span);
                 let scale = self.expr(step_scale)?;
                 self.assignable(&scale, &Ty::F32, step_scale.span)?;
                 self.set(step_scale, Ty::F32);
@@ -894,14 +901,16 @@ impl<'p,'a> Ck<'p,'a> {
                     function.span, "unknown differentiated function", "name a declared function"))?;
                 let param = if parameter.name.is_empty() { f.params.first() }
                     else { f.params.iter().find(|p| p.name.name == parameter.name) };
-                if param.is_none() {
-                    return Err(Diag::new(Code::E011, parameter.span, "unknown differentiated parameter", "name a parameter of this function"));
+                let param = param.ok_or_else(|| Diag::new(Code::E011, parameter.span,
+                    "unknown differentiated parameter", "name a parameter of this function"))?;
+                if param.ty.as_ref().map(|ty| self.resolve(ty, true)).transpose()? != Some(Ty::F32) {
+                    return Err(e003(param.name.span, "finite differences require a scalar floating parameter", "differentiate with respect to an f parameter"));
                 }
-                let t = self.call(function, args, e.span)?;
-                Ok(match t {
-                    Ty::Geo(Geo::Pt | Geo::Dir | Geo::Norm, space) => Ty::Geo(Geo::Vec, space),
-                    t => t,
-                })
+                match self.call(function, args, e.span)? {
+                    Ty::Geo(Geo::Pt | Geo::Dir | Geo::Norm, space) => Ok(Ty::Geo(Geo::Vec, space)),
+                    t @ (Ty::F32 | Ty::VecN(_) | Ty::Geo(Geo::Vec, _)) => Ok(t),
+                    _ => Err(e003(function.span, "finite differences require a floating result", "differentiate a scalar or vector function")),
+                }
             }
             ExprKind::If { condition, then, otherwise } => {
                 let actual = self.expr(condition)?;
@@ -1109,6 +1118,33 @@ impl<'p,'a> Ck<'p,'a> {
             self.set(&prior.value, Ty::U32);
             return Ok(Ty::Struct("PriorSample".into()));
         }
+        if matches!(callee.name.as_str(), "sample" | "sample_lod") && !self.p.fns.contains_key(callee.name.as_str()) {
+            let arity = if callee.name == "sample" { 2 } else { 3 };
+            if args.len() != arity || args.iter().any(|arg| arg.name.is_some()) {
+                return Err(e003(span, "invalid texture sample arguments", "write sample(Texture, uv) or sample_lod(Texture, uv, lod)"));
+            }
+            let name = &args[0].value;
+            let ExprKind::Name(name) = &name.kind else {
+                return Err(e003(name.span, "expected a baked texture name", "name a bake_tex declaration"));
+            };
+            let bake = self.p.bakes.get(name.as_str()).ok_or_else(|| Diag::new(Code::E011, span,
+                format!("unknown baked texture {name}"), "declare it with bake_tex"))?;
+            if matches!(bake.dim, TexDim::Cube(_)) && (bake.format.name == "r32float" || self.kernel.is_some()) {
+                return Err(e003(span, "cube sampling requires a filterable shader binding", "sample a filterable cube in a render query or bake a 2D or 3D texture"));
+            }
+            if self.comptime || self.ownership.is_some() {
+                return Err(Diag::new(Code::E403, span, "texture sampling needs a shader", "sample in a material, trace, surface or kernel"));
+            }
+            let coord = self.resolve(bake.texel.params[0].ty.as_ref().expect("typed bake coordinate"), true)?;
+            let actual = self.expr(&args[1].value)?;
+            self.assignable(&actual, &coord, args[1].value.span)?;
+            if let Some(lod) = args.get(2) {
+                let actual = self.expr(&lod.value)?;
+                self.assignable(&actual, &Ty::F32, lod.value.span)?;
+                self.set(&lod.value, Ty::F32);
+            }
+            return self.resolve(bake.texel.ret.as_ref().expect("typed bake value"), true);
+        }
         // `sample_c2(scan, t)`: the scan is named, not passed as a value.
         if matches!(callee.name.as_str(), "sample_c2" | "loft_dsample") {
             let want = if callee.name == "sample_c2" { 2 } else { 3 };
@@ -1265,14 +1301,24 @@ impl<'p,'a> Ck<'p,'a> {
                     return Err(e003(table.span, "atomic destination is not a table parameter", "write the destination through its table parameter"));
                 }
                 let det = match ts[0] {
-                    Ty::U32 | Ty::I32 => Determinism::Det,
-                    Ty::F32 => Determinism::NonDet,
+                    Ty::U32 | Ty::I32 => self.kernel.unwrap().tier,
+                    Ty::F32 if self.kernel.unwrap().tier == Determinism::NonDet => Determinism::NonDet,
+                    Ty::F32 => return Err(Diag::new(Code::E504, dst.value.span, "float atomic accumulation requires NonDet",
+                        "tag the kernel nondet or accumulate integers with an explicit fixed-point scale")),
                     _ => return Err(e003(dst.value.span, "atomic destination must be u, i or f", "use a scalar accumulator")),
                 };
                 self.assignable(&ts[1], &ts[0], val.value.span)?;
                 if ts[1] == Ty::AbstractInt { self.set(&val.value, ts[0].clone()); }
                 self.atomic_writes.entry(n.clone()).and_modify(|d| *d = (*d).max(det)).or_insert(det);
-                return Ok(ts[0].clone());
+                return Ok(Ty::Void);
+            }
+            "global_id" => {
+                if self.kernel.is_some() && !self.comptime && let [axis] = ts.as_slice() {
+                    self.assignable(axis, &Ty::U32, args[0].value.span)?;
+                    self.set(&args[0].value, Ty::U32);
+                    return Ok(Ty::U32);
+                }
+                return Err(e003(span, "global invocation ID needs a kernel and one axis", "write global_id(0) for the X axis"));
             }
             "workgroup_barrier" => {
                 self.require(KernelCapability::Workgroup, span)?;
@@ -1281,7 +1327,13 @@ impl<'p,'a> Ck<'p,'a> {
             }
             "subgroup_add" => {
                 self.require(KernelCapability::Subgroups, span)?;
-                if let [t @ (Ty::F32 | Ty::U32 | Ty::I32)] = ts.as_slice() { return Ok(t.clone()); }
+                if let [t @ (Ty::F32 | Ty::U32 | Ty::I32)] = ts.as_slice() {
+                    if *t == Ty::F32 && self.kernel.unwrap().tier.is_det() {
+                        return Err(Diag::new(Code::E504, span, "floating subgroup reduction requires NonDet",
+                            "tag the kernel nondet or reduce integer contributions"));
+                    }
+                    return Ok(t.clone());
+                }
                 return Err(e003(span, "subgroup_add takes one numeric scalar", "pass an f, i or u value"));
             }
             "mix_bsdf" => {
@@ -1647,4 +1699,31 @@ fn builtin(name: &str, ts: &[Ty], sp: &[Span], span: Span) -> Res<Ty> {
         }
         _ => Err(Diag::new(Code::E011, span, format!("unknown function `{name}`"), "declare it with `fn`, or check the spelling")),
     }
+}
+
+pub(crate) fn kernel_argument<'a>(
+    p: &Prog<'a>, types: &mut Vec<Ty>, kernel: &'a KernelDecl, value: &'a Expr,
+    ty: &TyExpr, overrides: &[(String, f64)],
+) -> Res<String> {
+    let mut ck = Ck::new(p, types);
+    ck.comptime = true;
+    ck.kernel = Some(kernel);
+    ck.scopes.push(HashMap::new());
+    let expected = ck.resolve(ty, true)?;
+    let actual = ck.expr(value)?;
+    ck.assignable(&actual, &expected, value.span)?;
+    ck.expect_unit(value, ck.declared_unit(ty))?;
+    ck.set(value, expected);
+    let mut ev = crate::Eval::<f32>::new(p, types, vec![], overrides);
+    let v = crate::eval::concrete(&ev.expr(value)?, value.span)?;
+    let float = |f: f32| format!("{f:?}");
+    Ok(match v {
+        crate::RowVal::F(n) if n.is_finite() => float(n),
+        crate::RowVal::I(n) => format!("{n}i"),
+        crate::RowVal::U(n) => format!("{n}u"),
+        crate::RowVal::B(n) => n.to_string(),
+        crate::RowVal::V(v) if (2..=4).contains(&v.len()) && v.iter().all(|n| n.is_finite()) =>
+            format!("vec{}f({})", v.len(), v.into_iter().map(float).collect::<Vec<_>>().join(", ")),
+        _ => return Err(e003(value.span, "kernel argument cannot be lowered as a constant", "supply a finite scalar or vector")),
+    })
 }

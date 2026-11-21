@@ -23,7 +23,7 @@ use material_shape::Layout;
 use loft_parse::ast::*;
 use crate::program::{abi, Draw};
 use loft_ir::{Code, Diag, Res, Span};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
 const PRELUDE: &str = r"struct Frame {
@@ -157,12 +157,16 @@ pub struct Emitter<'p, 'a> {
     maps: Vec<(String, Vec<MapStage>)>,
     luts: &'p [LutRef],
     motion:bool,
+    motion_tier: Determinism,
     priors: Option<&'p std::collections::BTreeMap<String, u32>>,
     locals: Vec<String>,
     temp: u32,
     prepare_light: bool,
     in_prepared_light: bool,
     baked_column: Option<u32>,
+    sampled_bakes: BTreeSet<String>,
+    kernel_atomics: BTreeMap<(String, String), AtomicScalar>,
+    kernel_sampling: bool,
 }
 
 #[derive(Default)]
@@ -171,6 +175,9 @@ pub(crate) struct References<'a> {
     pub names: Vec<(&'a str, Span)>,
     pub calls: Vec<&'a Ident>,
     pub scans: BTreeSet<&'a str>,
+    pub step_scales: Vec<&'a Expr>,
+    pub texture_names: BTreeSet<&'a str>,
+    atomic_targets: Vec<&'a Expr>,
 }
 impl<'a> References<'a> {
     pub fn function(f: &'a FnDecl) -> Self {
@@ -188,6 +195,7 @@ impl<'a> References<'a> {
     pub fn expr(&mut self, e: &'a Expr, locals: &[&'a str]) {
         match &e.kind {
             ExprKind::Unproved { step_scale, body } => {
+                self.step_scales.push(step_scale);
                 self.expr(step_scale, locals);
                 if !self.proof_only {
                     let mut inner = locals.to_vec();
@@ -209,10 +217,15 @@ impl<'a> References<'a> {
             }
             ExprKind::Call { callee, args } => {
                 self.calls.push(callee);
-                if matches!(callee.name.as_str(), "sample_c2" | "loft_dsample") &&
-                    let Some(Arg { value: Expr { kind: ExprKind::Name(n), .. }, .. }) = args.first()
-                {
-                    self.scans.insert(n);
+                if callee.name == "atomic_add" && let Some(a) = args.first() {
+                    self.atomic_targets.push(&a.value);
+                }
+                if let Some(Arg { value: Expr { kind: ExprKind::Name(n), .. }, .. }) = args.first() {
+                    match callee.name.as_str() {
+                        "sample_c2" | "loft_dsample" => { self.scans.insert(n); }
+                        "sample" | "sample_lod" => { self.texture_names.insert(n); }
+                        _ => {}
+                    }
                 }
                 self.args(args, locals);
             }
@@ -329,8 +342,8 @@ fn reachable_impl<'a>(p: &Prog<'a>, roots: &[&'a FnDecl], extra: &[&str], proof_
 
 impl<'p, 'a> Emitter<'p, 'a> {
     pub fn new(p: &'p Prog<'a>, types: &'p [Ty]) -> Self {
-        Emitter { p, types, out: String::new(), maps: vec![], luts: &[],motion:false,priors:None,locals:vec![],temp:0,
-            prepare_light: false, in_prepared_light: false, baked_column: None }
+        Emitter { p, types, out: String::new(), maps: vec![], luts: &[],motion:false,motion_tier:Determinism::Det,priors:None,locals:vec![],temp:0,
+            prepare_light: false, in_prepared_light: false, baked_column: None, sampled_bakes: BTreeSet::new(), kernel_atomics: BTreeMap::new(), kernel_sampling: false }
     }
 
     fn ty_of(&self, e: &Expr) -> &Ty {
@@ -514,7 +527,37 @@ impl<'p, 'a> Emitter<'p, 'a> {
             return format!("Bsdf({})", a.join(", "));
         }
         match &e.kind {
-            ExprKind::Unproved { .. } | ExprKind::FiniteDiff { .. } => unreachable!("Phase 4 geometry is refused before legacy emission"),
+            ExprKind::Unproved { body, .. } => {
+                if body.body.stmts.is_empty() {
+                    return self.expr(&body.value);
+                }
+                let name = format!("loft_tmp_{}", self.temp);
+                self.temp += 1;
+                let ty = wty(self.ty_of(e));
+                self.line(1, &format!("var {name}: {ty};"));
+                self.line(1, "{");
+                let (locals, maps) = (self.locals.len(), self.maps.len());
+                for stmt in &body.body.stmts { self.stmt(stmt, 2); }
+                let value = self.expr(&body.value);
+                self.line(2, &format!("{name} = {value};"));
+                self.locals.truncate(locals);
+                self.maps.truncate(maps);
+                self.line(1, "}");
+                name
+            }
+            ExprKind::FiniteDiff { function, parameter, args } => {
+                let f = self.p.fns[function.name.as_str()];
+                let param = crate::finite_diff_parameter(f, parameter);
+                let mut args = args.iter().map(|a| self.expr(&a.value)).collect::<Vec<_>>();
+                let value = args[param].clone();
+                let step = crate::FINITE_DIFF_STEP;
+                let symbol = fn_symbol(&function.name);
+                args[param] = format!("({value} + {step})");
+                let hi = args.join(", ");
+                args[param] = format!("({value} - {step})");
+                let lo = args.join(", ");
+                format!("(({symbol}({hi}) - {symbol}({lo})) / {})", 2.0 * step)
+            }
             ExprKind::If { condition, then, otherwise } => {
                 let name = format!("loft_tmp_{}", self.temp);
                 self.temp += 1;
@@ -556,6 +599,16 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 format!("{}u", 1 + self.p.worlds.keys().position(|k| *k == n).expect("checked world")),
             ExprKind::Name(n) => wgsl_name(n),
             ExprKind::Member(base, m) => {
+                if let Some((table, _, field)) = atomic_target(e)
+                    && let Some(ty) = self.kernel_atomics.get(&(table.to_owned(), field.to_owned())).cloned()
+                {
+                    let location = self.member(base, m);
+                    let load = format!("atomicLoad(&{location})");
+                    return match ty {
+                        AtomicScalar::U32 | AtomicScalar::I32 | AtomicScalar::Float(FloatAtomics::Native) => load,
+                        AtomicScalar::Float(FloatAtomics::Fixed(_)) => format!("loft_fixed_decode({load})"),
+                    };
+                }
                 if let ExprKind::Name(n) = &base.kind
                     && m.name == "cell"
                     && self.maps.iter().any(|(k, _)| k == &map_symbol(n))
@@ -573,7 +626,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                         _ => unreachable!("checked prior sample field"),
                     };
                 }
-                if matches!(self.ty_of(base),Ty::Frame(_)){format!("{}.{}",self.expr(base),frame_field(&m.name))}else if matches!(self.ty_of(base),Ty::Row(_)){format!("{}.r_{}", self.expr(base),m.name)}else{format!("{}.{}", self.expr(base), member_name(&m.name))}
+                self.member(base, m)
             }
             ExprKind::Index(a, i) => format!("{}[{}]", self.expr(a), self.expr(i)),
             ExprKind::Unary(op, x) => {
@@ -606,6 +659,14 @@ impl<'p, 'a> Emitter<'p, 'a> {
                     Ty::Xform(..) => format!("loft_xform_yaw({}, {})", a[0], a[1]),
                     t @ Ty::Void | t @ Ty::Bool | t @ Ty::U32 | t @ Ty::I32 | t @ Ty::F32 | t @ Ty::AbstractInt | t @ Ty::VecN(_) | t @ Ty::Geo(..) | t @ Ty::Map(..) | t @ Ty::Row(_) | t @ Ty::Frame(_) | t @ Ty::Table(_) | t @ Ty::Verdict | t @ Ty::Struct(_) | t @ Ty::Array(..) | t @ Ty::Id(_) | t @ Ty::Bsdf => format!("{}({})", wty(t), a.join(", ")),
                 }
+            }
+            ExprKind::Call { callee, args } if matches!(callee.name.as_str(), "sample" | "sample_lod")
+                && !self.p.fns.contains_key(callee.name.as_str()) => {
+                let ExprKind::Name(name) = &args[0].value.kind else { unreachable!("checked texture name") };
+                self.sampled_bakes.insert(name.clone());
+                let coord = self.expr(&args[1].value);
+                let lod = args.get(2).map_or_else(|| "0.0".into(), |a| self.expr(&a.value));
+                crate::bake_tex::sample_expression(self.p.bakes[name.as_str()], &coord, &lod, self.kernel_sampling)
             }
             ExprKind::Call { callee, args } if matches!(callee.name.as_str(), "sample_c2" | "loft_dsample") => {
                 let ExprKind::Name(n) = &args[0].value.kind else { unreachable!("checked scan name") };
@@ -652,10 +713,22 @@ impl<'p, 'a> Emitter<'p, 'a> {
                     let args = args[1..].iter().map(|arg| self.expr(&arg.value)).collect::<Vec<_>>();
                     return format!("emit_event({tag}, {})", args.join(", "));
                 }
+                if callee.name == "atomic_add" {
+                    let (table, index, field) = atomic_target(&args[0].value).expect("checked atomic destination");
+                    let value = self.expr(&args[1].value);
+                    if matches!(self.kernel_atomics.get(&(table.to_owned(), field.to_owned())), Some(AtomicScalar::Float(FloatAtomics::Fixed(_)))) {
+                        let index = self.expr(index);
+                        return format!("{}(u32({index}), {value})", float_atomic_symbol(table, field));
+                    }
+                    let ExprKind::Member(base, member) = &args[0].value.kind else { unreachable!("checked atomic destination") };
+                    return format!("atomicAdd(&{}, {value})", self.member(base, member));
+                }
                 let a: Vec<String> = args.iter().map(|x| self.expr(&x.value)).collect();
                 if callee.name=="place"{return format!("loft_xform_yaw({}, {})",a[0],a.get(1).map(String::as_str).unwrap_or("0.0"))}
                 match callee.name.as_str(){
-                    "atomic_add" => return format!("atomicAdd(&{}, {})", a[0], a[1]),
+                    "workgroup_barrier" => return "workgroupBarrier()".into(),
+                    "subgroup_add" => return format!("subgroupAdd({})", a[0]),
+                    "global_id" => return format!("loft_gid[{}]", a[0]),
                     "sky_zenith"=>return "loft_params[1u].xyz".into(),
                     "sky_horizon"=>return "loft_params[2u].xyz".into(),
                     "has_sky"=>return "(loft_params[1u].w != 0.0)".into(),
@@ -685,7 +758,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                     let steps = if a.len() == 5 { a[3].as_str() } else { "24u" };
                     return format!("loft_authored_volume({}, {}, {}, {steps}, {})", a[0], a[1], a[2], a.last().unwrap());
                 }
-                if self.motion && matches!(motion_math(&callee.name), MotionMath::Fixed){return format!("det_{}({})",callee.name,a.join(", "));}
+                if self.motion && self.motion_tier.is_det() && matches!(motion_math(&callee.name), MotionMath::Fixed){return format!("det_{}({})",callee.name,a.join(", "));}
                 if matches!(callee.name.as_str(),"held"|"missed"){return format!("CheckValue({}u, 0u, {})",if callee.name=="held"{1}else{2},a[0]);}
                 let name = match callee.name.as_str() {
                     "ggx_energy" => "loft_ggx_energy".into(),
@@ -705,9 +778,22 @@ impl<'p, 'a> Emitter<'p, 'a> {
         }
     }
 
+    fn member(&mut self, base: &Expr, name: &Ident) -> String {
+        let field = match self.ty_of(base) {
+            Ty::Frame(_) => frame_field(&name.name).to_owned(),
+            Ty::Row(_) => format!("r_{}", name.name),
+            _ => member_name(&name.name),
+        };
+        format!("{}.{field}", self.expr(base))
+    }
+
     fn header(&mut self, nonce: &str) {
         self.out += &PRELUDE.replace("{{NONCE}}", nonce);
         self.out += "fn loft_xform_yaw(o: vec3<f32>, yaw: f32) -> LoftXform {\n  let s = sin(yaw);\n  let c = cos(yaw);\n  return LoftXform(mat3x3<f32>(vec3<f32>(c, 0.0, -s), vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(s, 0.0, c)), o);\n}\n\n";
+    }
+
+    fn sampled_textures(&mut self) {
+        self.out.push_str(&crate::bake_tex::sampled_declarations(self.p, &self.sampled_bakes, self.kernel_sampling));
     }
 
     fn row_header(&mut self, k: &KindDecl) {
@@ -984,6 +1070,7 @@ pub(super) fn emit_kind_module(
         };
         em.func(f, n);
     }
+    em.sampled_textures();
     // Draw-form glue: the vis entry points, how shade rebuilds the hit, and the twin's geometry.
     let count_steps = aov == Aov::SdfSteps && draw == Draw::Traced && edit.is_none();
     let uses_world_hit = light.is_none() && aov == Aov::Beauty;
@@ -1186,6 +1273,23 @@ fn loft_box(ro: vec3<f32>, rd: vec3<f32>, lo: vec3<f32>, hi: vec3<f32>) -> vec2<
             )
         }
     };
+    let mut twin_geo = twin_geo;
+    if matches!(draw, Draw::Surface { .. }) && k.proof != GeometryProof::Required {
+        // Four diagonal taps recover the two tangents of the parameterized surface.
+        let step = crate::FINITE_DIFF_STEP;
+        let stencil = |uv: &str| format!(
+            "let a0 = q_surface(row, {uv}.x - {step}, {uv}.y - {step});\n  \
+             let a1 = q_surface(row, {uv}.x + {step}, {uv}.y - {step});\n  \
+             let a2 = q_surface(row, {uv}.x - {step}, {uv}.y + {step});\n  \
+             let a3 = q_surface(row, {uv}.x + {step}, {uv}.y + {step});\n  \
+             let cr = cross((a1 - a0) + (a3 - a2), (a2 - a0) + (a3 - a1));");
+        geometry = geometry.replace(
+            "let cr = cross(loft_surface_jvp(row, uv.x, uv.y, 1.0, 0.0), loft_surface_jvp(row, uv.x, uv.y, 0.0, 1.0));",
+            &stencil("uv"));
+        twin_geo = twin_geo.replace(
+            "let cr = cross(loft_surface_jvp(row, a.x, a.y, 1.0, 0.0), loft_surface_jvp(row, a.x, a.y, 0.0, 1.0));",
+            &stencil("a"));
+    }
     let mut diagnostics = "";
     if let Draw::Surface { nu, nv } = draw {
         vis.push_str(&surface::cached_grid(p, k.query(QueryKind::Surface).expect("surface query"), nu, nv));
@@ -1616,4 +1720,198 @@ fn bake(@builtin(global_invocation_id) gid: vec3<u32>) {{
 }}
 ");
     Ok((bake, em.out))
+}
+
+fn atomic_target(expr: &Expr) -> Option<(&str, &Expr, &str)> {
+    let ExprKind::Member(base, field) = &expr.kind else { return None; };
+    let ExprKind::Index(table, index) = &base.kind else { return None; };
+    let ExprKind::Name(table) = &table.kind else { return None; };
+    Some((table, index, &field.name))
+}
+
+/// Float table fields keep their f32 representation at every pass boundary.
+#[derive(Clone, Copy)]
+pub(crate) enum FloatAtomics {
+    Native,
+    Fixed(u32),
+}
+
+#[derive(Clone, Copy)]
+enum AtomicScalar {
+    I32,
+    U32,
+    Float(FloatAtomics),
+}
+
+fn float_atomic_symbol(table: &str, field: &str) -> String {
+    format!("loft_atomic_add_{}_{table}_{field}", table.len())
+}
+
+fn storage_fields<'a>(p: &Prog<'a>, row: &str) -> &'a [RowField] {
+    if let Some(k) = p.kinds.get(row) { &k.row } else { p.structs[row].1 }
+}
+
+fn table_struct(em: &mut Emitter<'_, '_>, symbol: &str, row: &str, parameter: Option<&str>) {
+    let _ = writeln!(em.out, "struct {symbol} {{");
+    for field in storage_fields(em.p, row) {
+        let name = &field.name.name;
+        let field_ty = em.resolve(&field.ty);
+        let atomic = parameter.and_then(|p| em.kernel_atomics.get(&(p.to_owned(), name.clone())));
+        let ty = match atomic {
+            Some(AtomicScalar::U32) => "atomic<u32>".to_owned(),
+            Some(AtomicScalar::I32 | AtomicScalar::Float(FloatAtomics::Fixed(_))) => "atomic<i32>".to_owned(),
+            Some(AtomicScalar::Float(FloatAtomics::Native)) => "atomic<f32>".to_owned(),
+            None => wty(&field_ty),
+        };
+        let name = if em.p.kinds.contains_key(row) { format!("r_{name}") } else { member_name(name) };
+        let _ = writeln!(em.out, "  {name}: {ty},");
+    }
+    em.out.push_str("}\n");
+}
+
+fn nested_table_structs(em: &mut Emitter<'_, '_>, rows: &[&str]) {
+    let mut emitted = BTreeSet::new();
+    let mut pending = rows.to_vec();
+    while let Some(row) = pending.pop() {
+        for field in storage_fields(em.p, row) {
+            let mut ty = em.resolve(&field.ty);
+            while let Ty::Array(element, _) = ty { ty = *element; }
+            if let Ty::Struct(name) = ty && let Some((&name, _)) = em.p.structs.get_key_value(name.as_str())
+                && name != "World" && emitted.insert(name)
+            {
+                pending.push(name);
+            }
+        }
+    }
+    for name in emitted {
+        table_struct(em, &format!("loft_type_{name}"), name, None);
+    }
+}
+
+pub(crate) fn table_layout(p: &Prog<'_>, row: &str, span: Span) -> Res<loft_ir::StructLayout> {
+    let mut em = Emitter::new(p, &[]);
+    em.header(abi::NONCE_PLACEHOLDER);
+    nested_table_structs(&mut em, &[row]);
+    table_struct(&mut em, "LoftTableRow", row, None);
+    em.out.push_str("@group(1) @binding(0) var<storage, read> loft_table: array<LoftTableRow>;");
+    let ir = naga::front::wgsl::parse_str(&em.out).map_err(|e| Diag::new(Code::E003, span,
+        format!("invalid storage row {row}: {}", e.message()), "declare a WGSL host-shareable row"))?;
+    let global = ir.global_variables.iter().find(|(_, g)| g.name.as_deref() == Some("loft_table"))
+        .expect("emitted table declaration").1;
+    let naga::TypeInner::Array { base, stride, .. } = ir.types[global.ty].inner else { unreachable!("emitted array") };
+    naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::default())
+        .validate(&ir).map_err(|e| Diag::new(Code::E003, span,
+            format!("invalid storage row {row}: {}", e.emit_to_string(&em.out)), "declare a WGSL host-shareable row"))?;
+    let naga::TypeInner::Struct { members, .. } = &ir.types[base].inner else { unreachable!("emitted struct") };
+    Ok(loft_ir::StructLayout { stride_bytes: stride, offsets: members.iter().map(|m| m.offset).collect() })
+}
+
+pub(crate) fn kernel_uses_float(k: &KernelDecl, types: &[Ty]) -> bool {
+    References::function(&k.f).atomic_targets.iter().any(|target| types[target.id as usize] == Ty::F32)
+}
+
+pub(crate) fn kernel_module(
+    p: &Prog<'_>, types: &[Ty], k: &KernelDecl,
+    arguments: &[String], bindings: &[(&str, &str, loft_ir::PassBinding, u32)], workgroup: [u32; 3],
+    float_atomics: FloatAtomics,
+) -> (String, Vec<loft_ir::PassBinding>) {
+    let mut em = Emitter::new(p, types);
+    em.kernel_sampling = true;
+    em.header(abi::NONCE_PLACEHOLDER);
+    for target in References::function(&k.f).atomic_targets {
+        let (table, _, field) = atomic_target(target).expect("checked atomic destination");
+        let scalar = match em.ty_of(target) {
+            Ty::U32 => AtomicScalar::U32,
+            Ty::I32 => AtomicScalar::I32,
+            Ty::F32 => AtomicScalar::Float(float_atomics),
+            _ => unreachable!("checked atomic scalar"),
+        };
+        em.kernel_atomics.insert((table.to_owned(), field.to_owned()), scalar);
+    }
+    let (mut encode, mut decode, mut converted) = (String::new(), String::new(), Vec::new());
+    let (helpers, consts) = reachable(p, &[&k.f], &[]);
+    nested_table_structs(&mut em, &bindings.iter().map(|(_, row, _, _)| *row).collect::<Vec<_>>());
+    em.library(&helpers, &consts);
+    for (param, row, binding, capacity) in bindings {
+        let ty = format!("LoftTable_{param}");
+        table_struct(&mut em, &ty, row, Some(param));
+        let access = if binding.access == loft_ir::BindAccess::ReadStorage { "read" } else { "read_write" };
+        let resource = wgsl_name(param);
+        let _ = writeln!(em.out, "@group({}) @binding({}) var<storage, {access}> {resource}: array<{ty}>;",
+            binding.group, binding.slot);
+        let mut conversions = Vec::new();
+        for ((table, field), kind) in &em.kernel_atomics {
+            if table != param || !matches!(kind, AtomicScalar::Float(FloatAtomics::Fixed(_))) { continue; }
+            let function = float_atomic_symbol(table, field);
+            let field = if p.kinds.contains_key(row) { format!("r_{field}") } else { member_name(field) };
+            let _ = writeln!(em.out, "
+fn {function}(index: u32, value: f32) {{
+  let ptr = &{resource}[index].{field};
+  let delta = loft_fixed_encode(value);
+  var old = atomicLoad(ptr);
+  loop {{
+    let sum = loft_fixed_sum(old, delta);
+    let next = atomicCompareExchangeWeak(ptr, old, sum);
+    if next.exchanged {{ break; }}
+    old = next.old_value;
+  }}
+}}");
+            conversions.push(field);
+        }
+        if !conversions.is_empty() {
+            converted.push(*binding);
+            // A separate dispatch changes representation before accumulation. Use
+            // logical capacity because a backend may pad the storage allocation.
+            for body in [&mut encode, &mut decode] {
+                let _ = writeln!(body, "for (var i = gid.x; i < {capacity}u; i += groups.x * 64u) {{");
+            }
+            for field in conversions {
+                let ptr = format!("&{resource}[i].{field}");
+                let _ = writeln!(encode, "atomicStore({ptr}, loft_fixed_encode(bitcast<f32>(atomicLoad({ptr}))));");
+                let _ = writeln!(decode, "atomicStore({ptr}, bitcast<i32>(loft_fixed_decode(atomicLoad({ptr}))));");
+            }
+            encode.push_str("}\n");
+            decode.push_str("}\n");
+        }
+    }
+    if let FloatAtomics::Fixed(scale) = float_atomics && !converted.is_empty() {
+        let _ = write!(em.out, r#"
+const LOFT_FIXED_SCALE: f32 = {scale}.0;
+const LOFT_FIXED_INVALID: i32 = -2147483647i - 1i;
+fn loft_fixed_encode(x: f32) -> i32 {{
+    let fixed = round(x * LOFT_FIXED_SCALE);
+    if abs(fixed) < 2147483648.0 {{ return i32(fixed); }}
+    return LOFT_FIXED_INVALID;
+}}
+fn loft_fixed_decode(x: i32) -> f32 {{
+    if x == LOFT_FIXED_INVALID {{ return bitcast<f32>(0x7fc00000u); }}
+    return f32(x) / LOFT_FIXED_SCALE;
+}}
+fn loft_fixed_sum(a: i32, b: i32) -> i32 {{
+    if a == LOFT_FIXED_INVALID || b == LOFT_FIXED_INVALID {{ return LOFT_FIXED_INVALID; }}
+    if b > 0i && a > 2147483647i - b {{ return LOFT_FIXED_INVALID; }}
+    if b < 0i && a < -2147483647i - b {{ return LOFT_FIXED_INVALID; }}
+    return a + b;
+}}
+@compute @workgroup_size(64) fn loft_fixed_prepare(@builtin(global_invocation_id) gid: vec3u, @builtin(num_workgroups) groups: vec3u) {{
+{encode}
+}}
+@compute @workgroup_size(64) fn loft_fixed_finish(@builtin(global_invocation_id) gid: vec3u, @builtin(num_workgroups) groups: vec3u) {{
+{decode}
+}}
+"#);
+    }
+    let mut f = k.f.clone();
+    f.params.retain(|p| !matches!(p.ty, Some(TyExpr::Table(_))));
+    em.out.push_str("var<private> loft_gid: vec3<u32>;\n");
+    em.func(&f, "loft_kernel");
+    em.sampled_textures();
+    let [x, y, z] = workgroup;
+    let _ = writeln!(em.out, "
+@compute @workgroup_size({x}, {y}, {z})
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
+  loft_gid = gid;
+  loft_kernel({});
+}}", arguments.join(", "));
+    (em.out, converted)
 }
