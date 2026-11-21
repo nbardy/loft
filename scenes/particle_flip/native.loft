@@ -1,0 +1,75 @@
+# Unit-mass FLIP in a 32³ tank. ParticleState and Control are host inputs.
+space World
+
+struct Word { value: u }
+struct PackedParticle { x: u, y: u, z: u, bits: u }
+struct ParticleState { position: v4, velocity: v4 }
+struct Node { before: v4, after: v4 }
+struct FloatCell { mass: f, mx: f, my: f, mz: f }
+
+# Four grids shorten hot-cell sums. Read bound row fields individually to preserve the kernel storage layout.
+kernel scatter_float(particles: [PackedParticle], control: [Word], grid: [FloatCell]) nondet allow(atomics) {
+  let id = global_id(0)
+  if control[0].value <= 65536 && id < control[0].value {
+    let px = particles[id].x
+    let py = particles[id].y
+    let pz = particles[id].z
+    let bits = particles[id].bits
+    let vx = f32(i32(bits % 128) - 63) / 63.0
+    let vy = f32(i32((bits / 256) % 128) - 63) / 63.0
+    let vz = f32(i32((bits / 65536) % 128) - 63) / 63.0
+    let fx = px % 16
+    let fy = py % 16
+    let fz = pz % 16
+    for t in 0..8 {
+      let dx = t % 2
+      let dy = (t / 2) % 2
+      let dz = t / 4
+      let x = (px / 16 + dx) % 32
+      let y = (py / 16 + dy) % 32
+      let z = (pz / 16 + dz) % 32
+      let node = x + 32 * (y + 32 * z) + 32768 * (id % 4)
+      let wx = select(16 - fx, fx, dx != 0)
+      let wy = select(16 - fy, fy, dy != 0)
+      let wz = select(16 - fz, fz, dz != 0)
+      let w = f32(wx * wy * wz) / 4096.0
+      atomic_add(grid[node].mass, w)
+      atomic_add(grid[node].mx, w * vx)
+      atomic_add(grid[node].my, w * vy)
+      atomic_add(grid[node].mz, w * vz)
+    }
+  }
+}
+
+schedule Main {
+  table(Control, row: Word, capacity: 1)
+  table(Status, row: Word, capacity: 1)
+  table(State, row: ParticleState, capacity: 65536)
+  table(Packed, row: PackedParticle, capacity: 65536)
+  table(Nodes, row: Node, capacity: 32768)
+  table(FloatGrid, row: FloatCell, capacity: 131072)
+  table(PublishedFloat, row: FloatCell, capacity: 32768)
+
+  pass pack reads [Control] writes [State, Packed] {
+    dispatch("../../stdlib/physics/particle_flip.wgsl", "pack_state", 1024)
+  }
+  pass check reads [Control] writes [Status] {
+    dispatch("../../stdlib/physics/particle_flip.wgsl", "check_capacity", 1)
+  }
+  pass p2g reads [Packed, Control] writes [FloatGrid] {
+    compute(entry: scatter_float, extent: 1024, workgroup: 64, particles: Packed, control: Control, grid: FloatGrid, fixed_scale: 4096)
+  }
+  pass publish writes [FloatGrid, PublishedFloat, Status] {
+    dispatch("../../stdlib/physics/particle_flip.wgsl", "publish_float", 512)
+  }
+  # Scratch begins zeroed by WebGPU. Clear it after publication for the next tick.
+  pass clear writes [FloatGrid] {
+    dispatch("../../stdlib/physics/particle_flip.wgsl", "clear_float", 2048)
+  }
+  pass update writes [PublishedFloat, Nodes, Status] {
+    dispatch("../../stdlib/physics/particle_flip.wgsl", "update_float", 512)
+  }
+  pass g2p reads [Control] writes [State, Status, Packed, Nodes] {
+    dispatch("../../stdlib/physics/particle_flip.wgsl", "g2p_linear", 1024)
+  }
+}

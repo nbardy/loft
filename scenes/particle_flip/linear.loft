@@ -1,0 +1,37 @@
+# Unit-mass FLIP in a 32³ tank. ParticleState and Control are host inputs.
+space World
+
+struct Word { value: u }
+struct PackedParticle { x: u, y: u, z: u, bits: u }
+struct ParticleState { position: v4, velocity: v4 }
+struct Node { before: v4, after: v4 }
+struct FixedCell { mass: i, mx: i, my: i, mz: i }
+
+schedule Main {
+  table(Control, row: Word, capacity: 1)
+  table(Status, row: Word, capacity: 1)
+  table(State, row: ParticleState, capacity: 65536)
+  table(Packed, row: PackedParticle, capacity: 65536)
+  table(Nodes, row: Node, capacity: 32768)
+  table(Grid, row: FixedCell, capacity: 32768)
+  table(AtomicGrid, row: FixedCell, capacity: 32768)
+
+  pass pack reads [Control] writes [State, Packed] {
+    dispatch("../../stdlib/physics/particle_flip.wgsl", "pack_state", 1024)
+  }
+  pass clear reads [Control] writes [Status, AtomicGrid] {
+    dispatch("../../stdlib/physics/particle_flip.wgsl", "clear_fixed", 512)
+  }
+  pass p2g reads [Control] writes [AtomicGrid, Status, Packed] {
+    dispatch("../../stdlib/physics/particle_flip.wgsl", "scatter_linear", 1024)
+  }
+  pass publish writes [AtomicGrid, Grid, Status] {
+    dispatch("../../stdlib/physics/particle_flip.wgsl", "publish_fixed", 512)
+  }
+  pass update writes [Grid, Nodes, Status] {
+    dispatch("../../stdlib/physics/particle_flip.wgsl", "update_fixed", 512)
+  }
+  pass g2p reads [Control] writes [State, Status, Packed, Nodes] {
+    dispatch("../../stdlib/physics/particle_flip.wgsl", "g2p_linear", 1024)
+  }
+}
