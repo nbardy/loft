@@ -275,15 +275,9 @@ impl<'src> Parser<'src, '_> {
                 _ => return self.err("a space-qualified geometry type"),
             });
         }
-        let name = match n.name.as_str() {
-            "f" => "f32",
-            "u" => "u32",
-            "i" => "i32",
-            "v2" => "vec2f",
-            "rgb" | "v3" => "vec3f",
-            "v4" => "vec4f",
-            _ => &n.name,
-        };
+        let name = TYPE_ALIASES.iter()
+            .find_map(|&(short, full)| (n.name == short).then_some(full))
+            .unwrap_or(&n.name);
         Ok(ty(name, n.span))
     }
     fn upper_ident(&mut self) -> Res<Ident> {
@@ -1792,11 +1786,15 @@ fn add_unit(dim: &mut Dimension, symbol: &str, power: f64) {
     for (v, e) in dim.iter_mut().zip(base) { *v += power * f64::from(e); }
 }
 
+pub const TYPE_ALIASES: &[(&str, &str)] = &[
+    ("f", "f32"), ("u", "u32"), ("i", "i32"),
+    ("v2", "vec2f"), ("rgb", "vec3f"), ("v3", "vec3f"), ("v4", "vec4f"),
+];
+
+pub const UNIT_SYMBOLS: &[&str] = &["m", "mm", "rad", "deg", "kg", "s", "N", "J", "Hz"];
+
 fn unit(s: &str) -> bool {
-    matches!(
-        s,
-        "m" | "mm" | "rad" | "deg" | "kg" | "s" | "N" | "J" | "Hz"
-    )
+    UNIT_SYMBOLS.contains(&s)
 }
 fn operator(s: &str) -> Option<(u8, BinOp)> {
     use BinOp::*;

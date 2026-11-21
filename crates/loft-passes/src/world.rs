@@ -27,13 +27,15 @@ pub struct WorldCall<V> {
     pub query: WorldQuery<V>,
 }
 
+pub(crate) const QUERY_ARITIES: &[(&str, usize)] = &[
+    ("trace", 1), ("material", 1), ("sky", 1), ("medium", 1),
+    ("visible", 2), ("pick_light", 2), ("light", 3),
+];
+
 impl<V: Clone> WorldCall<V> {
     pub fn resolve(name: &str, operands: &[V], span: Span) -> Res<Option<Self>> {
-        let arity = match name {
-            "trace" | "material" | "sky" | "medium" => 1,
-            "visible" | "pick_light" => 2,
-            "light" => 3,
-            _ => return Ok(None),
+        let Some(arity) = QUERY_ARITIES.iter().find_map(|&(n, arity)| (name == n).then_some(arity)) else {
+            return Ok(None);
         };
         let (world, args) = match operands.len() {
             n if n == arity => (None, operands),

@@ -20,6 +20,7 @@ mod profile;
 mod controls;
 mod fmt;
 mod fork;
+mod context;
 mod budget;
 mod lint;
 
@@ -59,6 +60,12 @@ fn flag(args: &mut Vec<String>, name: &str) -> Result<Option<String>, Failure> {
 }
 
 fn command(mut args: Vec<String>) -> Result<(), Failure> {
+    // These commands own all of their flags and never read scene overrides.
+    match args.first().map(String::as_str) {
+        Some("context") => return context::run(&args[1..]),
+        Some("fork") => return fork::run(&args[1..]),
+        Some(_) | None => {}
+    }
     let set = overrides(&mut args).map_err(Failure::Usage)?;
     let cmd = args.first().cloned().unwrap_or_default();
     if matches!(cmd.as_str(), "render" | "check") && build::trace::requested(&args[1..]) {
@@ -119,7 +126,6 @@ fn command(mut args: Vec<String>) -> Result<(), Failure> {
         "controls" => controls::run(&args[1..], &set),
         "lint" if set.is_empty() => lint::run(&args[1..]),
         "fmt" => fmt::run(&args[1..]),
-        "fork" => fork::run(&args[1..]),
         "show" => {
             let kind = flag(&mut args, "--kind")?;
             let json = args.iter().any(|a| a == "--json");
@@ -205,7 +211,7 @@ fn command(mut args: Vec<String>) -> Result<(), Failure> {
                 t.elapsed().as_secs_f64(), l.stats.pipelines_ms, g.adapter);
             Ok(())
         }
-        _ => Err(Failure::Usage("usage: loft build|check|show|still|clip|gate|load|ir|render|profile|controls|fmt|fork|diff|lint".into())),
+        _ => Err(Failure::Usage("usage: loft build|check|show|still|clip|gate|load|ir|render|profile|controls|fmt|fork|context|diff|lint".into())),
     }
 }
 

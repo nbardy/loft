@@ -56,6 +56,19 @@ impl Deref for Graph {
     }
 }
 
+/// Prefer the entry's checkout. For a loose file, use the invoking
+/// workspace or the checkout the executable was built from.
+pub fn workspace_root(path: &Path) -> Option<PathBuf> {
+    fn ancestor(path: &Path) -> Option<PathBuf> {
+        path.ancestors()
+            .find(|p| p.join("Cargo.toml").is_file() && p.join("stdlib").is_dir())
+            .map(Path::to_path_buf)
+    }
+    ancestor(path)
+        .or_else(|| ancestor(&std::env::current_dir().ok()?))
+        .or_else(|| ancestor(Path::new(env!("CARGO_MANIFEST_DIR"))))
+}
+
 impl Graph {
     /// Load a scene from its nearest workspace. The suffix is source owned by
     /// a client, such as an observation bake appended to the entry scene.
@@ -63,16 +76,14 @@ impl Graph {
         let entry = path
             .canonicalize()
             .map_err(|e| format!("{}: {e}", path.display()))?;
-        let root = entry
-            .ancestors()
-            .find(|p| p.join("Cargo.toml").is_file() && p.join("stdlib").is_dir())
-            .ok_or_else(|| {
-                format!(
-                    "{}: no ancestor holds stdlib/ and Cargo.toml",
-                    path.display()
-                )
-            })?;
-        Ok(Self::load(root, &entry, &Disk, suffix))
+        let root = workspace_root(&entry)
+            .ok_or_else(|| format!("{}: cannot find a workspace with stdlib/ and Cargo.toml", path.display()))?;
+        Ok(Self::load(&root, &entry, &Disk, suffix))
+    }
+
+    /// Resolve and link the entry and its imports without lowering a program.
+    pub fn validate_imports(&self) -> Res<()> {
+        self.parsed().map(|_| ())
     }
 
     /// Compile generated or edited scene text with the same dependency

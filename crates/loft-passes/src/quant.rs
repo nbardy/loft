@@ -19,7 +19,7 @@ pub(crate) enum Quant {
 }
 
 impl Quant {
-    const ALL: [Self; 11] = [
+    pub(crate) const ALL: [Self; 11] = [
         Self::DotI8,
         Self::DotU8,
         Self::Bf16,

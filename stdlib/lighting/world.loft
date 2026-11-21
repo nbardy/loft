@@ -2,6 +2,7 @@
 pub struct World {}
 pub type RngKey = array[u, 4]
 pub struct Ray { o: p3@World, d: d3@World, t0: m, t1: m, w: v2 }
+# context Hit.t is -1 on a miss and -2 on unresolved marches.
 pub struct Hit { t: m, p: p3@World, n: n3@World, uv: v2, local_p: p3@Local, kind_id: u, row_id: u, cell: v4 }
 pub struct Scatter { wi: d3@World, weight: Radiance, pdf: f, delta: bool }
 pub struct Lit { wi: d3@World, l: Radiance, pdf: f, p: p3@World, idx: u }
