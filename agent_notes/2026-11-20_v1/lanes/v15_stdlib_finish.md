@@ -6,7 +6,7 @@ Physical kinds accept `material(hit: SurfaceHit) -> Bsdf`. LightSummary styles a
 The Harbor showcases compile their typed payloads directly. The source-rewriting adapter was removed. Crab grammar repairs move comments out of leading block positions.
 
 Prediction was zero Vis64/depth changes across style swaps and the 64/128/256-spp reference controls, with finite depth and far depth 1 at (0,0).
-Both recognizers accepted all 81 added or edited Loft files. Main’s recorded run covered the 298 byte-identical sources, which use none of the replaced schedule syntax.
+Both recognizers accepted all 379 tracked Loft files in six shards and rejected the negative fixture.
 Corpus provenance, core vocabulary, shell syntax and Keel pins passed.
 All 32 files in the existing approval folders matched their recorded SHA-256. These include 30 stills.
 Lineup camera cuts, forward-only derivatives and spectral LightSummary refusal passed. Stock Capsules, Blobs and Hermit plans matched main. Shrine differed only in a raw helper's file ordinal.
@@ -20,7 +20,6 @@ The 256-spp Harbor capture still had 5,120 unwritten HDR pixels. The 1,024-spp a
 Harbor woodblock at 384×240 and t=0 measured 1.193 ms p95 over 20 frames after 5 warmups. Triangle p95 was 0.035 ms.
 Native suite on Metal ran 32 executables with 183 tests passed, zero failed and one ignored archive capture.
 Crab Live matched all 480 CPU/GPU ticks, with bytes agreeing at each sampled boundary for 1, 2 and 4 ticks per submission.
-Grammar coverage accounts for all 379 tracked sources. The standalone full replay is still running.
 Five compile attempts were required, including the successful lab workspace build and focused rebuild.
 
 [Local evidence](../../../out/meta/v15_stdlib_finish/)
