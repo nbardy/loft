@@ -1,4 +1,4 @@
-use loft_wgpu::{error::RunnerError, interop::{TextureShape, check_buffer, check_texture, stale}};
+use loft_wgpu::{error::RunnerError, interop::{TextureContract, check_buffer, check_texture, stale}};
 use wgpu::{BindingType, BufferUsages as B, TextureUsages as T, TextureViewDimension as V};
 
 #[test]
@@ -16,20 +16,23 @@ fn l23a_interop_checks_and_affected_groups_only() {
         check_buffer(64, B::COPY_DST, 64, B::STORAGE),
         Err(RunnerError::AbiMismatch)
     );
-    let shape = TextureShape {
+    let desc = wgpu::TextureDescriptor {
+        label: None,
         size: wgpu::Extent3d {
             width: 16,
             height: 16,
             depth_or_array_layers: 1,
         },
-        dim: wgpu::TextureDimension::D2,
+        dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Rgba8Unorm,
-        samples: 1,
-        mips: 1,
+        sample_count: 1,
+        mip_level_count: 1,
+        usage: T::STORAGE_BINDING,
+        view_formats: &[],
     };
     let binding = BindingType::StorageTexture {
         access: wgpu::StorageTextureAccess::WriteOnly,
-        format: shape.format,
+        format: desc.format,
         view_dimension: V::D2,
     };
     let entry = wgpu::BindGroupLayoutEntry {
@@ -38,21 +41,16 @@ fn l23a_interop_checks_and_affected_groups_only() {
         ty: binding,
         count: None,
     };
-    let check = |shape, usage| check_texture([&entry].into_iter(), shape, usage, wgpu::Features::empty());
-    assert!(check(shape, T::STORAGE_BINDING).is_ok());
-    assert_eq!(check(shape, T::TEXTURE_BINDING), Err(RunnerError::AbiMismatch));
-    assert_eq!(
-        check(TextureShape { samples: 4, ..shape }, T::STORAGE_BINDING),
-        Err(RunnerError::AbiMismatch)
-    );
-    assert_eq!(
-        check(
-            TextureShape {
-                format: wgpu::TextureFormat::R8Unorm,
-                ..shape
-            },
-            T::STORAGE_BINDING
-        ),
-        Err(RunnerError::AbiMismatch)
-    );
+    let check = |desc: &wgpu::TextureDescriptor<'_>| {
+        let TextureContract(shape, usage) = TextureContract::from(desc);
+        check_texture([&entry].into_iter(), shape, usage, wgpu::Features::empty())
+    };
+    assert!(check(&desc).is_ok());
+    for invalid in [
+        wgpu::TextureDescriptor { usage: T::TEXTURE_BINDING, ..desc.clone() },
+        wgpu::TextureDescriptor { sample_count: 4, ..desc.clone() },
+        wgpu::TextureDescriptor { format: wgpu::TextureFormat::R8Unorm, ..desc },
+    ] {
+        assert_eq!(check(&invalid), Err(RunnerError::AbiMismatch));
+    }
 }
