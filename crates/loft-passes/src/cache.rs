@@ -46,7 +46,7 @@ pub(crate) fn fingerprint(value: impl serde::Serialize, sp: Span) -> Res<Vec<u8>
     serde_json::to_vec(&ir).map_err(|e| error(sp, e))
 }
 
-pub(crate) fn certificate(p: &Prog, f: &FnDecl) -> Res<String> {
+pub fn certificate(p: &Prog, f: &FnDecl) -> Res<String> {
     let (helpers, names) = emit::reachable(p, &[f], &[]);
     let constants: Vec<_> = names.iter().map(|n| p.consts[n.as_str()]).collect();
     Ok(blake3::hash(&fingerprint((f, helpers, constants), f.name.span)?).to_hex().to_string())
@@ -58,9 +58,9 @@ pub(crate) fn kind_key(p: &Prog, k: &KindDecl, luts: &[Lut]) -> Res<blake3::Hash
         blake3::hash(
             concat!(
                 "local-derivation-v1",
-                include_str!("eval.rs"),
-                include_str!("lip.rs"),
-                include_str!("check.rs")
+                include_str!("../../loft-eval/src/eval.rs"),
+                include_str!("../../loft-eval/src/lip.rs"),
+                include_str!("../../loft-check/src/check.rs")
             )
             .as_bytes(),
         )

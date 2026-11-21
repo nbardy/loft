@@ -85,24 +85,6 @@ pub fn read(text: &str) -> Result<Program, String> {
     Ok(p)
 }
 
-/// A storage word can contain an integer bitcast to a float, including a NaN
-/// payload. Decimal float serialization would lose that row's identity.
-pub(crate) mod words {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-    pub fn serialize<S: Serializer>(v: &[f32], s: S) -> Result<S::Ok, S::Error> {
-        v.iter()
-            .map(|x| x.to_bits())
-            .collect::<Vec<_>>()
-            .serialize(s)
-    }
-    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<f32>, D::Error> {
-        Ok(Vec::<u32>::deserialize(d)?
-            .into_iter()
-            .map(f32::from_bits)
-            .collect())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

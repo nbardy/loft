@@ -68,7 +68,7 @@ impl<'a> Kind<'_, 'a> {
             return Ok(None);
         };
         let xf = self.pose(ev, leaf).inv();
-        let direction = rot(&xf, ray.direction);
+        let direction = rot(&xf, ray.direction());
         let local = |p| add(rot(&xf, p), xf.t);
         match self.intersect {
             Intersect::Analytic(f) => {
@@ -80,18 +80,18 @@ impl<'a> Kind<'_, 'a> {
                         f,
                         vec![
                             Val::Row(self.table, leaf.row_id as usize),
-                            v3(local(ray.at(ray.near))),
+                            v3(local(ray.at(*ray.interval().start()))),
                             v3(direction),
                         ],
                         at,
                     )?,
                     at,
                 )?;
-                let world_t = ray.near + t;
+                let world_t = *ray.interval().start() + t;
                 Ok((t >= 0.0 && span.accepts(world_t)).then_some(world_t))
             }
             Intersect::Traced => {
-                let mut t = span.near;
+                let mut t = *span.interval().start();
                 for _ in 0..STEPS {
                     // abs(d) is conservative on either side of the surface,
                     // including for rays that start in solid material.
@@ -100,7 +100,7 @@ impl<'a> Kind<'_, 'a> {
                         return Ok(Some(t));
                     }
                     let next = t + d / lip;
-                    if next > span.far {
+                    if next > *span.interval().end() {
                         return Ok(None);
                     }
                     if next <= t {

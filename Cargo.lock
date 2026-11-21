@@ -499,6 +499,17 @@ name = "loft-abi"
 version = "0.1.0"
 
 [[package]]
+name = "loft-check"
+version = "0.1.0"
+dependencies = [
+ "loft-abi",
+ "loft-ir",
+ "loft-parse",
+ "loft-plan",
+ "serde",
+]
+
+[[package]]
 name = "loft-cli"
 version = "0.1.0"
 dependencies = [
@@ -508,6 +519,7 @@ dependencies = [
  "loft-parse",
  "loft-passes",
  "loft-runner",
+ "loft-tier0",
  "naga",
  "png",
  "pollster",
@@ -519,12 +531,48 @@ dependencies = [
 ]
 
 [[package]]
+name = "loft-emit"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "loft-abi",
+ "loft-check",
+ "loft-ir",
+ "loft-parse",
+ "serde",
+]
+
+[[package]]
+name = "loft-eval"
+version = "0.1.0"
+dependencies = [
+ "loft-abi",
+ "loft-check",
+ "loft-ir",
+ "loft-parse",
+ "serde_json",
+]
+
+[[package]]
 name = "loft-format"
 version = "0.1.0"
 dependencies = [
  "blake3",
  "loft-ir",
  "naga",
+]
+
+[[package]]
+name = "loft-gltf"
+version = "0.1.0"
+dependencies = [
+ "loft-abi",
+ "loft-check",
+ "loft-eval",
+ "loft-ir",
+ "loft-parse",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -543,6 +591,7 @@ dependencies = [
  "loft-ir",
  "loft-passes",
  "loft-runner",
+ "loft-tier0",
  "naga",
  "pollster",
  "serde",
@@ -565,6 +614,10 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "loft-abi",
+ "loft-check",
+ "loft-emit",
+ "loft-eval",
+ "loft-gltf",
  "loft-ir",
  "loft-parse",
  "loft-plan",
@@ -605,6 +658,21 @@ dependencies = [
  "loft-format",
  "loft-ir",
  "naga",
+]
+
+[[package]]
+name = "loft-tier0"
+version = "0.1.0"
+dependencies = [
+ "loft-abi",
+ "loft-check",
+ "loft-emit",
+ "loft-eval",
+ "loft-ir",
+ "loft-parse",
+ "loft-passes",
+ "naga",
+ "tempfile",
 ]
 
 [[package]]

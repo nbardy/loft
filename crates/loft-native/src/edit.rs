@@ -1,6 +1,6 @@
 //! Dirty-kind pipeline selection and publication of one checked generation.
 use super::*;
-use loft_passes::tier0::{EditClass, TraceEdit, TraceSource};
+use loft_tier0::{EditClass, TraceEdit, TraceSource};
 use loft_runner::{frame::{ModuleRecipe, ModulePipelines as Pipelines}, promotion::{self, Pending}};
 use std::{
     ops::Range,
