@@ -6,8 +6,13 @@ Physical kinds accept `material(hit: SurfaceHit) -> Bsdf`. LightSummary styles a
 The Harbor showcases compile their typed payloads directly. The source-rewriting adapter was removed. Crab grammar repairs move comments out of leading block positions.
 
 Prediction was zero Vis64/depth changes across style swaps and the 64/128/256-spp reference controls, with finite depth and far depth 1 at (0,0).
-Both recognizers accepted all 81 added or edited Loft files. Corpus provenance, core vocabulary, shell syntax and Keel pins passed.
+Both recognizers accepted all 81 added or edited Loft files. Main’s recorded run covered the 298 byte-identical sources, which use none of the replaced schedule syntax.
+Corpus provenance, core vocabulary, shell syntax and Keel pins passed.
 All 32 files in the existing approval folders matched their recorded SHA-256. These include 30 stills.
 Lineup camera cuts, forward-only derivatives and spectral LightSummary refusal passed. Stock Capsules, Blobs and Hermit plans matched main. Shrine differed only in a raw helper's file ordinal.
+
+The lab workspace build and final focused suite passed. All five module tests passed, including the SurfaceHit CPU/path fixture.
+Harbor reference and the physical area-light control both produced portable bundles.
+The full grammar replay, native suite and locked Metal readbacks are pending.
 
 [Local evidence](../../../out/meta/v15_stdlib_finish/)
