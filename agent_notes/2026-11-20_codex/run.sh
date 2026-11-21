@@ -52,7 +52,7 @@ ${base_note}
 prompt="${compile_rule}$(cat "$D/$n.brief.md")"
 
 for try in 1 2; do
-  "$D/../../tools/quiet_gpu.sh" --wait || exit $?
+  [ "${LOFT_SKIP_QUIET_GPU:-0}" = "1" ] || "$D/../../tools/quiet_gpu.sh" --wait || exit $?
   # Background QoS (E-cores + throttled I/O) + nice +15 so foreground apps stay responsive.
   taskpolicy -b nice -n 15 perl -e 'alarm shift; exec @ARGV' $lim codex exec -m "$m" --dangerously-bypass-approvals-and-sandbox -C "$w" \
     -c model_reasoning_effort="$e" -o "$D/$n.final.md" "$prompt" < /dev/null >> "$D/$n.log" 2>&1
