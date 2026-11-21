@@ -337,7 +337,7 @@ fn solver_statement<'a>(
             }
         }
         Stmt::For { body, .. } | Stmt::Each { body, .. } => solver_block(body, writes, locals)?,
-        Stmt::Emit { span, .. } => {
+        Stmt::Emit { span, .. } | Stmt::ImportTable { span, .. } => {
             return Err(Diag::new(
                 Code::E403,
                 *span,

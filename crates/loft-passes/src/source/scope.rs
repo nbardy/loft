@@ -526,6 +526,10 @@ impl Scope<'_> {
                     locals.push(n.name.clone());
                 }
             }
+            Stmt::ImportTable { kind, index, .. } => {
+                self.ident(kind)?;
+                self.expr(index, locals)?;
+            }
             Stmt::Expr(e) => self.expr(e, locals)?,
         }
         Ok(())

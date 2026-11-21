@@ -1,0 +1,12 @@
+# Interpolate adjacent sampled sweep rings, including superellipse sections.
+pub fn sweep_span(u: f, v: f, expo: f, center_a: v3, side_a: v3, up_a: v3,
+                  center_b: v3, side_b: v3, up_b: v3) -> p3@World {
+  let angle = TAU * (v + 0.25)
+  # The double-angle form keeps the square nonnegative in interval arithmetic.
+  let square = 0.5 * cos(2 * angle)
+  let x = cos(angle) * pow(0.5 + square + 1e-12, expo)
+  let y = sin(angle) * pow(0.5 - square + 1e-12, expo)
+  let left = center_a + side_a * x + up_a * y
+  let right = center_b + side_b * x + up_b * y
+  [left * (1 - u) + right * u]@World
+}

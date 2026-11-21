@@ -487,3 +487,28 @@ gates. Lanes use CPU fixtures and Naga validation.
 | AOVs, bake clocks and mip generation (§§5–6) | Phase 4 · `l4c`, `i4` | `loft-runner`, `loft-passes`, `loft-cli` | ~220 | The synthetic Lipschitz-bound mutant renders red where `lipschitz_ratio > 1.0`. A 2048² procedural mask and 128² IBL cube bake and generate mips once at load in ≤2 ms total (predicted), with 0 ms/frame of baking and mip generation thereafter while clean. |
 | `.loftlog` and zero-compiler `.loftb` load (§8) | Phase 5 · `l5g`, `i5` | `loft-runner`, `loft-cli` | ~120 | The recorded crab scramble replays with a 0-bit state diff. A standalone runner loads the `.loftb` without linking `loft-passes`. |
 | Batched worlds (§7) | Phase 5.5 · **POST-v1.0** | `loft-runner`, `loft-ir`, `loft-passes` | ~240 | Future gate. Render 64 parallel crabs into a 2048×2048 atlas with the same GPU command count as one environment (≤19 commands) and ≥8× aggregate throughput versus sequential runs (predicted). |
+
+## Binary sampled rows
+
+In a stage-0 row build, `import_table("samples.bin", Kind, i)` appends the
+zero-based row `i: u32` to `Kind`. The path is relative to the module
+containing the statement. Use a build loop to append the full table in order.
+
+```loft
+build {
+  build for i in 0..24 { import_table("samples.bin", Sweep, i) }
+}
+```
+
+A `LOFTTAB1` file starts with those eight ASCII bytes, a little-endian u32 row
+count and a little-endian u16 column count. Each column, in declaration order,
+has a u8 name length, UTF-8 name bytes and a u8 type tag. Tags 1–4 encode that
+many f32 lanes, 5 encodes u32, 6 encodes i32, and 7 encodes a single 0 or 1 byte.
+The schema uses resolved storage types, so `rgb` and `v3` share tag 3.
+
+Each row starts with ceil(columns/8) mask bytes. Bit j mod 8 of byte j / 8
+marks a supplied column, followed by values in column order without padding.
+An unset bit uses the kind's declared default. The loader rejects missing
+required columns, nonfinite floats, unexpected bits, mismatched column
+names or types, trailing bytes and truncated rows. Imported values follow
+ordinary row refinements. A compiled bundle carries the packed row values.

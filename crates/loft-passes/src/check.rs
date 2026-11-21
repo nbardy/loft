@@ -755,6 +755,19 @@ impl<'p,'a> Ck<'p,'a> {
                 self.block(body)?;
                 self.scopes.pop();
             }
+            Stmt::ImportTable { kind, index, span, .. } => {
+                if !self.comptime {
+                    return Err(Diag::new(Code::E404, *span, "import_table appends a row at stage 0", "import inside a build block"));
+                }
+                if !self.p.kinds.contains_key(kind.name.as_str()) {
+                    return Err(Diag::new(Code::E011, kind.span, format!("unknown kind {}", kind.name), "declare the kind"));
+                }
+                let ty = self.expr(index)?;
+                self.assignable(&ty, &Ty::U32, index.span)?;
+                if ty == Ty::AbstractInt {
+                    self.set(index, Ty::U32);
+                }
+            }
             Stmt::Emit { kind, fields, span, bind } => {
                 if !self.comptime {
                     return Err(Diag::new(

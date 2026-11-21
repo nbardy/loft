@@ -103,6 +103,7 @@ block:       "{" (_NL? stmt (_sep stmt)* _sep?)? "}"
 stmt:        "let" LIDENT (":" type_expr)? "=" expr
            | "var" LIDENT (":" type_expr)? "=" expr
            | "map" LIDENT "=" expr
+           | "import_table" "(" STRING "," kind_ref "," expr ")"
            | build_for_stmt
            | "for" LIDENT "in" expr ".." expr block
            | "yield" expr

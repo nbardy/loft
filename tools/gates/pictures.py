@@ -177,7 +177,8 @@ def capture(build_log, root, out):
     scratch = out / "instrument"
     scratch.mkdir()
     here = Path(__file__).parent
-    shutil.copy2(here / "capture.rs", scratch)
+    for filename in ("capture.rs", "ordered_cull.rs"):
+        shutil.copy2(here / filename, scratch)
     if legacy:
         native = scratch / "native"
         shutil.copytree(root / "crates/loft-cli/src/native", native)

@@ -1,8 +1,7 @@
 //! Forward-mode AD (draft §2C) as a source-to-source pass, run before indexing so the checker types the result and
 //! every backend (stage 0, the CPU twin, interval bounds, WGSL) runs the same derivative code.
 //!
-//! `diff(f, x)(args)` was parsed as a call to `f__d_x`; this pass writes that fn as `f__jvp` (f's body with a tangent
-//! beside every value) seeded with 1 in `x`. A kind's `query surface` gets `surface__jvp` inside the kind, which the
+//! `diff(f, x)(args)` was parsed as a call to `f__d_x`; this pass writes that fn using a JVP specialized to the active parameters, seeded with 1 in `x`. A kind's `query surface` gets `surface__jvp` inside the kind, which the
 //! compiler calls for the surface normal. Rules are the textbook ones; a `C0` builtin (abs, min, clamp, floor, ...) is
 //! E307: differentiating it needs a choice the author has not made.
 
@@ -22,7 +21,7 @@ struct Ad<'a> {
     orig: BTreeMap<&'a str, &'a FnDecl>,
     next: &'a mut u32,
     /// jvp fns still to write.
-    todo: Vec<String>,
+    todo: Vec<(String, Vec<bool>)>,
     /// Names with a tangent in the fn being transformed.
     live: HashSet<String>,
 }
@@ -192,6 +191,12 @@ impl Ad<'_> {
         })
     }
 
+    fn enqueue(&mut self, name: &str, active: Vec<bool>) -> String {
+        let symbol = jvp_name(name, &active);
+        self.todo.push((name.into(), active));
+        symbol
+    }
+
     fn d_call(&mut self, f: &str, args: &[Arg], sp: Span) -> Res<Option<Expr>> {
         let a: Vec<&Expr> = args.iter().map(|a| &a.value).collect();
         let ds: Vec<Option<Expr>> = a.iter().map(|x| self.d(x)).collect::<Res<_>>()?;
@@ -338,19 +343,13 @@ impl Ad<'_> {
                 self.call("loft_dsample", vec![tab, t, dt], sp)
             }
             "loft_dsample" => return Err(Diag::new(Code::E405, sp, "a second derivative of a sampled table", "Phase 1 reads first derivatives of scans")),
-            user if self.orig.contains_key(user) || user.ends_with("__jvp") || user.contains("__d_") => {
-                // g(a)' = g__jvp(a, a')
+            user if self.orig.contains_key(user) || user.contains("__jvp") || user.contains("__d_") => {
+                // An inactive argument still supplies its primal value. Giving it
+                // a zero tangent parameter would make pow treat its exponent as live.
                 let mut out: Vec<Expr> = (0..a.len()).map(|i| c(self, i)).collect();
-                for (i, x) in a.iter().enumerate() {
-                    out.push(match take(i) {
-                        Some(d) => d,
-                        None => self.dz(x)?,
-                    });
-                }
-                let j = format!("{user}__jvp");
-                if !self.todo.contains(&user.to_string()) {
-                    self.todo.push(user.to_string());
-                }
+                let active = ds.iter().map(Option::is_some).collect();
+                out.extend(ds.into_iter().flatten());
+                let j = self.enqueue(user, active);
                 self.call(&j, out, sp)
             }
             other => return Err(Diag::new(Code::E405, sp, format!("`diff` through `{other}` is not lowered yet"), "differentiate a fn written with arithmetic, calls and the smooth builtins")),
@@ -358,24 +357,30 @@ impl Ad<'_> {
     }
 
     fn block(&mut self, b: &Block) -> Res<Block> {
+        let scope = self.live.clone();
         let mut stmts = vec![];
         for s in &b.stmts {
             stmts.extend(self.stmt(s)?);
         }
+        self.live = scope;
         Ok(Block { stmts })
     }
 
     fn stmt(&mut self, s: &Stmt) -> Res<Vec<Stmt>> {
         Ok(match s {
             Stmt::Let { mutable, name, ty, value } => {
-                let d = self.dz(value)?;
-                let v = self.cp(value);
-                self.live.insert(name.name.clone());
-                let tname = Ident { name: format!("{}__t", name.name), span: name.span };
-                vec![
-                    Stmt::Let { mutable: *mutable, name: name.clone(), ty: ty.clone(), value: v },
-                    Stmt::Let { mutable: *mutable, name: tname, ty: ty.as_ref().map(tty), value: d },
-                ]
+                let d = if *mutable { Some(self.dz(value)?) } else { self.d(value)? };
+                let mut stmts = vec![Stmt::Let {
+                    mutable: *mutable, name: name.clone(), ty: ty.clone(), value: self.cp(value),
+                }];
+                if let Some(d) = d {
+                    self.live.insert(name.name.clone());
+                    let tname = Ident { name: format!("{}__t", name.name), span: name.span };
+                    stmts.push(Stmt::Let { mutable: *mutable, name: tname, ty: ty.as_ref().map(tty), value: d });
+                } else {
+                    self.live.remove(&name.name);
+                }
+                stmts
             }
             Stmt::Assign { target, op, value } => {
                 let ExprKind::Name(n) = &target.kind else { unreachable!("checked: names only") };
@@ -410,24 +415,28 @@ impl Ad<'_> {
             }
             Stmt::For { comptime, var, lo, hi, body, span } => {
                 let (lo, hi) = (self.cp(lo), self.cp(hi));
+                let shadowed = self.live.remove(&var.name);
                 let body = self.block(body)?;
+                if shadowed {
+                    self.live.insert(var.name.clone());
+                }
                 vec![Stmt::For { comptime: *comptime, var: var.clone(), lo, hi, body, span: *span }]
             }
             Stmt::Expr(e) => vec![Stmt::Expr(self.cp(e))],
             Stmt::Map { name, .. } => {
                 return Err(Diag::new(Code::E405, name.span, "`diff` through a `map` statement is not lowered yet", "differentiate a fn without maps"));
             }
-            Stmt::Each{span,..} | Stmt::Emit { span, .. } => return Err(Diag::new(Code::E403, *span, "`emit` in a differentiated fn", "differentiate stage-1 code")),
+            Stmt::Each{span,..} | Stmt::Emit { span, .. } | Stmt::ImportTable { span, .. } => return Err(Diag::new(Code::E403, *span, "`emit` in a differentiated fn", "differentiate stage-1 code")),
         })
     }
 
-    /// `f__jvp(params..., tangents...)`: f's value derivative along the given tangents.
-    fn jvp(&mut self, f: &FnDecl) -> Res<FnDecl> {
+    /// All primals, followed by tangents for the active parameters only.
+    fn jvp(&mut self, f: &FnDecl, active: &[bool]) -> Res<FnDecl> {
         if f.raw.is_some(){return Err(Diag::new(Code::E307,f.name.span,"raw WGSL has no symbolic derivative","write the differentiated function in Loft"))}
         self.live.clear();
         let mut params: Vec<Param> = f.params.iter().map(|p| Param { name: p.name.clone(), ty: p.ty.clone() }).collect();
-        for p in &f.params {
-            if let Some(t) = &p.ty {
+        for (p, active) in f.params.iter().zip(active) {
+            if *active && let Some(t) = &p.ty {
                 self.live.insert(p.name.name.clone());
                 params.push(Param { name: Ident { name: format!("{}__t", p.name.name), span: p.name.span }, ty: Some(tty(t)) });
             }
@@ -436,12 +445,20 @@ impl Ad<'_> {
         Ok(FnDecl { raw: None,
             comptime: false,
             attrs: vec![],
-            name: Ident { name: format!("{}__jvp", f.name.name), span: f.name.span },
+            name: Ident { name: jvp_name(&f.name.name, active), span: f.name.span },
             params,
             ret: f.ret.as_ref().map(tty),
             body,
         })
     }
+}
+
+fn jvp_name(name: &str, active: &[bool]) -> String {
+    if active.iter().all(|enabled| *enabled) {
+        return format!("{name}__jvp");
+    }
+    let mask: String = active.iter().map(|enabled| if *enabled { '1' } else { '0' }).collect();
+    format!("{name}__jvp_{mask}")
 }
 
 pub fn run(modules: &mut Vec<Module>, next: &mut u32) -> Res<()> {
@@ -468,22 +485,12 @@ pub fn run(modules: &mut Vec<Module>, next: &mut u32) -> Res<()> {
             if !decl.params.iter().any(|p| Some(&p.name.name) == derivative) {
                 return Err(Diag::new(Code::E011, x.span, format!("`{}` has no parameter `{}`", f.name, x.name), "name one of its parameters"));
             }
-            // f__d_x(p...) = f__jvp(p..., [1 in x, 0 elsewhere])
             let sp = f.span;
-            let mut args = vec![];
-            for p in &decl.params {
-                args.push(ad.name(&p.name.name, sp));
-            }
-            for p in &decl.params {
-                let t = if Some(&p.name.name) == derivative {
-                    ad.num(1.0, sp)
-                } else {
-                    let n = ad.name(&p.name.name, sp);
-                    ad.call("loft_zero", vec![n], sp)
-                };
-                args.push(t);
-            }
-            let call = ad.call(&format!("{}__jvp", f.name), args, sp);
+            let active = decl.params.iter().map(|p| Some(&p.name.name) == derivative).collect();
+            let jvp = ad.enqueue(&f.name, active);
+            let mut args: Vec<_> = decl.params.iter().map(|p| ad.name(&p.name.name, sp)).collect();
+            args.push(ad.num(1.0, sp));
+            let call = ad.call(&jvp, args, sp);
             top.push(FnDecl { raw: None,
                 comptime: false,
                 attrs: vec![],
@@ -492,9 +499,6 @@ pub fn run(modules: &mut Vec<Module>, next: &mut u32) -> Res<()> {
                 ret: decl.ret.as_ref().map(tty),
                 body: Block { stmts: vec![Stmt::Return(Some(call), sp)] },
             });
-            if !ad.todo.contains(&f.name) {
-                ad.todo.push(f.name.clone());
-            }
         }
         // Surface normals: every `query surface` gets its jvp inside its kind.
         for item in modules.iter().flat_map(|m| &m.items) {
@@ -503,24 +507,24 @@ pub fn run(modules: &mut Vec<Module>, next: &mut u32) -> Res<()> {
                 && k.proof == GeometryProof::Required
                 && let Some(s) = k.query(QueryKind::Surface)
             {
-                let mut j = ad.jvp(s)?;
+                let mut j = ad.jvp(s, &vec![true; s.params.len()])?;
                 j.name.name = "surface__jvp".into();
                 in_kinds.push((k.name.name.clone(), j));
             }
         }
         let mut done = HashSet::new();
-        while let Some(name) = ad.todo.pop() {
-            if !done.insert(name.clone()) {
+        while let Some((name, active)) = ad.todo.pop() {
+            if !done.insert(jvp_name(&name, &active)) {
                 continue;
             }
             let src = match ad.orig.get(name.as_str()) {
-                Some(f) => ad.jvp(f)?,
+                Some(f) => ad.jvp(f, &active)?,
                 None => {
                     let Some(i) = top.iter().position(|f| f.name.name == name) else {
                         return Err(Diag::new(Code::E405, Span::NONE, format!("`diff` reaches `{name}`, which has no body to differentiate"), "differentiate fns with bodies"));
                     };
                     let f = std::mem::replace(&mut top[i], FnDecl { raw: None, comptime: false, attrs: vec![], name: Ident { name: String::new(), span: Span::NONE }, params: vec![], ret: None, body: Block { stmts: vec![] } });
-                    let j = ad.jvp(&f);
+                    let j = ad.jvp(&f, &active);
                     top[i] = f;
                     j?
                 }

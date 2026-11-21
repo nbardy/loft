@@ -1350,6 +1350,19 @@ impl<'src> Parser<'src, '_> {
         if self.eat("emit") {
             return self.emit(None, sp);
         }
+        if self.eat("import_table") {
+            self.expect("(")?;
+            if self.cur().kind != Kind::String {
+                return self.err("a binary table path");
+            }
+            let path = self.pop().text.to_string();
+            self.expect(",")?;
+            let kind = self.reference()?;
+            self.expect(",")?;
+            let index = self.expr(0)?;
+            self.expect(")")?;
+            return Ok(Stmt::ImportTable { kind, path, index, span: sp });
+        }
         let build = self.eat("build");
         if build || self.is("for") {
             self.expect("for")?;

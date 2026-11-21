@@ -5,6 +5,7 @@
 //! `compile` runs them all; `Compiled` keeps what the gates need afterwards (the CPU twin of every query).
 
 pub mod ad;
+mod import_table;
 pub mod check;
 mod cache;
 mod defaults;
@@ -351,6 +352,7 @@ fn geometry_fields(k: &KindDecl) -> Vec<usize> {
                     block(body, out);
                 }
                 Stmt::Expr(e) => walk(e, out),
+                Stmt::ImportTable { index, .. } => walk(index, out),
                 Stmt::Emit { .. } => {}
             }
         }
@@ -1057,6 +1059,7 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
     // Stage 0.
     let mut ev: Eval<f32> = Eval::new(&p, &types, vec![vec![]; p.kind_order.len()], overrides);
     ev.luts = &luts;
+    ev.source = Some(src);
     for f in &rows_fns {
         ev.call_fn(f, vec![], f.name.span)?;
     }

@@ -20,6 +20,7 @@ mod controls;
 mod fmt;
 mod fork;
 mod budget;
+mod lint;
 
 use loft_ir::{Diag, Sources};
 use loft_passes::source::Graph;
@@ -115,6 +116,7 @@ fn command(mut args: Vec<String>) -> Result<(), Failure> {
         "clip" => clip::run(&args[1..], &set),
         "profile" => profile::run(&args[1..], &set),
         "controls" => controls::run(&args[1..], &set),
+        "lint" if set.is_empty() => lint::run(&args[1..]),
         "fmt" => fmt::run(&args[1..]),
         "fork" => fork::run(&args[1..]),
         "show" => {
@@ -196,7 +198,7 @@ fn command(mut args: Vec<String>) -> Result<(), Failure> {
                 t.elapsed().as_secs_f64(), l.stats.pipelines_ms, g.adapter);
             Ok(())
         }
-        _ => Err(Failure::Usage("usage: loft build|check|show|still|clip|gate|load|ir|render|profile|controls|fmt|fork|diff".into())),
+        _ => Err(Failure::Usage("usage: loft build|check|show|still|clip|gate|load|ir|render|profile|controls|fmt|fork|diff|lint".into())),
     }
 }
 

@@ -361,6 +361,7 @@ pub(crate) fn lower(src: &crate::source::Graph, modules: &mut [Module]) -> Res<V
                     handles.remove(&name.name);
                 }
                 Stmt::Emit { fields, .. } => fields.iter_mut().try_for_each(|(_, e)| expr(e, &handles, scenes))?,
+                Stmt::ImportTable { index, .. } => expr(index, &handles, scenes)?,
                 Stmt::For { body, var, .. } | Stmt::Each { body, var, .. } => {
                     let mut inner = handles.clone();
                     inner.remove(&var.name);
