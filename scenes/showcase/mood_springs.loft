@@ -1,0 +1,136 @@
+use stdlib::motion::mood::{Mood, mood_timid, mood_alert, mood_jaunty, mood_ferocious, mood_exhausted, mix_mood, mood_stride, mood_prior}
+use stdlib::motion::springs::{spring_follow, spring_chain_step, squash_stretch, anticipation_overshoot, restless_pulse, strike_envelope}
+use stdlib::motion::solve::{capture_point_ff, quintic_plan, ik_reachable_end, solve_2bone_ik}
+use stdlib::materials::bsdf::{ggx, coat}
+use stdlib::sdf::solid::{box_sdf, sphere, capsule}
+
+fn performance(t: s) -> Mood {
+  let watch = mix_mood(mood_timid(), mood_alert(), (t - 1.4s) / 0.8s)
+  let play = mix_mood(watch, mood_jaunty(), (t - 3.0s) / 0.9s)
+  let attack = mix_mood(play, mood_ferocious(), (t - 5.0s) / 0.65s)
+  mix_mood(attack, mood_exhausted(), (t - 7.25s) / 1.1s)
+}
+
+fn stage_x(phase: f) -> m = 0.23 * sin(2.0 * phase)
+fn stage_z(phase: f) -> m = 0.17 * sin(1.2 * phase)
+
+# Capture at a discrete takeoff. Once a swing starts, the event phase
+# determines its landing target and the following stance retains that pin.
+fn pin(event: f, side: f, front: f) -> p3@World {
+  let root = [stage_x(event), 0.51, stage_z(event)]@World
+  let zero = [0]@World
+  # Nominal phase speed is one cycle/s for all takeoff samples.
+  let vel = [0.46 * cos(2.0 * event), 0.0, 0.204 * cos(1.2 * event)]@World - zero
+  let catch = capture_point_ff(root, vel, 0.51m, zero - zero, zero - zero, zero - zero,
+    [0.0, 9.81, 0.0]@World - zero)
+  [catch.x + 0.57 * front, 0.0, catch.z + 0.46 * side]@World
+}
+
+kind Creature @World (
+  phase: f = 0.0, bob: m = 0m, bob_rate: f = 0.0, tail: v4 = [0, 0, 0, 0],
+  tail_rate: v4 = [0, 0, 0, 0], impact: f = 0.0
+) {
+  trace(p) {
+    let affect = performance(time)
+    let stride = mood_stride(affect, 1s, 0.11m, 0rad)
+    let turn = restless_pulse(time, 2.1, 0.18, 0.42) * affect.normal.x
+    let root = [stage_x(phase), 0.51 + bob, stage_z(phase)]@World
+    let local = p - root
+    let scale = squash_stretch(bob_rate, impact, affect.tangent.z)
+    let q = [local.x / max(0.55, scale.x), (local.y - stride.z * local.x) / max(0.55, scale.y), local.z / max(0.55, scale.z)]@World
+    let zero = [0]@World
+    let shell = [q.x / 1.35, q.y / 0.81, q.z]@World - zero
+    var field = sphere(shell, 0.31) * 0.81 * min(scale.x, scale.y) / (1.0 + abs(stride.z))
+    for i in 0..4 {
+      let side = select(-1.0, 1.0, i == 1 || i == 3)
+      let front = select(-1.0, 1.0, i < 2)
+      let clock = phase - 0.25 * f32(i)
+      let event = floor(clock) + 0.25 * f32(i)
+      let u = clamp(fract(clock) / 0.23, 0.0, 1.0)
+      let a = pin(event - 1.0, side, front)
+      let b = pin(event, side, front)
+      let lift = stride.y * 16.0 * u * u * (1.0 - u) * (1.0 - u)
+      let wanted = a + (b - a) * quintic_plan(1m, 0.0, 1s, u).x + [0.0, lift, 0.0]
+      let hip = root + [0.26 * front, 0.05 * front * stride.z, 0.23 * side]
+      let pole = dir([0.1 * front, 1.0, 0.6 * side]@World)
+      let foot = ik_reachable_end(hip, wanted, 0.61m, 0.62m, pole)
+      let knee = solve_2bone_ik(hip, foot, 0.61m, 0.62m, pole)
+      field = min(field, capsule(p, hip, knee, 0.050))
+      field = min(field, capsule(p, knee, foot, 0.037))
+    }
+    var joint = root + [-0.34, 0.02, 0.0]
+    for i in 0..4 {
+      let angle = tail[i]
+      let next = joint + [-0.19 * cos(angle), 0.055 + 0.024 * f32(i), 0.19 * sin(angle)]
+      field = min(field, capsule(p, joint, next, 0.069 - 0.012 * f32(i)))
+      joint = next
+    }
+    for i in 0..2 {
+      let side = select(-1.0, 1.0, i == 1)
+      let base = root + [0.19, 0.16, side * 0.15]
+      let eye = base + [0.12 + 0.07 * sin(turn), 0.20 + 0.18 * affect.binormal.x,
+                        side * (0.07 + 0.08 * affect.binormal.x) + 0.14 * sin(turn + tail.y)]
+      let claw = root + [0.47, -0.11, side * 0.29]
+      field = min(field, capsule(p, base, eye, 0.031))
+      field = min(field, sphere(p - eye, 0.064))
+      field = min(field, capsule(p, root + [0.20, -0.07, side * 0.20], claw, 0.073))
+      let spread = 0.035 + 0.12 * affect.normal.z
+      field = min(field, capsule(p, claw, claw + [0.19, 0.02, spread], 0.052))
+      field = min(field, capsule(p, claw, claw + [0.17, -0.02, -spread], 0.046))
+    }
+    # Supply a finite scene-space extent across the animated poses.
+    max(field, box_sdf(p - [0.0, 0.55, 0.0]@World, [1.55, 0.85, 1.25]))
+  }
+  material(p, n) {
+    let alert = strike_envelope(time, 5.55s, 0.9s, 0.38s)
+    let shell = mix([0.031, 0.46, 0.39], [0.86, 0.22, 0.09], alert)
+    let eye = smoothstep(0.73, 0.99, p.y) * smoothstep(0.08, 0.34, p.x - stage_x(phase))
+    ggx(mix(shell, [0.98, 0.82, 0.30], eye), 0.38, 0.0) + coat(0.27, 0.15)
+  }
+}
+
+law animate(w: Creature, dt: s) writes w.{phase, bob, bob_rate, tail, tail_rate, impact} {
+  let affect = performance(time)
+  let stride = mood_stride(affect, 1s, 0.11m, 0rad)
+  let hz = affect.tangent.x
+  let damping = affect.tangent.y
+  let attack = anticipation_overshoot((time - 5.35s) / 0.85s, 0.42, 0.24)
+  let hit = strike_envelope(time, 5.75s, 0.43s, 0.20s)
+  let phase = w.phase + dt / stride.x
+  let beat = 0.5 - 0.5 * cos(25.13274123 * phase)
+  let goal = [0.0, 0.055 * stride.y / 0.11 * beat - 0.075 * hit, 0.0]@World
+  let old = [0.0, w.bob, 0.0]@World
+  let zero = [0]@World
+  let prior = mood_prior(affect, old, goal, 1.0, 0.22, zero - zero)
+  let bounce = spring_follow(w.bob, w.bob_rate, w.bob + prior.y, hz, damping, dt)
+  let drive = 0.45 * sin(6.283185307 * phase) + (0.90 * attack - 0.58) * hit
+  let chain = spring_chain_step(w.tail, w.tail_rate, drive, hz, damping, dt, 0.035s, 0.79)
+  # Round persistent feedback on a binary grid, as in the capture-point gait.
+  w.phase = floor(phase * 65536.0 + 0.5) / 65536.0
+  w.bob = floor(bounce.x * 8192.0 + 0.5) / 8192.0
+  w.bob_rate = floor(bounce.y * 4096.0 + 0.5) / 4096.0
+  w.tail = floor(v4(chain.origin.xyz, chain.tangent.x) * 8192.0 + v4(0.5)) / 8192.0
+  w.tail_rate = floor(v4(chain.normal.xyz, chain.tangent.y) * 4096.0 + v4(0.5)) / 4096.0
+  w.impact = floor(hit * 4096.0 + 0.5) / 4096.0
+}
+
+kind Stage @World () {
+  trace(p) = box_sdf(p - [0.0, -0.092, 0.0]@World, [6.0, 0.085, 6.0])
+  material(p, n) {
+    let rings = 0.5 + 0.5 * cos(48.0 * length(p.xz))
+    ggx(mix([0.095, 0.105, 0.14], [0.15, 0.19, 0.22], 0.24 * rings), 0.86, 0.0)
+  }
+}
+
+camera Main { at: [-0.08, 0.43, 0.0]@World, radius: 3.25m, height: 1.45m, period: 28s, fov: 39deg }
+
+build {
+  emit Creature()
+  emit Stage()
+  emit Sun(dir: dir([0.61, 0.74, 0.28]@World), color: [2.9, 2.62, 2.25])
+  emit Sky(zenith: [0.27, 0.41, 0.68], horizon: [0.63, 0.70, 0.76])
+}
+
+schedule Main {
+  run_laws(animate)
+}
