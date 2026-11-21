@@ -1,29 +1,9 @@
-# Writing a Loft scene
+# Writing Loft
 
-Each row is an instance. Give its kind a space, declare the columns and put per-instance variation in those columns. A trace returns signed distance in metres. A material returns a BSDF. The mirror introduces a fresh space. Use `sym.pt` for a point in it and `sym.out` to return to the parent space.
+Run `loft context` for the authoring guide, a complete custom schedule with a motion law, and the source-generated stdlib signatures. Use `loft context --section engines`, `--section motion`, `--section styles` or `--section passes` to inspect one part.
 
-```loft
-space World Shell
-use stdlib::sdf::solid::{sphere}
-use stdlib::materials::bsdf::{ggx}
-param rough: f = 0.35 in 0.05..1
-fn chitin(p, n) = ggx([0.7, 0.22, 0.08], rough, 0)
+Each row is an instance. Give its `kind` a space and columns for per-instance variation, then use `build for` and `emit` to populate it. A trace returns signed distance in metres. A material returns a BSDF. Bind a style or integrator in the schedule to change how those surfaces are lit.
 
-kind ShellPart @Shell (pose: xf@Shell>World, radius: f > 0, phase: f = 0) {
-  map sym(p) = p |> mirror_x
-  trace(p) = sphere(sym.p - sym.pt(0.2, 0, 0), radius)
-  material(p, n) = chitin(p, n)
-}
+The engine, schedule, integrator, style and motion library are editable Loft source. Run `loft fork engines/realtime my_engine.loft` and use the printed import from a sibling scene. Rewrite the fork's passes or lighting, author a new schedule, or replace a motion solver when the shot or frame budget demands it.
 
-law turn(h: ShellPart, dt) writes h.{phase} {
-  h.phase = h.phase + dt
-}
-
-build {
-  emit ShellPart(pose: place([0, 0, 0]@World), radius: 0.3)
-  emit Sun(dir: dir([1, 2, 1]@World), color: [2, 2, 2])
-  emit Sky(zenith: [0.2, 0.3, 0.5], horizon: [0.7, 0.8, 0.9])
-}
-```
-
-Use `build for` to emit many rows. A positive column bound proves that a divisor stays above zero. Pure helpers infer argument types at their calls. Mark raw motion code `wgsl det (...) -> T { ... }`. Use `loft check` to see a diagnostic at the source line and `loft show` to read the emitted shader.
+Run `loft check`, `loft lint` and `loft show --plan` on the scene. Use `loft still` and `loft clip` to judge the look and motion, and `loft profile` to measure p95 and pass cost at the intended resolution. Change the layer responsible, then run the same comparisons again.

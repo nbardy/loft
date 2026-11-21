@@ -1,5 +1,6 @@
 # A light reservoir packs (sum of weights, selected target, proposal count,
 # selected light). Target is unoccluded luminance. Visibility is queried once.
+# context Target is unoccluded luminance. Query visibility after reservoir selection.
 pub fn reservoir_add(r: v4, id: u, target_value: f, weight: f, count: f, xi: f) -> v4 =
   wgsl(r: v4, id: u, target_value: f, weight: f, count: f, xi: f) -> v4 {
     let total = r.x + weight;

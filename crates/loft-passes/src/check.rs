@@ -261,27 +261,24 @@ impl<'p,'a> Ck<'p,'a> {
             }
         };
         match t {
-            TyExpr::Name(i) => match i.name.as_str() {
-                "f32" => Ok(Ty::F32),
-                "u32" => Ok(Ty::U32),
-                "i32" => Ok(Ty::I32),
-                "bool" => Ok(Ty::Bool),
-                "vec2f" => Ok(Ty::VecN(2)),
-                "vec3f" => Ok(Ty::VecN(3)),
-                "vec4f" => Ok(Ty::VecN(4)),
-                "Bsdf" => Ok(Ty::Bsdf),
-                "Verdict"=>Ok(Ty::Verdict),
-                n if self.p.aliases.contains_key(n) || self.p.structs.contains_key(n) => self.resolve_named(i, sig, stack),
-                "Radiance" => Ok(Ty::VecN(3)),
-                n if self.p.kinds.contains_key(n) => Ok(Ty::Id(n.into())),
-                n if self.p.units.contains(n) => Ok(Ty::F32),
-                n => Err(Diag::new(
-                    Code::E011,
-                    i.span,
-                    format!("unknown type `{n}`"),
-                    "use f, u, i, bool, a declared type, p3@Space or xf@A>B",
-                )),
-            },
+            TyExpr::Name(i) => {
+                let n = i.name.as_str();
+                if let Some((_, ty)) = CORE_TYPES.iter().find(|(name, _)| *name == n) {
+                    return Ok(ty.clone());
+                }
+                match n {
+                    n if self.p.aliases.contains_key(n) || self.p.structs.contains_key(n) => self.resolve_named(i, sig, stack),
+                    RADIANCE => Ok(Ty::VecN(3)),
+                    n if self.p.kinds.contains_key(n) => Ok(Ty::Id(n.into())),
+                    n if self.p.units.contains(n) => Ok(Ty::F32),
+                    n => Err(Diag::new(
+                        Code::E011,
+                        i.span,
+                        format!("unknown type `{n}`"),
+                        "use f, u, i, bool, a declared type, p3@Space or xf@A>B",
+                    )),
+                }
+            }
             TyExpr::Generic(i, args) => match (i.name.as_str(), args.as_slice()) {
                 ("vec2" | "vec3" | "vec4", [TyExpr::Name(a)]) if a.name == "f32" => {
                     Ok(Ty::VecN(i.name.as_bytes()[3] - b'0'))
@@ -1113,7 +1110,7 @@ impl<'p,'a> Ck<'p,'a> {
         if let Some(a) = args.iter().find_map(|a| a.name.as_ref()) {
             return Err(Diag::new(Code::E405, a.span, "named arguments are schedule-only in Phase 0", "pass arguments by position"));
         }
-        if callee.name == "sample_prior" {
+        if callee.name == SAMPLE_PRIOR {
             let [prior, time] = args else {
                 return Err(e003(span, "sample_prior needs two arguments", "write sample_prior(PlanName, t)"));
             };
@@ -1131,8 +1128,8 @@ impl<'p,'a> Ck<'p,'a> {
             self.set(&prior.value, Ty::U32);
             return Ok(Ty::Struct("PriorSample".into()));
         }
-        if matches!(callee.name.as_str(), "sample" | "sample_lod") && !self.p.fns.contains_key(callee.name.as_str()) {
-            let arity = if callee.name == "sample" { 2 } else { 3 };
+        if matches!(callee.name.as_str(), SAMPLE | SAMPLE_LOD) && !self.p.fns.contains_key(callee.name.as_str()) {
+            let arity = if callee.name == SAMPLE { 2 } else { 3 };
             if args.len() != arity || args.iter().any(|arg| arg.name.is_some()) {
                 return Err(e003(span, "invalid texture sample arguments", "write sample(Texture, uv) or sample_lod(Texture, uv, lod)"));
             }
@@ -1159,8 +1156,8 @@ impl<'p,'a> Ck<'p,'a> {
             return self.resolve(bake.texel.ret.as_ref().expect("typed bake value"), true);
         }
         // `sample_c2(scan, t)`: the scan is named, not passed as a value.
-        if matches!(callee.name.as_str(), "sample_c2" | "loft_dsample") {
-            let want = if callee.name == "sample_c2" { 2 } else { 3 };
+        if matches!(callee.name.as_str(), SAMPLE_C2 | DERIVATIVE_SAMPLE) {
+            let want = if callee.name == SAMPLE_C2 { 2 } else { 3 };
             let sc = match args.first().map(|a| &a.value.kind) {
                 Some(ExprKind::Name(n)) => self.p.scans.get(n.as_str()).copied(),
                 _ => None,
@@ -1175,7 +1172,7 @@ impl<'p,'a> Ck<'p,'a> {
             }
             return self.types.get(sc.init.id as usize).filter(|t| matches!(t, Ty::Frame(_))).cloned().ok_or_else(|| e003(sc.init.span,"scan result type unavailable","initialise the scan with a frame"));
         }
-        if callee.name == "unknown" && !self.p.fns.contains_key("unknown") {
+        if callee.name == UNKNOWN_VERDICT && !self.p.fns.contains_key(UNKNOWN_VERDICT) {
             if let [Arg { value: Expr { kind: ExprKind::Name(reason), .. }, .. }] = args
                 && crate::fusion::reason(reason).is_some()
             {
@@ -1183,7 +1180,7 @@ impl<'p,'a> Ck<'p,'a> {
             }
             return Err(e003(span, "unknown verdict requires a reason tag", "write unknown(MissingSurface)"));
         }
-        if callee.name == "emit_event" {
+        if callee.name == EMIT_EVENT {
             if self.ownership.is_none() && self.kernel.is_none() {
                 return Err(e003(span, "emit_event requires an effectful entry", "call it in a law, solver or kernel"));
             }
@@ -1277,7 +1274,7 @@ impl<'p,'a> Ck<'p,'a> {
             return self.world_query(world, span);
         }
         match callee.name.as_str() {
-            "inscatter_joint" => {
+            INSCATTER_JOINT => {
                 let [world, ray, distance, tail @ ..] = ts.as_slice() else {
                     return Err(e003(span, "inscatter_joint needs a world, ray, ray limit and RNG key", "write inscatter_joint(w, r, t_max, steps, rng)"));
                 };
@@ -1303,7 +1300,7 @@ impl<'p,'a> Ck<'p,'a> {
                 if *distance == Ty::AbstractInt { self.set(&args[2].value, Ty::F32); }
                 return Ok(result);
             }
-            "atomic_add" => {
+            ATOMIC_ADD => {
                 self.require(KernelCapability::Atomics, span)?;
                 let [dst, val] = args else { return Err(e003(span, "atomic_add needs a destination and value", "write atomic_add(table[i].field, value)")); };
                 let ExprKind::Member(row, _) = &dst.value.kind else { return Err(e003(dst.value.span, "atomic destination must be a table field", "index a kernel table parameter")); };
@@ -1325,7 +1322,7 @@ impl<'p,'a> Ck<'p,'a> {
                 self.atomic_writes.entry(n.clone()).and_modify(|d| *d = (*d).max(det)).or_insert(det);
                 return Ok(Ty::Void);
             }
-            "global_id" => {
+            GLOBAL_ID => {
                 if self.kernel.is_some() && !self.comptime && let [axis] = ts.as_slice() {
                     self.assignable(axis, &Ty::U32, args[0].value.span)?;
                     self.set(&args[0].value, Ty::U32);
@@ -1333,12 +1330,12 @@ impl<'p,'a> Ck<'p,'a> {
                 }
                 return Err(e003(span, "global invocation ID needs a kernel and one axis", "write global_id(0) for the X axis"));
             }
-            "workgroup_barrier" => {
+            WORKGROUP_BARRIER => {
                 self.require(KernelCapability::Workgroup, span)?;
                 if ts.is_empty() { return Ok(Ty::Void); }
                 return Err(e003(span, "workgroup_barrier takes no arguments", "write workgroup_barrier()"));
             }
-            "subgroup_add" => {
+            SUBGROUP_ADD => {
                 self.require(KernelCapability::Subgroups, span)?;
                 if let [t @ (Ty::F32 | Ty::U32 | Ty::I32)] = ts.as_slice() {
                     if *t == Ty::F32 && self.kernel.unwrap().tier.is_det() {
@@ -1349,7 +1346,7 @@ impl<'p,'a> Ck<'p,'a> {
                 }
                 return Err(e003(span, "subgroup_add takes one numeric scalar", "pass an f, i or u value"));
             }
-            "mix_bsdf" => {
+            MIX_BSDF => {
                 if let [Ty::Bsdf, Ty::Bsdf, Ty::F32 | Ty::AbstractInt] = ts.as_slice() {
                     self.set(&args[2].value, Ty::F32);
                     return Ok(Ty::Bsdf);
@@ -1572,40 +1569,94 @@ fn geo_space(t: &Ty) -> Space {
     }
 }
 
-/// Builtin signatures. Componentwise maths on f32/vecN; geometry functions keep or check spaces.
-fn builtin(name: &str, ts: &[Ty], sp: &[Span], span: Span) -> Res<Ty> {
-    use Geo::*;
-    let arity = |n: usize| -> Res<()> {
-        if ts.len() == n { Ok(()) } else { Err(e003(span, format!("`{name}` takes {n} argument(s), got {}", ts.len()), "match the signature")) }
-    };
-    let same_space = |x: &Space, y: &Space| -> Res<()> {
-        if x == y { Ok(()) } else { Err(e104(sp[1], format!("`{name}` of values in `{x}` and `{y}`"), "bring both into one space")) }
-    };
-    // Componentwise: every argument the same numeric type (a literal converts), result that type.
-    let componentwise = |n: usize| -> Res<Ty> {
-        arity(n)?;
-        let mut t = Ty::AbstractInt;
-        for (x, s) in ts.iter().zip(sp) {
-            t = match (&t, x) {
-                (_, Ty::Geo(..)) => {
-                    return Err(e104(*s, format!("`{name}` is componentwise and drops spaces"), "write `.xyz` to drop the space explicitly"));
-                }
-                (Ty::AbstractInt, x) if num(x) || matches!(x, Ty::VecN(_)) => x.clone(),
-                (t, x) if meet(t, x).is_some() => meet(t, x).expect("checked"),
-                (Ty::VecN(_), x) if num(x) => t.clone(),
-                (t, Ty::VecN(_)) if num(t) => x.clone(),
-                _ => return Err(e003(*s, format!("`{name}` of `{t}` and `{x}`"), "use one numeric type")),
-            };
+const SAMPLE_PRIOR: &str = "sample_prior";
+const SAMPLE: &str = "sample";
+const SAMPLE_LOD: &str = "sample_lod";
+const SAMPLE_C2: &str = "sample_c2";
+const DERIVATIVE_SAMPLE: &str = "loft_dsample";
+const UNKNOWN_VERDICT: &str = "unknown";
+const EMIT_EVENT: &str = "emit_event";
+const INSCATTER_JOINT: &str = "inscatter_joint";
+const ATOMIC_ADD: &str = "atomic_add";
+const GLOBAL_ID: &str = "global_id";
+const WORKGROUP_BARRIER: &str = "workgroup_barrier";
+const SUBGROUP_ADD: &str = "subgroup_add";
+const MIX_BSDF: &str = "mix_bsdf";
+
+pub fn builtin_names() -> impl Iterator<Item = &'static str> {
+    BUILTINS.iter().copied()
+        .chain([
+            SAMPLE_PRIOR, SAMPLE, SAMPLE_LOD, SAMPLE_C2, DERIVATIVE_SAMPLE,
+            UNKNOWN_VERDICT, EMIT_EVENT, INSCATTER_JOINT, ATOMIC_ADD, GLOBAL_ID,
+            WORKGROUP_BARRIER, SUBGROUP_ADD, MIX_BSDF,
+        ])
+        .chain(crate::quant::Quant::ALL.into_iter().map(crate::quant::Quant::name))
+        .chain(crate::world::QUERY_ARITIES.iter().map(|&(name, _)| name))
+}
+
+const CORE_TYPES: &[(&str, Ty)] = &[
+    ("f32", Ty::F32), ("u32", Ty::U32), ("i32", Ty::I32), ("bool", Ty::Bool),
+    ("vec2f", Ty::VecN(2)), ("vec3f", Ty::VecN(3)), ("vec4f", Ty::VecN(4)),
+    ("Bsdf", Ty::Bsdf), ("Verdict", Ty::Verdict),
+];
+const RADIANCE: &str = "Radiance";
+
+pub fn builtin_types() -> impl Iterator<Item = &'static str> {
+    CORE_TYPES.iter().map(|&(name, _)| name).chain([RADIANCE])
+}
+
+/// The same arms generate the checker dispatch and the author-facing index.
+macro_rules! builtin_table {
+    (($name:ident, $ts:ident, $sp:ident, $span:ident) [$($setup:tt)*] {
+        $($($spelling:literal)|+ $(if $guard:expr)? => $body:expr,)*
+        _ => $unknown:expr
+    }) => {
+        const BUILTINS: &[&str] = &[$($($spelling),+),*];
+
+        fn builtin($name: &str, $ts: &[Ty], $sp: &[Span], $span: Span) -> Res<Ty> {
+            $($setup)*
+            match $name {
+                $($($spelling)|+ $(if $guard)? => $body,)*
+                _ => $unknown,
+            }
         }
-        Ok(if t == Ty::AbstractInt { Ty::F32 } else { t })
     };
-    match name {
+}
+
+builtin_table! {
+    (name, ts, sp, span) [
+        use Geo::*;
+        let arity = |n: usize| -> Res<()> {
+            if ts.len() == n { Ok(()) } else { Err(e003(span, format!("`{name}` takes {n} argument(s), got {}", ts.len()), "match the signature")) }
+        };
+        let same_space = |x: &Space, y: &Space| -> Res<()> {
+            if x == y { Ok(()) } else { Err(e104(sp[1], format!("`{name}` of values in `{x}` and `{y}`"), "bring both into one space")) }
+        };
+        // Componentwise: every argument the same numeric type (a literal converts), result that type.
+        let componentwise = |n: usize| -> Res<Ty> {
+            arity(n)?;
+            let mut t = Ty::AbstractInt;
+            for (x, s) in ts.iter().zip(sp) {
+                t = match (&t, x) {
+                    (_, Ty::Geo(..)) => {
+                        return Err(e104(*s, format!("`{name}` is componentwise and drops spaces"), "write `.xyz` to drop the space explicitly"));
+                    }
+                    (Ty::AbstractInt, x) if num(x) || matches!(x, Ty::VecN(_)) => x.clone(),
+                    (t, x) if meet(t, x).is_some() => meet(t, x).expect("checked"),
+                    (Ty::VecN(_), x) if num(x) => t.clone(),
+                    (t, Ty::VecN(_)) if num(t) => x.clone(),
+                    _ => return Err(e003(*s, format!("`{name}` of `{t}` and `{x}`"), "use one numeric type")),
+                };
+            }
+            Ok(if t == Ty::AbstractInt { Ty::F32 } else { t })
+        };
+    ] {
         "held"|"missed" if matches!(ts,[Ty::F32|Ty::AbstractInt])=>Ok(Ty::Verdict),
         "atan2" if matches!(ts,[Ty::F32,Ty::F32])=>Ok(Ty::F32),
         "ggx_energy" if matches!(ts, [Ty::F32, Ty::F32]) => Ok(Ty::VecN(2)),
         "has_sky"=>{arity(0)?;Ok(Ty::Bool)},
         "sky_zenith"|"sky_horizon"|"sun_color"=>{arity(0)?;Ok(Ty::VecN(3))},
-        "dist" => return builtin("distance",ts,sp,span),
+        "dist" => builtin("distance",ts,sp,span),
         "place" => match ts { [Ty::Geo(Pt,s)] | [Ty::Geo(Pt,s),Ty::F32|Ty::AbstractInt] => Ok(Ty::Xform(Space::Open,s.clone())),_=>Err(e003(span,"placement requires a point and optional yaw","write place([x,y,z]@World, yaw)")) },
         "dir" => match ts { [Ty::Geo(_,s)]=>Ok(Ty::Geo(Dir,s.clone())), _=>Err(e003(span,"direction requires a space","supply a vector in the requested space")) },
         "coords" => match ts { [Ty::Geo(..)]=>Ok(Ty::VecN(3)),_=>Err(e003(span,"expected a spatial value","pass a point or vector")) },
@@ -1622,7 +1673,7 @@ fn builtin(name: &str, ts: &[Ty], sp: &[Span], span: Span) -> Res<Ty> {
                 }
             }
             Ok(Ty::F32)
-        }
+        },
         "loft_zero" => {
             arity(1)?;
             Ok(match &ts[0] {
@@ -1630,7 +1681,7 @@ fn builtin(name: &str, ts: &[Ty], sp: &[Span], span: Span) -> Res<Ty> {
                 Ty::AbstractInt => Ty::I32,
                 other => other.clone(),
             })
-        }
+        },
         "loft_vec" => match ts {
             [Ty::Geo(_, s)] => Ok(Ty::Geo(Geo::Vec, s.clone())),
             _ => Err(e003(span, "`loft_vec` takes a point or vector", "internal")),
@@ -1651,7 +1702,7 @@ fn builtin(name: &str, ts: &[Ty], sp: &[Span], span: Span) -> Res<Ty> {
             meet(&ts[0], &ts[1]).or_else(|| (ts[0] == ts[1]).then(|| ts[0].clone())).ok_or_else(|| {
                 e003(span, "`select` arms differ", "give both arms one type")
             })
-        }
+        },
         "length" => {
             arity(1)?;
             match &ts[0] {
@@ -1660,7 +1711,7 @@ fn builtin(name: &str, ts: &[Ty], sp: &[Span], span: Span) -> Res<Ty> {
                 Ty::Geo(Pt, s) => Err(e104(sp[0], format!("`length` of a point in `{s}`"), "subtract an origin: `length(p - o)`")),
                 other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::AbstractInt | other @ Ty::Geo(..) | other @ Ty::Xform(..) | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Frame(_) | other @ Ty::Table(_) | other @ Ty::Verdict | other @ Ty::Struct(_) | other @ Ty::Array(..) | other @ Ty::Id(_) | other @ Ty::Bsdf => Err(e003(sp[0], format!("`length` of `{other}`"), "pass a vector")),
             }
-        }
+        },
         "distance" => {
             arity(2)?;
             match (&ts[0], &ts[1]) {
@@ -1668,7 +1719,7 @@ fn builtin(name: &str, ts: &[Ty], sp: &[Span], span: Span) -> Res<Ty> {
                 (Ty::Geo(Pt, x), Ty::Geo(Pt, y)) => same_space(x, y).map(|_| Ty::F32),
                 _ => Err(e003(span, "`distance` of two points (or two vectors)", "pass two Pt[S]")),
             }
-        }
+        },
         "dot" | "cross" => {
             arity(2)?;
             match (&ts[0], &ts[1]) {
@@ -1681,7 +1732,7 @@ fn builtin(name: &str, ts: &[Ty], sp: &[Span], span: Span) -> Res<Ty> {
                 }
                 _ => Err(e003(span, format!("`{name}` of `{}` and `{}`", ts[0], ts[1]), "pass two vectors in one space")),
             }
-        }
+        },
         "normalize" => {
             arity(1)?;
             match &ts[0] {
@@ -1690,7 +1741,7 @@ fn builtin(name: &str, ts: &[Ty], sp: &[Span], span: Span) -> Res<Ty> {
                 Ty::Geo(g, s) if vec_like(*g) => Ok(Ty::Geo(Dir, s.clone())),
                 other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::F32 | other @ Ty::AbstractInt | other @ Ty::Geo(..) | other @ Ty::Xform(..) | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Frame(_) | other @ Ty::Table(_) | other @ Ty::Verdict | other @ Ty::Struct(_) | other @ Ty::Array(..) | other @ Ty::Id(_) | other @ Ty::Bsdf => Err(e104(sp[0], format!("`normalize` of `{other}`"), "normalize a Vec")),
             }
-        }
+        },
         "inv" => match ts {
             [Ty::Xform(a, b)] => Ok(Ty::Xform(b.clone(), a.clone())),
             _ => Err(e003(span, "`inv` takes an Xform", "pass an `Xform[A -> B]`")),
@@ -1705,12 +1756,12 @@ fn builtin(name: &str, ts: &[Ty], sp: &[Span], span: Span) -> Res<Ty> {
                 "u32" => Ty::U32,
                 _ => Ty::I32,
             })
-        }
+        },
         "vec2" | "vec3" | "vec4" | "vec2f" | "vec3f" | "vec4f" => {
             let n = name.as_bytes()[3] - b'0';
             components(ts, n, span).map(|_| Ty::VecN(n))
-        }
-        _ => Err(Diag::new(Code::E011, span, format!("unknown function `{name}`"), "declare it with `fn`, or check the spelling")),
+        },
+        _ => Err(Diag::new(Code::E011, span, format!("unknown function `{name}`"), "declare it with `fn`, or check the spelling"))
     }
 }
 
