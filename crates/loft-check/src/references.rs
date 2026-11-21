@@ -97,7 +97,8 @@ impl<'a> References<'a> {
         for arg in args { self.expr(&arg.value, locals); }
     }
 
-    fn block(&mut self, b: &'a Block, locals: &mut Vec<&'a str>) {
+    /// The emitter leaves the row parameter out of locals to detect row-dependent surfaces.
+    pub fn block(&mut self, b: &'a Block, locals: &mut Vec<&'a str>) {
         let mark = locals.len();
         self.statements(b, locals);
         locals.truncate(mark);

@@ -11,7 +11,7 @@ mod shade_schedule;
 pub use loft_check::{Prog, bsdf, check, kind_space, pose_field, source, world, TWIN_LIGHT};
 pub use loft_eval::{ad, eval, lip};
 pub use loft_gltf as gltf;
-use loft_check::{defaults, geometry_fields, infer, unit};
+use loft_check::{FINITE_DIFF_STEP, defaults, geometry_fields, infer, unit};
 use loft_eval::{as_f32, pack, refine, stage0};
 
 pub mod emit {
