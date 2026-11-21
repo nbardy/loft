@@ -65,7 +65,7 @@ impl BindAccess {
         match self {
             Self::ReadStorage => 1,
             Self::ReadWriteStorage => 2,
-            Self::SampledTex | Self::StorageTex | Self::BindlessTexArray | Self::Sampler => 3,
+            Self::SampledTex | Self::StorageTex | Self::BindlessTexArray | Self::Sampler | Self::AccelerationStructure => 3,
         }
     }
 }

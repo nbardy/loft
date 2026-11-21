@@ -1536,7 +1536,7 @@ pub mod bundle {
     use super::{Compiled, Program};
     use loft_ir::Bundle;
 
-    pub use super::renderer_bundle::parameters;
+    pub use super::renderer_bundle::{Options, lower_program, lower_twin, parameters, replacement};
 
     pub fn lower(
         program: &Program, compiled: &Compiled, size: (u32, u32),

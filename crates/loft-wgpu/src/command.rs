@@ -2,7 +2,7 @@
 use wgpu::*;
 use std::ops::Range;
 
-pub use loft_std::frame::{Stamps, Work};
+pub use crate::frame::{Stamps, Work};
 
 pub struct Dispatch {
     pub pipeline: ComputePipeline,
@@ -10,7 +10,7 @@ pub struct Dispatch {
     pub work: Work,
 }
 
-pub use loft_std::attachments::{Color, Depth};
+pub use crate::attachments::{Color, Depth};
 
 pub enum DrawSource<'a> {
     Direct { vertices: Range<u32>, instances: Range<u32> },
@@ -70,7 +70,7 @@ pub enum Pass {
 }
 
 impl Pass {
-    pub(crate) fn append(&mut self, next: Self) -> std::result::Result<(), Self> {
+    pub fn append(&mut self, next: Self) -> std::result::Result<(), Self> {
         match (self, next) {
             (Self::Compute(a), Self::Compute(b)) => a.extend(b),
             (Self::Render { colors: a, depth: x, rasters: r },
@@ -126,4 +126,48 @@ fn record_render(enc: &mut CommandEncoder, colors: &[Color], depth: Option<&Dept
         color_attachments: &colors, depth_stencil_attachment, timestamp_writes, ..Default::default()
     });
     pass.execute_bundles(rasters.iter().map(|r| &r.bundle));
+}
+
+use crate::attachments::Canvas;
+use loft_ir::ModuleId;
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct RasterRecipe {
+    canvas: Canvas,
+    layout: PipelineLayout,
+    vertex: String,
+    fragment: String,
+    cull: bool,
+    additive: bool,
+    module: ModuleId,
+}
+impl RasterRecipe {
+    pub fn new(canvas: &Canvas, layout: &PipelineLayout, draw: &crate::schedule::Draw, cull: bool, additive: bool) -> Self {
+        Self { canvas: canvas.clone(), layout: layout.clone(), vertex: draw.decl.vertex_entry.clone(),
+            fragment: draw.decl.fragment_entry.clone(), cull, additive, module: draw.decl.module }
+    }
+
+    pub fn create(&self, device: &Device, shader: &ShaderModule, cache: Option<&PipelineCache>) -> RenderPipeline {
+        let blend = self.additive.then(|| {
+            let component = BlendComponent { src_factor: BlendFactor::One, dst_factor: BlendFactor::One, operation: BlendOperation::Add };
+            BlendState { color: component, alpha: component }
+        });
+        let targets = self.canvas.colors.iter().map(|&format| Some(ColorTargetState {
+            format, blend, write_mask: ColorWrites::ALL,
+        })).collect::<Vec<_>>();
+        device.create_render_pipeline(&RenderPipelineDescriptor {
+            label: None, layout: Some(&self.layout),
+            vertex: VertexState { module: shader, entry_point: Some(&self.vertex),
+                buffers: &[], compilation_options: Default::default() },
+            primitive: PrimitiveState { cull_mode: self.cull.then_some(Face::Front), ..Default::default() },
+            depth_stencil: self.canvas.depth_state(),
+            multisample: MultisampleState { count: self.canvas.samples, ..Default::default() },
+            fragment: (!self.fragment.is_empty()).then_some(FragmentState {
+                module: shader, entry_point: Some(&self.fragment), targets: &targets, compilation_options: Default::default()
+            }), multiview_mask: None, cache,
+        })
+    }
+}
+impl RasterRecipe {
+    pub fn name(&self) -> String { format!("{} {} {}", self.module.0, self.vertex, self.fragment) }
 }

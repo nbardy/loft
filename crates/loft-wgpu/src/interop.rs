@@ -152,7 +152,7 @@ pub fn storage_access(
     }
     if !granted.allowed_usages.contains(T::STORAGE_BINDING) || !granted.flags.contains(required)
         || (access == A::Atomic && !features.contains(wgpu::Features::TEXTURE_ATOMIC)) {
-        return Err(RunnerError::TextureAccess { format, access });
+        return Err(RunnerError::TextureAccess { format: format!("{format:?}"), access: format!("{access:?}") });
     }
     Ok(())
 }
@@ -278,6 +278,7 @@ pub enum Resource {
     Texture(TextureBinding),
     Attachment(wgpu::TextureView, TextureDecl),
     Sampler(wgpu::Sampler),
+    AccelerationStructure(wgpu::Tlas),
     HostAttachment,
 }
 pub enum TextureBinding {
@@ -290,13 +291,13 @@ impl Resource {
         match self {
             Self::Texture(TextureBinding::Bound(_, t)) => Some(t.clone()),
             Self::Attachment(v, _) => Some(Arc::new(v.texture().clone())),
-            Self::Buffer(_) | Self::Sampler(_) | Self::HostAttachment | Self::Texture(_) => None,
+            Self::Buffer(_) | Self::Sampler(_) | Self::AccelerationStructure(_) | Self::HostAttachment | Self::Texture(_) => None,
         }
     }
     pub fn buffer(&self) -> Option<&Arc<wgpu::Buffer>> {
         match self {
             Self::Buffer(b) => b.as_ref(),
-            Self::Texture(_) | Self::Attachment(..) | Self::Sampler(_) | Self::HostAttachment => None,
+            Self::Texture(_) | Self::Attachment(..) | Self::Sampler(_) | Self::AccelerationStructure(_) | Self::HostAttachment => None,
         }
     }
     pub fn bytes(&self) -> Result<&wgpu::Buffer> {
@@ -305,7 +306,7 @@ impl Resource {
     pub fn attachment(&self) -> Option<(&wgpu::TextureView, TextureDecl)> {
         match self {
             Self::Attachment(v, t) => Some((v, *t)),
-            Self::Buffer(_) | Self::Texture(_) | Self::Sampler(_) | Self::HostAttachment => None,
+            Self::Buffer(_) | Self::Texture(_) | Self::Sampler(_) | Self::AccelerationStructure(_) | Self::HostAttachment => None,
         }
     }
     pub fn declare(&mut self, desc: &wgpu::TextureDescriptor<'_>) -> Result<()> {
@@ -336,6 +337,7 @@ pub enum Bound<'a> {
     Buffer(wgpu::BufferBinding<'a>),
     Image(wgpu::TextureView),
     Sampler(&'a wgpu::Sampler),
+    AccelerationStructure(&'a wgpu::Tlas),
 }
 impl<'a> Bound<'a> {
     pub fn binding(&self) -> wgpu::BindingResource<'_> {
@@ -343,6 +345,7 @@ impl<'a> Bound<'a> {
             Self::Buffer(binding) => wgpu::BindingResource::Buffer(binding.clone()),
             Self::Image(view) => wgpu::BindingResource::TextureView(view),
             Self::Sampler(sampler) => wgpu::BindingResource::Sampler(sampler),
+            Self::AccelerationStructure(tlas) => tlas.as_binding(),
         }
     }
 }
@@ -365,8 +368,11 @@ impl Resource {
             (Self::Attachment(view, _), BindingType::Texture { .. } | BindingType::StorageTexture { .. }) => {
                 Ok(Bound::Image(view.clone()))
             }
-            (Self::Sampler(sampler), BindingType::Sampler(wgpu::SamplerBindingType::Comparison)) => {
+            (Self::Sampler(sampler), BindingType::Sampler(_)) => {
                 Ok(Bound::Sampler(sampler))
+            }
+            (Self::AccelerationStructure(tlas), BindingType::AccelerationStructure { vertex_return: false }) => {
+                Ok(Bound::AccelerationStructure(tlas))
             }
             _ => Err(RunnerError::UnknownResource),
         }

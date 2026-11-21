@@ -71,7 +71,7 @@ before starting a step. The timing command holds the reservation throughout.
 
 Each six-pair session alternates AB and BA ordering. Each arm records a triangle
 control before its gate and the normal Speed control for each scene. Any
-control above 0.350 ms makes that scene's timing verdicts unknown. Reports
+triangle p95 at or above 0.150 ms makes that scene's timing verdicts unknown. Reports
 retain both controls, frame batches, cold and warm loads, and binary hashes.
 A Speed observation is a batch p95 across the manifest orbit. Cold and warm
 Load observations come from the same batch, with the existing cold nonce and
@@ -86,8 +86,9 @@ declared margin as a fraction of that budget. An interval spanning a budget
 yields unknown. Unpaired CLI point estimates are diagnostics. The harness
 retains the native non-timing checks. `tools/check.sh full` supplies paired
 timing via `LOFT_BASELINE_BIN` and `LOFT_TIMING_MARGIN`. It uses
-`LOFT_BASELINE_BUILD_LOG` for the baseline picture instrument and writes all
-gate evidence below its new `out/check.*` directory. The scope of
+`LOFT_BASELINE_BUILD_LOG` for the baseline picture instrument. Set
+`LOFT_GATE_PROFILE=release` to verify a release build. The harness writes
+evidence below its new `out/check.*` directory. The scope of
 `--only` is one or more budgeted scenes.
 
 Replay the same six pairs with

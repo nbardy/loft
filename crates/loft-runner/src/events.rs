@@ -1,4 +1,4 @@
-pub use loft_std::outbox::{Outbox, OutboxEvent, capacity};
+pub use loft_wgpu::outbox::{Outbox, OutboxEvent, capacity};
 use super::*;
 impl Runner {
     /// Take the oldest completed outbox eligible for the two-frame readback delay.

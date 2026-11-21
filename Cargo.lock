@@ -504,6 +504,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "loft-ir",
+ "loft-native",
  "loft-parse",
  "loft-passes",
  "loft-runner",
@@ -532,6 +533,21 @@ version = "0.1.0"
 dependencies = [
  "bitflags",
  "serde",
+]
+
+[[package]]
+name = "loft-native"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "loft-ir",
+ "loft-passes",
+ "loft-runner",
+ "naga",
+ "pollster",
+ "serde",
+ "tempfile",
+ "wgpu",
 ]
 
 [[package]]
@@ -575,6 +591,7 @@ dependencies = [
  "loft-format",
  "loft-ir",
  "loft-std",
+ "loft-wgpu",
  "naga",
  "pollster",
  "wgpu",
@@ -587,6 +604,17 @@ dependencies = [
  "loft-abi",
  "loft-format",
  "loft-ir",
+ "naga",
+]
+
+[[package]]
+name = "loft-wgpu"
+version = "0.1.0"
+dependencies = [
+ "loft-abi",
+ "loft-format",
+ "loft-ir",
+ "loft-std",
  "naga",
  "web-sys",
  "wgpu",

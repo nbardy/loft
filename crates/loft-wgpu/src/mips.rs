@@ -1,8 +1,73 @@
-use super::command::{Dispatch, Pass, Stamps, Work};
-use super::{Result, RunnerError};
-pub use loft_std::mips::{Clock, Dimension};
-use std::{collections::HashMap, sync::Arc};
+use crate::{command::{Dispatch, Pass, Stamps, Work}, error::{Result, RunnerError}};
 use wgpu::*;
+
+fn storage_view(dim: Dimension) -> TextureViewDimension {
+    match dim {
+        Dimension::D2 => TextureViewDimension::D2,
+        Dimension::D3 => TextureViewDimension::D3,
+        Dimension::Cube => TextureViewDimension::D2Array,
+    }
+}
+
+pub use loft_std::mips::{Clock, Dimension};
+pub fn source(dim: Dimension, format: TextureFormat, limits: &Limits) -> Result<String> {
+    let (format, scalar) = match format {
+        TextureFormat::R8Unorm => ("r8unorm", true),
+        TextureFormat::R16Float => ("r16float", true),
+        TextureFormat::R32Float => ("r32float", true),
+        TextureFormat::Rgba8Unorm => ("rgba8unorm", false),
+        TextureFormat::Rgba16Float => ("rgba16float", false),
+        _ => return Err(RunnerError::Unsupported("unsupported compute mip format")),
+    };
+    Ok(loft_std::mips::source(dim, format, scalar,
+        dim.group(limits.max_compute_workgroup_size_z, limits.max_compute_invocations_per_workgroup)))
+}
+
+pub fn portable(tex: &Texture) -> crate::error::Result<Dimension> {
+    if tex.dimension() != TextureDimension::D2
+        || tex.depth_or_array_layers() != 1
+        || tex.mip_level_count() < 2
+        || tex.format() != TextureFormat::Rgba16Float
+        || !tex
+            .usage()
+            .contains(TextureUsages::TEXTURE_BINDING | TextureUsages::STORAGE_BINDING)
+    {
+        return Err(crate::error::RunnerError::Unsupported(
+            "mips require a 2D rgba16float texture with sampled and storage usages",
+        ));
+    }
+    Ok(Dimension::D2)
+}
+
+pub fn bindings(dim: Dimension, format: TextureFormat) -> [BindGroupLayoutEntry; 2] {
+    let view_dimension = storage_view(dim);
+    let entry = |binding, ty| BindGroupLayoutEntry {
+        binding,
+        visibility: ShaderStages::COMPUTE,
+        ty,
+        count: None,
+    };
+    [
+        entry(
+            0,
+            BindingType::Texture {
+                sample_type: TextureSampleType::Float { filterable: false },
+                view_dimension,
+                multisampled: false,
+            },
+        ),
+        entry(
+            1,
+            BindingType::StorageTexture {
+                access: StorageTextureAccess::WriteOnly,
+                format,
+                view_dimension,
+            },
+        ),
+    ]
+}
+
+use std::{collections::HashMap, sync::Arc};
 
 #[derive(Default)]
 pub struct Pipelines(HashMap<(Dimension, TextureFormat, Option<[u32; 3]>), ComputePipeline>);
@@ -14,7 +79,7 @@ enum Packing {
     HalfTowardZero,
 }
 
-pub(super) struct Packed {
+pub struct Packed {
     pub buffer: Arc<Buffer>,
     texture: Texture,
     extent: Extent3d,
@@ -39,7 +104,7 @@ impl Packed {
         let limits = device.limits();
         if size > limits.max_buffer_size.min(limits.max_storage_buffer_binding_size) { return Err(RunnerError::Capacity); }
         Ok(Self {
-            buffer: super::allocate(device, size, BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::COPY_DST),
+            buffer: crate::allocate(device, size, BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::COPY_DST),
             texture: texture.clone(), extent: Extent3d { width, height, depth_or_array_layers }, level, pitch, dim, packing,
         })
     }
@@ -100,13 +165,13 @@ fn loft_pack({args}, v: vec4f) {{
 }
 
 impl Pipelines {
-    pub(super) fn prepare(&mut self, device: &Device, texture: &Texture, dim: Dimension,
+    pub fn prepare(&mut self, device: &Device, texture: &Texture, dim: Dimension,
         cache: Option<&PipelineCache>, clock: Option<fn() -> std::time::Duration>, times: &mut Vec<(String, f64)>) -> Result<Mips> {
         let format = texture.format();
         let limits = device.limits();
         let size = [texture.width(),texture.height(),texture.depth_or_array_layers()];
         let views = (0..texture.mip_level_count()).map(|level| texture.create_view(&TextureViewDescriptor {
-            dimension: Some(dim.storage_view()), base_mip_level:level, mip_level_count:Some(1), ..Default::default()
+            dimension: Some(storage_view(dim)), base_mip_level:level, mip_level_count:Some(1), ..Default::default()
         })).collect::<Vec<_>>();
         let levels = views.windows(2).enumerate().map(|(level, pair)| {
             let level = level as u32 + 1;
@@ -116,16 +181,16 @@ impl Pipelines {
             let pipeline = match self.0.entry((dim, format, packed.as_ref().map(|_| extent))) {
                 std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
                 std::collections::hash_map::Entry::Vacant(entry) => {
-                    let mut text = loft_std::mips::source(dim, format, &limits).map_err(RunnerError::Unsupported)?;
-                    let mut entries = loft_std::mips::bindings(dim, format);
+                    let mut text = source(dim, format, &limits)?;
+                    let mut entries = bindings(dim, format);
                     if let Some(output) = &packed {
                         text = output.shader(&text, "dst", 0, 1)?;
-                        entries[1] = loft_std::bindings::slot(1, BufferBindingType::Storage { read_only: false });
+                        entries[1] = crate::bindings::slot(1, BufferBindingType::Storage { read_only: false });
                     }
                     let group = device.create_bind_group_layout(&BindGroupLayoutDescriptor { label:None, entries:&entries });
                     let layout = device.create_pipeline_layout(&PipelineLayoutDescriptor { label:None, bind_group_layouts:&[Some(&group)], immediate_size:0 });
                     let module = device.create_shader_module(ShaderModuleDescriptor { label:Some("mip reduction"), source:ShaderSource::Wgsl(text.into()) });
-                    let (pipe, ms) = super::encode::timed(clock, || device.create_compute_pipeline(&ComputePipelineDescriptor { label:None, layout:Some(&layout), module:&module,
+                    let (pipe, ms) = crate::timed(clock, || device.create_compute_pipeline(&ComputePipelineDescriptor { label:None, layout:Some(&layout), module:&module,
                         entry_point:Some("downsample"), compilation_options:Default::default(), cache }));
                     times.push((format!("mip {dim:?} {format:?}"), ms));
                     entry.insert(pipe)
@@ -139,7 +204,7 @@ impl Pipelines {
             let entries = [BindGroupEntry { binding:0, resource:BindingResource::TextureView(&pair[0]) },
                 BindGroupEntry { binding:1, resource:target }];
             let bg = device.create_bind_group(&BindGroupDescriptor { label:None, layout:&layout, entries:&entries });
-            let work = Work::Direct(std::array::from_fn(|i| extent[i].div_ceil(dim.group(&limits)[i])));
+            let work = Work::Direct(std::array::from_fn(|i| extent[i].div_ceil(dim.group(limits.max_compute_workgroup_size_z, limits.max_compute_invocations_per_workgroup)[i])));
             Ok((Pass::Compute(vec![Dispatch { pipeline:pipeline.clone(), groups:vec![bg], work }]), packed))
         }).collect::<Result<_>>()?;
         Ok(Mips(levels))

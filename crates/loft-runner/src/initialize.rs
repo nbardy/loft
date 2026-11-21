@@ -1,6 +1,6 @@
 use super::*;
 use crate::execution::{Clock, Dimension, Execution, Image, ImageStorage};
-use loft_std::{bundle::passes, interop::{TextureBinding, TextureContract, storage_access}};
+use loft_wgpu::{bundle::passes, interop::{TextureBinding, TextureContract, storage_access}};
 use std::collections::BTreeSet;
 use wgpu::{StorageTextureAccess, TextureDimension, TextureFormat as F, TextureUsages as T};
 
@@ -59,7 +59,7 @@ impl Initializers {
                 if packed { desc.usage = T::TEXTURE_BINDING | T::COPY_DST | T::COPY_SRC; }
                 let contract = TextureContract::from(&desc);
                 let tex = Arc::new(device.create_texture(&desc));
-                let group = dim.group(&device.limits());
+                let group = dim.group(device.limits().max_compute_workgroup_size_z, device.limits().max_compute_invocations_per_workgroup);
                 let split_cube = dim == mips::Dimension::Cube && workgroup == [8, 8, 6] && group != workgroup;
                 if packed || split_cube {
                     let mut source = std::str::from_utf8(&decl.modules[module].bytes).map_err(|_| RunnerError::AbiMismatch)?.to_owned();

@@ -1,6 +1,6 @@
 use super::*;
 pub use loft_ir::PickResult;
-pub(super) use loft_std::pick::Source;
+pub(super) use loft_wgpu::pick::Source;
 impl Runner {
     pub fn set_pick_source(&mut self, id: InstanceId, visibility: &wgpu::Texture, depth: &wgpu::Texture, inv_vp: [[f32; 4]; 4]) -> Result<()> {
         let d = self.device.clone();

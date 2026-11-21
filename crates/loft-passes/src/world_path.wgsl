@@ -69,7 +69,11 @@ fn world_trace(o: vec3<f32>, d: vec3<f32>, limit: f32) -> PathHit {
 }
 
 fn world_trace_ray(world: u32, ray: LoftRay) -> PathHit {
-  return world_hit(loft_bvh_trace_at(ray, world_root(world), false), ray);
+  return world_hit(world_secondary(world, ray, false), ray);
+}
+
+fn world_secondary(world: u32, ray: LoftRay, any_hit: bool) -> LoftBvhHit {
+  return loft_bvh_trace_at(ray, world_root(world), any_hit);
 }
 
 fn world_hit(hit: LoftBvhHit, ray: LoftRay) -> PathHit {

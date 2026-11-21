@@ -9,6 +9,7 @@ description = "Layer 0: runs a loft-ir Program on a wgpu device (buffers, pipeli
 [dependencies]
 loft-abi = { path = "../loft-abi" }
 loft-ir = { path = "../loft-ir" }
+loft-wgpu = { path = "../loft-wgpu" }
 loft-std = { path = "../loft-std" }
 loft-format = { path = "../loft-format" }
 blake3 = "1"
@@ -16,7 +17,7 @@ wgpu = { workspace = true, features = ["webgpu"] }
 naga.workspace = true
 
 [features]
-web-sys = ["loft-std/web-sys"]
+web-sys = ["loft-wgpu/web-sys"]
 
 [dev-dependencies]
 pollster.workspace = true

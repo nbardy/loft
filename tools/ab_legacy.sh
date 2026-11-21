@@ -137,9 +137,18 @@ fi
 git -C "$root" rev-parse HEAD >"$out/new-revision"
 git -C "$legacy" rev-parse HEAD >"$out/legacy-revision"
 
-tools/dev.sh check loft-cli >"$out/new-check.log" 2>&1
-tools/dev.sh build loft-cli --fast >"$out/new-build.log" 2>&1
-(cd "$legacy" && tools/dev.sh build loft-draw --fast -p loft-node) >"$out/legacy-build.log" 2>&1
+new="${LOFT_AB_NEW_BIN:-$root/target/lab/loft}"
+if [[ -z ${LOFT_AB_NEW_BIN:-} ]]; then
+  tools/dev.sh check loft-cli >"$out/new-check.log" 2>&1
+  tools/dev.sh build loft-cli --fast >"$out/new-build.log" 2>&1
+fi
+[[ -x "$new" ]] || { echo "missing candidate binary $new" >&2; exit 2; }
+if [[ ${LOFT_AB_LEGACY_PREBUILT:-0} == 1 ]]; then
+  test -x "$legacy/rust/target/lab/loft-draw"
+  test -r "$legacy/rust/target/lab/libloft_node.dylib"
+else
+  (cd "$legacy" && tools/dev.sh build loft-draw --fast -p loft-node) >"$out/legacy-build.log" 2>&1
+fi
 
 if [[ $matched == --matched ]]; then
   for count in 1 20; do
@@ -154,7 +163,7 @@ if [[ $matched == --matched ]]; then
           /usr/bin/time -p bun src/cli/main.ts build "$src" --precision f32 --out "$out/$split-$count-bundle"
       ) >"$out/$split-$count-author-load.log" 2>&1
     done
-    "$root/target/lab/loft" check "$out/fixture/engines/capsules-matched.loft" --set "count=$count" \
+    "$new" check "$out/fixture/engines/capsules-matched.loft" --set "count=$count" \
       >"$out/b-$count-check.log"
   done
   # This is a full-screen constant-color triangle in the same native recorder.
@@ -164,29 +173,17 @@ if [[ $matched == --matched ]]; then
     /tonemap_aces/ {print "  tonemap(ColorHdr, sky: sky_color, film: ab_triangle)"; next}
     {print}
   ' "$root/stdlib/engines/capsules.loft" >"$out/fixture/engines/triangle.loft"
-  "$root/target/lab/loft" ir "$out/fixture/engines/triangle.loft" --set count=1 \
+  "$new" ir "$out/fixture/engines/triangle.loft" --set count=1 \
     | sed 's/(passes Cull (Vis 0) Classify (Shade 0) Present)/(passes Present)/' >"$out/triangle.sexp"
   [[ $(rg -o '\(passes Present\)' "$out/triangle.sexp") == '(passes Present)' ]]
 fi
 
-# Acquire both of the repository's compile slots while holding the shared GPU lock.
-source tools/lib/build_gate.sh
-tools/gpu_lock.sh perl -MFcntl=:flock -e '
-  use strict;
-  use warnings;
-  my $dir = shift;
-  mkdir $dir unless -d $dir;
-  open(my $heavy, ">>", "$dir/slot.0") or die "heavy compile lock: $!";
-  flock($heavy, LOCK_EX) or die "heavy compile lock: $!";
-  open(my $light, ">>", "$dir/slot.light") or die "light compile lock: $!";
-  flock($light, LOCK_EX) or die "light compile lock: $!";
-  system(@ARGV) == 0 or die "timed benchmark failed (status $?)\n";
-' "$(keel_gate_dir)" bash -euo pipefail -s "$root" "$legacy" "$out" "$matched" <<'TIMED'
+tools/quiet_gpu.sh bash -euo pipefail -s "$root" "$legacy" "$out" "$matched" "$new" <<'TIMED'
 root=$1
 legacy=$2
 out=$3
 matched=$4
-new="$root/target/lab/loft"
+new=$5
 old="$legacy/rust/target/lab/loft-draw"
 scene="$root/stdlib/engines/capsules.loft"
 ps -Ao pid,comm >"$out/processes-before.txt"

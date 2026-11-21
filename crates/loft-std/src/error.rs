@@ -8,7 +8,7 @@ pub enum RunnerError {
     Capacity,
     InvalidShader(String),
     Unsupported(&'static str),
-    TextureAccess { format: wgpu::TextureFormat, access: wgpu::StorageTextureAccess },
+    TextureAccess { format: String, access: String },
 }
 impl From<crate::bundle::InvalidResources> for RunnerError {
     fn from(error: crate::bundle::InvalidResources) -> Self {
@@ -20,3 +20,8 @@ impl From<crate::bundle::InvalidResources> for RunnerError {
     }
 }
 pub type Result<T> = std::result::Result<T, RunnerError>;
+impl From<crate::events::InvalidOutbox> for RunnerError {
+    fn from(_: crate::events::InvalidOutbox) -> Self {
+        Self::AbiMismatch
+    }
+}

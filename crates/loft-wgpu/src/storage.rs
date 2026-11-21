@@ -13,6 +13,7 @@ pub enum Allocation {
     Texture,
     Attachment(TextureDecl),
     Sampler,
+    AccelerationStructure,
     HostAttachment,
 }
 
@@ -35,7 +36,7 @@ pub fn allocations<'a>(b: &'a Bundle, limits: &wgpu::Limits) -> Result<Vec<(&'a 
         let active =
             u32::try_from(t.initial.len() / t.stride_bytes as usize).map_err(|_| RunnerError::Capacity)?;
         if active > t.capacity
-            || active != 0 && (t.lifetime == TableLifetime::External || !matches!(role, Role::Buffer))
+            || active != 0 && (t.lifetime == TableLifetime::External || !matches!(role, Role::Buffer | Role::AccelerationStructure))
         {
             return Err(RunnerError::AbiMismatch);
         }
@@ -48,6 +49,7 @@ pub fn allocations<'a>(b: &'a Bundle, limits: &wgpu::Limits) -> Result<Vec<(&'a 
             Role::Texture => Allocation::Texture,
             Role::Attachment(desc) => Allocation::Attachment(desc),
             Role::Sampler => Allocation::Sampler,
+            Role::AccelerationStructure => Allocation::AccelerationStructure,
             Role::HostAttachment => Allocation::HostAttachment,
         };
         out.push((t, active, alloc));
@@ -138,4 +140,29 @@ pub fn preserve_capacity(next: &mut TableDecl, current: &TableDecl) -> Result<()
     }
     next.capacity = current.capacity;
     Ok(())
+}
+
+use crate::{allocate, interop::{Resource, TextureBinding}};
+
+pub fn create(d: &wgpu::Device, q: &wgpu::Queue, t: &TableDecl, alloc: Allocation, usage: wgpu::BufferUsages, comparison: bool) -> Result<Resource> {
+    Ok(match alloc {
+        Allocation::Buffer(size) => {
+            let buf = allocate(d, size, usage);
+            if !t.initial.is_empty() { q.write_buffer(&buf,0,&t.initial); }
+            Resource::Buffer(Some(buf))
+        }
+        Allocation::ExternalBuffer => Resource::Buffer(None),
+        Allocation::Texture => Resource::Texture(TextureBinding::Vacant),
+        Allocation::Attachment(desc) => {
+            let tex = d.create_texture(&attachment(desc,&d.limits())?);
+            Resource::Attachment(tex.create_view(&Default::default()),desc)
+        }
+        Allocation::Sampler => Resource::Sampler(d.create_sampler(&wgpu::SamplerDescriptor {
+            mag_filter: wgpu::FilterMode::Linear, min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            compare: comparison.then_some(wgpu::CompareFunction::LessEqual), ..Default::default()
+        })),
+        Allocation::AccelerationStructure => Resource::AccelerationStructure(crate::ray_query::build_aabbs(d, q, t)?),
+        Allocation::HostAttachment => Resource::HostAttachment,
+    })
 }

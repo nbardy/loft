@@ -1,5 +1,5 @@
 use super::*;
-use loft_std::edits::Pipelines;
+use loft_wgpu::edits::Pipelines;
 use wgpu::BufferUsages as U;
 
 const TABLE: TableId = TableId(7);

@@ -1,1 +1,1 @@
-pub mod native;
+pub use loft_native as native;

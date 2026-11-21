@@ -2,19 +2,12 @@
 use crate::error::*;
 use std::sync::Arc;
 use std::{collections::VecDeque, sync::Mutex};
-use wgpu::util::DeviceExt;
 
 pub use crate::events::capacity;
 use crate::events::{Events, decode};
 #[cfg(test)]
 use crate::events::{HEADER, RECORD};
 pub use loft_ir::OutboxEvent;
-
-impl From<crate::events::InvalidOutbox> for RunnerError {
-    fn from(_: crate::events::InvalidOutbox) -> Self {
-        Self::AbiMismatch
-    }
-}
 
 type Completion = Arc<Mutex<Option<Result<Events>>>>;
 
@@ -59,17 +52,14 @@ impl Outbox {
 
     pub fn begin(
         &self,
-        device: &wgpu::Device,
+        belt: &mut wgpu::util::StagingBelt,
         enc: &mut wgpu::CommandEncoder,
         outbox: &wgpu::Buffer,
     ) -> Result<()> {
-        let header = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("outbox capacity and frame"),
-            usage: wgpu::BufferUsages::COPY_SRC,
-            contents: [capacity(outbox.size())?.to_le_bytes(), self.frame.to_le_bytes()].as_flattened(),
-        });
-        enc.copy_buffer_to_buffer(&header, 0, outbox, 4, Some(4));
-        enc.copy_buffer_to_buffer(&header, 4, outbox, 12, Some(4));
+        let word = wgpu::BufferSize::new(4).unwrap();
+        for (offset, value) in [(4, capacity(outbox.size())?), (12, self.frame)] {
+            belt.write_buffer(enc, outbox, offset, word).copy_from_slice(&value.to_le_bytes());
+        }
         Ok(())
     }
 

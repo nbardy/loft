@@ -65,7 +65,7 @@ fn world_volume(world: u32, ray: LoftRay, steps: u32, illuminate: bool) -> LoftV
         for (var k = 0u; k < steps; k++) {
           let p = ray.o + ray.d * (begin + (f32(k) + 0.5) * ds);
           let shadow = LoftRay(p, sun, 0.0001, 1e6);
-          let hit = loft_bvh_trace_at(shadow, world_root(world), true);
+          let hit = world_secondary(world, shadow, true);
           let direct = select(vec3(0.0), sigma.s * loft_params[0].xyz * phase, hit.t == -1.0);
           vol = loft_volume_step(vol, sigma.t, source + direct, ds);
         }
@@ -79,7 +79,7 @@ fn world_volume(world: u32, ray: LoftRay, steps: u32, illuminate: bool) -> LoftV
 }
 
 fn world_visibility(world: u32, ray: LoftRay) -> vec3<f32> {
-  let hit = loft_bvh_trace_at(ray, world_root(world), true);
+  let hit = world_secondary(world, ray, true);
   if hit.t != -1.0 { return vec3(0.0); }
   return world_volume(world, ray, 1u, false).t;
 }
@@ -89,7 +89,7 @@ fn loft_visible(world: u32, a: vec3<f32>, b: vec3<f32>) -> vec3<f32> {
   let len = length(d);
   if len <= 0.0002 { return vec3(1.0); }
   let dir = d / len;
-  let hit = loft_bvh_trace_at(LoftRay(a, dir, 0.0001, len - 0.0001), world_root(world), true);
+  let hit = world_secondary(world, LoftRay(a, dir, 0.0001, len - 0.0001), true);
   if hit.t != -1.0 { return vec3(0.0); }
   return world_volume(world, LoftRay(a, dir, 0.0, len), 1u, false).t;
 }

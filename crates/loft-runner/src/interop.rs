@@ -1,5 +1,5 @@
 use super::*;
-pub(super) use loft_std::interop::*;
+pub(super) use loft_wgpu::interop::*;
 impl Runner {
     pub fn bind_external_buffer(&mut self, inst: InstanceId, table: TableId, buf: Arc<wgpu::Buffer>) -> Result<()> {
         let limits = self.device.limits();

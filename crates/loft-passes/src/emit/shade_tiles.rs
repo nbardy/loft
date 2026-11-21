@@ -109,6 +109,21 @@ pub(crate) fn world_source(
     words[3] = f32::from_bits(address(words.len())?);
     words[4] = f32::from_bits(address(data.lamps.len())?);
     words.extend_from_slice(data.lamps.as_flattened().as_flattened());
+    // The native TLAS primitive order is the compiled instance order.
+    // World membership is per kind, so the same bounds serve all World views.
+    words[5] = f32::from_bits(address(words.len())?);
+    let mask_words = data.worlds.len().div_ceil(32);
+    words[6] = f32::from_bits(address(mask_words + 2)?);
+    for instance in instances {
+        words.extend([instance.kind, instance.row].map(f32::from_bits));
+        for worlds in data.worlds.chunks(32) {
+            let mut mask = 0u32;
+            for (i, world) in worlds.iter().enumerate() {
+                if world.kinds.contains(&instance.kind) { mask |= 1 << i; }
+            }
+            words.push(f32::from_bits(mask));
+        }
+    }
     address(words.len())?;
 
     let mut em = Emitter::new(p, types);

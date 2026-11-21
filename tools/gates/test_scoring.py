@@ -67,8 +67,8 @@ class Scoring(unittest.TestCase):
 
     def test_paired_controls(self):
         def report(ms, cold, warm, triangle):
-            return {"adapter": "fixture", "preflight_control_ms": triangle,
-                    "scene": {"speed": {"control_p50_ms": triangle, "p95_ms": ms},
+            return {"adapter": "fixture", "preflight_control_p95_ms": triangle,
+                    "scene": {"speed": {"control_p95_ms": triangle, "p95_ms": ms},
                               "load": {"cold_s": cold, "warm_s": warm}}}
 
         baseline = [report(0.5 + offset / 100, 0.3, 0.01, 0.1) for offset in range(6)]
@@ -80,7 +80,7 @@ class Scoring(unittest.TestCase):
         self.assertEqual([row["verdict"] for row in metrics.values()], ["held", "missed", "held"])
         self.assertAlmostEqual(metrics["p95_ms"]["paired_delta_ci95"][0], -0.01)
         self.assertAlmostEqual(metrics["p95_ms"]["paired_delta_ci95"][1], -0.01)
-        candidate[-1]["preflight_control_ms"] = 0.36
+        candidate[-1]["preflight_control_p95_ms"] = 0.150
         noisy = timing.score(pairs, ["scene"], budgets, 0.05)["scenes"]["scene"]
         self.assertTrue(all(row["verdict"] == "unknown" for row in noisy["metrics"].values()))
         with self.assertRaises(ValueError):

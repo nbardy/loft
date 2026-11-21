@@ -13,7 +13,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 PAIR_COUNT = 6
-CONTROL_CAP_MS = 0.35
+CONTROL_CAP_MS = 0.150
 METRICS = (("speed", "p95_ms"), ("load", "cold_s"), ("load", "warm_s"))
 
 
@@ -56,11 +56,11 @@ def score(pairs, scenes, budgets, margin):
     if len(adapters) != 1:
         raise ValueError(f"adapter changed within the run: {adapters}")
     results = {}
-    preflight = [[number(report["preflight_control_ms"]) for report in pair] for pair in pairs]
+    preflight = [[number(report["preflight_control_p95_ms"]) for report in pair] for pair in pairs]
     for name in scenes:
-        controls = [[number(report[name]["speed"]["control_p50_ms"]) for report in pair]
+        controls = [[number(report[name]["speed"].get("control_p95_ms", report["preflight_control_p95_ms"])) for report in pair]
                     for pair in pairs]
-        contended = any(value > CONTROL_CAP_MS for pair in controls + preflight for value in pair)
+        contended = any(value >= CONTROL_CAP_MS for pair in controls + preflight for value in pair)
         metrics = {}
         for gate, metric in METRICS:
             observations = [[number(report[name][gate][metric]) for report in pair] for pair in pairs]
@@ -80,7 +80,7 @@ def score(pairs, scenes, budgets, margin):
                 "pairs": observations, "candidate_ci95": candidate_ci, "paired_delta_ci95": delta_ci,
                 "budget": cap, "allowed_delta": cap * margin, "verdict": verdict,
             }
-        results[name] = {"preflight_control_ms": preflight, "triangle_control_ms": controls,
+        results[name] = {"preflight_control_p95_ms": preflight, "triangle_control_ms": controls,
                          "contended": contended, "metrics": metrics}
     return {"adapter": adapters.pop(), "scenes": results}
 
@@ -159,9 +159,15 @@ def collect(args, work):
             report_file.unlink(missing_ok=True)
             log_path = arm / f"pair-{index}.log"
             with log_path.open("w") as log:
-                subprocess.run([cli, "profile", arm / first["file"], "--size", size,
+                # The candidate can record a p95 control for an older baseline whose
+                # profile command only emitted a median. Use it in both arms.
+                subprocess.run([binaries[1], "profile", arm / first["file"], "--size", size,
                                 "--frames", "1", "--warmup", "0", "--json", control_file,
                                 *overrides], cwd=arm, stdout=log, stderr=subprocess.STDOUT, check=True)
+                preflight = number(read_json(control_file)["control_p95_ms"])
+                if preflight >= CONTROL_CAP_MS:
+                    raise ValueError(f"{arm.name} pair {index}: triangle p95 {preflight:.3f} ms "
+                                     f"must be under {CONTROL_CAP_MS:.3f} ms; see {control_file}")
                 raw = subprocess.run([cli, "gate", *selection],
                                      cwd=arm, stdout=log, stderr=subprocess.STDOUT)
             if raw.returncode not in (0, 2, 3, 4, 7):
@@ -176,7 +182,7 @@ def collect(args, work):
                 speed = report[name]["speed"]
                 if speed["frames"] != candidate["timing_frames"] or len(speed["ms"]) != speed["frames"]:
                     raise ValueError(f"{name}: incomplete frame batch")
-            report.update(preflight_control_ms=control["control_p50_ms"], raw_gate_exit=raw.returncode)
+            report.update(preflight_control_p95_ms=control["control_p95_ms"], raw_gate_exit=raw.returncode)
             (arm / f"pair-{index}.json").write_text(json.dumps(report, allow_nan=False) + "\n")
             report_file.unlink()
     if hashes != tuple(binary_hash(cli) for cli in binaries):

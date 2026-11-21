@@ -27,7 +27,7 @@ pub struct Gpu {
 
 /// A high-performance device; timestamps when the adapter grants them.
 pub fn gpu() -> Result<Gpu, String> {
-    request_gpu(false)
+    ray_query::request_auto()
 }
 
 pub fn request_gpu(ray_query: bool) -> Result<Gpu, String> {
@@ -42,6 +42,7 @@ pub struct LoadStats {
     pub modules: usize,
     pub render_pipelines: usize,
     pub compute_pipelines: usize,
+    pub hardware_ray_query: bool,
     pub modules_ms: f64,
     pub pipelines_ms: f64,
     pub resources_ms: f64,
@@ -72,6 +73,7 @@ pub struct Loaded {
     shadow: Option<(u16, u32, Mutex<shadow::Reuse>)>,
     instance_bounds: wgpu::Buffer,
     color: wgpu::Texture,
+    planes: [TableId; 2],
     color_view: wgpu::TextureView,
     clock: Option<Clock>,
     pub stats: LoadStats,
@@ -213,6 +215,10 @@ fn read_clock(g: &Gpu, c: &Clock) -> Result<Vec<u64>, String> {
 
 impl Gpu {
     pub fn triangle_control_ms(&self, size: (u32, u32)) -> Result<f64, String> {
+        self.triangle_control(size).map(|[p50, _]| p50)
+    }
+
+    pub fn triangle_control(&self, size: (u32, u32)) -> Result<[f64; 2], String> {
         if !self.timestamps { return Err("the speed control needs GPU timestamps".into()); }
         let d = &self.device;
         let format = wgpu::TextureFormat::Rgba8Unorm;
@@ -238,7 +244,7 @@ impl Gpu {
         let id = runner.load_bundle(&bundle).map_err(runner_error)?;
         runner.prepare_frame(id, &view).map_err(runner_error)?;
         let c = Clock::new(self, 2);
-        let mut times = [0.; 11];
+        let mut times = [0.; 36];
         for ms in &mut times {
             let mut encoder = d.create_command_encoder(&Default::default());
             runner.encode_frame(id, &mut encoder, &view, 0., FrameOptions {
@@ -250,14 +256,20 @@ impl Gpu {
                 .ok_or("speed control has unusable timestamps")?;
             *ms = duration as f64 * c.period_ns / 1e6;
         }
-        times[2..].sort_by(f64::total_cmp);
-        Ok(times[6])
+        let measured = &mut times[4..];
+        measured.sort_by(f64::total_cmp);
+        Ok([measured[16], measured[29]])
     }
 }
 
 fn attach_runner(g: &Gpu) -> Runner {
     Runner::attach(Arc::new(g.device.clone()), Arc::new(g.queue.clone()), HostCaps {
-        depth_convention: DepthConvention::StandardZeroToOne, msaa_samples: 1, features: GpuFeatures::empty(),
+        depth_convention: DepthConvention::StandardZeroToOne, msaa_samples: 1,
+        features: if g.device.features().contains(wgpu::Features::EXPERIMENTAL_RAY_QUERY) {
+            GpuFeatures::RAY_QUERY
+        } else {
+            GpuFeatures::empty()
+        },
     }).with_pipeline_clock(|| {
         static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
         START.get_or_init(Instant::now).elapsed()
@@ -290,6 +302,7 @@ impl Loaded {
             p.camera, p.sun, size, 0., sun, alternate.map(|(lo, hi, side)| sun_camera(p.sun, lo, hi, side)));
         let plan = loft_passes::bundle::lower_program(p, params, size, loft_passes::bundle::Options {
             nonce, overdraw: aov == Aov::Overdraw, picture_only: true,
+            hardware_ray_query: edit.is_none() && loft_runner::ray_query::has_aabb_capacity(d, p.instances.len()),
             edit: edit.as_ref().map(|(i, source, bytes)| (*i, source.as_str(), bytes.as_slice())),
         }, frame)?;
         let color_format = if aov == Aov::Beauty { COLOR } else { wgpu::TextureFormat::Rgba8Unorm };
@@ -315,7 +328,9 @@ impl Loaded {
         let id = prepared.map_err(runner_error)?;
         d.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| e.to_string())?;
         let creates = runner.pipeline_creates(id).map_err(runner_error)?;
-        let mut stats = LoadStats { modules: plan.bundle.modules.len(),
+        let hardware_ray_query = plan.bundle.passes.iter().flat_map(|pass| &pass.bindings)
+            .any(|binding| binding.access == loft_ir::BindAccess::AccelerationStructure);
+        let mut stats = LoadStats { modules: plan.bundle.modules.len(), hardware_ray_query,
             render_pipelines: creates.render.len(), compute_pipelines: creates.compute.len(),
             modules_ms: (layouts_start - started).as_secs_f64() * 1e3,
             pipelines_ms: layouts_start.elapsed().as_secs_f64() * 1e3,
@@ -376,7 +391,7 @@ impl Loaded {
             frame_table, runner: Mutex::new(runner), id, modules: plan.modules, kind_tables,
             twin_sources: p.kinds.iter().map(|k| p.modules[k.module].naga.clone()).collect(),
             luts: p.luts.clone(), kind_words, params: Mutex::new((p.params.clone(), false)), instance_bounds, shadow,
-            color, color_view, clock, stats })
+            color, planes: [plan.visibility, plan.depth], color_view, clock, stats })
     }
 
     pub fn set_param_word(&self, word: usize, value: f32) -> Result<(), String> {
@@ -518,6 +533,17 @@ impl Loaded {
     /// The presented picture, tightly packed RGBA8 (sRGB), top row first.
     pub fn pixels(&self, g: &Gpu) -> Result<Vec<u8>, String> {
         loft_runner::read_texture(&g.device, &g.queue, &self.color, 0).map_err(runner_error)
+    }
+
+    pub fn picture_planes(&self, g: &Gpu) -> Result<(Vec<u8>, Vec<u8>), String> {
+        let runner = self.runner.lock().unwrap();
+        let read = |id| {
+            let texture = runner.export_texture(self.id, id).ok_or("missing picture plane")?;
+            loft_runner::read_texture(&g.device, &g.queue, &texture, 0).map_err(runner_error)
+        };
+        let [visibility, depth] = self.planes;
+        let ids = read(visibility)?.chunks_exact(8).flat_map(|pixel| pixel[..4].iter().copied()).collect();
+        Ok((ids, read(depth)?))
     }
 
     /// The twin: runs kind `k`'s queries on the GPU at samples of 8 floats each (p.xyz or (u, v, 0), row as bits,

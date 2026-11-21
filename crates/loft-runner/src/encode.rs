@@ -1,6 +1,7 @@
 use super::*;
 use command::{Dispatch, Pass, Stamps, Work};
-use loft_std::{bindings::slot, edits::Pipelines, frame::Templates, schedule::{self, Order}};
+use loft_std::frame::Templates;
+use loft_wgpu::{timed, bindings::slot, edits::Pipelines, schedule::{self, Order}};
 use std::collections::{BTreeSet, HashMap};
 use wgpu::util::DeviceExt;
 use std::time::Duration;
@@ -82,13 +83,6 @@ pub struct PipelineCreates {
     pub render: Vec<(String, f64)>,
 }
 
-pub(super) fn timed<T>(clock: Option<fn() -> Duration>, create: impl FnOnce() -> T) -> (T, f64) {
-    let start = clock.map(|now| now());
-    let value = create();
-    let ms = clock.zip(start).map_or(f64::NAN, |(now, start)| (now() - start).as_secs_f64() * 1e3);
-    (value, ms)
-}
-
 #[cfg(not(target_arch = "wasm32"))]
 fn create_all<T: Send + 'static, P: Send + 'static>(recipes: Vec<T>, create: impl Fn(T) -> P + Send + Sync + 'static) -> Result<Vec<P>> {
     if recipes.len() <= 1 {
@@ -97,7 +91,7 @@ fn create_all<T: Send + 'static, P: Send + 'static>(recipes: Vec<T>, create: imp
     let create = Arc::new(create);
     let workers = recipes.into_iter().map(|recipe| {
         let create = Arc::clone(&create);
-        loft_std::promotion::worker(move || create(recipe))
+        loft_wgpu::promotion::worker(move || create(recipe))
     }).collect::<Vec<_>>();
     workers.into_iter().map(|worker| worker.map_err(|e| RunnerError::InvalidShader(e.to_string()))?
         .recv().map_err(|_| RunnerError::Unsupported("pipeline worker stopped"))).collect()
@@ -309,7 +303,7 @@ impl Pipelines for ComputeCache {
         Ok(())
     }
 }
-pub(super) use loft_std::frame::Clock;
+pub(super) use loft_wgpu::frame::Clock;
 
 #[derive(Default)]
 pub struct FrameOptions<'a> {
@@ -401,7 +395,7 @@ impl Instance {
                         let texture = table.resource.texture().ok_or(RunnerError::UnknownResource)?;
                         let dim = match self.initializers.dimensions.get(id) {
                             Some(&dim) => dim,
-                            None => loft_std::mips::portable(&texture)?,
+                            None => loft_wgpu::mips::portable(&texture)?,
                         };
                         *chain = Some((table.epoch, c.mip_pipelines.prepare(d, &texture, dim, c.cache.as_ref(), c.clock, &mut c.creates.compute)?));
                     }
@@ -416,6 +410,14 @@ impl Instance {
     }
 
     pub fn record_frame(&mut self, d: &wgpu::Device, enc: &mut wgpu::CommandEncoder, clock: Clock<'_>,
+        target: Option<&embed::Target<'_>>, options: FrameOptions<'_>) -> Result<FrameRecord> {
+        let result = self.record_uploaded_frame(d, enc, clock, target, options);
+        // Encoder-owned copies preserve per-pass data even across deferred submissions.
+        self.uploads.finish_and_recall_on_submit(enc);
+        result
+    }
+
+    fn record_uploaded_frame(&mut self, d: &wgpu::Device, enc: &mut wgpu::CommandEncoder, clock: Clock<'_>,
         target: Option<&embed::Target<'_>>, options: FrameOptions<'_>) -> Result<FrameRecord> {
         if options.timestamps.is_some_and(|set| !matches!(set.ty(), wgpu::QueryType::Timestamp) || options.timestamp_start >= set.count()) {
             return Err(RunnerError::AbiMismatch);
@@ -433,17 +435,17 @@ impl Instance {
                 slot @ None => slot.insert(events::Outbox::new(d, buffer.size())?),
             };
             outbox.prepare()?;
-            outbox.begin(d, enc, buffer)?;
+            outbox.begin(&mut self.uploads, enc, buffer)?;
         }
-        if let Some(data) = c.params.take_upload() { upload(d,enc,data,&c.param_buffer,0); }
-        if let Some(data) = inputs { upload(d,enc,data,&c.input_buffer,0); }
+        if let Some(data) = c.params.take_upload() { upload(&mut self.uploads,enc,data,&c.param_buffer,0); }
+        if let Some(data) = inputs { upload(&mut self.uploads,enc,data,&c.input_buffer,0); }
         for id in &self.decl.resources.resets {
             let t = tables.get(id).ok_or(RunnerError::UnknownResource)?;
             if c.clears.contains(id) { enc.clear_buffer(t.bytes()?, 0, None); }
-            else { upload(d, enc, &t.decl.initial, t.bytes()?, 0); }
+            else { upload(&mut self.uploads, enc, &t.decl.initial, t.bytes()?, 0); }
         }
         if matches!(c.templates, Templates::Clock) {
-            upload(d,enc,[(clock.time as f32).to_le_bytes(),clock.dt.to_le_bytes()].as_flattened(),&c.frame,0);
+            upload(&mut self.uploads,enc,[(clock.time as f32).to_le_bytes(),clock.dt.to_le_bytes()].as_flattened(),&c.frame,0);
         }
         let load = self.record_initializers(d, enc, None, true)?;
         let dirty = self.record_initializers(d, enc, None, false)?;
@@ -459,7 +461,7 @@ impl Instance {
             if let Some(bytes) = c.templates.change(id, &mut template, clock.time as f32) {
                 batch.flush();
                 let bytes = options.uniform.map_or(bytes, |f| f(template.expect("selected frame table")));
-                upload(d,batch.encoder,&bytes,&c.frame,0);
+                upload(&mut self.uploads,batch.encoder,&bytes,&c.frame,0);
             }
             let cmd = &c.passes[&id];
             match &cmd.op {
@@ -483,9 +485,9 @@ impl Instance {
                     let live = table.bytes().expect("validated state table");
                     let args = tables[&f.args.resource].bytes().expect("validated arguments");
                     clock.advance(&mut self.history, id, f, table.active, self.decl.state.as_ref(), self.checkpoints.len(), |step| match step {
-                        loft_std::frame::Step::Save(i) => batch.encoder.copy_buffer_to_buffer(live,0,&self.checkpoints[i],0,Some(live.size())),
-                        loft_std::frame::Step::Run { args: data, work, stamps } => {
-                            upload(d, batch.encoder, &data, args, 0);
+                        loft_wgpu::frame::Step::Save(i) => batch.encoder.copy_buffer_to_buffer(live,0,&self.checkpoints[i],0,Some(live.size())),
+                        loft_wgpu::frame::Step::Run { args: data, work, stamps } => {
+                            upload(&mut self.uploads, batch.encoder, &data, args, 0);
                             batch.report.commands += cmd.dispatch(&c.fixed, k, Work::Direct(work)).record(batch.encoder,stamps);
                         }
                     });
@@ -535,13 +537,10 @@ fn resolve(d: &wgpu::Device, tables: &Tables, extent: &DispatchExtent) -> Result
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod edit_gate;
 /// Stage bytes in the encoder so two recorded frames may share the queue without overwriting each other.
-pub(super) fn upload(device: &wgpu::Device, enc: &mut wgpu::CommandEncoder, bytes: &[u8], dst: &wgpu::Buffer, offset: u64) {
-    let scratch = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: None,
-        contents: bytes,
-        usage: wgpu::BufferUsages::COPY_SRC,
-    });
-    enc.copy_buffer_to_buffer(&scratch, 0, dst, offset, Some(bytes.len() as u64));
+fn upload(belt: &mut wgpu::util::StagingBelt, enc: &mut wgpu::CommandEncoder, bytes: &[u8], dst: &wgpu::Buffer, offset: u64) {
+    if let Some(size) = wgpu::BufferSize::new(bytes.len() as u64) {
+        belt.write_buffer(enc, dst, offset, size).copy_from_slice(bytes);
+    }
 }
 
 #[derive(Clone)]

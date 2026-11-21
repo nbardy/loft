@@ -39,6 +39,7 @@ pub fn reflect(
                     _ => (var.ty, None),
                 };
                 let ty = match ir.types[ty].inner {
+                    TypeInner::AccelerationStructure { vertex_return } => Binding::AccelerationStructure { vertex_return },
                     TypeInner::Sampler { comparison } => Binding::Sampler(if comparison {
                         wgpu::SamplerBindingType::Comparison
                     } else {
@@ -124,6 +125,7 @@ pub fn reflect(
             Binding::Texture { .. } => Some(SampledTex),
             Binding::StorageTexture { .. } => Some(StorageTex),
             Binding::Sampler(_) => Some(Sampler),
+            Binding::AccelerationStructure { .. } => Some(AccelerationStructure),
             _ => return Err(RunnerError::AbiMismatch),
         };
         if let Some(access) = access

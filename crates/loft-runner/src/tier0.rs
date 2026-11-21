@@ -1,5 +1,5 @@
 use super::*;
-pub(super) use loft_std::edits::Edits;
+pub(super) use loft_wgpu::edits::Edits;
 impl Runner {
     pub fn register_tier0(&mut self, id: InstanceId, kind: KindId, pass: PassId) -> Result<()> {
         let i = self.instance(id)?;

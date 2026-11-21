@@ -15,6 +15,7 @@ type Bindings = BTreeMap<(String, ShaderStage), Vec<(Address, PassBinding)>>;
 struct Builder {
     bundle: Bundle,
     bindings: Vec<Bindings>,
+    baked_inputs: Resources,
     wave: u16,
 }
 
@@ -134,7 +135,50 @@ impl Builder {
                 bytes: code.into_bytes().into_boxed_slice(),
             });
         }
-        Ok(Self { bundle, bindings, wave: 0 })
+        Ok(Self { bundle, bindings, wave: 0, baked_inputs: Resources::new() })
+    }
+
+    fn native_world(&mut self, program: &Program) -> Result<()> {
+        let kind_modules = program.kinds.iter().map(|kind| kind.module).filter(|&id| {
+            program.modules[id].wgsl.contains("fn loft_tiled_node(")
+                && program.modules[id].wgsl.contains("fn world_secondary(")
+        }).collect::<Vec<_>>();
+        if kind_modules.is_empty() || program.instances.is_empty() { return Ok(()); }
+        let bounds = self.words(6, program.instances.iter()
+            .flat_map(|instance| instance.lo.into_iter().chain(instance.hi).map(f32::to_bits)));
+        self.baked_inputs.insert((3, u32::MAX), bounds);
+        for index in kind_modules {
+            let module = &mut self.bundle.modules[index];
+            let code = std::str::from_utf8(&module.bytes).map_err(|e| e.to_string())?;
+            let ir = naga::front::wgsl::parse_str(code).map_err(|e| e.emit_to_string(code))?;
+            let slot = ir.global_variables.iter().filter_map(|(_, g)| g.binding)
+                .filter(|b| b.group == 3).map(|b| b.binding + 1).max().unwrap_or(0);
+            let start = code.find("fn world_secondary(").ok_or("missing World traversal entry")?;
+            let end = start + code[start..].find("\n}").ok_or("missing World traversal body")? + 2;
+            let mut query = include_str!("world_ray_query.wgsl").replace("RAY_QUERY_SLOT", &slot.to_string());
+            let members = ir.types.iter().find_map(|(_, ty)| match &ty.inner {
+                TypeInner::Struct { members, .. } if ty.name.as_deref() == Some("LoftRay") => Some(members),
+                _ => None,
+            }).filter(|members| members.len() == 4).ok_or("missing World ray type")?;
+            // Naga may rename members such as t0 during portable WGSL emission.
+            for (member, key) in members.iter().zip(["RAY_ORIGIN", "RAY_DIRECTION", "RAY_NEAR", "RAY_FAR"]) {
+                query = query.replace(key, member.name.as_deref().ok_or("unnamed World ray field")?);
+            }
+            // Naga's WGSL writer cannot round-trip ray query instructions. The
+            // portable module has already been canonicalized, including its slots.
+            let code = format!("enable wgpu_ray_query;\n{}{}{}", &code[..start], query, &code[end..]);
+            let ir = naga::front::wgsl::parse_str(&code).map_err(|e| e.emit_to_string(&code))?;
+            valid::Validator::new(valid::ValidationFlags::all(), valid::Capabilities::default() | valid::Capabilities::RAY_QUERY)
+                .validate(&ir).map_err(|e| e.emit_to_string(&code))?;
+            module.hash = *blake3::hash(code.as_bytes()).as_bytes();
+            module.bytes = code.into_bytes().into_boxed_slice();
+            let bindings = self.bindings[index].get_mut(&("shade".into(), ShaderStage::Compute))
+                .ok_or("missing tiled shade entry")?;
+            bindings.push(((3, u32::MAX), PassBinding {
+                group: 3, slot, resource: bounds, access: BindAccess::AccelerationStructure,
+            }));
+        }
+        Ok(())
     }
 
     fn table(
@@ -205,7 +249,7 @@ impl Builder {
                 .ok_or_else(|| format!("module {} has no {stage:?} entry {name}", module.0))?;
             for (original, binding) in decl {
                 let mut binding = *binding;
-                binding.resource = resources.get(original).copied()
+                binding.resource = resources.get(original).or_else(|| self.baked_inputs.get(original)).copied()
                     .ok_or_else(|| format!("entry {name} needs original binding {original:?}"))?;
                 if bindings
                     .insert((binding.group, binding.slot), binding)
@@ -355,11 +399,14 @@ pub struct Options<'a> {
     pub edit: Option<(usize, &'a str, &'a [u8])>,
     /// Native motion sampling has its own absolute tick and readback API.
     pub picture_only: bool,
+    pub hardware_ray_query: bool,
 }
 
 pub struct Prepared {
     pub bundle: Bundle,
     pub instances: TableId,
+    pub visibility: TableId,
+    pub depth: TableId,
     pub modules: Vec<ModuleId>,
     pub shadow: Option<([f32; 3], [f32; 3], u32)>,
     pub shadow_wave: Option<u16>,
@@ -376,6 +423,7 @@ pub fn lower_program(
     let mut b = Builder::new(program, opts.nonce, arg_words,
         opts.edit.map(|(i, source, _)| (program.kinds[i].module, source)))?;
     b.bundle.params = params;
+    if opts.hardware_ray_query && !opts.overdraw { b.native_world(program)?; }
     let mut execution = Execution::default();
     let mut kinds = Vec::new();
     let mut bases = Vec::new();
@@ -517,8 +565,15 @@ pub fn lower_program(
         b.wave += 1;
     }
 
-    for bake in &program.bakes {
+    let mut bakes = program.bakes.iter().collect::<Vec<_>>();
+    bakes.sort_by_key(|bake| &bake.name);
+    if !bakes.is_empty() {
+        let sampler = b.external();
+        b.baked_inputs.insert((3, 2), sampler);
+    }
+    for (slot, bake) in (3..).zip(bakes) {
         let texture = b.transient(4, 0);
+        b.baked_inputs.insert((3, slot), texture);
         let first = PassId(b.bundle.passes.len() as u32);
         let mut passes = bake.passes(texture, first);
         let ids = passes.iter().map(|p| p.id).collect();
@@ -539,7 +594,7 @@ pub fn lower_program(
     }
     let mut present = Resources::from([((1, 0), hdr), ((1, 1), vis)]);
     if let Some(path) = &program.path {
-        for (symbol, data) in crate::bundle::path_words(program, path)? {
+        for (symbol, data) in path_words(program, path)? {
             present.insert(symbol, b.words(1, data));
         }
         if matches!(path.integrator, crate::emit::paths::Integrator::Spectral) {
@@ -659,7 +714,7 @@ pub fn lower_program(
     execution.ranges = b.bundle.passes.iter().flat_map(|pass| {
         pass.bindings.iter().filter_map(move |binding| match binding.access {
             BindAccess::ReadStorage | BindAccess::ReadWriteStorage => Some((pass.id, binding)),
-            BindAccess::SampledTex | BindAccess::StorageTex | BindAccess::BindlessTexArray | BindAccess::Sampler => None,
+            BindAccess::SampledTex | BindAccess::StorageTex | BindAccess::BindlessTexArray | BindAccess::Sampler | BindAccess::AccelerationStructure => None,
         })
     }).map(|(pass, binding)| {
         let table = &b.bundle.tables[binding.resource.0 as usize];
@@ -667,7 +722,7 @@ pub fn lower_program(
             size: (u64::from(table.capacity) * u64::from(table.stride_bytes)).max(4) }
     }).collect();
     b.bundle.tables.extend(execution.table());
-    Ok(Prepared { bundle: b.bundle, instances, shadow: shadow_bounds, shadow_wave,
+    Ok(Prepared { bundle: b.bundle, instances, visibility: vis, depth, shadow: shadow_bounds, shadow_wave,
         modules: program.kinds.iter().map(|k| ModuleId(k.module as u32)).collect() })
 }
 
@@ -723,7 +778,7 @@ pub fn lower_twin(ir: naga::Module, lut: &[f32], kind: [u32; 4], rows_bytes: u64
     if !samples.len().is_multiple_of(8) || samples.is_empty() { return Err("invalid twin sample extent".into()); }
     let count = u32::try_from(samples.len() / 8).map_err(|_| "too many twin samples")?;
     let (code, bindings) = shader(ir, "twin", None, 4)?;
-    let mut b = Builder { bundle: Bundle::default(), bindings: vec![bindings], wave: 0 };
+    let mut b = Builder { bundle: Bundle::default(), bindings: vec![bindings], wave: 0, baked_inputs: Resources::new() };
     b.bundle.modules.push(ModuleBlob { id: ModuleId(0), target: ShaderTarget::Wgsl,
         hash: *blake3::hash(code.as_bytes()).as_bytes(), bytes: code.into_bytes().into_boxed_slice() });
     b.bundle.params = params;

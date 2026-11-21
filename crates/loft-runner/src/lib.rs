@@ -4,19 +4,19 @@ mod encode;
 use loft_ir::execution;
 mod initialize;
 pub mod frame;
-pub use loft_std::interop::render_bundle_stale;
+pub use loft_wgpu::interop::render_bundle_stale;
 mod interop;
-pub mod mips;
+pub use loft_wgpu::mips;
+use loft_wgpu::allocate;
 mod stepping;
 #[cfg(not(target_arch = "wasm32"))]
-pub use stepping::{read_buffer, read_texture};
-mod resources;
+pub use loft_wgpu::readback::{read_buffer, read_texture};
 use loft_std::inputs;
 pub use backend::{ExecutionBackend, WgpuBackend};
 pub type Runner = WgpuBackend;
 
 use loft_ir::*;
-use loft_std::{interop::Resource, storage};
+use loft_wgpu::{interop::Resource, storage};
 use std::{collections::BTreeMap, sync::Arc};
 
 pub use loft_std::error::{RunnerError, Result};
@@ -40,19 +40,12 @@ struct Instance {
     resource_epoch: u64,
     checkpoints: Vec<Arc<wgpu::Buffer>>,
     history: stepping::History,
+    uploads: wgpu::util::StagingBelt,
     outbox: Option<events::Outbox>,
     pick_source: Option<pick::Source>,
     compute: encode::ComputeCache,
     initializers: initialize::Initializers,
     edits: tier0::Edits,
-}
-fn allocate(d: &wgpu::Device, size: u64, usage: wgpu::BufferUsages) -> Arc<wgpu::Buffer> {
-    Arc::new(d.create_buffer(&wgpu::BufferDescriptor {
-        label: None,
-        size: size.max(4),
-        usage,
-        mapped_at_creation: false,
-    }))
 }
 impl std::ops::Deref for Table {
     type Target = Resource;
@@ -66,7 +59,8 @@ impl Instance {
             .ok_or(RunnerError::AbiMismatch)).transpose()?.unwrap_or_default();
         if decl.tables.iter().any(|t| t.id == execution::DESCRIPTOR) { return Err(RunnerError::AbiMismatch); }
         let mut tables = storage::allocations(&decl, &device.limits())?.into_iter().map(|(t,active,alloc)| {
-            let resource = resources::create(device, queue, t, alloc, interop::buffer_usage(&decl, t.id))?;
+            let resource = storage::create(device, queue, t, alloc, interop::buffer_usage(&decl, t.id),
+                decl.resources.comparison_samplers.contains(&t.id))?;
             Ok((t.id, Table { decl:t.clone(), resource, active, epoch:0 }))
         }).collect::<Result<BTreeMap<_,_>>>()?;
         let checkpoints = if let Some(s) = &decl.state {
@@ -80,6 +74,7 @@ impl Instance {
         let compute = encode::ComputeCache::prepare(device, &decl, &exec, adapter, pipeline_cache, target.map(|target| (target, &tables)), clock)?;
         initializers.check_params(compute.params.bytes().len() / 4)?;
         Ok(Self { tables, decl, execution: exec, compute, initializers, checkpoints, resource_epoch:0,
+            uploads: wgpu::util::StagingBelt::new(device.clone(), 4096),
             edits:Default::default(), history:Default::default(), outbox:None, pick_source:None })
     }
     fn arena(&mut self, k: KindId) -> Result<&mut Table> {
@@ -227,8 +222,13 @@ pub mod pick;
 pub use loft_format::replay;
 pub mod tier0;
 #[doc(hidden)]
-pub use loft_std::promotion;
+pub use loft_wgpu::promotion;
 
 #[cfg(test)]
 mod tests;
-pub mod command;
+pub use loft_wgpu::command;
+
+#[cfg(all(target_arch = "wasm32", feature = "web-sys"))]
+pub use loft_wgpu::web;
+
+pub use loft_wgpu::ray_query;

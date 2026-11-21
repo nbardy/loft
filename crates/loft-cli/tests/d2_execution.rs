@@ -97,12 +97,7 @@ fn padded_offset_adopted_and_arena_capacity() {
 
 fn compile(file: &str, text: &str, overrides: &[(String, f64)]) -> (loft_passes::program::Program, loft_passes::Compiled) {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let mut paths = fs::read_dir(root.join("lib")).unwrap().map(|e| e.unwrap().path())
-        .filter(|p| p.extension().is_some_and(|e| e == "loft")).collect::<Vec<_>>();
-    paths.sort();
-    let mut src = Sources::default();
-    for file in paths { src.add(file.display().to_string(), fs::read_to_string(&file).unwrap()); }
-    src.add(file, text.to_owned());
+    let src = loft_passes::source::Graph::text(&root, Path::new(file), text);
     let (program, _, checked) = loft_passes::compile(&src, overrides).unwrap_or_else(|e| panic!("{}", e.render(&src)));
     (program, checked)
 }
@@ -190,7 +185,7 @@ fn ungated_storage_texture_is_refused_before_pipeline_creation() {
         ..Default::default()
     };
     assert_eq!(host(&d, &q).load_bundle(&bundle), Err(loft_runner::RunnerError::TextureAccess {
-        format: F::R16Float, access: gpu::StorageTextureAccess::WriteOnly,
+        format: "R16Float".into(), access: "WriteOnly".into(),
     }));
 }
 
@@ -201,7 +196,7 @@ fn prepared_sessions_share_encoder_and_query_set() {
     let (d, q) = device(&adapter, gpu::Features::TIMESTAMP_QUERY);
     let mut first = host(&d, &q);
     let mut second = host(&d, &q);
-    let (p, checked) = compile("capsules.loft", include_str!("../../../engines/capsules.loft"), &[("count".into(), 1.)]);
+    let (p, checked) = compile("stdlib/engines/capsules.loft", include_str!("../../../stdlib/engines/capsules.loft"), &[("count".into(), 1.)]);
     let bundle = lower(&p, &checked, (32, 32));
     let a = first.load_bundle(&bundle).unwrap();
     let b = second.load_bundle(&bundle).unwrap();
@@ -234,8 +229,8 @@ fn archive_frames() {
     let size = (1280, 800);
     let target = image(&d, [size.0, size.1, 1]);
     for family in ["capsules", "blobs", "hermit"] {
-        let scene = format!("engines/{family}.loft");
-        let text = fs::read_to_string(&scene).unwrap();
+        let scene = format!("stdlib/engines/{family}.loft");
+        let text = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(&scene)).unwrap();
         for count in [1, 20] {
             let (p, checked) = compile(&scene, &text, &[("count".into(), f64::from(count))]);
             let light = std::cell::Cell::new(None);
@@ -275,4 +270,24 @@ fn archive_frames() {
             }
         }
     }
+}
+
+#[test]
+fn sampled_study_ink_draws_from_the_portable_bake() {
+    let scene = include_str!("../../../scenes/spectral_caustic_study.loft");
+    let sampled = scene.replace("let stroke = study_ink(p.xz)",
+        "let stroke = sample(StudyInk, 0.5 * (p.xz + [1.0, 1.0]))");
+    let (program, compiled) = compile("scenes/spectral_caustic_study.loft", &sampled, &[]);
+    let size = (64, 48);
+    let bundle = lower(&program, &compiled, size);
+    let gpu = native::gpu().unwrap();
+    let (d, q) = (Arc::new(gpu.device.clone()), Arc::new(gpu.queue.clone()));
+    let mut portable = host(&d, &q);
+    let id = portable.load_bundle_bytes(&loft_runner::bundle::encode(&bundle)).unwrap();
+    let target = image(&d, [size.0, size.1, 1]);
+    draw(&mut portable, id, &d, &q, &target, 0.);
+    assert_eq!(portable.image(id, "StudyInk").unwrap().mip_level_count(), 10);
+    let native = Loaded::new(&gpu, &program, size, None).unwrap();
+    native.frame(&gpu, 0.);
+    assert_eq!(read_texture(&d, &q, &target, 0).unwrap(), native.pixels(&gpu).unwrap());
 }

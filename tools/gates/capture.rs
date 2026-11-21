@@ -1,6 +1,9 @@
 // Build with pictures.py against the same lab artifacts as the measured Loft binary.
+#[cfg(legacy_native_capture)]
 #[allow(dead_code, unused_imports)]
 mod native;
+#[cfg(not(legacy_native_capture))]
+use loft_native as native;
 use loft_passes::{program::Program, source::Graph};
 use native::Loaded;
 use serde_json::Value;

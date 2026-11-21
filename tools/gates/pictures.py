@@ -1,12 +1,9 @@
-# /// script
-# dependencies = ["numpy", "pillow"]
-# ///
 """Score lossless pictures and exact structural planes or a seeded path sequence."""
 
 import argparse
 import hashlib
 import json
-import math
+import os
 import re
 import shutil
 import subprocess
@@ -14,8 +11,6 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-import numpy as np
-from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = Path(__file__).with_name("pictures.json")
@@ -39,79 +34,34 @@ class Stochastic:
     frames: tuple
 
 
-def rgba(path, size):
-    with Image.open(path) as image:
-        if image.format != "PNG" or image.mode != "RGBA" or image.size != size:
-            raise ValueError(f"{path}: expected lossless RGBA8 PNG at {size}")
-        return np.array(image)
-
-
 def rgba_hash(image):
     return hashlib.sha256(image.tobytes()).hexdigest()
 
 
-def deterministic(mode):
-    approved = rgba(mode.approved, mode.size)
-    if rgba_hash(approved) != mode.approved_hash:
-        raise ValueError(f"{mode.approved}: approved RGBA hash mismatch")
-    baseline = rgba(mode.baseline / f"{mode.stem}.png", mode.size)
-    candidate = rgba(mode.candidate / f"{mode.stem}.png", mode.size)
-    # Main defines the drift budget. Report the frozen comparison for review.
-    comparisons = {}
-    for name, reference in (("main", baseline), ("approved", approved)):
-        delta = np.abs(candidate.astype(np.int16) - reference).max(axis=2)
-        changed = int(np.count_nonzero(delta))
-        worst = int(delta.max())
-        comparisons[name] = {
-            "changed_pixels": changed, "max_code_delta": worst,
-            "held": worst <= 1 and changed * 1000 < delta.size,
-        }
-    structural = {}
-    for name in ("id.u32", "depth.f32"):
-        planes = [(arm / f"{mode.stem}.{name}").read_bytes()
-                  for arm in (mode.baseline, mode.candidate)]
-        if any(len(plane) != math.prod(mode.size) * 4 for plane in planes):
-            raise ValueError(f"{mode.stem}.{name}: expected one 32-bit word per pixel")
-        structural[name] = planes[0] == planes[1]
-    return {
-        "pixels": math.prod(mode.size), "rgba_sha256": rgba_hash(candidate),
-        "comparisons": comparisons, "structure": structural,
-        "held": comparisons["main"]["held"] and all(structural.values()),
-    }
+def score_pack(modes, cli=None):
+    requests = {}
+    for name, mode in modes.items():
+        match mode:
+            case Deterministic():
+                requests[name] = {"deterministic": vars(mode)}
+            case Stochastic():
+                fields = ("size", "min_reference_psnr_db", "min_psnr_db", "max_temporal_variance")
+                requests[name] = {"stochastic": {
+                    **{key: mode.config[key] for key in fields},
+                    "reference": mode.reference, "convergence": mode.convergence, "frames": mode.frames,
+                }}
+    if cli is None:
+        cli = os.environ.get("LOFT_PICTURE_SCORER", ROOT / "target/lab/loft")
+    request = json.dumps(requests, default=os.fspath)
+    result = subprocess.run([cli, "gate", "--score-pictures"], input=request,
+                            text=True, capture_output=True)
+    if result.returncode != 0:
+        raise ValueError(result.stderr.strip() or result.stdout.strip())
+    return json.loads(result.stdout)
 
 
-def psnr(a, b):
-    mse = np.mean(np.square(a - b))
-    # JSON has no infinity. Zero MSE is a separate, exact observation.
-    return None if mse == 0 else float(-10 * np.log10(mse))
-
-
-def stochastic(mode):
-    cfg = mode.config
-    size = tuple(cfg["size"])
-    reference = rgba(mode.reference, size)[..., :3] / 255
-    convergence = rgba(mode.convergence, size)[..., :3] / 255
-    frames = np.stack([rgba(path, size)[..., :3] / 255 for path in mode.frames])
-    convergence_db = psnr(reference, convergence)
-    frame_db = [psnr(frame, reference) for frame in frames]
-    # Variance is measured per pixel and channel before spatial averaging.
-    variance = float(np.var(frames, axis=0, ddof=1).mean())
-    converged = convergence_db is None or convergence_db >= cfg["min_reference_psnr_db"]
-    return {
-        "reference_psnr_db": convergence_db, "frame_psnr_db": frame_db,
-        "temporal_variance": variance,
-        "held": converged and variance <= cfg["max_temporal_variance"]
-        and all(db is None or db >= cfg["min_psnr_db"] for db in frame_db),
-    }
-
-
-def score(mode):
-    match mode:
-        case Deterministic():
-            return deterministic(mode)
-        case Stochastic():
-            return stochastic(mode)
-    raise TypeError(mode)
+def score(mode, cli=None):
+    return score_pack({"picture": mode}, cli)["picture"]
 
 
 def sequence(cfg, folder, frame_prefix="seed"):
@@ -166,13 +116,10 @@ def capture_path(reference_cli, cli, name, cfg, out):
     for seed, good, broken in zip(seeds, candidate.frames, mutant.frames, strict=True):
         render("candidate", cli, good, seed, cfg["samples"], 1.0)
         render("candidate", cli, broken, seed, cfg["samples"], 0.1)
-    return {
-        name: score(candidate),
-        f"{name}-mutant": score(mutant),
-    }
+    return score_pack({name: candidate, f"{name}-mutant": mutant}, cli)
 
 
-def deterministic_pack(config, baseline, candidate):
+def deterministic_pack(config, baseline, candidate, cli=None):
     manifest = json.loads((ROOT / "engines/gates.json").read_text())
     if sorted(config) != sorted(scene["name"] for scene in manifest["scenes"]):
         raise ValueError("every Pictures gate scene needs a mode declaration")
@@ -186,12 +133,12 @@ def deterministic_pack(config, baseline, candidate):
             stamp = format(time, "g")
             name = scene["name"]
             stem = f"{name}_t{stamp}"
-            results[stem] = score(Deterministic(
+            results[stem] = Deterministic(
                 tuple(manifest["size"]), manifest["refs"][f"{name}@{stamp}"],
                 ROOT / "tests/fixtures/gate-refs" / f"{stem}.png",
                 baseline, candidate, stem,
-            ))
-    return results
+            )
+    return score_pack(results, cli)
 
 
 def write_capture_inputs(root, out):
@@ -205,8 +152,12 @@ def write_capture_inputs(root, out):
 
 
 def capture(build_log, root, out):
-    crates = {"loft_ir", "loft_passes", "loft_runner", "naga", "png", "pollster",
-              "serde", "serde_json", "wgpu"}
+    legacy = not (root / "crates/loft-native").is_dir()
+    crates = {"loft_passes", "naga", "png", "serde_json"}
+    if legacy:
+        crates.update({"loft_ir", "loft_runner", "pollster", "serde", "wgpu"})
+    else:
+        crates.add("loft_native")
     libraries = {crate: set() for crate in crates}
     with build_log.open() as messages:
         for line in messages:
@@ -224,31 +175,34 @@ def capture(build_log, root, out):
         raise ValueError(f"capture libraries must come from {expected}")
     out.mkdir(parents=True)
     scratch = out / "instrument"
-    native = scratch / "native"
-    shutil.copytree(root / "crates/loft-cli/src/native", native)
+    scratch.mkdir()
     here = Path(__file__).parent
-    for source in ("capture.rs", "capture_planes.rs"):
-        shutil.copy2(here / source, scratch)
-    module = native / "mod.rs"
-    code = module.read_text()
-    for before, after in (
-        ('size, VIS, T::RENDER_ATTACHMENT | T::TEXTURE_BINDING);',
-         'size, VIS, T::RENDER_ATTACHMENT | T::TEXTURE_BINDING | T::COPY_SRC);'),
-        ('"depth", size, DEPTH, T::RENDER_ATTACHMENT);',
-         '"depth", size, DEPTH, T::RENDER_ATTACHMENT | T::COPY_SRC);'),
-        ('wgpu::StoreOp::Store, wgpu::StoreOp::Discard),',
-         'wgpu::StoreOp::Store, wgpu::StoreOp::Store),'),
-    ):
-        if code.count(before) != 1:
-            raise ValueError(f"{root}: native picture attachment declaration changed: {before}")
-        code = code.replace(before, after)
-    module.write_text(code + '\ninclude!("../capture_planes.rs");\n')
+    shutil.copy2(here / "capture.rs", scratch)
+    if legacy:
+        native = scratch / "native"
+        shutil.copytree(root / "crates/loft-cli/src/native", native)
+        module = native / "mod.rs"
+        code = module.read_text()
+        for before, after in (
+            ('size, VIS, T::RENDER_ATTACHMENT | T::TEXTURE_BINDING);',
+             'size, VIS, T::RENDER_ATTACHMENT | T::TEXTURE_BINDING | T::COPY_SRC);'),
+            ('"depth", size, DEPTH, T::RENDER_ATTACHMENT);',
+             '"depth", size, DEPTH, T::RENDER_ATTACHMENT | T::COPY_SRC);'),
+            ('wgpu::StoreOp::Store, wgpu::StoreOp::Discard),',
+             'wgpu::StoreOp::Store, wgpu::StoreOp::Store),'),
+        ):
+            if code.count(before) != 1:
+                raise ValueError(f"{root}: native picture attachment declaration changed: {before}")
+            code = code.replace(before, after)
+        module.write_text(code + '\ninclude!("../capture_planes.rs");\n')
+        shutil.copy2(here / "capture_planes.rs", scratch)
     executable = scratch / "capture"
     externs = [word for crate, path in sorted(deps.items()) for word in ("--extern", f"{crate}={path}")]
     search = [word for path in sorted({p.parent for p in deps.values()})
               for word in ("-L", f"dependency={path}")]
     rustc = subprocess.check_output(["rustup", "which", "rustc"], cwd=root, text=True).strip()
-    subprocess.run([ROOT / "tools/lib/build_gate.sh", "run", rustc, "--edition=2024",
+    cfg = ["--cfg", "legacy_native_capture"] if legacy else []
+    subprocess.run([ROOT / "tools/lib/build_gate.sh", "run", rustc, "--edition=2024", *cfg,
                     "-C", "opt-level=2", *search, *externs,
                     scratch / "capture.rs", "-o", executable], cwd=root, check=True)
     subprocess.run([ROOT / "tools/gpu_lock.sh", executable, root, out], check=True)
@@ -261,6 +215,7 @@ def main():
     comparison = commands.add_parser("deterministic")
     comparison.add_argument("baseline", type=Path)
     comparison.add_argument("candidate", type=Path)
+    comparison.add_argument("--scorer", type=Path)
     comparison.set_defaults(mode="deterministic")
     raw = commands.add_parser("capture")
     raw.add_argument("build_log", type=Path)
@@ -284,7 +239,7 @@ def main():
             capture(args.build_log, args.checkout.resolve(strict=True), args.out.resolve())
             return 0
         case "deterministic":
-            results = deterministic_pack(config["deterministic"], args.baseline, args.candidate)
+            results = deterministic_pack(config["deterministic"], args.baseline, args.candidate, args.scorer)
         case "sequence":
             if args.scene not in config["stochastic"]:
                 parser.error(f"{args.scene}: no stochastic mode declaration")
