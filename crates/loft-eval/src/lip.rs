@@ -1,5 +1,5 @@
 //! Derived bounds (draft §2D): interval arithmetic with a Lipschitz bound carried beside every value, run through the
-//! shared evaluator. Per row, a branch-and-bound over the field's interval extension finds the world AABB of its
+//! shared evaluator and its builtin dispatch. Per row, a branch-and-bound over the field's interval extension finds the world AABB of its
 //! surface; one more evaluation over that AABB gives L. Nothing is authored: an unbounded result is E211/E212.
 //!
 //! Precision: intervals are f64 without outward rounding, so they bound the f64 field. The GPU evaluates in f32, so
@@ -309,7 +309,7 @@ impl Scalar for TraceIv {
             Un::Abs if self.iv.lo >= 0.0 => self.clone(),
             Un::Abs if self.iv.hi <= 0.0 => self.neg(),
             Un::Abs => Self { iv, form: self.form.clone().and_then(Form::abs) },
-            _ => iv.into(),
+            Un::Sin | Un::Cos | Un::Sqrt | Un::Exp | Un::Floor | Un::Fract | Un::Sign => iv.into(),
         }
     }
     fn min(&self, o: &Self) -> Self { self.iv.min(&o.iv).into() }

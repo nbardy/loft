@@ -8,6 +8,7 @@ mod kernel_units;
 #[path = "motion_source.rs"]
 pub mod motion_source;
 use crate::Prog;
+use loft_builtins::{ArgShape, Builtin, BuiltinSpec, PolyRule, RetShape, SigRule, lookup};
 use loft_parse::ast::*;
 use loft_ir::{Code, Diag, Res, Span};
 use std::collections::{BTreeMap, HashMap};
@@ -1110,10 +1111,10 @@ impl<'p,'a> Ck<'p,'a> {
         if let Some(a) = args.iter().find_map(|a| a.name.as_ref()) {
             return Err(Diag::new(Code::E405, a.span, "named arguments are schedule-only in Phase 0", "pass arguments by position"));
         }
-        if callee.name == SAMPLE_PRIOR {
-            let [prior, time] = args else {
-                return Err(e003(span, "sample_prior needs two arguments", "write sample_prior(PlanName, t)"));
-            };
+        let spec = lookup(&callee.name);
+        if let Some(spec) = spec.filter(|spec| spec.id == Builtin::SamplePrior) {
+            builtin_arity(spec, args.len(), span)?;
+            let (prior, time) = (&args[0], &args[1]);
             let decl = match &prior.value.kind {
                 ExprKind::Name(name) => self.p.plans.get(name.as_str()),
                 _ => None,
@@ -1128,11 +1129,10 @@ impl<'p,'a> Ck<'p,'a> {
             self.set(&prior.value, Ty::U32);
             return Ok(Ty::Struct("PriorSample".into()));
         }
-        if matches!(callee.name.as_str(), SAMPLE | SAMPLE_LOD) && !self.p.fns.contains_key(callee.name.as_str()) {
-            let arity = if callee.name == SAMPLE { 2 } else { 3 };
-            if args.len() != arity || args.iter().any(|arg| arg.name.is_some()) {
-                return Err(e003(span, "invalid texture sample arguments", "write sample(Texture, uv) or sample_lod(Texture, uv, lod)"));
-            }
+        if let Some(spec) = spec.filter(|spec| spec.sig == SigRule::Poly(PolyRule::TextureSample))
+            && !self.p.fns.contains_key(callee.name.as_str())
+        {
+            builtin_arity(spec, args.len(), span)?;
             let name = &args[0].value;
             let ExprKind::Name(name) = &name.kind else {
                 return Err(e003(name.span, "expected a baked texture name", "name a bake_tex declaration"));
@@ -1156,13 +1156,13 @@ impl<'p,'a> Ck<'p,'a> {
             return self.resolve(bake.texel.ret.as_ref().expect("typed bake value"), true);
         }
         // `sample_c2(scan, t)`: the scan is named, not passed as a value.
-        if matches!(callee.name.as_str(), SAMPLE_C2 | DERIVATIVE_SAMPLE) {
-            let want = if callee.name == SAMPLE_C2 { 2 } else { 3 };
+        if let Some(spec) = spec.filter(|spec| spec.sig == SigRule::Poly(PolyRule::ScanFrame)) {
+            builtin_arity(spec, args.len(), span)?;
             let sc = match args.first().map(|a| &a.value.kind) {
                 Some(ExprKind::Name(n)) => self.p.scans.get(n.as_str()).copied(),
                 _ => None,
             };
-            let (Some(sc), true) = (sc, args.len() == want) else {
+            let Some(sc) = sc else {
                 return Err(e003(span, format!("`{}` takes a scan's name and its parameter", callee.name), "write `sample_c2(my_scan, t)`"));
             };
             self.set(&args[0].value, Ty::Void);
@@ -1172,8 +1172,11 @@ impl<'p,'a> Ck<'p,'a> {
             }
             return self.types.get(sc.init.id as usize).filter(|t| matches!(t, Ty::Frame(_))).cloned().ok_or_else(|| e003(sc.init.span,"scan result type unavailable","initialise the scan with a frame"));
         }
-        if callee.name == UNKNOWN_VERDICT && !self.p.fns.contains_key(UNKNOWN_VERDICT) {
-            if let [Arg { value: Expr { kind: ExprKind::Name(reason), .. }, .. }] = args
+        if let Some(spec) = spec.filter(|spec| spec.id == Builtin::Unknown)
+            && !self.p.fns.contains_key(callee.name.as_str())
+        {
+            builtin_arity(spec, args.len(), span)?;
+            if let ExprKind::Name(reason) = &args[0].value.kind
                 && crate::reason(reason).is_some()
             {
                 return Ok(Ty::Verdict);
@@ -1249,19 +1252,6 @@ impl<'p,'a> Ck<'p,'a> {
                 None => Ty::Void,
             };
             return Ok(subst(&ret, &vars));
-        }
-        if let Some(op) = crate::quant::Quant::resolve(&callee.name) {
-            let (params, result) = op.signature();
-            if ts.len() != params.len() {
-                return Err(e003(span, format!("{} takes {} arguments", op.name(), params.len()), "match the packed intrinsic signature"));
-            }
-            for ((arg, ty), expected) in args.iter().zip(ts).zip(params) {
-                self.assignable(&ty, expected, arg.value.span)?;
-                if ty == Ty::AbstractInt {
-                    self.set(&arg.value, expected.clone());
-                }
-            }
-            return Ok(result);
         }
         if let Some(world) = crate::world::WorldCall::resolve(&callee.name, &ts, span)? {
             if matches!(world.query, crate::world::WorldQuery::Sky { .. }) {
@@ -1346,13 +1336,6 @@ impl<'p,'a> Ck<'p,'a> {
                 }
                 return Err(e003(span, "subgroup_add takes one numeric scalar", "pass an f, i or u value"));
             }
-            MIX_BSDF => {
-                if let [Ty::Bsdf, Ty::Bsdf, Ty::F32 | Ty::AbstractInt] = ts.as_slice() {
-                    self.set(&args[2].value, Ty::F32);
-                    return Ok(Ty::Bsdf);
-                }
-                return Err(e003(span, "mix_bsdf takes (Bsdf, Bsdf, f)", "supply two materials and a scalar weight"));
-            }
             _ => {}
         }
         if MAP_OPS.contains(&callee.name.as_str()) {
@@ -1363,7 +1346,57 @@ impl<'p,'a> Ck<'p,'a> {
                 format!("use it in a map statement: `map m = p |> {}(...);`", callee.name),
             ));
         }
-        builtin(&callee.name, &ts, &sp, span)
+        let Some(spec) = spec.filter(|spec| spec.sig != SigRule::Poly(PolyRule::Unchecked)) else {
+            return Err(Diag::new(
+                Code::E011, span, format!("unknown function `{}`", callee.name),
+                "declare it with `fn`, or check the spelling",
+            ));
+        };
+        builtin_arity(spec, ts.len(), span)?;
+        match spec.sig {
+            SigRule::Fixed(params, result) => {
+                for ((arg, actual), shape) in args.iter().zip(&ts).zip(params) {
+                    let expected = match shape {
+                        ArgShape::Scalar if num(actual) => continue,
+                        ArgShape::Spatial if matches!(actual, Ty::Geo(..)) => continue,
+                        ArgShape::Scalar => return Err(e003(arg.value.span, "expected a numeric scalar", "convert the argument to a scalar")),
+                        ArgShape::Spatial => return Err(e003(arg.value.span, "expected a spatial value", "pass a point or vector")),
+                        ArgShape::F32 => {
+                            if *actual != Ty::F32 {
+                                return Err(e003(arg.value.span, "expected f32", "pass an f32 value"));
+                            }
+                            continue;
+                        }
+                        ArgShape::Float => Ty::F32,
+                        ArgShape::U32 => Ty::U32,
+                        ArgShape::Vec2 => Ty::VecN(2),
+                        ArgShape::Vec3 => Ty::VecN(3),
+                        ArgShape::Bsdf => Ty::Bsdf,
+                        ArgShape::Plan | ArgShape::Reason => unreachable!("named builtin operands are checked before value operands"),
+                    };
+                    self.assignable(actual, &expected, arg.value.span)?;
+                    // Packed words and BSDF weights retain their contextual types in IR.
+                    if (*shape == ArgShape::U32 && *actual == Ty::AbstractInt)
+                        || (spec.id == Builtin::MixBsdf && *shape == ArgShape::Float)
+                    {
+                        self.set(&arg.value, expected);
+                    }
+                }
+                Ok(match result {
+                    RetShape::Bool => Ty::Bool,
+                    RetShape::F32 => Ty::F32,
+                    RetShape::I32 => Ty::I32,
+                    RetShape::U32 => Ty::U32,
+                    RetShape::Vec2 => Ty::VecN(2),
+                    RetShape::Vec3 => Ty::VecN(3),
+                    RetShape::Vec4 => Ty::VecN(4),
+                    RetShape::Verdict => Ty::Verdict,
+                    RetShape::Bsdf => Ty::Bsdf,
+                    RetShape::PriorSample => Ty::Struct("PriorSample".into()),
+                })
+            }
+            SigRule::Poly(rule) => builtin_poly(spec.name, rule, &ts, &sp, span),
+        }
     }
 
     fn world_query(&self, call: crate::world::WorldCall<Ty>, span: Span) -> Res<Ty> {
@@ -1569,28 +1602,17 @@ fn geo_space(t: &Ty) -> Space {
     }
 }
 
-const SAMPLE_PRIOR: &str = "sample_prior";
-const SAMPLE: &str = "sample";
-const SAMPLE_LOD: &str = "sample_lod";
-const SAMPLE_C2: &str = "sample_c2";
-const DERIVATIVE_SAMPLE: &str = "loft_dsample";
-const UNKNOWN_VERDICT: &str = "unknown";
 const EMIT_EVENT: &str = "emit_event";
 const INSCATTER_JOINT: &str = "inscatter_joint";
 const ATOMIC_ADD: &str = "atomic_add";
 const GLOBAL_ID: &str = "global_id";
 const WORKGROUP_BARRIER: &str = "workgroup_barrier";
 const SUBGROUP_ADD: &str = "subgroup_add";
-const MIX_BSDF: &str = "mix_bsdf";
-
 pub fn builtin_names() -> impl Iterator<Item = &'static str> {
-    BUILTINS.iter().copied()
-        .chain([
-            SAMPLE_PRIOR, SAMPLE, SAMPLE_LOD, SAMPLE_C2, DERIVATIVE_SAMPLE,
-            UNKNOWN_VERDICT, EMIT_EVENT, INSCATTER_JOINT, ATOMIC_ADD, GLOBAL_ID,
-            WORKGROUP_BARRIER, SUBGROUP_ADD, MIX_BSDF,
-        ])
-        .chain(crate::quant::Quant::ALL.into_iter().map(crate::quant::Quant::name))
+    loft_builtins::BUILTINS.iter()
+        .filter(|spec| spec.sig != SigRule::Poly(PolyRule::Unchecked))
+        .map(|spec| spec.name)
+        .chain([EMIT_EVENT, INSCATTER_JOINT, ATOMIC_ADD, GLOBAL_ID, WORKGROUP_BARRIER, SUBGROUP_ADD])
         .chain(crate::world::QUERY_ARITIES.iter().map(|&(name, _)| name))
 }
 
@@ -1605,106 +1627,66 @@ pub fn builtin_types() -> impl Iterator<Item = &'static str> {
     CORE_TYPES.iter().map(|&(name, _)| name).chain([RADIANCE])
 }
 
-/// The same arms generate the checker dispatch and the author-facing index.
-macro_rules! builtin_table {
-    (($name:ident, $ts:ident, $sp:ident, $span:ident) [$($setup:tt)*] {
-        $($($spelling:literal)|+ $(if $guard:expr)? => $body:expr,)*
-        _ => $unknown:expr
-    }) => {
-        const BUILTINS: &[&str] = &[$($($spelling),+),*];
-
-        fn builtin($name: &str, $ts: &[Ty], $sp: &[Span], $span: Span) -> Res<Ty> {
-            $($setup)*
-            match $name {
-                $($($spelling)|+ $(if $guard)? => $body,)*
-                _ => $unknown,
-            }
-        }
-    };
+fn builtin_arity(spec: &BuiltinSpec, actual: usize, span: Span) -> Res<()> {
+    let (min, max) = (usize::from(spec.min_arity), usize::from(spec.max_arity));
+    if (min..=max).contains(&actual) {
+        return Ok(());
+    }
+    let expected = if min == max { min.to_string() } else { format!("{min} to {max}") };
+    Err(e003(span, format!("`{}` takes {expected} argument(s), got {actual}", spec.name), "match the signature"))
 }
 
-builtin_table! {
-    (name, ts, sp, span) [
-        use Geo::*;
-        let arity = |n: usize| -> Res<()> {
-            if ts.len() == n { Ok(()) } else { Err(e003(span, format!("`{name}` takes {n} argument(s), got {}", ts.len()), "match the signature")) }
-        };
-        let same_space = |x: &Space, y: &Space| -> Res<()> {
-            if x == y { Ok(()) } else { Err(e104(sp[1], format!("`{name}` of values in `{x}` and `{y}`"), "bring both into one space")) }
-        };
-        // Componentwise: every argument the same numeric type (a literal converts), result that type.
-        let componentwise = |n: usize| -> Res<Ty> {
-            arity(n)?;
-            let mut t = Ty::AbstractInt;
-            for (x, s) in ts.iter().zip(sp) {
-                t = match (&t, x) {
-                    (_, Ty::Geo(..)) => {
-                        return Err(e104(*s, format!("`{name}` is componentwise and drops spaces"), "write `.xyz` to drop the space explicitly"));
-                    }
-                    (Ty::AbstractInt, x) if num(x) || matches!(x, Ty::VecN(_)) => x.clone(),
-                    (t, x) if meet(t, x).is_some() => meet(t, x).expect("checked"),
-                    (Ty::VecN(_), x) if num(x) => t.clone(),
-                    (t, Ty::VecN(_)) if num(t) => x.clone(),
-                    _ => return Err(e003(*s, format!("`{name}` of `{t}` and `{x}`"), "use one numeric type")),
-                };
-            }
-            Ok(if t == Ty::AbstractInt { Ty::F32 } else { t })
-        };
-    ] {
-        "held"|"missed" if matches!(ts,[Ty::F32|Ty::AbstractInt])=>Ok(Ty::Verdict),
-        "atan2" if matches!(ts,[Ty::F32,Ty::F32])=>Ok(Ty::F32),
-        "ggx_energy" if matches!(ts, [Ty::F32, Ty::F32]) => Ok(Ty::VecN(2)),
-        "has_sky"=>{arity(0)?;Ok(Ty::Bool)},
-        "sky_zenith"|"sky_horizon"|"sun_color"=>{arity(0)?;Ok(Ty::VecN(3))},
-        "dist" => builtin("distance",ts,sp,span),
-        "place" => match ts { [Ty::Geo(Pt,s)] | [Ty::Geo(Pt,s),Ty::F32|Ty::AbstractInt] => Ok(Ty::Xform(Space::Open,s.clone())),_=>Err(e003(span,"placement requires a point and optional yaw","write place([x,y,z]@World, yaw)")) },
-        "dir" => match ts { [Ty::Geo(_,s)]=>Ok(Ty::Geo(Dir,s.clone())), _=>Err(e003(span,"direction requires a space","supply a vector in the requested space")) },
-        "coords" => match ts { [Ty::Geo(..)]=>Ok(Ty::VecN(3)),_=>Err(e003(span,"expected a spatial value","pass a point or vector")) },
-        "frame_axes" => match ts { [Ty::Geo(Pt,s),Ty::Geo(_,a),Ty::Geo(_,b),Ty::Geo(_,c)] if s==a&&s==b&&s==c=>Ok(Ty::Frame(s.clone())),_=>Err(e104(span,"frame axes occupy different spaces","use the origin and axes from one space")) },
-        "acos" | "log" | "abs" | "sqrt" | "sin" | "cos" | "exp" | "floor" | "fract" | "sign" | "saturate" => componentwise(1),
-        "min" | "max" | "pow" | "step" => componentwise(2),
-        "clamp" | "smoothstep" => componentwise(3),
-        "fma" if matches!(ts, [Ty::F32, Ty::F32, Ty::F32]) => Ok(Ty::F32),
-        "smootherstep" | "loft_dsmoothstep" | "loft_dsmootherstep" => {
-            arity(3)?;
-            for (t, s) in ts.iter().zip(sp) {
-                if !matches!(t, Ty::F32 | Ty::AbstractInt) {
-                    return Err(e003(*s, format!("`{name}` is scalar"), "pass f32 values"));
+fn builtin_poly(name: &str, rule: PolyRule, ts: &[Ty], sp: &[Span], span: Span) -> Res<Ty> {
+    use Geo::*;
+    let same_space = |x: &Space, y: &Space| -> Res<()> {
+        if x == y { Ok(()) } else { Err(e104(sp[1], format!("`{name}` of values in `{x}` and `{y}`"), "bring both into one space")) }
+    };
+    // Componentwise: every argument the same numeric type (a literal converts), result that type.
+    let componentwise = || -> Res<Ty> {
+        let mut t = Ty::AbstractInt;
+        for (x, s) in ts.iter().zip(sp) {
+            t = match (&t, x) {
+                (_, Ty::Geo(..)) => {
+                    return Err(e104(*s, format!("`{name}` is componentwise and drops spaces"), "write `.xyz` to drop the space explicitly"));
                 }
-            }
-            Ok(Ty::F32)
-        },
-        "loft_zero" => {
-            arity(1)?;
+                (Ty::AbstractInt, x) if num(x) || matches!(x, Ty::VecN(_)) => x.clone(),
+                (t, x) if meet(t, x).is_some() => meet(t, x).expect("checked"),
+                (Ty::VecN(_), x) if num(x) => t.clone(),
+                (t, Ty::VecN(_)) if num(t) => x.clone(),
+                _ => return Err(e003(*s, format!("`{name}` of `{t}` and `{x}`"), "use one numeric type")),
+            };
+        }
+        Ok(if t == Ty::AbstractInt { Ty::F32 } else { t })
+    };
+    match rule {
+        PolyRule::Place => match ts { [Ty::Geo(Pt,s)] | [Ty::Geo(Pt,s),Ty::F32|Ty::AbstractInt] => Ok(Ty::Xform(Space::Open,s.clone())),_=>Err(e003(span,"placement requires a point and optional yaw","write place([x,y,z]@World, yaw)")) },
+        PolyRule::Direction => match ts { [Ty::Geo(_,s)]=>Ok(Ty::Geo(Dir,s.clone())), _=>Err(e003(span,"direction requires a space","supply a vector in the requested space")) },
+        PolyRule::FrameAxes => match ts { [Ty::Geo(Pt,s),Ty::Geo(_,a),Ty::Geo(_,b),Ty::Geo(_,c)] if s==a&&s==b&&s==c=>Ok(Ty::Frame(s.clone())),_=>Err(e104(span,"frame axes occupy different spaces","use the origin and axes from one space")) },
+        PolyRule::Componentwise => componentwise(),
+        PolyRule::Zero => {
             Ok(match &ts[0] {
                 Ty::Geo(_, s) => Ty::Geo(Geo::Vec, s.clone()),
                 Ty::AbstractInt => Ty::I32,
                 other => other.clone(),
             })
         },
-        "loft_vec" => match ts {
+        PolyRule::Displacement => match ts {
             [Ty::Geo(_, s)] => Ok(Ty::Geo(Geo::Vec, s.clone())),
             _ => Err(e003(span, "`loft_vec` takes a point or vector", "internal")),
         },
-        "eval_bsdf" => match ts {
-            [Ty::Bsdf, Ty::VecN(3), Ty::VecN(3), Ty::VecN(3)] => Ok(Ty::VecN(3)),
-            _ => Err(e003(span, "`eval_bsdf(b, n, v, l)` takes a Bsdf and three world vec3s", "pass `.xyz` of each direction; `l = vec3(0.0)` asks for emitted radiance")),
-        },
-        "mix" => match ts {
+        PolyRule::Mix => match ts {
             [Ty::Geo(g, x), Ty::Geo(h, y), t] if g == h && num(t) => same_space(x, y).map(|_| ts[0].clone()),
-            _ => componentwise(3),
+            _ => componentwise(),
         },
-        "select" | "loft_conditional" => {
-            arity(3)?;
+        PolyRule::Select => {
             if ts[2] != Ty::Bool {
                 return Err(e003(sp[2], "`select(f, t, cond)` needs a bool", "compare to get a bool"));
             }
-            meet(&ts[0], &ts[1]).or_else(|| (ts[0] == ts[1]).then(|| ts[0].clone())).ok_or_else(|| {
+            meet(&ts[0], &ts[1]).ok_or_else(|| {
                 e003(span, "`select` arms differ", "give both arms one type")
             })
         },
-        "length" => {
-            arity(1)?;
+        PolyRule::Length => {
             match &ts[0] {
                 Ty::VecN(_) | Ty::F32 => Ok(Ty::F32),
                 Ty::Geo(g, _) if vec_like(*g) => Ok(Ty::F32),
@@ -1712,20 +1694,18 @@ builtin_table! {
                 other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::AbstractInt | other @ Ty::Geo(..) | other @ Ty::Xform(..) | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Frame(_) | other @ Ty::Table(_) | other @ Ty::Verdict | other @ Ty::Struct(_) | other @ Ty::Array(..) | other @ Ty::Id(_) | other @ Ty::Bsdf => Err(e003(sp[0], format!("`length` of `{other}`"), "pass a vector")),
             }
         },
-        "distance" => {
-            arity(2)?;
+        PolyRule::Distance => {
             match (&ts[0], &ts[1]) {
                 (Ty::VecN(n), Ty::VecN(m)) if n == m => Ok(Ty::F32),
                 (Ty::Geo(Pt, x), Ty::Geo(Pt, y)) => same_space(x, y).map(|_| Ty::F32),
                 _ => Err(e003(span, "`distance` of two points (or two vectors)", "pass two Pt[S]")),
             }
         },
-        "dot" | "cross" => {
-            arity(2)?;
+        PolyRule::Dot | PolyRule::Cross => {
             match (&ts[0], &ts[1]) {
-                (Ty::VecN(n), Ty::VecN(m)) if n == m => Ok(if name == "dot" { Ty::F32 } else { Ty::VecN(3) }),
+                (Ty::VecN(n), Ty::VecN(m)) if n == m => Ok(if rule == PolyRule::Dot { Ty::F32 } else { Ty::VecN(3) }),
                 (Ty::Geo(g, x), Ty::Geo(h, y)) if vec_like(*g) && vec_like(*h) => {
-                    same_space(x, y).map(|_| if name == "dot" { Ty::F32 } else { Ty::Geo(Vec, x.clone()) })
+                    same_space(x, y).map(|_| if rule == PolyRule::Dot { Ty::F32 } else { Ty::Geo(Vec, x.clone()) })
                 }
                 (Ty::Geo(Pt, s), _) | (_, Ty::Geo(Pt, s)) => {
                     Err(e104(span, format!("`{name}` of a point in `{s}`"), "subtract an origin to get a Vec"))
@@ -1733,8 +1713,7 @@ builtin_table! {
                 _ => Err(e003(span, format!("`{name}` of `{}` and `{}`", ts[0], ts[1]), "pass two vectors in one space")),
             }
         },
-        "normalize" => {
-            arity(1)?;
+        PolyRule::Normalize => {
             match &ts[0] {
                 Ty::VecN(n) => Ok(Ty::VecN(*n)),
                 Ty::Geo(Norm, s) => Ok(Ty::Geo(Norm, s.clone())),
@@ -1742,26 +1721,14 @@ builtin_table! {
                 other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::F32 | other @ Ty::AbstractInt | other @ Ty::Geo(..) | other @ Ty::Xform(..) | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Frame(_) | other @ Ty::Table(_) | other @ Ty::Verdict | other @ Ty::Struct(_) | other @ Ty::Array(..) | other @ Ty::Id(_) | other @ Ty::Bsdf => Err(e104(sp[0], format!("`normalize` of `{other}`"), "normalize a Vec")),
             }
         },
-        "inv" => match ts {
+        PolyRule::Inverse => match ts {
             [Ty::Xform(a, b)] => Ok(Ty::Xform(b.clone(), a.clone())),
             _ => Err(e003(span, "`inv` takes an Xform", "pass an `Xform[A -> B]`")),
         },
-        "f32" | "u32" | "i32" => {
-            arity(1)?;
-            if !num(&ts[0]) {
-                return Err(e003(sp[0], format!("`{name}` of `{}`", ts[0]), "convert a scalar"));
-            }
-            Ok(match name {
-                "f32" => Ty::F32,
-                "u32" => Ty::U32,
-                _ => Ty::I32,
-            })
-        },
-        "vec2" | "vec3" | "vec4" | "vec2f" | "vec3f" | "vec4f" => {
-            let n = name.as_bytes()[3] - b'0';
-            components(ts, n, span).map(|_| Ty::VecN(n))
-        },
-        _ => Err(Diag::new(Code::E011, span, format!("unknown function `{name}`"), "declare it with `fn`, or check the spelling"))
+        PolyRule::VectorConstructor(n) => components(ts, n, span).map(|_| Ty::VecN(n)),
+        PolyRule::TextureSample | PolyRule::ScanFrame | PolyRule::Unchecked => {
+            unreachable!("only value signatures reach builtin_poly")
+        }
     }
 }
 

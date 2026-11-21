@@ -51,7 +51,7 @@ case "$command_name" in
 esac
 if [[ "$crate" == --workspace ]]; then
   scope=(--workspace)
-elif [[ -f "$root/crates/$crate/Cargo.toml" ]]; then
+elif [[ -f "$root/crates/$crate/Cargo.toml" || -f "$root/tools/$crate/Cargo.toml" ]]; then
   scope=(-p "$crate")
 else
   echo "dev.sh: unknown workspace crate '$crate'" >&2; exit 2

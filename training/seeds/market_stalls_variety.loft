@@ -1,0 +1,49 @@
+use stdlib::sdf::solid::{box_sdf}
+use stdlib::materials::bsdf::{ggx, lambert}
+
+kind Copper @World (at: p3@World) {
+  trace(p) {
+    let table = box_sdf(p - (at + [0, 0.30, 0]), [0.33, 0.29, 0.24])
+    let awning = box_sdf(p - (at + [0, 0.94, 0]), [0.39, 0.065, 0.30])
+    let post = box_sdf(p - (at + [0, 0.59, -0.19]), [0.060, 0.35, 0.048])
+    min(table, min(awning, post))
+  }
+  material(p, n) = ggx([0.71, 0.26, 0.09], 0.34, 0.72)
+}
+
+kind Canvas @World (at: p3@World) {
+  trace(p) {
+    let table = box_sdf(p - (at + [0, 0.30, 0]), [0.33, 0.29, 0.24])
+    let awning = box_sdf(p - (at + [0, 0.94, 0]), [0.39, 0.065, 0.30])
+    let post = box_sdf(p - (at + [0, 0.59, -0.19]), [0.060, 0.35, 0.048])
+    min(table, min(awning, post))
+  }
+  material(p, n) = ggx([0.86, 0.68, 0.33], 0.82, 0.0)
+}
+
+kind Jade @World (at: p3@World) {
+  trace(p) {
+    let table = box_sdf(p - (at + [0, 0.30, 0]), [0.33, 0.29, 0.24])
+    let awning = box_sdf(p - (at + [0, 0.94, 0]), [0.39, 0.065, 0.30])
+    let post = box_sdf(p - (at + [0, 0.59, -0.19]), [0.060, 0.35, 0.048])
+    min(table, min(awning, post))
+  }
+  material(p, n) = ggx([0.08, 0.57, 0.37], 0.43, 0.0)
+}
+
+kind Ground @World () {
+  trace(p) = box_sdf(p - [0, -0.09, 0]@World, [4, 0.08, 4])
+  material(p, n) = lambert([0.24, 0.19, 0.13])
+}
+
+camera Main { at: [0, 0.43, 0]@World, radius: 4.25m, height: 2.25m, period: 32s, fov: 40deg }
+
+build {
+  build for i in 0..3 {
+    let z = (f32(i) - 1.0) * 0.86
+    emit Copper(at: [-0.92, 0, z]@World)
+    emit Canvas(at: [0, 0, z]@World)
+    emit Jade(at: [0.92, 0, z]@World)
+  }
+  emit Ground()
+}

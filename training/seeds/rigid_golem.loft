@@ -1,0 +1,33 @@
+use stdlib::sdf::solid::{box_sdf}
+use stdlib::materials::bsdf::{ggx, lambert}
+
+kind Golem @World (lift: m = 0m) {
+  trace(p) {
+    let torso = box_sdf(p - [0, 0.81 + lift, 0]@World, [0.32, 0.30, 0.23])
+    let head = box_sdf(p - [0, 1.22 + lift, 0]@World, [0.19, 0.16, 0.19])
+    let legs = box_sdf(p - [abs(p.x) * 2.0 - 0.18, 0.27, 0]@World, [0.12, 0.27, 0.17])
+    let fists = box_sdf(p - [abs(p.x) * 2.0 - 0.49, 0.68 + lift, 0]@World, [0.13, 0.25, 0.16])
+    min(min(torso, head), min(legs, fists))
+  }
+  material(p, n) = ggx([0.31, 0.30, 0.25] + [0.13, 0.14, 0.08] * abs(n.y), 0.86, 0.0)
+}
+
+law rise(g: Golem, dt: s) writes g.{lift} {
+  g.lift = 0.21 * smoothstep(0.15, 1.05, time / 1s)
+}
+
+kind Ground @World () {
+  trace(p) = box_sdf(p - [0, -0.09, 0]@World, [4, 0.08, 4])
+  material(p, n) = lambert([0.16, 0.21, 0.16])
+}
+
+camera Main { at: [0, 0.74, 0]@World, radius: 3.35m, height: 0.55m, period: 32s, fov: 40deg }
+
+build {
+  emit Golem()
+  emit Ground()
+}
+
+schedule Main {
+  run_laws(rise)
+}

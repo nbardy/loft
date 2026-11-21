@@ -4,7 +4,7 @@
 
 use loft_check::{Prog, FINITE_DIFF_STEP, TWIN_LIGHT, finite_diff_parameter, pose_field, unit};
 pub use loft_check::references::{References, fn_symbol, proof_dependencies, reachable};
-use loft_check::references::{MotionMath, motion_math};
+use loft_builtins::{MotionClass, WgslLowering, lookup};
 pub mod solver;
 #[path="aov.rs"]
 mod aov;
@@ -23,54 +23,28 @@ use loft_ir::{Code, Diag, Res, Span};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
-const PRELUDE: &str = r"struct Frame {
-  view_proj: mat4x4<f32>,
-  inv_view_proj: mat4x4<f32>,
-  eye: vec4<f32>,
-  sun: vec4<f32>,
-  size: vec4<u32>,
-  cold: vec4<u32>,
-  light_vp: mat4x4<f32>,
-}
-@group(0) @binding(0) var<uniform> frame: Frame;
+const PRELUDE: &str = include_str!("../../../stdlib/core/prelude.wgsl");
 
-@group(0) @binding(2) var<storage, read> loft_params: array<vec4<f32>>;
-const LOFT_NONCE: u32 = {{NONCE}};
-const LOFT_EMPTY: u32 = 0xffffffffu;
-
-struct LoftXform { r: mat3x3<f32>, t: vec3<f32> }
-fn loft_xf_pt(x: LoftXform, p: vec3<f32>) -> vec3<f32> { return x.r * p + x.t; }
-fn loft_xf_vec(x: LoftXform, v: vec3<f32>) -> vec3<f32> { return x.r * v; }
-fn loft_xf_inv(x: LoftXform) -> LoftXform { let rt = transpose(x.r); return LoftXform(rt, -(rt * x.t)); }
-fn loft_xf_mul(a: LoftXform, b: LoftXform) -> LoftXform { return LoftXform(a.r * b.r, a.r * b.t + a.t); }
-// Rotations of the plane (i, j): i' = cos i + sin j, j' = cos j - sin i (the evaluator's rule).
-fn loft_rot_x(p: vec3<f32>, a: f32) -> vec3<f32> {
-  let s = sin(a);
-  let c = cos(a);
-  return vec3<f32>(p.x, c * p.y + s * p.z, c * p.z - s * p.y);
+// Substitute only markers in the template. Inserted WGSL may itself carry the runtime nonce.
+fn render_template(template: &str, values: &[(&str, &str)]) -> String {
+    let mut out = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some((before, marker)) = rest.split_once("{{") {
+        let (key, after) = marker.split_once("}}").expect("closed WGSL template marker");
+        out.push_str(before);
+        if let Some((_, value)) = values.iter().find(|(name, _)| *name == key) {
+            out.push_str(value);
+        } else {
+            debug_assert_eq!(key, "NONCE", "unreplaced WGSL template marker");
+            out.push_str("{{");
+            out.push_str(key);
+            out.push_str("}}");
+        }
+        rest = after;
+    }
+    out.push_str(rest);
+    out
 }
-fn loft_rot_y(p: vec3<f32>, a: f32) -> vec3<f32> {
-  let s = sin(a);
-  let c = cos(a);
-  return vec3<f32>(c * p.x + s * p.z, p.y, c * p.z - s * p.x);
-}
-fn loft_rot_z(p: vec3<f32>, a: f32) -> vec3<f32> {
-  let s = sin(a);
-  let c = cos(a);
-  return vec3<f32>(c * p.x + s * p.y, c * p.y - s * p.x, p.z);
-}
-fn loft_unit(e0: f32, e1: f32, x: f32) -> f32 { return clamp((x - e0) / (e1 - e0), 0.0, 1.0); }
-fn loft_smootherstep(e0: f32, e1: f32, x: f32) -> f32 { let t = loft_unit(e0, e1, x); return t * t * t * ((6.0 * t - 15.0) * t + 10.0); }
-fn loft_dsmoothstep(e0: f32, e1: f32, x: f32) -> f32 { let t = loft_unit(e0, e1, x); return 6.0 * t * (1.0 - t) / (e1 - e0); }
-fn loft_dsmootherstep(e0: f32, e1: f32, x: f32) -> f32 { let t = loft_unit(e0, e1, x); return 30.0 * t * t * (1.0 - t) * (1.0 - t) / (e1 - e0); }
-struct LoftFrame { origin: vec3<f32>, tangent: vec3<f32>, normal: vec3<f32>, binormal: vec3<f32> }
-// The camera ray through a pixel position (pixel units, centre at +0.5).
-fn loft_ray(px: vec2<f32>) -> vec3<f32> {
-  let ndc = vec2<f32>(px.x / f32(frame.size.x) * 2.0 - 1.0, 1.0 - px.y / f32(frame.size.y) * 2.0);
-  let far = frame.inv_view_proj * vec4<f32>(ndc, 1.0, 1.0);
-  return normalize(far.xyz / far.w - frame.eye.xyz);
-}
-";
 
 /// Lowers a type for WGSL: spaces and units erase to their storage.
 fn wty(t: &Ty) -> String {
@@ -544,9 +518,6 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 }
                 if callee.name=="coords"{return a[0].clone()}
                 if self.p.fns.contains_key(callee.name.as_str()) {return format!("{}{}({})",if self.motion{"motion_"}else{""},fn_symbol(&callee.name),a.join(", "));}
-                if let Some(op) = loft_check::quant::Quant::resolve(&callee.name) {
-                    return format!("loft_quant_{}({})", op.name(), a.join(", "));
-                }
                 if let Ok(Some(call)) = loft_check::world::WorldCall::resolve(&callee.name, &a, e.span) {
                     use loft_check::world::WorldQuery::*;
                     let world = call.world.as_deref().unwrap_or("0u");
@@ -565,22 +536,25 @@ impl<'p, 'a> Emitter<'p, 'a> {
                     let steps = if a.len() == 5 { a[3].as_str() } else { "24u" };
                     return format!("loft_authored_volume({}, {}, {}, {steps}, {})", a[0], a[1], a[2], a.last().unwrap());
                 }
-                if self.motion && self.motion_tier.is_det() && matches!(motion_math(&callee.name), MotionMath::Fixed){return format!("det_{}({})",callee.name,a.join(", "));}
-                if matches!(callee.name.as_str(),"held"|"missed"){return format!("CheckValue({}u, 0u, {})",if callee.name=="held"{1}else{2},a[0]);}
-                let name = match callee.name.as_str() {
-                    "ggx_energy" => "loft_ggx_energy".into(),
-                    "frame_axes" => "LoftFrame".into(),
-                    "dir" => "normalize".into(),
-                    "dist"=>"distance".into(),
-                    "smootherstep" => "loft_smootherstep".to_string(),
-                    "inv" => "loft_xf_inv".to_string(),
-                    "vec2" | "vec2f" => "vec2<f32>".into(),
-                    "loft_conditional" => "select".into(),
-                    "vec3" | "vec3f" => "vec3<f32>".into(),
-                    "vec4" | "vec4f" => "vec4<f32>".into(),
-                    other => other.into(),
+                let name = callee.name.as_str();
+                if matches!(name, "held" | "missed") {
+                    let status = if name == "held" { 1 } else { 2 };
+                    return format!("CheckValue({status}u, 0u, {})", a[0]);
+                }
+                let symbol = match lookup(name) {
+                    Some(spec) if self.motion && self.motion_tier.is_det()
+                        && spec.motion_math == MotionClass::Fixed =>
+                        return format!("det_{}({})", spec.name, a.join(", ")),
+                    Some(spec) => match spec.wgsl {
+                        WgslLowering::Direct(symbol) => symbol,
+                        WgslLowering::Prefix(op) => return format!("({op}{})", a[0]),
+                        WgslLowering::Infix(op) => return format!("({} {op} {})", a[0], a[1]),
+                        // Generated BSDF evaluation retains its WGSL name.
+                        WgslLowering::Custom => name,
+                    },
+                    None => name,
                 };
-                format!("{name}({})", a.join(", "))
+                format!("{symbol}({})", a.join(", "))
             }
         }
     }
@@ -595,8 +569,8 @@ impl<'p, 'a> Emitter<'p, 'a> {
     }
 
     pub fn header(&mut self, nonce: &str) {
-        self.out += &PRELUDE.replace("{{NONCE}}", nonce);
-        self.out += "fn loft_xform_yaw(o: vec3<f32>, yaw: f32) -> LoftXform {\n  let s = sin(yaw);\n  let c = cos(yaw);\n  return LoftXform(mat3x3<f32>(vec3<f32>(c, 0.0, -s), vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(s, 0.0, c)), o);\n}\n\n";
+        self.out += &render_template(PRELUDE, &[("NONCE", nonce)]);
+        self.out += concat!(include_str!("../../../stdlib/core/xform_yaw.wgsl"), "\n");
     }
 
     fn sampled_textures(&mut self) {
@@ -743,40 +717,11 @@ pub fn kind_module_edit(
 }
 
 fn traced_march(count_steps: bool) -> String {
-    let mut out = String::from(
-        r"  // Sphere trace with the row's derived Lipschitz bound (hidden column `loft_lip`).
-  var t = max(span.x, 0.0);
-  let step = 1.0 / row.loft_lip;
-  const march_limit = 0u;
-  const march_hit = 1u;
-  const march_interval = 2u;
-  var march_exit = march_limit;
-",
-    );
-    if count_steps {
-        out.push_str("  var steps = 0u;\n");
-    }
-    // A hit owns the distance before the advance. Even in a group, an interval
-    // exit must break before the next sample, and sample 192 can still hit.
-    let step = |out: &mut String, indent| {
-        if count_steps {
-            writeln!(out, "{indent}steps += 1u;").unwrap();
-        }
-        writeln!(out, "{indent}let d = q_trace(row, lro + lrd * t);
-{indent}if d < 1e-4 + 2e-4 * t {{ march_exit = march_hit; break; }}
-{indent}t += d * step;
-{indent}if t > span.y {{ march_exit = march_interval; break; }}").unwrap();
-    };
-    out.push_str("  for (var i = 0u; i < 24u; i++) {\n");
-    step(&mut out, "    ");
-    out.push_str("  }\n  if march_exit == march_limit {\n    for (var i = 0u; i < 42u; i++) {\n");
-    for _ in 0..4 {
-        out.push_str("      {\n");
-        step(&mut out, "        ");
-        out.push_str("      }\n");
-    }
-    out.push_str("    }\n  }\n  if march_exit != march_hit { discard; }\n");
-    out
+    render_template(include_str!("../../../stdlib/core/march.wgsl"), &[
+        ("STEPS_INIT", if count_steps { "  var steps = 0u;\n" } else { "" }),
+        ("STEPS_4", if count_steps { "    steps += 1u;\n" } else { "" }),
+        ("STEPS_8", if count_steps { "        steps += 1u;\n" } else { "" }),
+    ])
 }
 
 pub fn emit_kind_module(
@@ -883,54 +828,9 @@ pub fn emit_kind_module(
     let uses_world_hit = light.is_none() && aov == Aov::Beauty;
     let (mut vis, mut geometry, twin_geo) = match draw {
         Draw::Surface { nu, nv } => (
-            format!(
-                r"struct VsOut {{ @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32>, @location(1) @interpolate(flat) row: u32 }}
-struct FsOut {{ @location(0) vis: vec2<u32> }}
-
-// The grid: two triangles per cell of {nu} x {nv}; corner bits (0,1,1,0,1,0) in u and (0,0,1,0,1,1) in v.
-@vertex fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VsOut {{
-  let r = visible[kp.base + ii];
-  if r == LOFT_EMPTY {{ return VsOut(vec4f(2.0, 2.0, 2.0, 1.0), vec2f(0.0), r); }}
-  let row = load_row(r);
-  let cell = vi / 6u;
-  let c = vi % 6u;
-  let u = f32(cell % {nu}u + ((0x16u >> c) & 1u)) / {nu}.0;
-  let v = f32(cell / {nu}u + ((0x34u >> c) & 1u)) / {nv}.0;
-  let wp = loft_xf_pt(loft_pose(row), q_surface(row, u, v));
-  return VsOut(frame.view_proj * vec4<f32>(wp, 1.0), vec2<f32>(u, v), r);
-}}
-
-// The record carries (u, v); shading rebuilds the point and the AD normal from them.
-@fragment fn fs(v: VsOut) -> FsOut {{
-  if frame.cold.x == LOFT_NONCE {{ discard; }}
-  // Packed by hand: Metal's pack/unpack2x16unorm round trip through naga garbled u on the M4 (19 Nov 2026).
-  let q = vec2<u32>(round(clamp(v.uv, vec2<f32>(0.0), vec2<f32>(1.0)) * 65535.0));
-  return FsOut(vec2<u32>((kp.kind_id << 24u) | v.row, q.x | (q.y << 16u)));
-}}
-"
-            ),
-            "  let uv = vec2<f32>(f32(v.y & 0xffffu), f32(v.y >> 16u)) / 65535.0;
-  let pl = q_surface(row, uv.x, uv.y);
-  let cr = cross(loft_surface_jvp(row, uv.x, uv.y, 1.0, 0.0), loft_surface_jvp(row, uv.x, uv.y, 0.0, 1.0));
-  let nl = cr * inverseSqrt(max(dot(cr, cr), 1e-30));
-  let p = loft_xf_pt(pose, pl);
-  var n = normalize(loft_xf_vec(pose, nl));
-  // Two-sided: the inside of the aperture faces the camera too.
-  if dot(n, rd) > 0.0 { n = -n; }
-  let ao = 1.0;
-  let b = q_material(row, pl, nl, uv);
-"
-            .to_string(),
-            "  let pl = q_surface(row, a.x, a.y);
-  let cr = cross(loft_surface_jvp(row, a.x, a.y, 1.0, 0.0), loft_surface_jvp(row, a.x, a.y, 0.0, 1.0));
-  let nl = normalize(cr);
-  let nw = loft_xf_vec(pose, nl);
-  let o0 = vec4<f32>(0.0);
-  let o2 = vec4<f32>(loft_xf_pt(pose, pl), 0.0);
-  let o3 = vec4<f32>(nw, 0.0);
-  let bs = q_material(row, pl, nl, a.xy);
-"
-            .to_string(),
+            render_template(include_str!("../../../stdlib/core/surface_vis.wgsl"), &[("NU", &nu.to_string()), ("NV", &nv.to_string())]),
+            include_str!("../../../stdlib/core/surface_geometry.wgsl").to_owned(),
+            include_str!("../../../stdlib/core/surface_twin.wgsl").to_owned(),
         ),
         Draw::Mesh { .. } => crate::mesh::draw(),
         Draw::Analytic | Draw::Traced => {
@@ -954,129 +854,17 @@ struct FsOut {{ @location(0) vis: vec2<u32> }}
             let distance = if count_steps { "((bitcast<u32>(t) & 0xffffff00u) | steps)" } else { "bitcast<u32>(t)" };
             let visible_twin = if q(QueryKind::Visible) { "q_visible(row, pl, dl)" } else { "0.0" };
             (
-                format!(
-                    r"const LOFT_CUBE: array<u32, 36> = array<u32, 36>(1u, 3u, 7u, 1u, 7u, 5u, 0u, 6u, 2u, 0u, 4u, 6u, 2u, 6u, 7u, 2u, 7u, 3u,
-  0u, 1u, 5u, 0u, 5u, 4u, 4u, 5u, 7u, 4u, 7u, 6u, 0u, 2u, 3u, 0u, 3u, 1u);
-struct VsOut {{ @builtin(position) pos: vec4<f32>, @location(0) wp: vec3<f32>, @location(1) @interpolate(flat) row: u32 }}
-struct FsOut {{ @location(0) vis: vec2<u32>, @builtin(frag_depth) depth: f32 }}
-
-// The proxy: the row's derived AABB, back faces (the camera may be inside it).
-@vertex fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VsOut {{
-  let r = visible[kp.base + ii];
-  if r == LOFT_EMPTY {{ return VsOut(vec4f(2.0, 2.0, 2.0, 1.0), vec3f(0.0), r); }}
-  let row = load_row(r);
-  let c = LOFT_CUBE[vi];
-  let corner = vec3<f32>(f32(c & 1u), f32((c >> 1u) & 1u), f32((c >> 2u) & 1u));
-  let wp = mix(row.loft_lo, row.loft_hi, corner);
-  return VsOut(frame.view_proj * vec4<f32>(wp, 1.0), wp, r);
-}}
-
-const LOFT_TETRA: array<vec3<f32>, 4> = array<vec3<f32>, 4>(vec3<f32>(1.0, -1.0, -1.0), vec3<f32>(-1.0, -1.0, 1.0),
-  vec3<f32>(-1.0, 1.0, -1.0), vec3<f32>(1.0, 1.0, 1.0));
-
-fn loft_box(ro: vec3<f32>, rd: vec3<f32>, lo: vec3<f32>, hi: vec3<f32>) -> vec2<f32> {{
-  let inv = 1.0 / rd;
-  let a = (lo - ro) * inv;
-  let b = (hi - ro) * inv;
-  let n = min(a, b);
-  let f = max(a, b);
-  return vec2<f32>(max(max(n.x, n.y), n.z), min(min(f.x, f.y), f.z));
-}}
-
-@fragment fn fs(v: VsOut) -> FsOut {{
-  if frame.cold.x == LOFT_NONCE {{ discard; }}
-  let row = load_row(v.row);
-  var ro = frame.eye.xyz;
-  var rd = {primary_direction};
-  // The sun's view is orthographic: every ray runs along `eye.xyz`, starting outside the row's bound.
-  if frame.cold.y == 1u {{
-    rd = frame.eye.xyz;
-    ro = v.wp - rd * (2.0 * length(row.loft_hi - row.loft_lo) + 1.0);
-  }}
-  let span = loft_box(ro, rd, row.loft_lo, row.loft_hi);
-  let xf = loft_xf_inv(loft_pose(row));
-  let lro = loft_xf_pt(xf, ro);
-  let lrd = loft_xf_vec(xf, rd);
-{hit}  let clip = frame.view_proj * vec4<f32>(ro + rd * t, 1.0);
-  return FsOut(vec2<u32>((kp.kind_id << 24u) | v.row, {distance}), clip.z / clip.w);
-}}
-"
-                ),
+                render_template(include_str!("../../../stdlib/core/ray_vis.wgsl"), &[("PRIMARY_DIRECTION", primary_direction), ("HIT", &hit), ("DISTANCE", distance)]),
                 if edit.is_some() {
-                    "  let t = bitcast<f32>(v.y);
-  let p = frame.eye.xyz + rd * t;
-  let pl = loft_xf_pt(xf, p);
-  let normal_ao = loft_edit_normal_ao(row, pl, t);
-  let nl = normal_ao.xyz;
-  let ao = normal_ao.w;
-  let n = normalize(loft_xf_vec(pose, nl));
-  let b = q_material(row, pl, nl);
-"
-                    .to_string()
+                    include_str!("../../../stdlib/core/ray_geometry_edit.wgsl").to_owned()
                 } else if split_ao {
                     // The tetrahedral sum and the five AO taps keep their original
                     // order. Separate the loops to compute only the active sample.
-                    "  let t = bitcast<f32>(v.y);
-  let p = frame.eye.xyz + rd * t;
-  let pl = loft_xf_pt(xf, p);
-  let e = 5e-4 * max(1.0, 0.25 * t);
-  var g = vec3<f32>(0.0);
-  for (var i = 0u; i < 4u; i++) {
-    let offset = LOFT_TETRA[i];
-    g += offset * q_trace(row, pl + offset * e);
-  }
-  let nl = normalize(g);
-  var occ = 0.0;
-  var w = 1.0;
-  for (var i = 0u; i < 5u; i++) {
-    let h = 0.02 + 0.06 * f32(i);
-    occ += (h - q_trace(row, pl + nl * h)) * w;
-    w *= 0.8;
-  }
-  let ao = clamp(1.0 - 2.0 * occ, 0.0, 1.0);
-  let n = normalize(loft_xf_vec(pose, nl));
-  let b = q_material(row, pl, nl);
-"
-                    .to_string()
+                    include_str!("../../../stdlib/core/ray_geometry_split_ao.wgsl").to_owned()
                 } else {
-                "  let t = bitcast<f32>(v.y);
-  let p = frame.eye.xyz + rd * t;
-  let pl = loft_xf_pt(xf, p);
-  // Normal from the field (tetrahedron differences, i < 4), then occlusion along it (i >= 4), in the kind's space.
-  // One loop, one call site: Metal inlines every call site of the field, and compile time follows (phase1.md).
-  let e = 5e-4 * max(1.0, 0.25 * t);
-  var g = vec3<f32>(0.0);
-  var nl = vec3<f32>(0.0, 1.0, 0.0);
-  var occ = 0.0;
-  var w = 1.0;
-  for (var i = 0u; i < 9u; i++) {
-    var q = pl + LOFT_TETRA[min(i, 3u)] * e;
-    var h = 0.0;
-    if i >= 4u {
-      if i == 4u { nl = normalize(g); }
-      h = 0.02 + 0.06 * f32(i - 4u);
-      q = pl + nl * h;
-    }
-    let d = q_trace(row, q);
-    if i < 4u { g += LOFT_TETRA[i] * d; } else { occ += (h - d) * w; w *= 0.8; }
-  }
-  let ao = clamp(1.0 - 2.0 * occ, 0.0, 1.0);
-  let n = normalize(loft_xf_vec(pose, nl));
-  let b = q_material(row, pl, nl);
-"
-                    .to_string()
+                    include_str!("../../../stdlib/core/ray_geometry.wgsl").to_owned()
                 },
-                format!(
-                    "  let pl = loft_xf_pt(xf, a.xyz);
-  let dl = normalize(loft_xf_vec(xf, d.xyz));
-  let o0 = vec4<f32>(q_trace(row, pl), {visible_twin}, 0.0, 0.0);
-  let o2 = vec4<f32>(0.0);
-  let o3 = vec4<f32>(0.0);
-  let nl = dl;
-  let nw = normalize(d.xyz);
-  let bs = q_material(row, pl, nl);
-"
-                ),
+                render_template(include_str!("../../../stdlib/core/ray_twin.wgsl"), &[("VISIBLE_TWIN", visible_twin)]),
             )
         }
     };
@@ -1101,7 +889,7 @@ fn loft_box(ro: vec3<f32>, rd: vec3<f32>, lo: vec3<f32>, hi: vec3<f32>) -> vec2<
     if let Draw::Surface { nu, nv } = draw {
         vis.push_str(&surface::cached_grid(p, k.query(QueryKind::Surface).expect("surface query"), nu, nv));
     }
-    let shade = match aov {
+    let shade: String = match aov {
         // The shelf light evaluates an emission-only stack exactly once at zero incident direction.
         Aov::Beauty if light == Some("sun_sky") && layout.lobes.iter().all(|(name, _)| *name == "emit_lobe") =>
             "eval_bsdf(b, n, -rd, vec3<f32>(0.0))".into(),
@@ -1137,28 +925,7 @@ fn loft_box(ro: vec3<f32>, rd: vec3<f32>, lo: vec3<f32>, hi: vec3<f32>) -> vec2<
             } else {
                 // Axis differences estimate the direction. One secant in that direction is
                 // itself bounded by L, even where axis samples straddle different smooth pieces.
-                geometry.push_str(r"
-  let delta = max(4.0 * e, 64.0 * 1.1920929e-7 * length(pl));
-  var grad = vec3<f32>(0.0);
-  for (var j = 0u; j < 6u; j++) {
-    let axis = j / 2u;
-    var q = pl;
-    let side = select(-1.0, 1.0, (j & 1u) == 0u);
-    q[axis] += side * delta;
-    grad[axis] += side * q_trace(row, q);
-  }
-  let offset = grad * (delta * inverseSqrt(max(dot(grad, grad), 1e-30)));
-  let a = pl - offset;
-  let b0 = pl + offset;
-  let fa = q_trace(row, a);
-  let fb = q_trace(row, b0);
-  let chord = distance(a, b0);
-  // Subtract the endpoint uncertainty in field units. Compare the resulting
-  // lower estimate at the original threshold; zero-length chords prove nothing.
-  let extent = length(row.loft_hi - row.loft_lo);
-  let roundoff = 8.0 * 1.1920929e-7 * (abs(fa) + abs(fb) + row.loft_lip * max(extent, length(pl)));
-  let ratio = select(0.0, max(0.0, abs(fa - fb) - roundoff) / max(chord * row.loft_lip, 1e-30), chord > 0.0);
-");
+                geometry.push_str(include_str!("../../../stdlib/core/ray_lipschitz.wgsl"));
                 "loft_ratio(ratio)".into()
             }
         }
@@ -1167,207 +934,35 @@ fn loft_box(ro: vec3<f32>, rd: vec3<f32>, lo: vec3<f32>, hi: vec3<f32>) -> vec2<
             "vec3<f32>(0.0)".into()
         }
     };
-    // Keep the nine comparisons and their addition order. Static taps let the
-    // backend issue independent samples without the nested loop's control flow.
-    let mut shadow_taps = String::new();
-    for i in -1..=1 {
-        for j in -1..=1 {
-            let _ = writeln!(shadow_taps, "  s += textureSampleCompareLevel(shadow_tex, shadow_smp, uv + vec2<f32>({i}.0, {j}.0) * texel, depth);");
-        }
-    }
-    let tl = unit(TWIN_LIGHT);
-    let shade_entry = SHADE_ENTRY;
-    let twin_bindings = TWIN_BINDINGS;
-    let _ = write!(
-        em.out,
-        r"{queries_end}
-{vis}
-{diagnostics}
-@group(2) @binding(0) var vis_tex: texture_2d<u32>;
-@group(2) @binding(1) var hdr: texture_storage_2d<rgba16float, write>;
-@group(2) @binding(2) var<storage, read> tiles: array<u32>;
-@group(2) @binding(3) var shadow_tex: texture_depth_2d;
-@group(2) @binding(4) var shadow_smp: sampler_comparison;
-
-// The sun's shadow map, 3x3 bilinear comparisons; the point moves 1.5 texels along its normal first.
-fn loft_shadow(p: vec3<f32>, n: vec3<f32>) -> f32 {{
-  if frame.cold.z == 0u {{ return 1.0; }}
-  let q = frame.light_vp * vec4<f32>(p + n * (1.5 * frame.sun.w), 1.0);
-  let uv = vec2<f32>(q.x * 0.5 + 0.5, 0.5 - q.y * 0.5);
-  if any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0)) || q.z > 1.0 || q.z < 0.0 {{ return 1.0; }}
-  let texel = 1.0 / f32(textureDimensions(shadow_tex).x);
-  let depth = q.z - 0.0005;
-  var s = 0.0;
-{shadow_taps}  return s / 9.0;
-}}
-
-
-{shade_entry}
-@compute @workgroup_size(8, 8) fn shade(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {{
-  if frame.cold.x == LOFT_NONCE {{ return; }}
-  let tile = tiles[kp.kind_id * frame.size.w + wg.x];
-  let px = vec2<u32>(tile & 0xffffu, tile >> 16u) * 8u + lid.xy;
-  if px.x >= frame.size.x || px.y >= frame.size.y {{ return; }}
-  let v = textureLoad(vis_tex, px, 0).xy;
-  if v.x == LOFT_EMPTY || (v.x >> 24u) != kp.kind_id {{ return; }}
-  let row = load_row(v.x & 0xffffffu);
-  let rd = loft_ray(vec2<f32>(px) + 0.5);
-  let pose = loft_pose(row);
-  let xf = loft_xf_inv(pose);
-{geometry}  let sun = normalize(frame.sun.xyz);
-  textureStore(hdr, px, vec4<f32>({shade}, 1.0));
-}}
-
-
-
-{twin_bindings}: array<vec4<f32>>;
-@group(3) @binding(1) var<storage, read_write> twin_out: array<vec4<f32>>;
-
-// The twin gate: the frame's queries at CPU-chosen samples; the material is lit by one fixed light plus emission.
-@compute @workgroup_size(64) fn twin(@builtin(global_invocation_id) g: vec3<u32>) {{
-  let i = g.x;
-  if i >= arrayLength(&twin_out) / 4u {{ return; }}
-  let a = twin_in[2u * i];
-  let d = twin_in[2u * i + 1u];
-  let row = load_row(bitcast<u32>(a.w));
-  let pose = loft_pose(row);
-  let xf = loft_xf_inv(pose);
-{twin_geo}  // Lit 60 degrees off the normal, away from any specular peak (where a 1e-7 change moves D by 1e-3).
-  let lt = nw * 0.5 + normalize(cross(nw, vec3<f32>({l0}, {l1}, {l2}))) * 0.8660254;
-  let m = eval_bsdf(bs, nw, nw, lt) + eval_bsdf(bs, nw, nw, vec3<f32>(0.0));
-  twin_out[4u * i] = o0;
-  twin_out[4u * i + 1u] = vec4<f32>(m, 0.0);
-  twin_out[4u * i + 2u] = o2;
-  twin_out[4u * i + 3u] = o3;
-}}
-",
-        queries_end = paths::QUERIES_END,
-        l0 = f32_lit(f64::from(tl[0])),
-        l1 = f32_lit(f64::from(tl[1])),
-        l2 = f32_lit(f64::from(tl[2])),
-    );
+    let [l0, l1, l2] = unit(TWIN_LIGHT).map(|v| f32_lit(f64::from(v)));
+    em.out += &render_template(include_str!("../../../stdlib/core/kind_shade.wgsl"), &[
+        ("QUERIES_END", paths::QUERIES_END), ("VIS", &vis), ("DIAGNOSTICS", diagnostics),
+        ("SHADOW", include_str!("../../../stdlib/core/shadow.wgsl")), ("SHADE_ENTRY", SHADE_ENTRY), ("GEOMETRY", &geometry),
+        ("SHADE", &shade), ("TWIN_BINDINGS", TWIN_BINDINGS), ("TWIN_GEO", &twin_geo),
+        ("L0", &l0), ("L1", &l1), ("L2", &l2),
+    ]);
     Ok(em.out)
 }
 
 /// Scan tables: frame `i` of a scan at `off`, clamped to its ends; the uniform cubic B-spline (C2 in t) and its
 /// t-derivative scaled by `dt`, the same weights the CPU evaluator uses.
-const LUTS: &str = r"fn loft_lut(i: i32, off: u32, n: u32) -> LoftFrame {
-  let o = (off + u32(clamp(i, 0, i32(n) - 1))) * 12u;
-  return LoftFrame(vec3<f32>(luts[o], luts[o + 1u], luts[o + 2u]), vec3<f32>(luts[o + 3u], luts[o + 4u], luts[o + 5u]),
-    vec3<f32>(luts[o + 6u], luts[o + 7u], luts[o + 8u]), vec3<f32>(luts[o + 9u], luts[o + 10u], luts[o + 11u]));
-}
-fn loft_blend(i: i32, off: u32, n: u32, w: vec4<f32>) -> LoftFrame {
-  let a = loft_lut(i - 1, off, n);
-  let b = loft_lut(i, off, n);
-  let c = loft_lut(i + 1, off, n);
-  let d = loft_lut(i + 2, off, n);
-  return LoftFrame(a.origin * w.x + b.origin * w.y + c.origin * w.z + d.origin * w.w,
-    a.tangent * w.x + b.tangent * w.y + c.tangent * w.z + d.tangent * w.w,
-    a.normal * w.x + b.normal * w.y + c.normal * w.z + d.normal * w.w,
-    a.binormal * w.x + b.binormal * w.y + c.binormal * w.z + d.binormal * w.w);
-}
-fn loft_sample(off: u32, n: u32, lo: f32, hi: f32, t: f32) -> LoftFrame {
-  let s = (t - lo) / (hi - lo) * f32(n - 1u);
-  let i = clamp(floor(s), 0.0, f32(n - 1u));
-  let f = s - i;
-  let g = 1.0 - f;
-  return loft_blend(i32(i), off, n, vec4<f32>(g * g * g / 6.0, (3.0 * f * f * f - 6.0 * f * f + 4.0) / 6.0,
-    (-3.0 * f * f * f + 3.0 * f * f + 3.0 * f + 1.0) / 6.0, f * f * f / 6.0));
-}
-fn loft_dsample(off: u32, n: u32, lo: f32, hi: f32, t: f32, dt: f32) -> LoftFrame {
-  let s = (t - lo) / (hi - lo) * f32(n - 1u);
-  let i = clamp(floor(s), 0.0, f32(n - 1u));
-  let f = s - i;
-  let g = 1.0 - f;
-  let k = f32(n - 1u) / (hi - lo) * dt;
-  return loft_blend(i32(i), off, n, vec4<f32>(-g * g / 2.0, (3.0 * f * f - 4.0 * f) / 2.0, (-3.0 * f * f + 2.0 * f + 1.0) / 2.0, f * f / 2.0) * k);
-}
-
-";
+const LUTS: &str = concat!(include_str!("../../../stdlib/core/luts.wgsl"), "\n");
 
 pub fn cull_module(single_draw: bool) -> String {
-    let mut s = PRELUDE.replace("{{NONCE}}", abi::NONCE_PLACEHOLDER);
-    s += r"
-struct Inst { lo: vec3<f32>, kind: u32, hi: vec3<f32>, row: u32 }
-@group(1) @binding(0) var<storage, read> insts: array<Inst>;
-@group(1) @binding(1) var<storage, read_write> draw_args: array<atomic<u32>>;
-@group(1) @binding(2) var<storage, read_write> visible: array<u32>;
-@group(1) @binding(3) var<storage, read> bases: array<u32>;
-override loft_draw_words: u32 = 4u;
-
-// Every row of every kind: frustum-test its derived AABB and bound the indirect draw.
-@compute @workgroup_size(64) fn cull(@builtin(global_invocation_id) g: vec3<u32>) {
-  if frame.cold.x == LOFT_NONCE { return; }
-  let i = g.x;
-  if i >= arrayLength(&insts) { return; }
-  let b = insts[i];
-  var outside = 0x3fu;
-  for (var c = 0u; c < 8u; c++) {
-    let corner = vec3<f32>(f32(c & 1u), f32((c >> 1u) & 1u), f32((c >> 2u) & 1u));
-    let q = frame.view_proj * vec4<f32>(mix(b.lo, b.hi, corner), 1.0);
-    var bits = 0u;
-    if q.x < -q.w { bits |= 1u; }
-    if q.x > q.w { bits |= 2u; }
-    if q.y < -q.w { bits |= 4u; }
-    if q.y > q.w { bits |= 8u; }
-    if q.z < 0.0 { bits |= 16u; }
-    if q.z > q.w { bits |= 32u; }
-    outside &= bits;
-  }
-";
-    // A single draw can use row IDs as instance indices. With strict Less,
-    // equal stored depths then retain the lower row, independent of GPU cull order.
-    if single_draw {
-        s += r"
-  let inside = outside == 0u;
-  visible[bases[b.kind] + b.row] = select(LOFT_EMPTY, b.row, inside);
-  if inside {
-    atomicMax(&draw_args[b.kind * loft_draw_words + 1u], b.row + 1u);
-  }
-";
-    } else {
-        s += r"
-  if outside != 0u { return; }
-  let slot = atomicAdd(&draw_args[b.kind * loft_draw_words + 1u], 1u);
-  visible[bases[b.kind] + slot] = b.row;
-";
-    }
-    s += "}\n";
-    s
+    // Direct row indices retain the lower row on equal stored depths with strict Less.
+    let draw = if single_draw { include_str!("../../../stdlib/core/cull_single.wgsl") }
+        else { include_str!("../../../stdlib/core/cull_multi.wgsl") };
+    render_template(PRELUDE, &[("NONCE", abi::NONCE_PLACEHOLDER)])
+        + &render_template(include_str!("../../../stdlib/core/cull.wgsl"), &[("DRAW", draw)])
 }
 
 pub fn classify_module() -> String {
-    let mut s = PRELUDE.replace("{{NONCE}}", abi::NONCE_PLACEHOLDER);
-    s += r"
-@group(1) @binding(0) var vis_tex: texture_2d<u32>;
-@group(1) @binding(1) var<storage, read_write> shade_args: array<atomic<u32>>;
-@group(1) @binding(2) var<storage, read_write> tiles: array<u32>;
-var<workgroup> mask: atomic<u32>;
-
-// One workgroup per 8x8 tile: which kinds cover it; append the tile to each kind's list.
-@compute @workgroup_size(8, 8) fn classify(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) li: u32,
-    @builtin(global_invocation_id) g: vec3<u32>) {
-  if frame.cold.x == LOFT_NONCE { return; }
-  if li == 0u { atomicStore(&mask, 0u); }
-  workgroupBarrier();
-  if g.x < frame.size.x && g.y < frame.size.y {
-    let v = textureLoad(vis_tex, g.xy, 0).x;
-    if v != LOFT_EMPTY { atomicOr(&mask, 1u << (v >> 24u)); }
-  }
-  workgroupBarrier();
-  if li == 0u {
-    var m = atomicLoad(&mask);
-    loop {
-      if m == 0u { break; }
-      let k = firstTrailingBit(m);
-      let slot = atomicAdd(&shade_args[k * 3u], 1u);
-      tiles[k * frame.size.w + slot] = wg.x | (wg.y << 16u);
-      m &= m - 1u;
-    }
-  }
+    classify_with_halo("")
 }
-";
-    s
+
+fn classify_with_halo(halo: &str) -> String {
+    render_template(PRELUDE, &[("NONCE", abi::NONCE_PLACEHOLDER)])
+        + &render_template(include_str!("../../../stdlib/core/classify.wgsl"), &[("HALO", halo)])
 }
 
 /// `sky` is the library fn named by the schedule's present pass.
@@ -1388,49 +983,14 @@ fn emit_present(p: &Prog, types: &[Ty], sky: &str, aov: Aov, paper: Option<&str>
     let sky=fn_symbol(sky);
     let film = film.map_or_else(|| "loft_aces".to_owned(), fn_symbol);
     let resolve = match (aov, paper.map(fn_symbol)) {
-        (Aov::Beauty, Some(paper)) => format!(r"
-  let center = textureLoad(vis_tex, px, 0).x;
-  if center == LOFT_EMPTY {{ c = {sky}(loft_ray(pos.xy), normalize(frame.sun.xyz)); }}
-  let size = vec2<i32>(textureDimensions(vis_tex));
-  var line = 0.0;
-  for (var i=0u; i<4u; i++) {{
-    let sign = select(-1, 1, (i & 1u) == 0u);
-    let step = select(vec2<i32>(0,sign),vec2<i32>(sign,0),i<2u);
-    let q = clamp(vec2<i32>(px)+step,vec2<i32>(0),size-1);
-    if textureLoad(vis_tex,q,0).x!=center {{ line += 0.33; }}
-  }}
-  let hatch = smoothstep(0.74,0.98,cos((pos.x+pos.y)*1.256637)) * (1.0-smoothstep(0.08,0.32,dot(c,vec3<f32>(0.2126,0.7152,0.0722))));
-  c = mix(c, vec3<f32>(0.025,0.02,0.035), min(line + 0.42*hatch,1.0));
-  return vec4<f32>({paper}(loft_aces(c),pos.xy,0.04,0.03),1.0);
-"),
+        (Aov::Beauty, Some(paper)) => render_template(include_str!("../../../stdlib/core/present_paper.wgsl"), &[("SKY", &sky), ("PAPER", &paper)]),
         (Aov::Beauty, None) => format!("if textureLoad(vis_tex, px, 0).x == LOFT_EMPTY {{ c = {sky}(loft_ray(pos.xy), normalize(frame.sun.xyz)); }} return vec4<f32>({film}(c), 1.0);"),
         (Aov::Overdraw, _) => "return vec4<f32>(c, 1.0);".into(),
         (Aov::Depth, _) => "return vec4<f32>(select(c, vec3<f32>(1.0), textureLoad(vis_tex, px, 0).x == LOFT_EMPTY), 1.0);".into(),
         (Aov::Albedo | Aov::Normal | Aov::Id | Aov::SdfSteps | Aov::LipschitzRatio, _) =>
             "return vec4<f32>(select(c, vec3<f32>(0.0), textureLoad(vis_tex, px, 0).x == LOFT_EMPTY), 1.0);".into(),
     };
-    em.out += &format!(
-        r"@group(1) @binding(0) var hdr_tex: texture_2d<f32>;
-@group(1) @binding(1) var vis_tex: texture_2d<u32>;
-
-@vertex fn vs_present(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {{
-  let uv = vec2<f32>(f32((vi << 1u) & 2u), f32(vi & 2u));
-  return vec4<f32>(uv * 2.0 - 1.0, 0.0, 1.0);
-}}
-
-// ACES filmic fit (Narkowicz 2015); the target is sRGB, so the hardware encodes.
-fn loft_aces(x: vec3<f32>) -> vec3<f32> {{
-  return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), vec3<f32>(0.0), vec3<f32>(1.0));
-}}
-
-@fragment fn fs_present(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {{
-  if frame.cold.x == LOFT_NONCE {{ discard; }}
-  let px = vec2<u32>(pos.xy);
-  var c = textureLoad(hdr_tex, px, 0).rgb;
-  {resolve}
-}}
-"
-    );
+    em.out += &render_template(include_str!("../../../stdlib/core/present.wgsl"), &[("RESOLVE", &resolve)]);
     em.out
 }
 
@@ -1471,20 +1031,7 @@ pub fn bake_module(p: &Prog, types: &[Ty], decl: &BakeDecl) -> Res<(crate::bake_
     em.baked_column = column;
     em.func(&decl.texel, "texel_value");
     if let TexDim::Cube(_) = decl.dim {
-        em.out.push_str(r"
-fn bake_direction(face: u32, uv: vec2<f32>) -> vec3<f32> {
-  let h = uv * 2.0 - 1.0;
-  var d: vec3<f32>;
-  switch face {
-    case 0u: { d = vec3<f32>( 1.0, -h.y, -h.x); }
-    case 1u: { d = vec3<f32>(-1.0, -h.y,  h.x); }
-    case 2u: { d = vec3<f32>( h.x,  1.0,  h.y); }
-    case 3u: { d = vec3<f32>( h.x, -1.0, -h.y); }
-    case 4u: { d = vec3<f32>( h.x, -h.y,  1.0); }
-    default: { d = vec3<f32>(-h.x, -h.y, -1.0); }
-  }
-  return normalize(d);
-}");
+        em.out.push_str(include_str!("../../../stdlib/core/bake_cube.wgsl").strip_suffix('\n').unwrap());
     }
     let [x, y, z] = size(decl.dim);
     let [wx, wy, wz] = workgroup(decl.dim);
@@ -1494,28 +1041,17 @@ fn bake_direction(face: u32, uv: vec2<f32>) -> vec3<f32> {
     };
     let format_name = &decl.format.name;
     let (invocation, column_arg, end) = if column.is_some() {
-        (format!(r"  let x = (f32(gid.x) + 0.5) / f32(extent.x);
-  let column = loft_bake_column(vec2f(x, 0.0));
-  for (var dy = 0u; dy < {rows_per_invocation}u; dy++) {{
-    let id = vec3(gid.x, gid.y * {rows_per_invocation}u + dy, gid.z);
-    if any(id >= extent) {{ break; }}
-    let u = vec3(x, (f32(id.y) + 0.5) / f32(extent.y), 0.5);"), ", column", "  }")
+        (render_template(include_str!("../../../stdlib/core/bake_column.wgsl").strip_suffix('\n').unwrap(), &[("ROWS_PER_INVOCATION", &rows_per_invocation.to_string())]), ", column", "  }")
     } else {
-        (r"  let id = gid;
-  if any(id >= extent) { return; }
-  let u = (vec3<f32>(id) + 0.5) / vec3<f32>(extent);".to_owned(), "", "")
+        (include_str!("../../../stdlib/core/bake_invocation.wgsl").strip_suffix('\n').unwrap().to_owned(), "", "")
     };
-    let _ = write!(em.out, r"
-@group(3) @binding(0) var baked: texture_storage_{storage}<{format_name}, write>;
-@compute @workgroup_size({wx}, {wy}, {wz})
-fn bake(@builtin(global_invocation_id) gid: vec3<u32>) {{
-  let extent = vec3<u32>({x}u, {y}u, {z}u);
-{invocation}
-  let texel = texel_value({arg}{column_arg});
-  textureStore(baked, {index}, {encoding});
-{end}
-}}
-");
+    em.out += &render_template(include_str!("../../../stdlib/core/bake.wgsl"), &[
+        ("STORAGE", storage), ("FORMAT_NAME", format_name),
+        ("WX", &wx.to_string()), ("WY", &wy.to_string()), ("WZ", &wz.to_string()),
+        ("X", &x.to_string()), ("Y", &y.to_string()), ("Z", &z.to_string()),
+        ("INVOCATION", &invocation), ("ARG", arg), ("COLUMN_ARG", column_arg),
+        ("INDEX", index), ("ENCODING", encoding), ("END", end),
+    ]);
     Ok((clock, rows_per_invocation, em.out))
 }
 
@@ -1632,18 +1168,9 @@ pub fn kernel_module(
             if table != param || !matches!(kind, AtomicScalar::Float(FloatAtomics::Fixed(_))) { continue; }
             let function = float_atomic_symbol(table, field);
             let field = if p.kinds.contains_key(row) { format!("r_{field}") } else { member_name(field) };
-            let _ = writeln!(em.out, "
-fn {function}(index: u32, value: f32) {{
-  let ptr = &{resource}[index].{field};
-  let delta = loft_fixed_encode(value);
-  var old = atomicLoad(ptr);
-  loop {{
-    let sum = loft_fixed_sum(old, delta);
-    let next = atomicCompareExchangeWeak(ptr, old, sum);
-    if next.exchanged {{ break; }}
-    old = next.old_value;
-  }}
-}}");
+            em.out += &render_template(include_str!("../../../stdlib/core/kernel_atomic.wgsl"), &[
+                ("FUNCTION", &function), ("RESOURCE", &resource), ("FIELD", &field),
+            ]);
             conversions.push(field);
         }
         if !conversions.is_empty() {
@@ -1663,31 +1190,9 @@ fn {function}(index: u32, value: f32) {{
         }
     }
     if let FloatAtomics::Fixed(scale) = float_atomics && !converted.is_empty() {
-        let _ = write!(em.out, r#"
-const LOFT_FIXED_SCALE: f32 = {scale}.0;
-const LOFT_FIXED_INVALID: i32 = -2147483647i - 1i;
-fn loft_fixed_encode(x: f32) -> i32 {{
-    let fixed = round(x * LOFT_FIXED_SCALE);
-    if abs(fixed) < 2147483648.0 {{ return i32(fixed); }}
-    return LOFT_FIXED_INVALID;
-}}
-fn loft_fixed_decode(x: i32) -> f32 {{
-    if x == LOFT_FIXED_INVALID {{ return bitcast<f32>(0x7fc00000u); }}
-    return f32(x) / LOFT_FIXED_SCALE;
-}}
-fn loft_fixed_sum(a: i32, b: i32) -> i32 {{
-    if a == LOFT_FIXED_INVALID || b == LOFT_FIXED_INVALID {{ return LOFT_FIXED_INVALID; }}
-    if b > 0i && a > 2147483647i - b {{ return LOFT_FIXED_INVALID; }}
-    if b < 0i && a < -2147483647i - b {{ return LOFT_FIXED_INVALID; }}
-    return a + b;
-}}
-@compute @workgroup_size(64) fn loft_fixed_prepare(@builtin(global_invocation_id) gid: vec3u, @builtin(num_workgroups) groups: vec3u) {{
-{encode}
-}}
-@compute @workgroup_size(64) fn loft_fixed_finish(@builtin(global_invocation_id) gid: vec3u, @builtin(num_workgroups) groups: vec3u) {{
-{decode}
-}}
-"#);
+        em.out += &render_template(include_str!("../../../stdlib/core/kernel_fixed.wgsl"), &[
+            ("SCALE", &scale.to_string()), ("ENCODE", &encode), ("DECODE", &decode),
+        ]);
     }
     let mut f = k.f.clone();
     f.params.retain(|p| !matches!(p.ty, Some(TyExpr::Table(_))));
@@ -1695,11 +1200,9 @@ fn loft_fixed_sum(a: i32, b: i32) -> i32 {{
     em.func(&f, "loft_kernel");
     em.sampled_textures();
     let [x, y, z] = workgroup;
-    let _ = writeln!(em.out, "
-@compute @workgroup_size({x}, {y}, {z})
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
-  loft_gid = gid;
-  loft_kernel({});
-}}", arguments.join(", "));
+    em.out += &render_template(include_str!("../../../stdlib/core/kernel.wgsl"), &[
+        ("X", &x.to_string()), ("Y", &y.to_string()), ("Z", &z.to_string()),
+        ("ARGS", &arguments.join(", ")),
+    ]);
     (em.out, converted)
 }

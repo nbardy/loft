@@ -5,6 +5,7 @@
 //! compiler calls for the surface normal. Rules are the textbook ones; a `C0` builtin (abs, min, clamp, floor, ...) is
 //! E307: differentiating it needs a choice the author has not made.
 
+use loft_builtins::{Builtin, lookup, spec};
 use loft_parse::ast::*;
 use loft_ir::{Code, Diag, Res, Span};
 use std::collections::{BTreeMap, HashSet};
@@ -25,8 +26,6 @@ struct Ad<'a> {
     /// Names with a tangent in the fn being transformed.
     live: HashSet<String>,
 }
-
-const C0: [&str; 11] = ["abs", "min", "max", "clamp", "saturate", "floor", "fract", "sign", "step", "select", "round"];
 
 impl Ad<'_> {
     fn e(&mut self, span: Span, kind: ExprKind) -> Expr {
@@ -203,34 +202,34 @@ impl Ad<'_> {
         if ds.iter().all(Option::is_none) {
             return Ok(None);
         }
-        if C0.contains(&f) {
-            return Err(Diag::new(Code::E307, sp, format!("cannot differentiate a `C0` expression: `{f}` has a kink"), "keep `diff` on the smooth part (smoothstep/smootherstep, sin, exp, ...), or move the kink outside the differentiated fn"));
-        }
         let mut ds = ds;
         let mut take = |i: usize| ds[i].take();
         let c = |s: &mut Self, i: usize| s.cp(a[i]);
         let mul = |s: &mut Self, x: Expr, y: Expr| s.bin(BinOp::Mul, x, y);
-        Ok(Some(match f {
-            "sin" | "cos" | "exp" | "sqrt" => {
+        use Builtin::*;
+        let builtin = lookup(f).map(|spec| spec.id);
+        Ok(Some(match builtin {
+            Some(Sin | Cos | Exp | Sqrt) => {
                 let dx = take(0).expect("checked: varies");
                 let x = c(self, 0);
-                let k = match f {
-                    "sin" => self.call("cos", vec![x], sp),
-                    "cos" => {
+                let k = match builtin {
+                    Some(Sin) => self.call("cos", vec![x], sp),
+                    Some(Cos) => {
                         let s = self.call("sin", vec![x], sp);
                         self.neg(s)
                     }
-                    "exp" => self.call("exp", vec![x], sp),
-                    _ => {
+                    Some(Exp) => self.call("exp", vec![x], sp),
+                    Some(Sqrt) => {
                         let r = self.call("sqrt", vec![x], sp);
                         let two = self.num(2.0, sp);
                         let r2 = mul(self, two, r);
                         return Ok(Some(self.bin(BinOp::Div, dx, r2)));
                     }
+                    _ => unreachable!("smooth unary builtin"),
                 };
                 mul(self, k, dx)
             }
-            "pow" => {
+            Some(Pow) => {
                 if take(1).is_some() {
                     return Err(Diag::new(Code::E405, sp, "`diff` of `pow` with a varying exponent", "write `exp(b * log(a))` once `log` lands, or keep the exponent constant"));
                 }
@@ -242,32 +241,26 @@ impl Ad<'_> {
                 let kp = mul(self, k1, p);
                 mul(self, kp, dx)
             }
-            "dot" | "cross" => {
+            Some(Dot | Cross) => {
                 let (da, db) = (take(0), take(1));
-                let l = match da {
-                    Some(da) => {
-                        let b = c(self, 1);
-                        Some(self.call(f, vec![da, b], sp))
-                    }
-                    None => None,
-                };
-                let r = match db {
-                    Some(db) => {
-                        let x = c(self, 0);
-                        Some(self.call(f, vec![x, db], sp))
-                    }
-                    None => None,
-                };
+                let l = da.map(|da| {
+                    let b = c(self, 1);
+                    self.call(f, vec![da, b], sp)
+                });
+                let r = db.map(|db| {
+                    let x = c(self, 0);
+                    self.call(f, vec![x, db], sp)
+                });
                 self.add(l, r, false).expect("one varies")
             }
-            "length" => {
+            Some(Length) => {
                 let dv = take(0).expect("varies");
                 let (v1, v2) = (c(self, 0), c(self, 0));
                 let num = self.call("dot", vec![v1, dv], sp);
                 let len = self.call("length", vec![v2], sp);
                 self.bin(BinOp::Div, num, len)
             }
-            "distance" => {
+            Some(Distance) => {
                 let (da, db) = (take(0), take(1));
                 let dd = self.add(da, db, true).expect("one varies");
                 let (p1, q1, p2, q2) = (c(self, 0), c(self, 1), c(self, 0), c(self, 1));
@@ -276,7 +269,7 @@ impl Ad<'_> {
                 let len = self.call("distance", vec![p2, q2], sp);
                 self.bin(BinOp::Div, num, len)
             }
-            "normalize" => {
+            Some(Normalize) => {
                 // (v/|v|)' = (v' - n (n . v')) / |v|
                 let dv = take(0).expect("varies");
                 let (v1, v2, v3) = (c(self, 0), c(self, 0), c(self, 0));
@@ -289,7 +282,7 @@ impl Ad<'_> {
                 let len = self.call("length", vec![v3], sp);
                 self.bin(BinOp::Div, perp, len)
             }
-            "mix" => {
+            Some(Mix) => {
                 // mix(a, b, t)' = mix(a', b', t) + (b - a) t'
                 let (da, db, dt) = (take(0), take(1), take(2));
                 let mut out = None;
@@ -313,19 +306,20 @@ impl Ad<'_> {
                 }
                 out.expect("one varies")
             }
-            "smoothstep" | "smootherstep" => {
+            Some(op @ (Smoothstep | Smootherstep)) => {
                 if take(0).is_some() || take(1).is_some() {
                     return Err(Diag::new(Code::E405, sp, format!("`diff` of `{f}` with varying edges"), "keep the edges constant"));
                 }
                 let dx = take(2).expect("varies");
                 let (e0, e1, x) = (c(self, 0), c(self, 1), c(self, 2));
-                let slope = self.call(&format!("loft_d{f}"), vec![e0, e1, x], sp);
+                let slope = if op == Smoothstep { DSmoothstep } else { DSmootherstep };
+                let slope = self.call(spec(slope).name, vec![e0, e1, x], sp);
                 mul(self, slope, dx)
             }
-            "f32" => take(0).map(|d| self.call("f32", vec![d], sp)).expect("varies"),
-            "u32" | "i32" | "loft_zero" => return Ok(None),
-            "loft_vec" => take(0).expect("varies"),
-            "vec2" | "vec3" | "vec4" | "vec2f" | "vec3f" | "vec4f" => {
+            Some(F32) => take(0).map(|d| self.call("f32", vec![d], sp)).expect("varies"),
+            Some(U32 | I32 | LoftZero) => return Ok(None),
+            Some(LoftVec) => take(0).expect("varies"),
+            Some(Vec2 | Vec3 | Vec4 | Vec2f | Vec3f | Vec4f) => {
                 let mut out = vec![];
                 for (i, x) in a.iter().enumerate() {
                     out.push(match take(i) {
@@ -335,24 +329,33 @@ impl Ad<'_> {
                 }
                 self.call(f, out, sp)
             }
-            "sample_c2" => {
+            Some(SampleC2) => {
                 // The uniform cubic B-spline is C2 in t: its derivative is another table read, scaled by t'.
                 let dt = take(1).expect("varies");
                 let tab = c(self, 0);
                 let t = c(self, 1);
                 self.call("loft_dsample", vec![tab, t, dt], sp)
             }
-            "loft_dsample" => return Err(Diag::new(Code::E405, sp, "a second derivative of a sampled table", "Phase 1 reads first derivatives of scans")),
-            user if self.orig.contains_key(user) || user.contains("__jvp") || user.contains("__d_") => {
+            Some(DSample) => return Err(Diag::new(Code::E405, sp, "a second derivative of a sampled table", "Phase 1 reads first derivatives of scans")),
+            Some(Abs | Min | Max | Clamp | Saturate | Floor | Fract | Sign | Step | Select | Round) => {
+                return Err(Diag::new(Code::E307, sp, format!("cannot differentiate a `C0` expression: `{f}` has a kink"), "keep `diff` on the smooth part (smoothstep/smootherstep, sin, exp, ...), or move the kink outside the differentiated fn"));
+            }
+            None | Some(Acos | Atan2 | Fma | Log | Asin | Atan | Tan | Exp2 | Log2 | Conditional | Dist
+                | Dir | Coords | Place | Inv | FrameAxes | Sample | SampleLod | SamplePrior | HasSky
+                | SkyZenith | SkyHorizon | SunColor | Held | Missed | Unknown | EvalBsdf | MixBsdf
+                | GgxEnergy | Dot4I8 | Dot4U8 | UnpackBf16x2 | PackBf16x2 | UnpackU4Lo | UnpackU4Hi
+                | UnpackI4Lo | UnpackI4Hi | UnpackU2 | UnpackFp8E4m3 | UnpackFp8E5m2) => {
+                if !self.orig.contains_key(f) && !f.contains("__jvp") && !f.contains("__d_") {
+                    return Err(Diag::new(Code::E405, sp, format!("`diff` through `{f}` is not lowered yet"), "differentiate a fn written with arithmetic, calls and the smooth builtins"));
+                }
                 // An inactive argument still supplies its primal value. Giving it
                 // a zero tangent parameter would make pow treat its exponent as live.
                 let mut out: Vec<Expr> = (0..a.len()).map(|i| c(self, i)).collect();
                 let active = ds.iter().map(Option::is_some).collect();
                 out.extend(ds.into_iter().flatten());
-                let j = self.enqueue(user, active);
+                let j = self.enqueue(f, active);
                 self.call(&j, out, sp)
             }
-            other => return Err(Diag::new(Code::E405, sp, format!("`diff` through `{other}` is not lowered yet"), "differentiate a fn written with arithmetic, calls and the smooth builtins")),
         }))
     }
 

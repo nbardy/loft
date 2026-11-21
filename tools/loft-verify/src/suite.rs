@@ -9,7 +9,7 @@
 //! `--approve` writes the current renders as references (and their hashes into gates.json), then gates strictly.
 //! Every check is a `Verdict`; a gate passes only when all of its verdicts are `Held`.
 
-use crate::budget::{self, Failure};
+use loft_cli::{authored_checks, budget::Failure, quantile, render, shader_hashes, sources, write_json, write_png};
 use loft_ir::Verdict;
 use loft_passes::program::{Draw, Program};
 use loft_passes::Compiled;
@@ -196,17 +196,6 @@ fn root() -> Result<PathBuf, String> {
         .ok_or_else(|| "run from inside the repository: no engines/gates.json above the current directory".into())
 }
 
-pub(crate) fn write_png(path: &Path, size: (u32, u32), rgba: &[u8]) -> Result<(), String> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    }
-    let f = std::fs::File::create(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let mut e = png::Encoder::new(std::io::BufWriter::new(f), size.0, size.1);
-    e.set_color(png::ColorType::Rgba);
-    e.set_depth(png::BitDepth::Eight);
-    e.write_header().and_then(|mut w| w.write_image_data(rgba)).map_err(|e| e.to_string())
-}
-
 fn read_png(path: &Path) -> Result<((u32, u32), Vec<u8>), String> {
     let f = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let mut r = png::Decoder::new(std::io::BufReader::new(f)).read_info().map_err(|e| e.to_string())?;
@@ -341,60 +330,7 @@ pub(crate) fn score_pictures() -> Result<(), Failure> {
         }.map_err(Failure::Parity)?;
         Ok((name, outcome))
     }).collect::<Result<BTreeMap<_, _>, Failure>>()?;
-    crate::profile::write_json("-", &results)
-}
-
-fn decode_verdict(record: Option<[f32; 2]>) -> Verdict {
-    match record {
-        Some([1.0, value]) if value.is_finite() && value >= 0.0 => Verdict::Held { margin: value.into() },
-        Some([2.0, value]) if value.is_finite() && value >= 0.0 => Verdict::Missed { by: value.into() },
-        Some([3.0, _]) => Verdict::Unknown { reason: "authored check returned Unknown".into() },
-        _ => Verdict::Unknown { reason: "missing or nonfinite check record".into() },
-    }
-}
-
-pub(crate) fn check_records(p: &Program, samples: &[loft_passes::program::MotionSample]) -> Vec<(String, Verdict)> {
-    let mut results = vec![];
-    for step in &p.dispatches {
-        let (kind, rows, _, _) = step.input.view(&p.kinds).expect("compiled dispatch input");
-        for name in &step.checks {
-            let mut records = samples.iter().filter(|s| s.kind == kind)
-                .flat_map(|s| &s.checks).filter(|(n, _)| n == name).map(|(_, v)| v);
-            let values = records.next().filter(|v| records.next().is_none() && v.len() == rows as usize);
-            for row in 0..rows as usize {
-                results.push((format!("{kind}[{row}].{name}"), decode_verdict(values.map(|v| v[row]))));
-            }
-        }
-    }
-    results
-}
-
-pub fn authored_checks(g: &Gpu, p: &Program, t: f32) -> Result<Vec<(String, Verdict)>, String> {
-    if p.dispatches.iter().all(|m| m.checks.is_empty()) { return Ok(vec![]); }
-    loft_cli::native::sample_motion(g, p, t).map(|samples| check_records(p, &samples))
-}
-
-pub fn still(scene: &Path, set: &[(String, f64)], t: f32, out: &Path, max_frame: Option<f64>) -> Result<(), Failure> {
-    let src = crate::sources(scene).map_err(Failure::Usage)?;
-    let (mut p, _, _) = loft_passes::compile(&src, set).map_err(|d| Failure::Compile(d.render(&src)))?;
-    let g = loft_cli::native::gpu().map_err(Failure::Device)?;
-    if max_frame.is_some() { budget::timestamps(g.timestamps)?; }
-    if !p.dispatches.is_empty() {
-        let sampled = loft_cli::native::sample_motion(&g, &p, t).map_err(Failure::Device)?;
-        for kind in &sampled {
-            for (n, values) in &kind.fields { println!("{}.{} {:?}", kind.kind, n, values); }
-            for (n, values) in &kind.checks { println!("check {} {:?}", n, values); }
-        }
-        p = loft_passes::compile_snapshot(&src, set, &sampled).map_err(|d| Failure::Compile(d.render(&src)))?.0;
-    }
-    let size = (1280, 800);
-    let l = Loaded::new(&g, &p, size, None).map_err(Failure::Device)?;
-    l.frame(&g, t);
-    if let Some(max) = max_frame { budget::check(&g, &l, max)?; }
-    let px = l.pixels(&g).map_err(Failure::Device)?;
-    write_png(out, size, &px).map_err(Failure::Usage)?;
-    println!("wrote {}", out.display());
-    Ok(())
+    write_json("-", &results)
 }
 
 /// Deterministic samples (a 64-bit LCG): the gates must not change between runs.
@@ -416,12 +352,6 @@ impl Rng {
             }
         }
     }
-}
-
-pub(crate) fn quantile(xs: &[f64], q: f64) -> f64 {
-    let mut s = xs.to_vec();
-    s.sort_by(f64::total_cmp);
-    s[((s.len() - 1) as f64 * q).round() as usize]
 }
 
 struct Ctx<'a> {
@@ -553,7 +483,7 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
             let deciles: Vec<f64> = (0..=10).map(|i| quantile(&ms, f64::from(i) / 10.0)).collect();
             let contended = control_p95_ms >= 0.150;
             report[&s.name]["speed"] = json!({"control_p50_ms": control_p50_ms, "control_p95_ms": control_p95_ms, "contended": contended, "p50_ms": p50, "p95_ms": p95, "commands": commands, "frames": ms.len(), "deciles_ms": deciles, "ms": ms,
-                "frame_stamps": measured, "shader_sha256": crate::profile::shader_hashes(p)?});
+                "frame_stamps": measured, "shader_sha256": shader_hashes(p)?});
             push(format!("{commands} GPU commands == {}", b.commands), held_if(-f64::from(commands.abs_diff(b.commands)), None));
             out.push(Check {
                 gate, scene: s.name.clone(), contended,
@@ -572,9 +502,9 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
             let mut times = vec![];
             for _ in 0..2 {
                 let t = Instant::now();
-                let src = crate::sources(&c.root.join(&s.file))?;
+                let src = sources(&c.root.join(&s.file))?;
                 let set: Vec<_> = s.set.iter().map(|(k, &v)| (k.clone(), v)).collect();
-                let (p2, r, _) = loft_passes::compile_cached(&src, &set, cache.path()).map_err(|d| crate::render(&d, &src))?;
+                let (p2, r, _) = loft_passes::compile_cached(&src, &set, cache.path()).map_err(|d| render(&d, &src))?;
                 let front = t.elapsed().as_secs_f64() * 1e3;
                 let device = Instant::now();
                 let l = Loaded::new(c.g, &p2, c.size, Some(nonce))?;
@@ -752,7 +682,7 @@ fn run_selected(approve: bool, only: Option<&str>, selected: &[Gate]) -> Result<
     for s in scenes.into_iter().filter(|s| selected.iter().any(|g| s.includes(*g))) {
         let file = root.join(&s.file);
         let set: Vec<_> = s.set.iter().map(|(k, &v)| (k.clone(), v)).collect();
-        let src = crate::sources(&file).map_err(Failure::Usage)?;
+        let src = sources(&file).map_err(Failure::Usage)?;
         let (p, r, comp) = loft_passes::compile(&src, &set).map_err(|d| Failure::Compile(d.render(&src)))?;
         report[&s.name]["compile_ms"] = json!(r.ms.iter().map(|(n, t)| json!([n, t])).collect::<Vec<_>>());
         report[&s.name]["rows"] = json!(r.kinds.iter().map(|k| json!([k.name, k.rows, k.shapes, k.l_max])).collect::<Vec<_>>());
@@ -821,15 +751,6 @@ mod tests {
         assert!(missing.select(Some("capsules-1"), false).is_err());
         assert!(!rgba_len((2, 3), &[0; 23]));
         assert!(rgba_len((2, 3), &[0; 24]));
-    }
-
-    #[test]
-    fn authored_verdicts_require_a_record_and_finite_evidence() {
-        for record in [None, Some([0.0, 0.0]), Some([1.0, f32::NAN]), Some([3.0, 0.0])] {
-            assert!(matches!(decode_verdict(record), Verdict::Unknown { .. }));
-        }
-        assert!(matches!(decode_verdict(Some([2.0, 1.0])), Verdict::Missed { .. }));
-        assert!(matches!(decode_verdict(Some([1.0, 1.0])), Verdict::Held { .. }));
     }
 
     #[test]

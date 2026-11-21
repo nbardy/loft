@@ -87,28 +87,24 @@ impl Source {
             aspect: wgpu::TextureAspect::DepthOnly,
             ..Default::default()
         });
-        let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &source.pipeline.get_bind_group_layout(0),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&vis),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&depth),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: coord.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: output.as_entire_binding(),
-                },
-            ],
-        });
+        let bind = crate::bindings::group(device, &source.pipeline.get_bind_group_layout(0), &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&vis),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(&depth),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: coord.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: output.as_entire_binding(),
+            },
+        ]);
         let mut enc = device.create_command_encoder(&Default::default());
         dispatch(&mut enc, source.pipeline.clone(), bind);
         enc.copy_buffer_to_buffer(&output, 0, &staging, 0, Some(12));

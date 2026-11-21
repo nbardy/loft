@@ -1,0 +1,31 @@
+use stdlib::sdf::solid::{box_sdf, sphere}
+use stdlib::materials::bsdf::{ggx, lambert}
+
+kind Stone @World (at: p3@World, radius: m > 0m) {
+  trace(p) = max(sphere(p - at, radius), abs(p.y - at.y) - 0.072)
+  material(p, n) = ggx([0.39, 0.36, 0.29], 0.80, 0.0)
+}
+
+kind Water @World () {
+  trace(p) = box_sdf(p - [0, 0.021, 0]@World, [1.30, 0.025, 1.0])
+  material(p, n) {
+    let ring = 0.5 + 0.5 * cos(31.0 * length(p.xz) - 6.0 * time / 1s)
+    ggx(mix([0.031, 0.12, 0.14], [0.07, 0.27, 0.29], ring * ring), 0.24, 0.20)
+  }
+}
+
+kind Ground @World () {
+  trace(p) = box_sdf(p - [0, -0.09, 0]@World, [4, 0.08, 4])
+  material(p, n) = lambert([0.12, 0.19, 0.10])
+}
+
+camera Main { at: [0, 0.02, 0]@World, radius: 3.7m, height: 2.3m, period: 32s, fov: 40deg }
+
+build {
+  emit Water()
+  build for i in 0..5 {
+    let k = f32(i)
+    emit Stone(at: [k * 0.43 - 0.86, 0.11, 0.32 * sin(k * 1.32)]@World, radius: 0.18)
+  }
+  emit Ground()
+}

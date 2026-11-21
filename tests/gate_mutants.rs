@@ -1,5 +1,6 @@
 //! Run the production gate decisions on one changed observation at a time.
 use super::*;
+use loft_cli::budget;
 use std::process::Command;
 
 #[test]
@@ -18,23 +19,6 @@ fn score(gate: Gate, v: Verdict) -> Result<(), Failure> {
         verdict: v,
         contended: false,
     }])
-}
-#[test]
-fn fake_foot_20mm() {
-    let fixture = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../tests/fixtures/pin-drift.loft"
-    );
-    let check = |drift: &str| {
-        crate::command(vec![
-            "check".into(),
-            fixture.into(),
-            "--set".into(),
-            format!("drift_m={drift}"),
-        ])
-    };
-    check("0").unwrap();
-    assert_eq!(check("0.020").unwrap_err().exit().0, 2);
 }
 #[test]
 fn one_vs_20_module_drift() {

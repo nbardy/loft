@@ -4,6 +4,14 @@ use std::ops::Range;
 
 pub use crate::frame::{Stamps, Work};
 
+pub fn compute_pipeline(
+    device: &Device, layout: &PipelineLayout, module: &ShaderModule, entry: &str, cache: Option<&PipelineCache>,
+) -> ComputePipeline {
+    device.create_compute_pipeline(&ComputePipelineDescriptor {
+        label: None, layout: Some(layout), module, entry_point: Some(entry), compilation_options: Default::default(), cache,
+    })
+}
+
 pub struct Dispatch {
     pub pipeline: ComputePipeline,
     pub groups: Vec<BindGroup>,

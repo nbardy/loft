@@ -3,6 +3,8 @@
 //! shared; a branch the domain cannot decide is an error, never a guess.
 
 use crate::Prog;
+use loft_builtins::{Builtin, lookup, spec};
+use loft_check::quant::Quant;
 use loft_parse::ast::*;
 use loft_ir::{Code, Diag, Res, Span};
 
@@ -701,16 +703,19 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 }
             }
             ExprKind::Call { callee, args } => {
-                if callee.name=="loft_conditional" && let Val::B(Some(b))=self.expr(&args[2].value)? {
+                let name = callee.name.as_str();
+                let builtin = lookup(name).map(|spec| spec.id);
+                let function = self.p.fns.get(name).copied();
+                if builtin == Some(Builtin::Conditional) && let Val::B(Some(b))=self.expr(&args[2].value)? {
                     return self.expr(&args[usize::from(b)].value);
                 }
-                if callee.name=="place" {
+                if builtin == Some(Builtin::Place) {
                     let Val::V(o,_)=self.expr(&args[0].value)? else {unreachable!("typed placement")};
                     let exact=|s:&S|s.exact().map(|v|v as f32).ok_or_else(||err(e.span,"placement varies across the query","store it in a row"));
                     let yaw=match args.get(1) {Some(a)=>match self.expr(&a.value)?{Val::S(x)=>exact(&x)?,Val::I(n)=>n as f32,_=>unreachable!("typed yaw")},None=>0.};
                     return Ok(Val::X(Rigid::yaw([exact(&o[0])?,exact(&o[1])?,exact(&o[2])?],yaw)));
                 }
-                if matches!(callee.name.as_str(), "sample" | "sample_lod") && !self.p.fns.contains_key(callee.name.as_str()) {
+                if matches!(builtin, Some(Builtin::Sample | Builtin::SampleLod)) && function.is_none() {
                     let ExprKind::Name(name) = &args[0].value.kind else { unreachable!("checked texture name") };
                     let Val::V(uv, _) = self.expr(&args[1].value)? else { unreachable!("checked sampling coordinate") };
                     let lod = match args.get(2).map(|arg| self.expr(&arg.value)).transpose()? {
@@ -720,42 +725,27 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                     };
                     return self.sample_bake(self.p.bakes[name.as_str()], &uv, lod, e.span);
                 }
-                if matches!(callee.name.as_str(), "sample_c2" | "loft_dsample") {
+                if matches!(builtin, Some(Builtin::SampleC2 | Builtin::DSample)) {
                     let ExprKind::Name(n) = &args[0].value.kind else { unreachable!("checked scan name") };
                     let lut = self.luts.iter().find(|l| &l.name == n).ok_or_else(|| err(e.span, format!("scan `{n}` is not baked yet"), "a scan reads only scans declared before it"))?;
                     let Val::S(t) = self.expr(&args[1].value)? else { unreachable!("checked f32") };
-                    let mut c = lut.sample(&t, callee.name == "loft_dsample");
-                    if callee.name == "loft_dsample" {
+                    let derivative = builtin == Some(Builtin::DSample);
+                    let mut c = lut.sample(&t, derivative);
+                    if derivative {
                         let Val::S(dt) = self.expr(&args[2].value)? else { unreachable!("checked f32") };
                         c = c.iter().map(|x| x.mul(&dt)).collect();
                     }
                     return Ok(Val::V(c, 0.0));
                 }
                 let vals = args.iter().map(|a| self.expr(&a.value)).collect::<Res<Vec<_>>>()?;
-                if let Some(f) = self.p.fns.get(callee.name.as_str()) {
+                if let Some(f) = function {
                     if f.attrs.iter().any(|a| a.name.name == "lobe") {
                         return Ok(Val::Bsdf(vec![Layer::Lobe(callee.name.clone(), vals)]));
                     }
                     return self.call_fn(f, vals, e.span);
                 }
-                if callee.name == "mix_bsdf" {
-                    let [Val::Bsdf(a), Val::Bsdf(b), Val::S(t)] = vals.as_slice() else { unreachable!("checked material mix") };
-                    return Ok(Val::Bsdf(vec![Layer::Mix(a.clone(), b.clone(), t.max(&S::c(0.)).min(&S::c(1.)))]));
-                }
-                if callee.name == "eval_bsdf" {
-                    return self.eval_bsdf(&vals[0], &vals[1], &vals[2], &vals[3], e.span);
-                }
-                if let Some(op) = loft_check::quant::Quant::resolve(&callee.name) {
-                    return crate::quant::twin(op, &vals, e.span);
-                }
-                if callee.name == "ggx_energy" {
-                    let [Val::S(rough), Val::S(mu)] = vals.as_slice() else { unreachable!("checked GGX arguments") };
-                    let (Some(rough), Some(mu)) = (rough.exact(), mu.exact()) else {
-                        return Err(Diag::new(Code::E211, e.span, "GGX albedo lookup requires exact inputs", "evaluate the lobe in a material query"));
-                    };
-                    return Ok(Val::V(loft_check::bsdf::ggx_energy(rough as f32, mu as f32).map(|x| S::c(f64::from(x))).into(), 0.0));
-                }
-                Ok(self.builtin(&callee.name, vals, e))
+                let builtin = builtin.unwrap_or_else(|| unreachable!("checked builtin {name}"));
+                self.builtin(builtin, vals, e)
             }
         }
     }
@@ -924,8 +914,12 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
         Val::vector(c, l)
     }
 
-    fn builtin(&mut self, name: &str, mut v: Vec<Val<S>>, e: &'a Expr) -> Val<S> {
-        let f32ty = matches!(self.ty(e), Ty::F32 | Ty::VecN(_) | Ty::Geo(..));
+    fn builtin(&mut self, builtin: Builtin, mut v: Vec<Val<S>>, e: &'a Expr) -> Res<Val<S>> {
+        use Builtin::*;
+        // Packed and material calls consume the original checked operands.
+        let f32ty = !matches!(builtin, MixBsdf | EvalBsdf | GgxEnergy | UnpackBf16x2 | UnpackU4Lo
+            | UnpackU4Hi | UnpackI4Lo | UnpackI4Hi | UnpackU2 | UnpackFp8E4m3 | UnpackFp8E5m2)
+            && matches!(self.ty(e), Ty::F32 | Ty::VecN(_) | Ty::Geo(..));
         // Integer literals meet f32 in componentwise maths.
         if f32ty {
             for x in &mut v {
@@ -934,36 +928,39 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 }
             }
         }
-        let un = |x: &Val<S>, f: Un| match x {
-            Val::S(s) => Val::S(s.un(f)),
-            Val::V(c, l) => {
-                let c: Vec<S> = c.iter().map(|s| s.clone().project(*l).un(f)).collect();
-                // abs is 1-Lipschitz componentwise, so it keeps the vector bound; the rest bound per component.
-                let l = match f {
-                    Un::Abs => *l,
-                    Un::Sin | Un::Cos | Un::Sqrt | Un::Exp | Un::Floor | Un::Fract | Un::Sign => c.iter().map(|s| s.lip() * s.lip()).sum::<f64>().sqrt(),
+        Ok(match builtin {
+            MixBsdf => {
+                let [Val::Bsdf(a), Val::Bsdf(b), Val::S(t)] = v.as_slice() else { unreachable!("checked material mix") };
+                Val::Bsdf(vec![Layer::Mix(a.clone(), b.clone(), t.max(&S::c(0.)).min(&S::c(1.)))])
+            }
+            EvalBsdf => return self.eval_bsdf(&v[0], &v[1], &v[2], &v[3], e.span),
+            GgxEnergy => {
+                let [Val::S(rough), Val::S(mu)] = v.as_slice() else { unreachable!("checked GGX arguments") };
+                let (Some(rough), Some(mu)) = (rough.exact(), mu.exact()) else {
+                    return Err(Diag::new(Code::E211, e.span, "GGX albedo lookup requires exact inputs", "evaluate the lobe in a material query"));
                 };
-                Val::vector(c, l)
+                let energy = loft_check::bsdf::ggx_energy(rough as f32, mu as f32);
+                Val::V(energy.map(|x| S::c(f64::from(x))).into(), 0.0)
             }
-            other @ Val::Void | other @ Val::B(_) | other @ Val::U(_) | other @ Val::I(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) | other @ Val::Bsdf(_) => unreachable!("checked unary builtin on {other:?}"),
-        };
-        let zip2 = |x: &Val<S>, y: &Val<S>, f: &dyn Fn(&S, &S) -> S| -> Val<S> {
-            match (x, y) {
-                (Val::S(a), Val::S(b)) => Val::S(f(a, b)),
-                (Val::V(a, la), Val::V(b, lb)) => Val::V(a.iter().zip(b).map(|(p, q)| f(p, q)).collect(), la.hypot(*lb)),
-                (Val::V(a, la), Val::S(b)) => Val::V(a.iter().map(|p| f(p, b)).collect(), la.hypot(b.lip())),
-                (Val::S(a), Val::V(b, lb)) => Val::V(b.iter().map(|q| f(a, q)).collect(), lb.hypot(a.lip())),
-                other => unreachable!("checked binary builtin on {other:?}"),
-            }
-        };
-        match name {
-            "frame_axes" => self.build(v,12),
-            "has_sky"=>Val::B(Some(self.p.kind_order.iter().position(|k|*k=="Sky").and_then(|i|self.tables.get(i)).is_some_and(|t|!t.is_empty()))),
-            "sky_zenith" | "sky_horizon" | "sun_color" => {
-                let (kind, column, default) = match name {
-                    "sky_zenith" => ("Sky", 0, loft_check::defaults::ENV_DEFAULTS[1]),
-                    "sky_horizon" => ("Sky", 1, loft_check::defaults::ENV_DEFAULTS[2]),
-                    _ => ("Sun", 1, loft_check::defaults::ENV_DEFAULTS[0]),
+            Dot4I8 => return crate::quant::twin(Quant::DotI8, &v, e.span),
+            Dot4U8 => return crate::quant::twin(Quant::DotU8, &v, e.span),
+            UnpackBf16x2 => return crate::quant::twin(Quant::Bf16, &v, e.span),
+            PackBf16x2 => return crate::quant::twin(Quant::PackBf16, &v, e.span),
+            UnpackU4Lo => return crate::quant::twin(Quant::U4Lo, &v, e.span),
+            UnpackU4Hi => return crate::quant::twin(Quant::U4Hi, &v, e.span),
+            UnpackI4Lo => return crate::quant::twin(Quant::I4Lo, &v, e.span),
+            UnpackI4Hi => return crate::quant::twin(Quant::I4Hi, &v, e.span),
+            UnpackU2 => return crate::quant::twin(Quant::U2, &v, e.span),
+            UnpackFp8E4m3 => return crate::quant::twin(Quant::Fp8E4M3, &v, e.span),
+            UnpackFp8E5m2 => return crate::quant::twin(Quant::Fp8E5M2, &v, e.span),
+            FrameAxes => self.build(v,12),
+            HasSky=>Val::B(Some(self.p.kind_order.iter().position(|k|*k=="Sky").and_then(|i|self.tables.get(i)).is_some_and(|t|!t.is_empty()))),
+            SkyZenith | SkyHorizon | SunColor => {
+                let (kind, column, default) = match builtin {
+                    SkyZenith => ("Sky", 0, loft_check::defaults::ENV_DEFAULTS[1]),
+                    SkyHorizon => ("Sky", 1, loft_check::defaults::ENV_DEFAULTS[2]),
+                    SunColor => ("Sun", 1, loft_check::defaults::ENV_DEFAULTS[0]),
+                    _ => unreachable!("sky color builtin"),
                 };
                 if let Some(row) = self.p.kind_order.iter().position(|k| *k == kind)
                     .and_then(|i| self.tables.get(i)).and_then(|rows| rows.first())
@@ -973,28 +970,29 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                     self.module_expr(&self.p.consts[default].value).expect("validated prelude default")
                 }
             }
-            "coords" => v.remove(0),
-            "dir" => normalize(v.remove(0)),
-            "loft_zero" => match &v[0] {
+            Coords => v.remove(0),
+            LoftZero => match &v[0] {
                 Val::S(_) => Val::S(S::c(0.0)),
                 Val::V(c, _) => Val::V(vec![S::c(0.0); c.len()], 0.0),
                 Val::U(_) => Val::U(0),
                 Val::I(_) => Val::I(0),
                 other @ Val::Void | other @ Val::B(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) | other @ Val::Bsdf(_) => unreachable!("checked zero of {other:?}"),
             },
-            "loft_vec" => v[0].clone(),
-            "smootherstep" | "loft_dsmoothstep" | "loft_dsmootherstep" => {
-                // t = clamp((x - a) / (b - a)); value t^3 (6t^2 - 15t + 10); slopes 6t(1-t)/(b-a), 30t^2(1-t)^2/(b-a).
-                let (e0, e1, x) = (v[0].clone(), v[1].clone(), v[2].clone());
-                let span = self.arith(BinOp::Sub, e1, e0.clone());
-                let num = self.arith(BinOp::Sub, x, e0);
-                let t = self.arith(BinOp::Div, num, span.clone());
-                let t = zip2(&t, &Val::S(S::c(0.0)), &|a, z| a.max(z).min(&S::c(1.0)));
+            LoftVec => v[0].clone(),
+            Smoothstep | Smootherstep | DSmoothstep | DSmootherstep => {
+                let (e0, e1, x) = (&v[0], &v[1], &v[2]);
+                let span = self.arith(BinOp::Sub, e1.clone(), e0.clone());
+                let num = self.arith(BinOp::Sub, x.clone(), e0.clone());
+                let t = saturate(&self.arith(BinOp::Div, num, span.clone()));
                 let c = |k: f64| Val::S(S::c(k));
-                let one_t = self.arith(BinOp::Sub, c(1.0), t.clone());
                 let tt = self.arith(BinOp::Mul, t.clone(), t.clone());
-                match name {
-                    "smootherstep" => {
+                match builtin {
+                    Smoothstep => {
+                        let two_t = self.arith(BinOp::Mul, c(2.0), t);
+                        let k = self.arith(BinOp::Sub, c(3.0), two_t);
+                        self.arith(BinOp::Mul, tt, k)
+                    }
+                    Smootherstep => {
                         let a = self.arith(BinOp::Mul, c(6.0), t.clone());
                         let a = self.arith(BinOp::Sub, a, c(15.0));
                         let a = self.arith(BinOp::Mul, a, t.clone());
@@ -1023,60 +1021,49 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                             _ => out,
                         }
                     }
-                    "loft_dsmoothstep" => {
+                    DSmoothstep => {
+                        let one_t = self.arith(BinOp::Sub, c(1.0), t.clone());
                         let a = self.arith(BinOp::Mul, c(6.0), t);
                         let a = self.arith(BinOp::Mul, a, one_t);
                         self.arith(BinOp::Div, a, span)
                     }
-                    _ => {
+                    DSmootherstep => {
+                        let one_t = self.arith(BinOp::Sub, c(1.0), t.clone());
                         let oo = self.arith(BinOp::Mul, one_t.clone(), one_t);
                         let a = self.arith(BinOp::Mul, c(30.0), tt);
                         let a = self.arith(BinOp::Mul, a, oo);
                         self.arith(BinOp::Div, a, span)
                     }
+                    _ => unreachable!("smootherstep builtin"),
                 }
             }
-            "abs" => un(&v[0], Un::Abs),
-            "sqrt" => un(&v[0], Un::Sqrt),
-            "sin" => un(&v[0], Un::Sin),
-            "cos" => un(&v[0], Un::Cos),
-            "exp" => un(&v[0], Un::Exp),
-            "floor" => un(&v[0], Un::Floor),
-            "fract" => un(&v[0], Un::Fract),
-            "sign" => un(&v[0], Un::Sign),
-            "min" => zip2(&v[0], &v[1], &|a, b| a.min(b)),
-            "max" => zip2(&v[0], &v[1], &|a, b| a.max(b)),
-            "pow" => zip2(&v[0], &v[1], &|a, b| a.pow(b)),
-            "step" => zip2(&v[0], &v[1], &|e, x| {
+            Abs => map1(&v[0], Un::Abs),
+            Sqrt => map1(&v[0], Un::Sqrt),
+            Sin => map1(&v[0], Un::Sin),
+            Cos => map1(&v[0], Un::Cos),
+            Exp => map1(&v[0], Un::Exp),
+            Floor => map1(&v[0], Un::Floor),
+            Fract => map1(&v[0], Un::Fract),
+            Sign => map1(&v[0], Un::Sign),
+            Min => map2(&v[0], &v[1], S::min),
+            Max => map2(&v[0], &v[1], S::max),
+            Pow => map2(&v[0], &v[1], S::pow),
+            Step => map2(&v[0], &v[1], |e, x| {
                 let d = x.sub(e);
                 let s = d.un(Un::Sign).max(&S::c(0.0));
                 // step(e, x) = 1 where x >= e: sign maps 0 to 0, so lift the boundary.
                 s.max(&S::c(if d.exact() == Some(0.0) { 1.0 } else { 0.0 }))
             }),
-            "saturate" => zip2(&v[0], &Val::S(S::c(0.0)), &|a, z| a.max(z).min(&S::c(1.0))),
-            "clamp" => {
-                let lo = zip2(&v[0], &v[1], &|a, b| a.max(b));
-                zip2(&lo, &v[2], &|a, b| a.min(b))
-            }
-            "mix" => {
+            Saturate => saturate(&v[0]),
+            Clamp => map3(&v[0], &v[1], &v[2], S::max, S::min),
+            Mix => {
                 // a + (b - a) * t, through the same rules.
                 let (a, b, t) = (v[0].clone(), v[1].clone(), v[2].clone());
                 let d = self.arith(BinOp::Sub, b, a.clone());
                 let dt = self.arith(BinOp::Mul, d, t);
                 self.arith(BinOp::Add, a, dt)
             }
-            "smoothstep" => {
-                let (e0, e1, x) = (v[0].clone(), v[1].clone(), v[2].clone());
-                let span = self.arith(BinOp::Sub, e1, e0.clone());
-                let num = self.arith(BinOp::Sub, x, e0);
-                let t = self.arith(BinOp::Div, num, span);
-                let t = zip2(&t, &Val::S(S::c(0.0)), &|a, z| a.max(z).min(&S::c(1.0)));
-                let tt = self.arith(BinOp::Mul, t.clone(), t.clone());
-                let two_t = self.arith(BinOp::Mul, Val::S(S::c(2.0)), t);
-                let k = self.arith(BinOp::Sub, Val::S(S::c(3.0)), two_t);
-                self.arith(BinOp::Mul, tt, k)
-            }
-            "select" | "loft_conditional" => match &v[2] {
+            Select | Conditional => match &v[2] {
                 Val::B(Some(true)) => v[1].clone(),
                 Val::B(Some(false)) => v[0].clone(),
                 Val::Void | Val::S(_) | Val::V(..) | Val::B(_) | Val::U(_) | Val::I(_) | Val::X(_) | Val::Row(..) | Val::MapRef(..) | Val::Bsdf(_) => match (&v[0], &v[1]) {
@@ -1085,20 +1072,9 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                     other => unreachable!("checked select on {other:?}"),
                 },
             },
-            "length" => match &v[0] {
-                Val::S(s) => Val::S(s.un(Un::Abs)),
-                Val::V(c, l) => Val::S(sum_sq(c).un(Un::Sqrt).with_lip(*l)),
-                other @ Val::Void | other @ Val::B(_) | other @ Val::U(_) | other @ Val::I(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) | other @ Val::Bsdf(_) => unreachable!("checked length of {other:?}"),
-            },
-            "distance" | "dist" => {
-                let d = self.arith(BinOp::Sub, v[0].clone(), v[1].clone());
-                match d {
-                    Val::V(c, l) => Val::S(sum_sq(&c).un(Un::Sqrt).with_lip(l)),
-                    Val::S(s) => Val::S(s.un(Un::Abs)),
-                    other @ Val::Void | other @ Val::B(_) | other @ Val::U(_) | other @ Val::I(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) | other @ Val::Bsdf(_) => unreachable!("checked distance of {other:?}"),
-                }
-            }
-            "dot" => {
+            Length => length(&v[0]),
+            Distance | Dist => length(&self.arith(BinOp::Sub, v[0].clone(), v[1].clone())),
+            Dot => {
                 let (Val::V(a, la), Val::V(b, lb)) = (&v[0], &v[1]) else { unreachable!("checked dot") };
                 let mut s = a[0].mul(&b[0]);
                 for i in 1..a.len() {
@@ -1106,7 +1082,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 }
                 Val::S(s.with_lip(norm(a) * lb + norm(b) * la))
             }
-            "cross" => {
+            Cross => {
                 let (Val::V(a, la), Val::V(b, lb)) = (&v[0], &v[1]) else { unreachable!("checked cross") };
                 let c = vec![
                     a[1].mul(&b[2]).sub(&a[2].mul(&b[1])),
@@ -1115,37 +1091,33 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 ];
                 Val::V(c, norm(a) * lb + norm(b) * la)
             }
-            "normalize" => normalize(v[0].clone()),
-            "inv" => match &v[0] {
+            Dir | Normalize => normalize(v.swap_remove(0)),
+            Inv => match &v[0] {
                 Val::X(x) => Val::X(x.inv()),
                 other @ Val::Void | other @ Val::S(_) | other @ Val::V(..) | other @ Val::B(_) | other @ Val::U(_) | other @ Val::I(_) | other @ Val::Row(..) | other @ Val::MapRef(..) | other @ Val::Bsdf(_) => unreachable!("checked inv of {other:?}"),
             },
-            "f32" => match &v[0] {
+            F32 => match &v[0] {
                 Val::U(u) => Val::S(S::c(f64::from(*u))),
                 Val::I(i) => Val::S(S::c(f64::from(*i))),
                 other @ Val::Void | other @ Val::S(_) | other @ Val::V(..) | other @ Val::B(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) | other @ Val::Bsdf(_) => other.clone(),
             },
             // Between integers WGSL reinterprets the bits (u32(-1) is 0xffffffff); from f32 it saturates.
-            "u32" if matches!(v[0], Val::I(_)) => match v[0] {
-                Val::I(i) => Val::U(i as u32),
-                _ => unreachable!("matched"),
+            U32 | I32 => match (builtin, &v[0]) {
+                (U32, Val::I(i)) => Val::U(*i as u32),
+                (I32, Val::U(u)) => Val::I(*u as i32),
+                (U32, Val::U(u)) => Val::U(*u),
+                (I32, Val::I(i)) => Val::I(*i),
+                (U32, Val::S(s)) => Val::U(s.exact().unwrap_or(f64::NAN) as u32),
+                (I32, Val::S(s)) => Val::I(s.exact().unwrap_or(f64::NAN) as i32),
+                (_, other) => unreachable!("checked conversion of {other:?}"),
             },
-            "i32" if matches!(v[0], Val::U(_)) => match v[0] {
-                Val::U(u) => Val::I(u as i32),
-                _ => unreachable!("matched"),
-            },
-            "u32" | "i32" => {
-                let x = match &v[0] {
-                    Val::U(u) => f64::from(*u),
-                    Val::I(i) => f64::from(*i),
-                    Val::S(s) => s.exact().unwrap_or(f64::NAN),
-                    other @ Val::Void | other @ Val::V(..) | other @ Val::B(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) | other @ Val::Bsdf(_) => unreachable!("checked conversion of {other:?}"),
-                };
-                if name == "u32" { Val::U(x as u32) } else { Val::I(x as i32) }
-            }
-            "vec2" | "vec3" | "vec4" | "vec2f" | "vec3f" | "vec4f" => self.build(v, (name.as_bytes()[3] - b'0') as usize),
-            other => unreachable!("checked builtin {other}"),
-        }
+            Vec2 | Vec2f => self.build(v, 2),
+            Vec3 | Vec3f => self.build(v, 3),
+            Vec4 | Vec4f => self.build(v, 4),
+            Acos | Atan2 | Fma | Log | Asin | Atan | Tan | Exp2 | Log2 | Round | Place | Sample
+            | SampleLod | SampleC2 | DSample | SamplePrior | Held | Missed | Unknown
+                => unreachable!("checked builtin {}", spec(builtin).name),
+        })
     }
 
     /// `eval_bsdf(b, n, v, l)`: each lobe bottom first, `c = c * below + own` (the lobe's vec4 is own rgb and the
@@ -1189,8 +1161,55 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
     }
 }
 
+fn map1<S: Scalar>(x: &Val<S>, f: Un) -> Val<S> {
+    match x {
+        Val::S(s) => Val::S(s.un(f)),
+        Val::V(c, l) => {
+            let c: Vec<S> = c.iter().map(|s| s.clone().project(*l).un(f)).collect();
+            // abs is 1-Lipschitz componentwise, so it keeps the vector bound; the rest bound per component.
+            let l = match f {
+                Un::Abs => *l,
+                Un::Sin | Un::Cos | Un::Sqrt | Un::Exp | Un::Floor | Un::Fract | Un::Sign => c.iter().map(|s| s.lip() * s.lip()).sum::<f64>().sqrt(),
+            };
+            Val::vector(c, l)
+        }
+        other @ Val::Void | other @ Val::B(_) | other @ Val::U(_) | other @ Val::I(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) | other @ Val::Bsdf(_) => unreachable!("checked unary builtin on {other:?}"),
+    }
+}
+
+fn map2<S: Scalar>(x: &Val<S>, y: &Val<S>, f: impl Fn(&S, &S) -> S) -> Val<S> {
+    match (x, y) {
+        (Val::S(a), Val::S(b)) => Val::S(f(a, b)),
+        (Val::V(a, la), Val::V(b, lb)) => Val::V(a.iter().zip(b).map(|(p, q)| f(p, q)).collect(), la.hypot(*lb)),
+        (Val::V(a, la), Val::S(b)) => Val::V(a.iter().map(|p| f(p, b)).collect(), la.hypot(b.lip())),
+        (Val::S(a), Val::V(b, lb)) => Val::V(b.iter().map(|q| f(a, q)).collect(), lb.hypot(a.lip())),
+        other => unreachable!("checked binary builtin on {other:?}"),
+    }
+}
+
+// Keep both binary stages so mixed scalar/vector args retain the original
+// intermediate Lipschitz bound and hypot order.
+fn map3<S: Scalar>(
+    x: &Val<S>, y: &Val<S>, z: &Val<S>,
+    first: impl Fn(&S, &S) -> S, second: impl Fn(&S, &S) -> S,
+) -> Val<S> {
+    map2(&map2(x, y, first), z, second)
+}
+
+fn saturate<S: Scalar>(x: &Val<S>) -> Val<S> {
+    map2(x, &Val::S(S::c(0.0)), |a, z| a.max(z).min(&S::c(1.0)))
+}
+
 fn max_mag<S: Scalar>(v: &[S]) -> f64 {
     v.iter().map(S::mag).fold(0.0, f64::max)
+}
+
+fn length<S: Scalar>(v: &Val<S>) -> Val<S> {
+    match v {
+        Val::S(s) => Val::S(s.un(Un::Abs)),
+        Val::V(c, l) => Val::S(sum_sq(c).un(Un::Sqrt).with_lip(*l)),
+        other => unreachable!("checked length of {other:?}"),
+    }
 }
 
 fn sum_sq<S: Scalar>(c: &[S]) -> S {

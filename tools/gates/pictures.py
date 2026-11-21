@@ -51,9 +51,9 @@ def score_pack(modes, cli=None):
                     "reference": mode.reference, "convergence": mode.convergence, "frames": mode.frames,
                 }}
     if cli is None:
-        cli = os.environ.get("LOFT_PICTURE_SCORER", ROOT / "target/lab/loft")
+        cli = os.environ.get("LOFT_PICTURE_SCORER", ROOT / "target/lab/loft-verify")
     request = json.dumps(requests, default=os.fspath)
-    result = subprocess.run([cli, "gate", "--score-pictures"], input=request,
+    result = subprocess.run([cli, "score-pictures"], input=request,
                             text=True, capture_output=True)
     if result.returncode != 0:
         raise ValueError(result.stderr.strip() or result.stdout.strip())
@@ -73,7 +73,7 @@ def sequence(cfg, folder, frame_prefix="seed"):
                       tuple(folder / f"{frame_prefix}-{seed}.png" for seed in seeds))
 
 
-def capture_path(reference_cli, cli, name, cfg, out):
+def capture_path(reference_cli, cli, name, cfg, out, scorer=None):
     candidate = sequence(cfg, out)
     mutant = sequence(cfg, out, "mutant")
     seeds = cfg["frame_seeds"]
@@ -116,7 +116,7 @@ def capture_path(reference_cli, cli, name, cfg, out):
     for seed, good, broken in zip(seeds, candidate.frames, mutant.frames, strict=True):
         render("candidate", cli, good, seed, cfg["samples"], 1.0)
         render("candidate", cli, broken, seed, cfg["samples"], 0.1)
-    return score_pack({name: candidate, f"{name}-mutant": mutant}, cli)
+    return score_pack({name: candidate, f"{name}-mutant": mutant}, scorer)
 
 
 def deterministic_pack(config, baseline, candidate, cli=None):
@@ -241,6 +241,7 @@ def main():
     path.add_argument("reference_cli", type=Path)
     path.add_argument("cli", type=Path)
     path.add_argument("out", type=Path, help="a new scratch directory under the checkout's out/")
+    path.add_argument("--scorer", type=Path)
     path.set_defaults(mode="stochastic")
     replay = commands.add_parser("sequence")
     replay.add_argument("scene")
@@ -269,7 +270,7 @@ def main():
                 work = out / name
                 work.mkdir()
                 results.update(capture_path(args.reference_cli.resolve(strict=True),
-                                            args.cli.resolve(strict=True), name, cfg, work))
+                                            args.cli.resolve(strict=True), name, cfg, work, args.scorer))
                 mutants.add(f"{name}-mutant")
     print(json.dumps(results, indent=2, allow_nan=False))
     return not all(result["held"] == (name not in mutants) for name, result in results.items())

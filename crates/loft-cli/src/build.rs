@@ -1,8 +1,7 @@
 //! CPU-only corpus build and bundle writing.
-mod artifact;
-pub(crate) mod trace;
 
 use crate::{budget::Failure, flag, sources};
+use loft_cli::{artifact, write};
 use std::path::Path;
 
 pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure> {
@@ -22,24 +21,4 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
     }
     println!("built {} modules", program.modules.len());
     Ok(())
-}
-
-pub(super) fn write(path: &Path, bytes: &[u8]) -> Result<(), Failure> {
-    use std::io::Write;
-    let err = |e: std::io::Error| Failure::Usage(format!("{}: {e}", path.display()));
-    let dir = path
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    let mut file = tempfile::NamedTempFile::new_in(dir).map_err(err)?;
-    file.write_all(bytes).map_err(err)?;
-    file.persist(path).map_err(|e| err(e.error))?;
-    Ok(())
-}
-
-fn live_names<'a>(prog: &'a loft_passes::Prog<'_>) -> impl Iterator<Item = &'a str> {
-    use loft_parse::ast::TyExpr;
-    prog.consts.iter().filter_map(|(&name, c)| {
-        (c.comptime && matches!(&c.ty, Some(TyExpr::Name(n)) if n.name == "f32")).then_some(name)
-    })
 }

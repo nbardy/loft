@@ -1,8 +1,31 @@
 //! Source rendering shared by stills and clips.
-use crate::{budget, budget::Failure, flag, gates::write_png, sources};
-use loft_cli::native::{self, Gpu, Loaded};
+use crate::{budget, budget::Failure, flag, sources};
+use loft_cli::{native::{self, Gpu, Loaded}, write_png};
 use loft_passes::emit::Aov;
 use std::{path::{Path, PathBuf}, process::Command, time::Instant};
+
+pub(crate) fn source_still(scene: &Path, set: &[(String, f64)], t: f32, out: &Path, max_frame: Option<f64>) -> Result<(), Failure> {
+    let src = sources(scene).map_err(Failure::Usage)?;
+    let (mut p, _, _) = loft_passes::compile(&src, set).map_err(|d| Failure::Compile(d.render(&src)))?;
+    let g = native::gpu().map_err(Failure::Device)?;
+    if max_frame.is_some() { budget::timestamps(g.timestamps)?; }
+    if !p.dispatches.is_empty() {
+        let sampled = native::sample_motion(&g, &p, t).map_err(Failure::Device)?;
+        for kind in &sampled {
+            for (n, values) in &kind.fields { println!("{}.{} {:?}", kind.kind, n, values); }
+            for (n, values) in &kind.checks { println!("check {} {:?}", n, values); }
+        }
+        p = loft_passes::compile_snapshot(&src, set, &sampled).map_err(|d| Failure::Compile(d.render(&src)))?.0;
+    }
+    let size = (1280, 800);
+    let l = Loaded::new(&g, &p, size, None).map_err(Failure::Device)?;
+    l.frame(&g, t);
+    if let Some(max) = max_frame { budget::check(&g, &l, max)?; }
+    let px = l.pixels(&g).map_err(Failure::Device)?;
+    write_png(out, size, &px).map_err(Failure::Usage)?;
+    println!("wrote {}", out.display());
+    Ok(())
+}
 
 struct Options {
     scene: PathBuf,

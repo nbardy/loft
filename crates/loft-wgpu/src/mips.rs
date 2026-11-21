@@ -187,11 +187,10 @@ impl Pipelines {
                         text = output.shader(&text, "dst", 0, 1)?;
                         entries[1] = crate::bindings::slot(1, BufferBindingType::Storage { read_only: false });
                     }
-                    let group = device.create_bind_group_layout(&BindGroupLayoutDescriptor { label:None, entries:&entries });
+                    let group = crate::bindings::layout(device, &entries);
                     let layout = device.create_pipeline_layout(&PipelineLayoutDescriptor { label:None, bind_group_layouts:&[Some(&group)], immediate_size:0 });
                     let module = device.create_shader_module(ShaderModuleDescriptor { label:Some("mip reduction"), source:ShaderSource::Wgsl(text.into()) });
-                    let (pipe, ms) = crate::timed(clock, || device.create_compute_pipeline(&ComputePipelineDescriptor { label:None, layout:Some(&layout), module:&module,
-                        entry_point:Some("downsample"), compilation_options:Default::default(), cache }));
+                    let (pipe, ms) = crate::timed(clock, || crate::command::compute_pipeline(device, &layout, &module, "downsample", cache));
                     times.push((format!("mip {dim:?} {format:?}"), ms));
                     entry.insert(pipe)
                 }
@@ -203,7 +202,7 @@ impl Pipelines {
             };
             let entries = [BindGroupEntry { binding:0, resource:BindingResource::TextureView(&pair[0]) },
                 BindGroupEntry { binding:1, resource:target }];
-            let bg = device.create_bind_group(&BindGroupDescriptor { label:None, layout:&layout, entries:&entries });
+            let bg = crate::bindings::group(device, &layout, &entries);
             let work = Work::Direct(std::array::from_fn(|i| extent[i].div_ceil(dim.group(limits.max_compute_workgroup_size_z, limits.max_compute_invocations_per_workgroup)[i])));
             Ok((Pass::Compute(vec![Dispatch { pipeline:pipeline.clone(), groups:vec![bg], work }]), packed))
         }).collect::<Result<_>>()?;

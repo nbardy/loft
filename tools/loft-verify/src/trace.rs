@@ -1,6 +1,5 @@
 //! Replay the Phase 1.5 row-local schedule with its f32 expression twin.
-use super::{live_names, write};
-use crate::{budget::Failure, flag, gates, sources};
+use loft_cli::{artifact, budget::Failure, check_records, flag, live_names, sources, write, write_png};
 use loft_cli::native::{self, Loaded};
 use loft_ir::{ParamMeta, Sources, Span, Verdict};
 use loft_parse::ast::{Arg, Expr, ExprKind, Item, NumSuffix, Stmt, Ty, TyExpr};
@@ -94,7 +93,7 @@ fn read(path: &Path) -> Result<LoftLog> {
 }
 
 fn bundle_hash(program: &Program, code: &Compiled) -> Result<[u8; 32]> {
-    let bundle = super::artifact::lower(program, code).map_err(Failure::Compile)?;
+    let bundle = artifact::lower(program, code).map_err(Failure::Compile)?;
     Ok(identity(&loft_runner::bundle::encode(&bundle)))
 }
 
@@ -113,11 +112,6 @@ fn initial_log(hash: [u8; 32], prog: &Prog<'_>, program: &Program) -> LoftLog {
             .map(|(name, value)| (name.to_owned(), value))
             .collect(),
     }
-}
-
-pub(crate) fn requested(args: &[String]) -> bool {
-    args.iter()
-        .any(|a| matches!(a.as_str(), "--record" | "--replay" | "--format"))
 }
 
 pub(crate) fn run(args: &[String], set: &[(String, f64)], render: bool) -> Result<()> {
@@ -247,7 +241,7 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)], render: bool) -> Resul
         let gpu = gpu.as_ref().expect("output device");
         let loaded = Loaded::new(gpu, &snapshot, size, None).map_err(device)?;
         loaded.frame(gpu, time);
-        gates::write_png(&out, size, &loaded.pixels(gpu).map_err(device)?).map_err(usage)?;
+        write_png(&out, size, &loaded.pixels(gpu).map_err(device)?).map_err(usage)?;
     }
     if let Some(path) = recording {
         log.expected_final_identity = Some(identity(&result.bytes));
@@ -305,7 +299,7 @@ fn execute(
             "trace parameter snapshot differs from the scene schema",
         ));
     }
-    let schema = super::artifact::parameters(program, compiled).map_err(Failure::Compile)?;
+    let schema = loft_passes::bundle::parameters(program, compiled).map_err(Failure::Compile)?;
     for (name, value) in &log.params {
         update(&schema, &mut params, name, *value)?;
     }
@@ -326,7 +320,7 @@ fn execute(
             step(&mut ev, src)?;
         }
         samples = snapshots(&mut ev, program, src)?;
-        for (name, verdict) in gates::check_records(program, &samples) {
+        for (name, verdict) in check_records(program, &samples) {
             if !matches!(verdict, Verdict::Held { .. }) && missed.is_none() {
                 // Preserve failed traces for reproduction. Only a Truth check
                 // turns an authored verdict into the command's exit status.
@@ -386,7 +380,7 @@ fn execute_native(
     }
     let mut ticks = log.ticks(hash).map_err(usage)?;
     let end = log.validate().map_err(usage)?;
-    let schema = super::artifact::parameters(program, compiled).map_err(Failure::Compile)?;
+    let schema = loft_passes::bundle::parameters(program, compiled).map_err(Failure::Compile)?;
     let prog = compiled.prog();
     let mut params: BTreeMap<_, _> = live_names(&prog)
         .map(|name| (name.to_owned(), 0.))
@@ -423,7 +417,7 @@ fn execute_native(
             return Err(device("native snapshot time cannot represent this tick"));
         }
         samples = native::sample_motion(gpu, program, seconds).map_err(device)?;
-        for (name, verdict) in gates::check_records(program, &samples) {
+        for (name, verdict) in check_records(program, &samples) {
             if !matches!(verdict, Verdict::Held { .. }) && missed.is_none() {
                 missed = Some(format!("tick {tick} {name}: {verdict}"));
             }
@@ -709,7 +703,7 @@ fn adapt_verdict(expr: &mut Expr, id: u32) -> Result<()> {
 mod tests {
     use super::*;
 
-    const SCENE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/l5g/scramble.loft");
+    const SCENE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../crates/loft-cli/tests/l5g/scramble.loft");
 
     #[test]
     fn native_scramble_record_replays_every_state_bit() {
@@ -756,7 +750,7 @@ mod tests {
         let src = sources(Path::new(SCENE)).unwrap();
         let (program, _, mut code) =
             loft_passes::compile(&src, &[]).unwrap_or_else(|d| panic!("{}", d.render(&src)));
-        let artifact = super::super::artifact::lower(&program, &code).unwrap();
+        let artifact = artifact::lower(&program, &code).unwrap();
         loft_runner::bundle::validate_wgsl(&artifact).unwrap();
         let packed = loft_runner::bundle::encode(&artifact);
         assert_eq!(

@@ -1,0 +1,30 @@
+use stdlib::sdf::solid::{box_sdf, capsule}
+use stdlib::materials::bsdf::{ggx, lambert, emit_lobe, coat}
+
+kind Jelly @World () {
+  trace(p) {
+    let lift = 0.11 * sin(5.0 * time / 1s)
+    let q = p - [0, 1.08 + lift, 0]@World
+    var field = max(length(q) - 0.37, -q.y - 0.07)
+    for i in 0..6 {
+      let a = f32(i) * 1.04719755
+      let x = 0.24 * cos(a)
+      let z = 0.24 * sin(a)
+      field = min(field, capsule(p, [x, 1.04 + lift, z]@World, [x * 0.66 + lift, 0.45, z * 0.72]@World, 0.026))
+    }
+    max(field, box_sdf(p - [0, 0.94, 0]@World, [0.65, 0.65, 0.65]))
+  }
+  material(p, n) = ggx([0.10, 0.52, 0.63], 0.16, 0.41) + coat(0.52, 0.10) + emit_lobe([0.015, 0.09, 0.13])
+}
+
+kind Ground @World () {
+  trace(p) = box_sdf(p - [0, -0.09, 0]@World, [4, 0.08, 4])
+  material(p, n) = lambert([0.031, 0.071, 0.11]) + emit_lobe([0.02, 0.12, 0.17] * exp(-6.0 * length(p.xz)))
+}
+
+camera Main { at: [0, 0.82, 0]@World, radius: 3.25m, height: 0.5m, period: 32s, fov: 40deg }
+
+build {
+  emit Jelly()
+  emit Ground()
+}
