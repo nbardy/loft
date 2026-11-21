@@ -574,23 +574,7 @@ pub fn lower_program(
     for (slot, bake) in (3..).zip(bakes) {
         let texture = b.transient(4, 0);
         b.baked_inputs.insert((3, slot), texture);
-        let first = PassId(b.bundle.passes.len() as u32);
-        let mut passes = bake.passes(texture, first);
-        let ids = passes.iter().map(|p| p.id).collect();
-        for pass in &mut passes { pass.wave = b.wave; b.wave += 1; }
-        b.bundle.passes.extend(passes);
-        use crate::bake_tex::{Clock, TexDim};
-        let dimension = match bake.dim {
-            TexDim::D2(..) => execution::Dimension::Plane,
-            TexDim::D3(..) => execution::Dimension::Volume,
-            TexDim::Cube(_) => execution::Dimension::Cube,
-        };
-        let clock = match &bake.clock {
-            Clock::Load => execution::Clock::Load,
-            Clock::Dirty(words) => execution::Clock::Dirty(words.clone()),
-        };
-        execution.initializers.push(Initializer { name: bake.name.clone(), passes: ids, clock,
-            image: Some(Image { table: texture, dimension, extent: bake.size(), levels: bake.mip_count(), format: bake.storage()? }) });
+        execution.initializers.push(append_bake(&mut b.bundle, bake, texture, &mut b.wave)?);
     }
     let mut present = Resources::from([((1, 0), hdr), ((1, 1), vis)]);
     if let Some(path) = &program.path {
@@ -724,6 +708,49 @@ pub fn lower_program(
     b.bundle.tables.extend(execution.table());
     Ok(Prepared { bundle: b.bundle, instances, visibility: vis, depth, shadow: shadow_bounds, shadow_wave,
         modules: program.kinds.iter().map(|k| ModuleId(k.module as u32)).collect() })
+}
+
+fn append_bake(bundle: &mut Bundle, bake: &crate::bake_tex::Bake, texture: TableId, wave: &mut u16) -> Result<Initializer> {
+    let first = PassId(bundle.passes.len() as u32);
+    let mut passes = bake.passes(texture, first);
+    let ids = passes.iter().map(|p| p.id).collect();
+    for pass in &mut passes { pass.wave = *wave; *wave = wave.checked_add(1).ok_or("too many pass waves")?; }
+    bundle.passes.extend(passes);
+    use crate::bake_tex::{Clock, TexDim};
+    let dimension = match bake.dim {
+        TexDim::D2(..) => execution::Dimension::Plane,
+        TexDim::D3(..) => execution::Dimension::Volume,
+        TexDim::Cube(_) => execution::Dimension::Cube,
+    };
+    let clock = match &bake.clock {
+        Clock::Load => execution::Clock::Load,
+        Clock::Dirty(words) => execution::Clock::Dirty(words.clone()),
+    };
+    Ok(Initializer { name: bake.name.clone(), passes: ids, clock,
+        image: Some(Image { table: texture, dimension, extent: bake.size(), levels: bake.mip_count(), format: bake.storage()? }) })
+}
+
+pub(super) fn compute_bakes(program: &Program, tables: &BTreeMap<String, TableId>, bundle: &mut Bundle) -> Result<()> {
+    let mut execution = Execution::default();
+    let mut wave = bundle.passes.last().map_or(Ok(0), |pass| pass.wave.checked_add(1).ok_or("too many pass waves"))?;
+    for bake in &program.bakes {
+        // A compute bundle already declares the sampled slot. Its initializer
+        // makes that table runner-owned just as in a render bundle.
+        let Some(&texture) = tables.get(&bake.name) else { continue };
+        bundle.tables.iter_mut().find(|table| table.id == texture)
+            .ok_or("unknown compute bake image")?.lifetime = TableLifetime::Transient;
+        let original = &program.modules[bake.module];
+        let (code, _) = shader(original.naga.clone(), &original.name, None, 4)?;
+        let mut bake = bake.clone();
+        bake.module = bundle.modules.len();
+        bundle.modules.push(ModuleBlob {
+            id: ModuleId(bake.module as u32), target: ShaderTarget::Wgsl,
+            hash: *blake3::hash(code.as_bytes()).as_bytes(), bytes: code.into_bytes().into_boxed_slice(),
+        });
+        execution.initializers.push(append_bake(bundle, &bake, texture, &mut wave)?);
+    }
+    bundle.tables.extend(execution.table());
+    Ok(())
 }
 
 fn append_bvh(nodes: &mut Vec<u32>, leaves: &mut Vec<u32>, tree: &crate::bvh::Bvh2) -> Result<u32> {

@@ -11,7 +11,7 @@ fn sources(scene: &str) -> loft_passes::source::Graph {
 #[test]
 fn source_compute_bundle_runs_with_gpu_readback() {
     let src = sources("crates/loft-passes/tests/escapes/compute.loft");
-    let (program, _, compiled) =
+    let (_, _, compiled) =
         loft_passes::compile(&src, &[]).unwrap_or_else(|d| panic!("{}", d.render(&src)));
     let compute = compiled.compute;
     let artifact = tempfile::NamedTempFile::new().unwrap();
@@ -44,28 +44,7 @@ fn source_compute_bundle_runs_with_gpu_readback() {
         },
     );
     let id = runner.load_bundle_bytes(&bytes).unwrap();
-    let loaded = loft_cli::native::Loaded::new(&g, &program, (32, 32), None).unwrap();
-    let texture = loaded.baked_texture("Probe").unwrap();
-    let probe = compute.tables["Probe"];
-    runner
-        .declare_external_texture(
-            id,
-            probe,
-            &wgpu::TextureDescriptor {
-                label: Some("Probe"),
-                size: texture.size(),
-                mip_level_count: texture.mip_level_count(),
-                sample_count: texture.sample_count(),
-                dimension: texture.dimension(),
-                format: texture.format(),
-                usage: wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            },
-        )
-        .unwrap();
-    runner
-        .bind_external_texture(id, probe, Arc::new(texture))
-        .unwrap();
+    assert!(runner.image(id, "Probe").is_some());
     let target = g.device.create_texture(&wgpu::TextureDescriptor {
         label: None,
         size: wgpu::Extent3d {

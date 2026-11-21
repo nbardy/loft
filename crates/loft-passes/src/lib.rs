@@ -1550,6 +1550,7 @@ pub mod bundle {
         }
         let mut bundle = compiled.compute.bundle.clone();
         bundle.params = parameters(program, compiled)?;
+        super::renderer_bundle::compute_bakes(program, &compiled.compute.tables, &mut bundle)?;
         Ok(bundle)
     }
 }
