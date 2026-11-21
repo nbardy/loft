@@ -32,14 +32,19 @@ def builds():
     if len(data) % stride:
         raise ValueError("unexpected kinfo_proc size")
     libc = ctypes.CDLL(None)
-    libc.getprogname.restype = ctypes.c_char_p
-    own_name = libc.getprogname()[:16]
+    # argv[0] can be a symlink such as python3. Compare two kernel records.
+    short = ctypes.create_string_buffer(64)  # Darwin struct proc_bsdshortinfo
+    pid = os.getpid()
+    if (libc.proc_pidinfo(pid, 13, 0, short, len(short)) != len(short)
+            or struct.unpack_from("=I", short.raw)[0] != pid):
+        raise ValueError("could not read observer identity from PROC_PIDT_SHORTBSDINFO")
+    own_name = short.raw[16:32].split(b"\0", 1)[0]
     verified = False
     active = []
     for offset in range(0, len(data), stride):
         state, pid = struct.unpack_from("=b3xi", data, offset + 36)
         name = data[offset + 243:offset + 260].split(b"\0", 1)[0]
-        verified |= pid == os.getpid() and name == own_name
+        verified |= pid == os.getpid() and name[:16] == own_name
         if state != 5 and name in (b"cargo", b"rustc"):  # SZOMB has exited
             active.append(f"{pid} {name.decode()}")
     if not verified:
