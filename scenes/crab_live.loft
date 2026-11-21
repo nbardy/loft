@@ -1,0 +1,164 @@
+use stdlib::geometry::analytic::{ray_ground}
+use stdlib::integrators::direct::{sun_sky}
+use stdlib::materials::bsdf::{ggx, emit_lobe}
+use stdlib::sdf::solid::{box_sdf}
+
+space World
+
+# State is in 1/12000 m and ticks (120 Hz). Whole-valued f32 columns pack into
+# the snapshot ABI. The law only uses exact integer-valued operations.
+const UNITS = 12000.0
+const STRIDE_TICKS = 36.0
+const RIDE = 2.5m
+param stick: f = 0 in -3..3
+param scripted: f = 1 in 0..1
+
+kind StageCrab @World (
+  centre: v3 = [0, 0, 0], shape: v3, ink: rgb, leg: u = 0, section: f = 0,
+  travel: f = 0, speed: f = 0, near_pin: f = 0, far_pin: f = 0,
+  landing: f = 0, phase: f = 0, group: f = 1, tick: f = 0
+) {
+  surface(u, v) grid 20x14 {
+    let a = TAU * u
+    let b = 0.5 * TAU * (v - 0.5)
+    let globe = [cos(a) * cos(b), sin(b), -sin(a) * cos(b)]
+    let offset = [0, 0, travel / UNITS]
+    if section == 0.0 { return [centre + shape * globe + offset]@World }
+
+    let toe = stage_toe(self, leg)
+    if section == 4.0 { return [toe.xyz + shape * globe + offset]@World }
+    let home = feet(leg % 4)
+    let side = side_of(leg)
+    let hip = [home.x, RIDE + 0.10, 2.5 * side]
+    let knee = [mix(hip.x, toe.x, 0.43), RIDE + 1.35, mix(hip.z, toe.z, 0.53)]
+    let ankle = [mix(knee.x, toe.x, 0.97), toe.y + 1.1, mix(knee.z, toe.z, 0.97)]
+    if section == 1.0 { return [joint_shell(hip, knee, shape.x, u, v) + offset]@World }
+    if section == 2.0 { return [joint_shell(knee, ankle, shape.x, u, v) + offset]@World }
+    [joint_shell(ankle, toe.xyz, shape.x, u, v) + offset]@World
+  }
+
+  material(p, n, uv) = ggx(ink, 0.42, 0)
+}
+
+fn joint_shell(a: v3, b: v3, radius: f, u: f, v: f) -> v3 {
+  let axis = b - a
+  let along = axis / (length(axis) + 0.0001)
+  let xz = [-along.z, 0.0, along.x]
+  let across = xz / (length(xz) + 0.0001)
+  let up = cross(along, across)
+  let ang = TAU * u
+  let cap = 0.5 * TAU * (v - 0.5)
+  let drum = smoothstep(0.0, 0.22, v) * (1.0 - smoothstep(0.78, 1.0, v))
+  let joint = radius * mix(cos(cap), 1.0, drum)
+  let t = smoothstep(0.12, 0.88, v)
+  a + t * axis + along * (radius * sin(cap)) + joint * (cos(ang) * up - sin(ang) * across)
+}
+
+fn side_of(i: u) -> f {
+  if i >= 4 { return 1.0 }
+  -1.0
+}
+
+fn feet(i: u) -> v3 {
+  let root = [1.35, 0.5, -0.4, -1.3]
+  let ahead = [2.8, 1.1, -0.9, -2.7]
+  let out = [6.6, 7.4, 7.3, 6.4]
+  [root[i], ahead[i], out[i]]
+}
+
+fn stage_toe(h: StageCrab, i: u) -> p3@World {
+  let group = (i + i / 4) % 2
+  let side = side_of(i)
+  let other = f32(group) - h.group
+  let pin = mix(h.near_pin, h.far_pin, f32(group))
+  let t = (1.0 - other * other) * h.phase / STRIDE_TICKS
+  let planted = mix(pin, h.landing, smoothstep(0.0, 1.0, t))
+  let lift = 0.65 * 16.0 * t * t * (1.0 - t) * (1.0 - t)
+  let home = feet(i % 4)
+  [home.y, 0.13 + lift, side * home.z + (planted - h.travel) / UNITS]@World
+}
+
+law roam_stage(h: StageCrab, dt) writes h.{travel, speed, near_pin, far_pin, landing, phase, group, tick} {
+  let k = h.tick
+  let cue = select(select(select(0.0, -210.0, k < 384), 120.0, k < 204), 0.0, k < 24)
+  let goal = select(floor(stick * 100 + 0.5), cue, scripted > 0.5)
+  let v = h.speed + clamp(goal - h.speed, -9.0, 9.0)
+  let x = h.travel + v
+  let idle = h.phase == 0.0
+  let next = 1.0 - h.group
+  let pin = select(h.near_pin, h.far_pin, next == 1.0)
+  let start = idle && abs(x - pin) > 950.0
+  let active = select(h.group, next, start)
+  let landing = select(h.landing, x + v * 28.0, start)
+  let phase = select(0.0, h.phase + 1.0, start || !idle)
+  let landed = phase == STRIDE_TICKS
+  h.tick = min(k + 1.0, 480.0)
+  h.travel = x
+  h.speed = v
+  h.near_pin = select(h.near_pin, landing, landed && active == 0.0)
+  h.far_pin = select(h.far_pin, landing, landed && active == 1.0)
+  h.phase = select(phase, 0.0, landed)
+  h.landing = landing
+  h.group = active
+}
+
+kind SandDeck @World (radius: f) {
+  visible(ro, rd) = ray_ground(ro, rd, radius)
+  trace(p) = box_sdf(p - [0, -0.03, 0]@World, [radius, 0.03, radius])
+  material(p, n) {
+    let d = abs(fract(p.xyz * 0.5 + rgb(0.5)) - rgb(0.5))
+    let grid = 1.0 - smoothstep(0.003, 0.022, min(d.x, d.z))
+    let sand = mix([0.89, 0.71, 0.48], [0.59, 0.45, 0.30], grid)
+    ggx(sand * [0.78, 0.65, 0.45], 0.9, 0.0) + emit_lobe(sand * [0.29, 0.24, 0.19])
+  }
+}
+
+fn stage_sky(rd: rgb, sun: rgb) -> rgb = [0.89, 0.69, 0.44]
+
+camera Main { eye: [17, 14, 15]@World, at: [0, 1.8, -0.2]@World, fov: 0.63 }
+build {
+  let red = [0.77, 0.062, 0.017]
+  let black = [0.042, 0.015, 0.009]
+  let gold = [0.90, 0.52, 0.095]
+  let teal = [0.067, 0.41, 0.35]
+  emit StageCrab(centre: [0, RIDE, 0], shape: [4.08, 1.05, 3.35], ink: red)
+  build for side in [-1.0, 1.0] {
+    var i = 0
+    build for site in [
+      [3.45, 3.14, 1.65], [3.77, 3.38, 1.70], [3.4, 2.26, 3.0],
+      [4.65, 2.34, 3.36], [4.75, 2.38, 2.76]
+    ] {
+      var k = 0
+      build for size in [
+        [0.50, 0.67, 0.50], [0.28, 0.33, 0.28], [1.65, 0.55, 0.76],
+        [0.89, 0.25, 0.24], [0.74, 0.22, 0.22]
+      ] {
+        if i == k {
+          emit StageCrab(centre: [site.x, site.y, side * site.z], shape: size,
+            ink: select(select(red, gold, i == 0), black, i == 1))
+        }
+        k = k + 1
+      }
+      i = i + 1
+    }
+  }
+  build for i in 0..8 {
+    let band = (i + i / 4) % 2
+    build for segment in [[1.0, 0.26], [2.0, 0.20], [3.0, 0.12]] {
+      emit StageCrab(shape: [segment.y, 0.0, 0.0], ink: select(red, black, segment.x == 3.0),
+        leg: i, section: segment.x)
+    }
+    emit StageCrab(shape: [0.20, 0.13, 0.20], ink: select(gold, teal, band == 1), leg: i, section: 4.0)
+  }
+  emit SandDeck(radius: 150)
+}
+schedule Main {
+  use_camera(Main)
+  run_laws(roam_stage)
+  cull_indirect(StageCrab, SandDeck)
+  render_bundle(Vis64) { draw_indirect(StageCrab, SandDeck) }
+  find_shadow_map(StageCrab, size: 1024)
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: sun_sky, sun: [-0.45, 0.82, -0.35])
+  tonemap_aces(ColorHdr, sky: stage_sky)
+}

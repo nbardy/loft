@@ -173,6 +173,87 @@ fn gpu() -> (Runner, loft_cli::native::Gpu) {
 }
 
 #[test]
+fn lineup_camera_follows_cuts() {
+    let scene = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scenes/crab_lineup.loft");
+    let src = Graph::file(&scene, "").unwrap();
+    let (_, _, compiled) = loft_passes::compile(&src, &[]).unwrap_or_else(|d| panic!("{}", d.render(&src)));
+    for (t, eye, fov) in [
+        (0.0, [34.0, 20.0, 3.0], 0.8),
+        (3.0, [37.0, 22.0, 1.5], 0.8),
+        (13.0, [44.0, 22.0, 0.0], 0.8),
+        (16.5, [36.0, 3.0, 0.0], 0.4),
+        (17.0, [40.0, 24.0, 0.0], 0.8),
+        (24.0, [39.2, 3.0, 18.0], 0.4),
+        (32.0, [34.0, 20.0, 3.0], 0.8),
+    ] {
+        let camera = compiled.camera_at(t, &[]).unwrap().unwrap();
+        assert_eq!(camera.fov, fov);
+        for (actual, expected) in camera.eye(t).into_iter().zip(eye) {
+            assert!((actual - expected).abs() < 0.0001, "eye at {t}: {}", actual);
+        }
+    }
+    let square = compiled.camera_at(0.0, &[("square".into(), 1.0)]).unwrap().unwrap();
+    assert_eq!(square.eye(0.0), [46.0, 40.0, 3.0]);
+    assert!(compiled.camera_at(0.0, &[("shot_time".into(), 16.5)]).unwrap().is_none());
+}
+
+#[test]
+fn motion_gpu_crab_live_twin() {
+    let scene = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scenes/crab_live.loft");
+    let src = Graph::file(&scene, "").unwrap();
+    let program = loft_passes::compile(&src, &[]).unwrap_or_else(|d| panic!("{}", d.render(&src))).0;
+    let dispatch = &program.dispatches[0];
+    let bundle = fusion::motion_bundle(&program, dispatch, 0);
+    let mut cpu = tables(&bundle);
+    let mut snapshots = vec![cpu[&ROWS].clone()];
+    for tick in 1..=480 {
+        step(&bundle, &mut cpu, tick - 1, tick);
+        snapshots.push(cpu[&ROWS].clone());
+    }
+    let field = |tick: usize, name: &str| {
+        let word = dispatch.fields.iter().find(|(field, _)| field == name).unwrap().1 as usize;
+        f32::from_le_bytes(snapshots[tick][word * 4..word * 4 + 4].try_into().unwrap())
+    };
+    assert_eq!(field(24, "travel"), 0.0);
+    assert_eq!(field(25, "travel"), 9.0);
+    assert_eq!(field(192, "travel"), 19419.0);
+    assert_eq!(field(205, "speed"), 111.0);
+    assert_eq!(field(384, "speed"), -210.0);
+    assert_eq!(field(480, "speed"), 0.0);
+
+    let (mut runner, g) = gpu();
+    let stride = snapshots[0].len() as u64;
+    for interval in [1, 2, 4] {
+        let id = runner.load_bundle(&bundle).unwrap();
+        let rows = runner.export_buffer(id, ROWS).unwrap();
+        let count = 480 / interval + 1;
+        let staging = g.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("crab live twin samples"),
+            size: stride * u64::from(count),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = g.device.create_command_encoder(&Default::default());
+        for frame in 0..count {
+            let tick = frame * interval;
+            if tick != 0 {
+                runner.advance_into(id, &mut encoder, tick, 0).unwrap();
+            }
+            encoder.copy_buffer_to_buffer(&rows, 0, &staging, u64::from(frame) * stride, stride);
+        }
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        encoder.map_buffer_on_submit(&staging, wgpu::MapMode::Read, .., move |result| tx.send(result).unwrap());
+        g.queue.submit([encoder.finish()]);
+        g.device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        rx.recv().unwrap().unwrap();
+        for (frame, words) in staging.slice(..).get_mapped_range().unwrap().chunks_exact(stride as usize).enumerate() {
+            let tick = frame * interval as usize;
+            assert_eq!(words, snapshots[tick], "{interval} ticks/frame, tick {tick}");
+        }
+    }
+}
+
+#[test]
 fn motion_gpu_alternates_cpu_and_gpu_ticks() {
     let b = fixture(BOSS, &[]);
     let (mut runner, g) = gpu();

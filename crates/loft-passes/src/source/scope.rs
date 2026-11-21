@@ -594,6 +594,12 @@ impl Scope<'_> {
                         span: f.name.span,
                     });
                     resolved.push_str(&token[word.len()..]);
+                } else if let Some(name) = word.strip_prefix("loft_type_")
+                    && let Some(key) = self.resolve(name, f.name.span, false)?
+                {
+                    resolved.push_str("loft_type_");
+                    resolved.push_str(&key);
+                    resolved.push_str(&token[word.len()..]);
                 } else {
                     resolved.push_str(token);
                 }

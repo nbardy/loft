@@ -85,7 +85,13 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
         loft_passes::sexp::read(&data).map_err(Failure::Compile)?
     } else {
         let src = sources(path).map_err(Failure::Usage)?;
-        loft_passes::compile(&src, set).map_err(|d| Failure::Compile(d.render(&src)))?.0
+        let (mut program, _, compiled) = loft_passes::compile(&src, set).map_err(|d| Failure::Compile(d.render(&src)))?;
+        if let Some(t) = time
+            && let Some(camera) = compiled.camera_at(t, set).map_err(|d| Failure::Compile(d.render(&src)))?
+        {
+            program.camera = camera;
+        }
+        program
     };
     let gpu = native::gpu().map_err(Failure::Device)?;
     crate::budget::timestamps(gpu.timestamps)?;
@@ -113,7 +119,10 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
             hardware_ray_query: loaded.stats.hardware_ray_query,
             device_loads_ms: loads.map(|_| device_loads_ms.clone()),
             pipelines: loads.map(|_| loaded.stats.compute_pipelines + loaded.stats.render_pipelines),
-            passes: program.passes.iter().map(|p| format!("{p:?}")).collect(),
+            passes: program.passes.iter().flat_map(|pass| match pass {
+                loft_passes::program::Pass::PathPrimary(_) => vec!["PathVisibility".into(), format!("{pass:?}")],
+                _ => vec![format!("{pass:?}")],
+            }).collect(),
             gpu_frame_ms: frame_stamps.iter().map(|f| f.gpu_ms).collect(),
             gpu_pass_ms: frame_stamps.iter().map(|f| f.pass_ms.clone()).collect(),
             frame_time_bits: times[warmup as usize..].iter().map(|t| t.to_bits()).collect(),

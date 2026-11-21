@@ -517,8 +517,10 @@ pub fn lower_program(
     let groups = [size.0.div_ceil(8), size.1.div_ceil(8), 1];
     let tiles = b.transient(4, count * groups[0] * groups[1]);
     let empty = Some([f64::from(u32::MAX), 0., 0., 0.]);
+    let path_miss = Some([f64::from(u32::MAX), f64::from(1e30_f32.to_bits()), 0., 0.]);
     let far = Some([1., 0., 0., 0.]);
-    let vis = b.texture(ImageFormat::Rg32Uint, size, empty);
+    let vis_clear = if program.passes.iter().any(|pass| matches!(pass, Pass::PathPrimary(_))) { path_miss } else { empty };
+    let vis = b.texture(ImageFormat::Rg32Uint, size, vis_clear);
     let depth = b.texture(ImageFormat::Depth32Float, size, far);
     let side = program.shadow_size.max(1);
     let shadow = b.texture(ImageFormat::Depth32Float, (side, side), far);

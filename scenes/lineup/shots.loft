@@ -1,0 +1,58 @@
+# [cut, move end, start lens, end lens].
+# The same edit plays wide or square. Each group lens is [eye x, y, z, pitch degrees].
+const OPEN = [34, 20, 3, 15]
+const SQUARE = [46, 40, 3, 22]
+
+build fn raised(id: u, square: bool) -> v4 {
+  var k = u32(0)
+  var wide = OPEN
+  build for row in [OPEN, [40, 24, 0, 17], [40, 24, 0, 17], [44, 22, 0, 13], [30, 20, 9, 22], [28, 20, 9, 22]] {
+    if k == id { wide = row }
+    k = k + 1
+  }
+  k = 0
+  var close = SQUARE
+  build for row in [SQUARE, [50, 40, 0, 22], [53, 40, 0, 22], [50, 40, 0, 22], [38, 36, 9, 22], [39, 36, 9, 22]] {
+    if k == id { close = row }
+    k = k + 1
+  }
+  select(wide, close, square)
+}
+
+build fn lens(id: u, square: bool) -> frame@World {
+  if id < 6 {
+    let l = raised(id, square)
+    let pitch = l.w * TAU / 360.0
+    return frame_axes([l.xyz]@World, [-10.0 * cos(pitch), -10.0 * sin(pitch), 0]@World - [0]@World,
+      [0.8, 0, 0]@World - [0]@World, [0]@World - [0]@World)
+  }
+  # Single lenses, [x, z, distance, aim height]. Face cut comes first.
+  var k = u32(6)
+  var l = [0, 0, 30, 3.4]
+  build for row in [[0, 0, 30, 3.4], [8, 18, 26, 3.2], [2, 9, 31, 3.4],
+    [-4, 0, 30, 3.4], [-10, -9, 30, 3.4], [-16, -18, 40, 5.8]] {
+    if k == id { l = row }
+    k = k + 1
+  }
+  return frame_axes([l.x + 1.2 * l.z, 3, l.y]@World, [-1.2 * l.z, l.w - 1.5, 0]@World - [0]@World,
+    [0.4, 0, 0]@World - [0]@World, [0]@World - [0]@World)
+}
+
+pub build fn shot_at(seconds: s, square: bool) -> frame@World {
+  let count = 64.0 * fract(seconds / 32.0)
+  var cut = [0.0, 8.0, 0.0, 1.0]
+  build for row in [
+    [16, 26, 2, 3], [33, 34, 6, 6], [34, 46, 1, 5],
+    [48, 49, 7, 7], [50, 51, 8, 8], [52, 53, 9, 9],
+    [54, 55, 10, 10], [56, 57, 11, 11], [58, 62, 4, 0]
+  ] {
+    if count >= row.x { cut = row }
+  }
+  let a = lens(u32(cut.z), square)
+  let b = lens(u32(cut.w), square)
+  let start = max(4.0, cut.x)
+  let x = saturate((count - start) / (cut.y - start))
+  let u = select(1.0 - 2.0 * (1.0 - x) * (1.0 - x), 2.0 * x * x, x < 0.5)
+  let eye = a.o + (b.o - a.o) * u
+  frame_axes(eye, a.t + (b.t - a.t) * u, a.n + (b.n - a.n) * u, a.b)
+}

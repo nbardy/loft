@@ -1,0 +1,15 @@
+# World-anchored swell contours. Large wave bands follow two crossing swells;
+# short pale cuts follow the fastest part of the crest and fade into the distance.
+pub fn print_sea(p: p3@World, t: s, deep: rgb, shallow: rgb, foam: rgb) -> rgb {
+  let q = p.xz
+  let a = sin(0.19 * q.y + 0.09 * q.x - 0.55 * t)
+  let b = sin(0.32 * q.x - 0.18 * q.y + 0.34 * t)
+  let flow = q.x * 0.28 + t * 0.61 + 0.32 * a + 0.26 * b
+  let ridge = 0.5 + 0.5 * cos(TAU * flow)
+  let stroke = smoothstep(0.945, 0.993, ridge) * smoothstep(0.23, 0.75, a + 0.62 * b)
+  let distance = length(q)
+  let horizon = smoothstep(28, 115, distance)
+  let bands = smoothstep(0.4, 0.6, ridge) * (0.27 + 0.23 * a)
+  let water = mix(deep, shallow, max(bands * (1.0 - horizon), 0.65 * horizon))
+  mix(water, foam, stroke * (1.0 - horizon) * 0.56)
+}

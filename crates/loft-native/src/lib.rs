@@ -73,7 +73,8 @@ pub struct Loaded {
     shadow: Option<(u16, u32, Mutex<shadow::Reuse>)>,
     instance_bounds: wgpu::Buffer,
     color: wgpu::Texture,
-    planes: [TableId; 2],
+    planes: [TableId; 3],
+    linear_hdr: bool,
     color_view: wgpu::TextureView,
     clock: Option<Clock>,
     pub stats: LoadStats,
@@ -376,7 +377,8 @@ impl Loaded {
                     (wave, i as u32 + u32::from(photons), Mutex::new(shadow::Reuse::prepare(p, casters, indexed, editable)))
                 })
         });
-        let clock = g.timestamps.then(|| Clock::new(g, 2 * (p.passes.len() as u32 + u32::from(photons))));
+        let path_primary = p.passes.iter().any(|pass| matches!(pass, Pass::PathPrimary(_)));
+        let clock = g.timestamps.then(|| Clock::new(g, 2 * (p.passes.len() as u32 + u32::from(photons) + u32::from(path_primary))));
         let kind_tables = (0..p.kinds.len()).map(|i| plan.bundle.rows[&KindId(i as u32)]).collect();
         let mut base = 0;
         let kind_words = p.kinds.iter().enumerate().map(|(i, k)| {
@@ -391,7 +393,11 @@ impl Loaded {
             frame_table, runner: Mutex::new(runner), id, modules: plan.modules, kind_tables,
             twin_sources: p.kinds.iter().map(|k| p.modules[k.module].naga.clone()).collect(),
             luts: p.luts.clone(), kind_words, params: Mutex::new((p.params.clone(), false)), instance_bounds, shadow,
-            color, planes: [plan.visibility, plan.depth], color_view, clock, stats })
+            color, planes: [plan.visibility, plan.depth, plan.hdr], linear_hdr: p.path.is_none() || path_primary, color_view, clock, stats })
+    }
+
+    pub fn aim(&mut self, camera: loft_passes::program::Orbit) {
+        self.camera = camera;
     }
 
     pub fn set_param_word(&self, word: usize, value: f32) -> Result<(), String> {
@@ -536,14 +542,22 @@ impl Loaded {
     }
 
     pub fn picture_planes(&self, g: &Gpu) -> Result<(Vec<u8>, Vec<u8>), String> {
-        let runner = self.runner.lock().unwrap();
-        let read = |id| {
-            let texture = runner.export_texture(self.id, id).ok_or("missing picture plane")?;
-            loft_runner::read_texture(&g.device, &g.queue, &texture, 0).map_err(runner_error)
-        };
-        let [visibility, depth] = self.planes;
-        let ids = read(visibility)?.chunks_exact(8).flat_map(|pixel| pixel[..4].iter().copied()).collect();
-        Ok((ids, read(depth)?))
+        let [visibility, depth, _] = self.planes;
+        let ids = self.read_plane(g, visibility)?.chunks_exact(8).flat_map(|pixel| pixel[..4].iter().copied()).collect();
+        Ok((ids, self.read_plane(g, depth)?))
+    }
+
+    pub fn attachment_bytes(&self, g: &Gpu) -> Result<[Vec<u8>; 3], String> {
+        if !self.linear_hdr {
+            return Err("the selected path renderer writes display output directly".into());
+        }
+        let [visibility, depth, hdr] = self.planes;
+        Ok([self.read_plane(g, visibility)?, self.read_plane(g, depth)?, self.read_plane(g, hdr)?])
+    }
+
+    fn read_plane(&self, g: &Gpu, id: TableId) -> Result<Vec<u8>, String> {
+        let texture = self.runner.lock().unwrap().export_texture(self.id, id).ok_or("missing picture plane")?;
+        loft_runner::read_texture(&g.device, &g.queue, &texture, 0).map_err(runner_error)
     }
 
     /// The twin: runs kind `k`'s queries on the GPU at samples of 8 floats each (p.xyz or (u, v, 0), row as bits,

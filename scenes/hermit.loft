@@ -1,0 +1,65 @@
+use self::lineup::cast::{cast, back, CastPart, CastSpiral}
+use stdlib::geometry::analytic::{ray_ground}
+use stdlib::lighting::emitters
+use stdlib::materials::bsdf::{emit_lobe}
+use stdlib::post::display::{paper_grain}
+use stdlib::sdf::solid::{box_sdf}
+use stdlib::sky::environment
+use stdlib::styles::print_sea::{print_sea}
+use stdlib::styles::woodblock::{woodblock_pigment}
+
+space World
+
+const DEEP: rgb = [0.022, 0.053, 0.147]
+const SHALLOW: rgb = [0.065, 0.135, 0.29]
+const FOAM: rgb = [0.52, 0.67, 0.78]
+
+param front: f = 0 in 0..1
+
+camera Main {
+  eye: [mix([1, 5, -30], [30, 3, 0], front)]@World,
+  at: [mix([1, 3.4, 0], [0, 3.4, 0], front)]@World,
+  fov: 0.4
+}
+
+kind Littoral @World (radius: f) {
+  visible(ro, rd) = ray_ground(ro, rd, radius)
+  trace(p) = box_sdf(p - [0, -0.05, 0]@World, [radius, 0.05, radius])
+  material(p, n) {
+    let water = print_sea(p, time, DEEP, SHALLOW, FOAM)
+    let rim = 1.0 - smoothstep(0.12, 0.38, abs(length((p.xz - [-2.8, 0.36]) / [1.08, 0.78]) - 3.13))
+    let foam = rim * smoothstep(0.25, 0.76, 0.5 + 0.5 * sin(8.0 * p.z + 6.0 * p.x + time))
+    emit_lobe(mix(water, [0.92, 0.78, 0.50], foam * 0.83))
+  }
+}
+
+fn coastal_sky(rd: rgb, sun: rgb) -> rgb {
+  # Use the same world-space ink when the sea is beyond the depth buffer.
+  if rd.y < 0.0 {
+    let p = wgsl(rd: rgb) -> p3@World {
+      let distance = -frame.eye.y / min(rd.y, -0.00001);
+      return frame.eye.xyz + distance * rd;
+    }
+    return print_sea(p, time, DEEP, SHALLOW, FOAM)
+  }
+  let value = smoothstep(0.0, 0.27, rd.y)
+  mix([0.95, 0.82, 0.56], [0.24, 0.40, 0.54], value)
+}
+
+build {
+  let dims = [3.35, 2.19, 4.0, 4.10]
+  let paint = [0.57, 0.081, 0.042]
+  cast(2, [0, 0], dims, paint, 0.98, false, 3)
+  back(2, [0, 0], dims, paint, 2, false)
+  emit Littoral(radius: 550)
+}
+
+schedule Main {
+  use_camera(Main)
+  cull_indirect(CastPart, CastSpiral, Littoral)
+  render_bundle(Vis64) { draw_indirect(CastPart, CastSpiral, Littoral) }
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: woodblock_pigment, sun: [0.38, 0.77, -0.51])
+  outline_and_paper(ColorHdr)
+  tonemap_aces(ColorHdr, sky: coastal_sky)
+}
