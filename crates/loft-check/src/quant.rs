@@ -1,5 +1,3 @@
-use loft_parse::ast::Ty;
-
 #[derive(Clone, Copy)]
 pub enum Quant {
     DotI8,
@@ -49,20 +47,6 @@ impl Quant {
     pub fn resolve(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|op| op.name() == name)
     }
-
-    pub fn signature(self) -> (&'static [Ty], Ty) {
-        match self {
-            Self::DotI8 => (&[Ty::U32, Ty::U32], Ty::I32),
-            Self::DotU8 => (&[Ty::U32, Ty::U32], Ty::U32),
-            Self::Bf16 => (&[Ty::U32], Ty::VecN(2)),
-            Self::PackBf16 => (&[Ty::VecN(2)], Ty::U32),
-            Self::U2 => (&[Ty::U32, Ty::U32], Ty::F32),
-            Self::U4Lo | Self::U4Hi | Self::I4Lo | Self::I4Hi | Self::Fp8E4M3 | Self::Fp8E5M2 => {
-                (&[Ty::U32], Ty::VecN(4))
-            }
-        }
-    }
-
 }
 
 #[derive(Clone, Copy)]
