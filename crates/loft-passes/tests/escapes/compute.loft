@@ -1,0 +1,46 @@
+space World
+bake_tex Probe 8x8 r16float on load mips(true) (uv: v2) { uv.x }
+# The signed cell stores multiples of 1/256.
+struct SignedCell { value: i }
+struct FloatCell { value: f }
+struct Word { value: u }
+
+kernel add_signed(dst: [SignedCell], n: u) allow(atomics, workgroup, dynamic_loops) {
+  let x = global_id(0)
+  workgroup_barrier()
+  for i in 0..n {
+    atomic_add(dst[0].value, i32(x + 1))
+  }
+}
+
+kernel accumulate_float(dst: [FloatCell]) nondet allow(atomics) {
+  let x = global_id(0)
+  atomic_add(dst[0].value, f32(x + 1) * 0.5)
+}
+
+kernel read_bake(dst: [FloatCell]) nondet allow(atomics) {
+  atomic_add(dst[0].value, sample_lod(Probe, [0.375, 0.5], 1.5))
+}
+
+schedule Main {
+  table(Fixed, row: SignedCell, capacity: 1)
+  table(Float, row: FloatCell, capacity: 1)
+  table(Texel, row: FloatCell, capacity: 1)
+  table(Source, row: Word, capacity: 2)
+  table(Output, row: Word, capacity: 2)
+  pass fixed writes [Fixed] {
+    compute(entry: add_signed, extent: 1, workgroup: 8, dst: Fixed, n: 1)
+  }
+  pass floating writes [Float] {
+    compute(entry: accumulate_float, extent: 8, dst: Float, fixed_scale: 256)
+  }
+  pass texel reads [Probe] writes [Texel] {
+    compute(entry: read_bake, extent: 1, dst: Texel, fixed_scale: 256)
+  }
+  pass seed writes [Source] {
+    dispatch("seed.wgsl", "seed", 1)
+  }
+  pass copy_rows reads [Source] writes [Output] {
+    dispatch("copy.wgsl", "copy_rows", 1)
+  }
+}

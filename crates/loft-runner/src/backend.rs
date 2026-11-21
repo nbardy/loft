@@ -26,6 +26,9 @@ pub struct WgpuBackend {
     pub(super) device: Arc<wgpu::Device>,
     pub(super) queue: Arc<wgpu::Queue>,
     pub caps: HostCaps,
+    pub(super) adapter: Option<wgpu::Adapter>,
+    pub(super) pipeline_cache: Option<wgpu::PipelineCache>,
+    pub(super) pipeline_clock: Option<fn() -> std::time::Duration>,
     pub(super) instances: Vec<Instance>,
 }
 impl ExecutionBackend for WgpuBackend {

@@ -73,6 +73,16 @@ fn motion_params(program: &Program) -> Vec<ParamMeta> {
     result
 }
 
+pub(crate) fn tick_run(step: &Dispatch, module: ModuleId, instances: TableId) -> PassRun {
+    use loft_parse::ast::Determinism;
+    let entry = step.entry.clone();
+    let max_ticks = AdvanceArgs::MAX_TICKS;
+    match step.tier {
+        Determinism::Det => PassRun::ComputeFusedTicks { module, entry, max_ticks, instances },
+        Determinism::NonDet => PassRun::ComputeNonDetTicks { module, entry, max_ticks, instances },
+    }
+}
+
 pub fn motion_bundle(program: &Program, step: &Dispatch, checkpoint_slots: u32) -> Bundle {
     let (_, rows, stride, words) = step.input.view(&program.kinds).expect("validated dispatch");
     let wgsl = &program.modules[step.module].wgsl;
@@ -86,7 +96,7 @@ pub fn motion_bundle(program: &Program, step: &Dispatch, checkpoint_slots: u32) 
         state: Some(StateStoreDecl {
             table: ROWS,
             layout_hash: step.layout_hash,
-            checkpoint_slots,
+            checkpoint_slots: if step.tier.is_det() { checkpoint_slots } else { 0 },
         }),
         params: motion_params(program),
         ..Default::default()
@@ -140,12 +150,7 @@ pub fn motion_bundle(program: &Program, step: &Dispatch, checkpoint_slots: u32) 
         wave: 0,
         queue: QueueClass::AsyncCompute,
         bindings: bindings.into(),
-        run: PassRun::ComputeFusedTicks {
-            module: ModuleId(0),
-            entry: step.entry.clone(),
-            max_ticks: AdvanceArgs::MAX_TICKS,
-            instances: ROWS,
-        },
+        run: tick_run(step, ModuleId(0), ROWS),
     });
     b
 }

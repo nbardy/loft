@@ -51,10 +51,9 @@ impl WebGpu {
             );
         }
         let mut buffers = BTreeMap::new();
-        for table in decl
-            .tables
-            .iter()
-            .filter(|t| t.lifetime != TableLifetime::External)
+        for table in decl.tables.iter().filter(|t| {
+            t.lifetime != TableLifetime::External && t.id != loft_ir::execution::DESCRIPTOR
+        })
         {
             let size = u64::from(table.stride_bytes) * u64::from(table.capacity);
             if table.stride_bytes == 0
@@ -65,12 +64,7 @@ impl WebGpu {
             {
                 return Err("invalid .loftb buffer size or stride".into());
             }
-            let usage = wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_DST
-                | wgpu::BufferUsages::COPY_SRC
-                | wgpu::BufferUsages::INDIRECT
-                | wgpu::BufferUsages::VERTEX
-                | wgpu::BufferUsages::INDEX;
+            let usage = crate::interop::buffer_usage(&decl, table.id);
             let desc = Object::new();
             Reflect::set(&desc, &"size".into(), &(size.max(4) as f64).into())?;
             Reflect::set(&desc, &"usage".into(), &usage.bits().into())?;
@@ -214,6 +208,7 @@ pub fn load_browser(device: JsValue, bytes: &[u8], source: &Function) -> Result<
                 }
                 PassRun::RenderBundle { .. }
                 | PassRun::ComputeFusedTicks { .. }
+                | PassRun::ComputeNonDetTicks { .. }
                 | PassRun::PassLoop { .. }
                 | PassRun::GenerateMips { .. } => return Err("unsupported browser pass".into()),
             };

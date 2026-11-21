@@ -1,4 +1,4 @@
-import init, { loadBundle } from './generated/loft_std.js';
+import init, { loadBundle } from './generated/loft_wgpu.js';
 
 // Keep the native Present entry and use a depth-writing entry for this host.
 export function hostShader(source, sunSlot) {

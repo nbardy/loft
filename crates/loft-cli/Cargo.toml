@@ -16,6 +16,7 @@ loft-parse = { path = "../loft-parse" }
 naga.workspace = true
 loft-ir = { path = "../loft-ir" }
 loft-passes = { path = "../loft-passes" }
+loft-native = { path = "../loft-native" }
 loft-runner = { path = "../loft-runner" }
 wgpu.workspace = true
 pollster.workspace = true

@@ -69,27 +69,6 @@ impl Runner {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-pub(super) fn read_buffer(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::Buffer) -> Result<Vec<u8>> {
-    let read = device.create_buffer(&wgpu::BufferDescriptor {
-        label: None,
-        size: buffer.size(),
-        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    let mut encoder = device.create_command_encoder(&Default::default());
-    encoder.copy_buffer_to_buffer(buffer, 0, &read, 0, Some(read.size()));
-    let (tx, rx) = std::sync::mpsc::sync_channel(1);
-    encoder.map_buffer_on_submit(&read, wgpu::MapMode::Read, .., move |r| {
-        let _ = tx.send(r);
-    });
-    queue.submit([encoder.finish()]);
-    device.poll(wgpu::PollType::wait_indefinitely()).map_err(|_| RunnerError::Unsupported("readback failed"))?;
-    rx.recv().ok().and_then(std::result::Result::ok).ok_or(RunnerError::Unsupported("readback failed"))?;
-    let mapped = read.get_mapped_range(..).map_err(|_| RunnerError::Unsupported("readback failed"))?;
-    Ok(mapped.to_vec())
-}
-
 pub(super) fn check_fused(fused: &Fused, id: PassId, tables: &BTreeMap<TableId, Table>, to: u32, history: &mut History, limit: u32) -> Result<()> {
     let table = &tables[&fused.rows];
     let args = tables[&fused.args.resource].bytes()?;

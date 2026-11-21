@@ -8,6 +8,7 @@ pub enum Role {
     Texture,
     Attachment(TextureDecl),
     Sampler,
+    AccelerationStructure,
     HostAttachment,
 }
 
@@ -49,6 +50,7 @@ impl Resources {
             match &pass.run {
                 PassRun::Compute { .. }
                 | PassRun::ComputeFusedTicks { .. }
+                | PassRun::ComputeNonDetTicks { .. }
                 | PassRun::PassLoop { .. } => {}
                 PassRun::GenerateMips { texture } => {
                     assign(&tables, &mut roles, *texture, Role::Texture)?;
@@ -73,6 +75,7 @@ impl Resources {
                     | BindAccess::StorageTex
                     | BindAccess::BindlessTexArray => Role::Texture,
                     BindAccess::Sampler => Role::Sampler,
+                    BindAccess::AccelerationStructure => Role::AccelerationStructure,
                 };
                 assign(&tables, &mut roles, binding.resource, role)?;
             }
@@ -99,7 +102,8 @@ fn assign(
     }
     use std::collections::btree_map::Entry;
     match roles.entry(id) {
-        Entry::Vacant(entry) if !matches!(role, Role::Sampler) => {
+        Entry::Vacant(entry)
+            if !matches!(role, Role::Sampler) || tables[&id] == TableLifetime::External => {
             entry.insert(role);
         }
         Entry::Occupied(entry)
@@ -108,6 +112,7 @@ fn assign(
                 (Role::Buffer, Role::Buffer)
                     | (Role::Texture | Role::Attachment(_), Role::Texture)
                     | (Role::Sampler, Role::Sampler)
+                    | (Role::AccelerationStructure, Role::AccelerationStructure)
             ) => {}
         _ => return Err(InvalidResources::Layout),
     }
@@ -162,6 +167,7 @@ pub fn children(run: &PassRun) -> &[PassDecl] {
         PassRun::PassLoop { body, .. } => body,
         PassRun::Compute { .. }
         | PassRun::ComputeFusedTicks { .. }
+        | PassRun::ComputeNonDetTicks { .. }
         | PassRun::RenderBundle { .. }
         | PassRun::GenerateMips { .. } => &[],
     }

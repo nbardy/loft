@@ -1,12 +1,19 @@
 use super::*;
-pub(super) use loft_std::interop::*;
+pub(super) use loft_wgpu::interop::*;
 impl Runner {
     pub fn bind_external_buffer(&mut self, inst: InstanceId, table: TableId, buf: Arc<wgpu::Buffer>) -> Result<()> {
         let limits = self.device.limits();
         let i = self.instance(inst)?;
         let t = i.tables.get_mut(&table).ok_or(RunnerError::UnknownResource)?;
         if !matches!(t.resource, Resource::Buffer(_)) { return Err(RunnerError::AbiMismatch); }
-        validate_buffer(&i.decl, &t.decl, &buf, &limits, i.compute.resource_bindings(table))?;
+        let logical = logical_size(&t.decl);
+        let mut required = buffer_usage(&i.decl, table);
+        if !matches!(t.decl.lifetime, TableLifetime::DynamicArena { .. }) && !i.decl.resources.resets.contains(&table)
+            && !i.decl.state.as_ref().is_some_and(|s| s.table == table) {
+            required.remove(wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC);
+        }
+        check_buffer(buf.size(), buf.usage(), logical, required)?;
+        i.compute.check_buffer(table, buf.size(), buf.usage(), logical, &limits)?;
         let epoch = next_epoch(i.resource_epoch)?;
         t.resource = Resource::Buffer(Some(buf));
         if t.decl.lifetime == TableLifetime::External { t.active = t.decl.capacity; }

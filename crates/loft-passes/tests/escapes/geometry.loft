@@ -1,0 +1,27 @@
+use stdlib::materials::bsdf::{ggx}
+
+space World
+
+fn crease(x: f) -> f = abs(x)
+
+kind Sharp @World () {
+  trace(p) = unproved(0.5) {
+    let q = abs(coords(p))
+    let cusp = sqrt(q.x) * 0.05
+    let slope = diff(crease, x)(p.y)
+    length(q) - 0.65 + cusp + 0.015 * slope
+  }
+  material(p, n) = ggx([0.4, 0.25, 0.1], 0.7, 0)
+}
+
+kind Patch @World () {
+  surface(u, v) grid 8x8 = unproved(0.5) {
+    [u + 1.0, abs(u - 0.5) * 0.2, v]@World
+  }
+  material(p, n, uv) = ggx([0.24, 0.4, 0.2], 0.8, 0)
+}
+
+build {
+  emit Sharp()
+  emit Patch()
+}

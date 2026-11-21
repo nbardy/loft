@@ -1,0 +1,33 @@
+# One periodic particle-to-grid transfer. Each unit-mass particle splats
+# to its two neighboring nodes. Force fixed-point by compiling without
+# FLOAT32_ATOMICS; both routes publish f32 mass and momentum.
+space World
+
+param seed: u = 0
+param bins: u = 16 in 1..16
+param reverse: u = 0 in 0..1
+
+struct GridNode { mass: f, momentum: f }
+
+kernel scatter_particles(grid: [GridNode], seed: u, span: u, reverse: u) nondet allow(atomics) {
+  let lane = global_id(0)
+  let id = select(lane, 255 - lane, reverse != 0)
+  let bits = id * 747796405 + seed * 2891336453
+  let position = (bits / 65536) % (16 * span)
+  let first = position / 16
+  let next = (first + 1) % span
+  let t = f32(position % 16) / 16.0
+  let velocity = f32(i32((bits / 16777216) % 127) - 63) / 63.0
+  atomic_add(grid[first].mass, 1.0 - t)
+  atomic_add(grid[first].momentum, (1.0 - t) * velocity)
+  atomic_add(grid[next].mass, t)
+  atomic_add(grid[next].momentum, t * velocity)
+}
+
+schedule Main {
+  table(Grid, row: GridNode, capacity: 16)
+  # 256 particles × 2^20 counts per channel fits i32 at every interleaving.
+  pass scatter writes [Grid] {
+    compute(entry: scatter_particles, extent: 4, workgroup: 64, grid: Grid, seed: seed, span: bins, reverse: reverse, fixed_scale: 1048576)
+  }
+}

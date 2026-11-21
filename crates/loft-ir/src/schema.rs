@@ -40,6 +40,7 @@ macro_rules! bundle_schema {
             3 => StorageTex,
             4 => BindlessTexArray,
             5 => Sampler,
+            6 => AccelerationStructure,
         });
 
         $sum!(#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -147,6 +148,12 @@ macro_rules! bundle_schema {
             },
             4 => GenerateMips {
                 texture: TableId,
+            },
+            5 => ComputeNonDetTicks {
+                module: ModuleId,
+                entry: String,
+                max_ticks: u32,
+                instances: TableId,
             },
         });
 

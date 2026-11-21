@@ -85,31 +85,8 @@ fn sample(g: &Gpu, p: &Program, seconds: f32, clock: Option<&Clock>) -> Result<(
             .export_buffer(id, fusion::ROWS)
             .ok_or("missing state table")?;
         let read = |buffer: &wgpu::Buffer| -> Result<Vec<u32>, String> {
-            use wgpu::BufferUsages as U;
-            let staging = g.device.create_buffer(&wgpu::BufferDescriptor {
-                label: None,
-                size: buffer.size(),
-                usage: U::COPY_DST | U::MAP_READ,
-                mapped_at_creation: false,
-            });
-            let mut enc = g.device.create_command_encoder(&Default::default());
-            enc.copy_buffer_to_buffer(buffer, 0, &staging, 0, Some(staging.size()));
-            let (tx, rx) = std::sync::mpsc::sync_channel(1);
-            enc.map_buffer_on_submit(&staging, wgpu::MapMode::Read, .., move |r| {
-                let _ = tx.send(r);
-            });
-            g.queue.submit([enc.finish()]);
-            g.device
-                .poll(wgpu::PollType::wait_indefinitely())
-                .map_err(|e| e.to_string())?;
-            rx.recv()
-                .map_err(|e| e.to_string())?
-                .map_err(|e| e.to_string())?;
-            let mapped = staging.get_mapped_range(..).map_err(|e| e.to_string())?;
-            Ok(mapped
-                .chunks_exact(4)
-                .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
-                .collect())
+            let bytes = loft_runner::read_buffer(&g.device, &g.queue, buffer).map_err(runner_error)?;
+            Ok(bytes.as_chunks::<4>().0.iter().copied().map(u32::from_le_bytes).collect())
         };
         let state = read(&state)?;
         let fields = step

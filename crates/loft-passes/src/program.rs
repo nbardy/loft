@@ -135,6 +135,8 @@ pub enum Pass {
 /// A fixed-step dispatch and its packed row and verdict layouts.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Dispatch {
+    #[serde(default, skip_serializing_if = "loft_parse::ast::Determinism::is_det")]
+    pub tier: loft_parse::ast::Determinism,
     pub module: usize,
     pub entry: String,
     pub workgroup_x: u32,

@@ -165,6 +165,12 @@ fn command(mut args: Vec<String>) -> Result<(), Failure> {
             exact(&args, 3, 3)?;
             gates::still(&scene(&args)?, &set, time, Path::new(&args[2]), max_frame)
         }
+        "gate" if args.get(1).is_some_and(|x| x == "--score-pictures") => {
+            if args.len() != 2 || !set.is_empty() {
+                return Err(Failure::Usage("picture scoring reads capture metadata from stdin".into()));
+            }
+            gates::score_pictures()
+        }
         "gate" => {
             let only = flag(&mut args, "--only")?;
             let approve = args.get(1).is_some_and(|s| s == "--approve");

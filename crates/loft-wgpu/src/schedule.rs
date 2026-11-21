@@ -126,7 +126,8 @@ impl Linker<'_> {
                 entry,
                 dispatch,
             } => self.dispatch(p, *module, entry, dispatch)?,
-            PassRun::ComputeFusedTicks { module, entry, .. } => self.ticks(p, *module, entry)?,
+            PassRun::ComputeFusedTicks { module, entry, .. }
+            | PassRun::ComputeNonDetTicks { module, entry, .. } => self.ticks(p, *module, entry)?,
             PassRun::RenderBundle {
                 draws,
                 color_targets,

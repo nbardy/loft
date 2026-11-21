@@ -212,8 +212,136 @@ fn read_png(path: &Path) -> Result<((u32, u32), Vec<u8>), String> {
     let mut r = png::Decoder::new(std::io::BufReader::new(f)).read_info().map_err(|e| e.to_string())?;
     let mut buf = vec![0; r.output_buffer_size().ok_or("png too large")?];
     let info = r.next_frame(&mut buf).map_err(|e| e.to_string())?;
+    if info.color_type != png::ColorType::Rgba || info.bit_depth != png::BitDepth::Eight {
+        return Err(format!("{}: expected RGBA8 PNG", path.display()));
+    }
     buf.truncate(info.buffer_size());
     Ok(((info.width, info.height), buf))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum PictureMode {
+    Deterministic(Deterministic),
+    Stochastic(Stochastic),
+}
+
+#[derive(Deserialize)]
+struct Deterministic {
+    size: (u32, u32),
+    approved_hash: String,
+    approved: PathBuf,
+    baseline: PathBuf,
+    candidate: PathBuf,
+    stem: String,
+}
+
+#[derive(Deserialize)]
+struct Stochastic {
+    size: (u32, u32),
+    reference: PathBuf,
+    convergence: PathBuf,
+    frames: Vec<PathBuf>,
+    min_reference_psnr_db: f64,
+    min_psnr_db: f64,
+    max_temporal_variance: f64,
+}
+
+fn picture_pixels(path: &Path, size: (u32, u32)) -> Result<Vec<u8>, String> {
+    let (actual, bytes) = read_png(path)?;
+    if actual != size || bytes.is_empty() || !rgba_len(size, &bytes) {
+        return Err(format!("{}: expected RGBA8 PNG of size {size:?}", path.display()));
+    }
+    Ok(bytes)
+}
+
+impl Deterministic {
+    fn score(self) -> Result<Value, String> {
+        let load = |path: &Path| picture_pixels(path, self.size);
+        let approved = load(&self.approved)?;
+        if format!("{:x}", Sha256::digest(&approved)) != self.approved_hash {
+            return Err(format!("{}: approved RGBA hash mismatch", self.approved.display()));
+        }
+        let image = format!("{}.png", self.stem);
+        let baseline = load(&self.baseline.join(&image))?;
+        let candidate = load(&self.candidate.join(&image))?;
+        let pixels = candidate.len() / 4;
+        let compare = |reference: &[u8]| {
+            let (mut changed, mut worst) = (0, 0);
+            for (a, b) in candidate.as_chunks::<4>().0.iter().zip(reference.as_chunks::<4>().0) {
+                let delta = (0..4).map(|i| a[i].abs_diff(b[i])).max().unwrap();
+                changed += usize::from(delta != 0);
+                worst = worst.max(delta);
+            }
+            json!({"changed_pixels": changed, "max_code_delta": worst,
+                "held": worst <= 1 && changed < pixels.div_ceil(1000)})
+        };
+        let plane = |folder: &Path, suffix| {
+            let path = folder.join(format!("{}.{suffix}", self.stem));
+            let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            if bytes.len() != candidate.len() {
+                return Err(format!("{}: expected one 32-bit word per pixel", path.display()));
+            }
+            Ok(bytes)
+        };
+        let same = |suffix| Ok::<_, String>(plane(&self.baseline, suffix)? == plane(&self.candidate, suffix)?);
+        let (id, depth) = (same("id.u32")?, same("depth.f32")?);
+        let main = compare(&baseline);
+        let held = main["held"] == true && id && depth;
+        Ok(json!({"pixels": pixels, "rgba_sha256": format!("{:x}", Sha256::digest(&candidate)),
+            "comparisons": {"main": main, "approved": compare(&approved)},
+            "structure": {"id.u32": id, "depth.f32": depth}, "held": held}))
+    }
+}
+
+impl Stochastic {
+    fn score(self) -> Result<Value, String> {
+        if self.frames.len() < 2 || ![self.min_reference_psnr_db, self.min_psnr_db, self.max_temporal_variance]
+            .into_iter().all(|limit| limit.is_finite() && limit >= 0.)
+        {
+            return Err("stochastic scoring needs two or more frames and finite limits".into());
+        }
+        let rgb = |path: &Path| Ok::<_, String>(picture_pixels(path, self.size)?.as_chunks::<4>().0
+            .iter().flat_map(|p| p[..3].iter().map(|&v| f64::from(v) / 255.0)).collect::<Vec<_>>());
+        let reference = rgb(&self.reference)?;
+        let count = reference.len() as f64;
+        let psnr = |frame: &[f64]| {
+            let mse = frame.iter().zip(&reference).map(|(a, b)| (a - b).powi(2)).sum::<f64>() / count;
+            (mse > 0.).then(|| -10.0 * mse.log10())
+        };
+        let convergence_db = psnr(&rgb(&self.convergence)?);
+        let mut mean = vec![0.0; reference.len()];
+        let mut residual = vec![0.0; reference.len()];
+        let mut scores = Vec::new();
+        for (i, path) in self.frames.iter().enumerate() {
+            let frame = rgb(path)?;
+            scores.push(psnr(&frame));
+            for ((mean, residual), sample) in mean.iter_mut().zip(&mut residual).zip(frame) {
+                let delta = sample - *mean;
+                *mean += delta / (i + 1) as f64;
+                *residual += delta * (sample - *mean);
+            }
+        }
+        let variance = residual.into_iter().sum::<f64>() / (count * (scores.len() - 1) as f64);
+        let held = convergence_db.is_none_or(|db| db >= self.min_reference_psnr_db)
+            && scores.iter().all(|db| db.is_none_or(|db| db >= self.min_psnr_db))
+            && variance <= self.max_temporal_variance;
+        Ok(json!({"reference_psnr_db": convergence_db, "frame_psnr_db": scores,
+            "temporal_variance": variance, "held": held}))
+    }
+}
+
+pub(crate) fn score_pictures() -> Result<(), Failure> {
+    let requests: BTreeMap<String, PictureMode> = serde_json::from_reader(std::io::stdin().lock())
+        .map_err(|e| Failure::Usage(format!("picture scoring input: {e}")))?;
+    let results = requests.into_iter().map(|(name, mode)| {
+        let outcome = match mode {
+            PictureMode::Deterministic(tolerance) => tolerance.score(),
+            PictureMode::Stochastic(sequence) => sequence.score(),
+        }.map_err(Failure::Parity)?;
+        Ok((name, outcome))
+    }).collect::<Result<BTreeMap<_, _>, Failure>>()?;
+    crate::profile::write_json("-", &results)
 }
 
 fn decode_verdict(record: Option<[f32; 2]>) -> Verdict {
@@ -409,7 +537,7 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
             }
         }
         (Gate::Speed, SceneChecks::Budget(b)) => {
-            let control = c.g.triangle_control_ms(c.size)?;
+            let [control_p50_ms, control_p95_ms] = c.g.triangle_control(c.size)?;
             let l = Loaded::new(c.g, p, c.size, None)?;
             let times = (0..30).map(|i| i as f32 / 30.0)
                 .chain((0..c.timing_frames).map(|i| c.frames[0] + i as f32 * (1.0 / 60.0)));
@@ -423,14 +551,18 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
             report[&s.name]["speed_passes_p50_ms"] = json!(pass_p50);
             let (p50, p95) = (quantile(&ms, 0.5), quantile(&ms, 0.95));
             let deciles: Vec<f64> = (0..=10).map(|i| quantile(&ms, f64::from(i) / 10.0)).collect();
-            let contended = control > 0.35;
-            report[&s.name]["speed"] = json!({"control_p50_ms": control, "contended": contended, "p50_ms": p50, "p95_ms": p95, "commands": commands, "frames": ms.len(), "deciles_ms": deciles, "ms": ms,
+            let contended = control_p95_ms >= 0.150;
+            report[&s.name]["speed"] = json!({"control_p50_ms": control_p50_ms, "control_p95_ms": control_p95_ms, "contended": contended, "p50_ms": p50, "p95_ms": p95, "commands": commands, "frames": ms.len(), "deciles_ms": deciles, "ms": ms,
                 "frame_stamps": measured, "shader_sha256": crate::profile::shader_hashes(p)?});
             push(format!("{commands} GPU commands == {}", b.commands), held_if(-f64::from(commands.abs_diff(b.commands)), None));
             out.push(Check {
                 gate, scene: s.name.clone(), contended,
-                what: format!("p95 {p95:.3} ms <= {} ms (control p50 {control:.3} ms)", b.p95_ms),
-                verdict: held_if(b.p95_ms - p95, None),
+                what: format!("p95 {p95:.3} ms <= {} ms (control p95 {control_p95_ms:.3} ms)", b.p95_ms),
+                verdict: if contended {
+                    Verdict::Unknown { reason: "triangle p95 must be under 0.150 ms".into() }
+                } else {
+                    held_if(b.p95_ms - p95, None)
+                },
             });
         }
         (Gate::Load, SceneChecks::Budget(b)) => {

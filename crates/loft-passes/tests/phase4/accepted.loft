@@ -5,7 +5,7 @@ use stdlib::sky::environment::{sky_dome}
 space World Local
 type Fixed = i
 struct Bin { fixed: Fixed, count: u, flux: f }
-kernel scatter(fixed: [Bin], floating: [Bin], n: u, travel: m, dt: s) allow(atomics, workgroup, subgroups, dynamic_loops) {
+kernel scatter(fixed: [Bin], floating: [Bin], n: u, travel: m, dt: s) nondet allow(atomics, workgroup, subgroups, dynamic_loops) {
   let speed: m/s = travel / dt
   for i in 0..n {
     atomic_add(fixed[i].count, 1)

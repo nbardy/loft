@@ -128,6 +128,10 @@ impl Graph {
         loader.graph
     }
 
+    pub(crate) fn compute_only(&self) -> bool {
+        schedule(&self.nodes[usize::from(self.entry)].module).is_some_and(compute_only)
+    }
+
     pub fn entry(&self) -> u16 {
         self.entry
     }
@@ -161,6 +165,11 @@ fn schedule(module: &Module) -> Option<&ScheduleDecl> {
 
 fn complete(s: &ScheduleDecl) -> bool {
     s.passes.iter().any(|p| p.verb.name == "render_bundle")
+}
+
+fn compute_only(s: &ScheduleDecl) -> bool {
+    s.passes.iter().any(|p| p.resources.is_some())
+        && s.passes.iter().all(|p| p.resources.is_some() || p.verb.name == "table")
 }
 
 impl Loader<'_> {

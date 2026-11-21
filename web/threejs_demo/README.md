@@ -18,8 +18,8 @@ Use the repository's Rust toolchain, Chrome with WebGPU, pnpm and `wasm-bindgen-
 ```sh
 mkdir -p web/threejs_demo/generated
 CARGO_BUILD_JOBS=2 tools/dev.sh run loft-cli -- build stdlib/engines/hermit.loft --set count=1 -o web/threejs_demo/generated/hermit.loftb
-CARGO_BUILD_JOBS=2 rustup run 1.99.1 cargo rustc --locked -p loft-std --profile lab --target wasm32-unknown-unknown --features web-sys --lib --crate-type cdylib
-wasm-bindgen --target web --out-dir web/threejs_demo/generated target/wasm32-unknown-unknown/lab/loft_std.wasm
+CARGO_BUILD_JOBS=2 rustup run 1.99.1 cargo rustc --locked -p loft-wgpu --profile lab --target wasm32-unknown-unknown --features web-sys --lib --crate-type cdylib
+wasm-bindgen --target web --out-dir web/threejs_demo/generated target/wasm32-unknown-unknown/lab/loft_wgpu.wasm
 pnpm --dir web/threejs_demo install --frozen-lockfile
 uv run --no-project python -m http.server 8080 --bind 127.0.0.1 --directory web/threejs_demo
 ```

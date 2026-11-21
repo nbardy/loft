@@ -1,0 +1,21 @@
+[package]
+name = "loft-native"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Native scene host and profiling on the Loft runner."
+
+[dependencies]
+blake3 = "1"
+loft-ir = { path = "../loft-ir" }
+loft-passes = { path = "../loft-passes" }
+loft-runner = { path = "../loft-runner" }
+naga.workspace = true
+pollster.workspace = true
+serde = { version = "1", features = ["derive"] }
+tempfile = "3"
+wgpu.workspace = true
+
+[lints]
+workspace = true

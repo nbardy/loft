@@ -184,6 +184,11 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)], render: bool) -> Resul
     let src = sources(Path::new(scene)).map_err(usage)?;
     let (mut program, _, mut compiled) =
         loft_passes::compile(&src, set).map_err(|d| Failure::Compile(d.render(&src)))?;
+    if program.dispatches.iter().any(|dispatch| !dispatch.tier.is_det())
+        || compiled.compute.tiers.values().any(|tier| !tier.is_det())
+    {
+        return Err(Failure::Compile("E504: exact replay requires Det producers".into()));
+    }
     let hash = bundle_hash(&program, &compiled)?;
     let mut log = if let Some(path) = replay {
         read(Path::new(&path))?

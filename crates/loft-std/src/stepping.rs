@@ -24,14 +24,10 @@ pub struct Fused {
 }
 impl Fused {
     pub fn reflect(ir: &naga::Module, pass: &PassDecl) -> Result<Self> {
-        let PassRun::ComputeFusedTicks {
-            entry,
-            max_ticks,
-            instances,
-            ..
-        } = &pass.run
-        else {
-            return Err(Error::AbiMismatch);
+        let (entry, max_ticks, instances) = match &pass.run {
+            PassRun::ComputeFusedTicks { entry, max_ticks, instances, .. }
+            | PassRun::ComputeNonDetTicks { entry, max_ticks, instances, .. } => (entry, max_ticks, instances),
+            _ => return Err(Error::AbiMismatch),
         };
         let e = ir
             .entry_points
@@ -223,9 +219,7 @@ pub fn step_bundle_cpu(
         .iter()
         .find(|p| p.id == pass)
         .ok_or(Error::UnknownResource)?;
-    let PassRun::ComputeFusedTicks { module, .. } = decl.run else {
-        return Err(Error::AbiMismatch);
-    };
+    let module = cpu_tick_module(&decl.run)?;
     let blob = bundle
         .modules
         .iter()
@@ -279,6 +273,15 @@ pub fn step_bundle_cpu(
     Ok(())
 }
 
+fn cpu_tick_module(run: &PassRun) -> Result<ModuleId> {
+    match run {
+        PassRun::ComputeFusedTicks { module, .. } => Ok(*module),
+        PassRun::ComputeNonDetTicks { .. } => Err(Error::Unsupported("NonDet ticks require GPU execution")),
+        PassRun::Compute { .. } | PassRun::RenderBundle { .. } | PassRun::PassLoop { .. }
+        | PassRun::GenerateMips { .. } => Err(Error::AbiMismatch),
+    }
+}
+
 fn run(
     f: &Fused,
     id: InstanceId,
@@ -300,6 +303,8 @@ impl History {
     pub fn step_live(&mut self, f: &Fused, decl: &PassDecl, active: u32, stride_bytes: u32,
         rows: Range<u32>, ticks: u32, inst: InstanceId, outbox: Option<TableId>, params: &[u8],
         mut read: impl FnMut(TableId) -> Result<Vec<u8>>, mut write: impl FnMut(TableId, &[u8]) -> Result<()>) -> Result<&[u8]> {
+        // Live stepping reaches the same CPU interpreter as offline bundle stepping.
+        cpu_tick_module(&decl.run)?;
         let pass = decl.id;
             if rows.start > rows.end || rows.end > active {
                 return Err(Error::Capacity);

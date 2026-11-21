@@ -1,0 +1,20 @@
+{
+  "deterministic": [
+    "blobs-1", "blobs-20", "capsules-1", "capsules-20",
+    "coral_shrine", "hermit-1", "hermit-20"
+  ],
+  "stochastic": {
+    "reference-sphere": {
+      "scene": "tools/gates/reference-sphere.loft",
+      "size": [48, 48],
+      "time": 0,
+      "frame_seeds": [11, 23, 37, 53],
+      "samples": 64,
+      "reference_seed": 101,
+      "reference_samples": 512,
+      "min_reference_psnr_db": 35,
+      "min_psnr_db": 27,
+      "max_temporal_variance": 0.0025
+    }
+  }
+}

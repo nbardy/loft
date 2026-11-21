@@ -11,6 +11,8 @@ struct Profile {
     adapter: String,
     modules: Vec<ModuleTelemetry>,
     control_p50_ms: f64,
+    control_p95_ms: f64,
+    hardware_ray_query: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     device_loads_ms: Option<Vec<f64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -100,13 +102,15 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
         .chain((0..frames).map(|i| time.unwrap_or(i as f32 * (1.0 / 60.0))))
         .collect::<Vec<_>>();
     let run = |deferred| -> Result<Profile, Failure> {
-        let control_p50_ms = gpu.triangle_control_ms(size).map_err(Failure::Device)?;
+        let [control_p50_ms, control_p95_ms] = gpu.triangle_control(size).map_err(Failure::Device)?;
         let frame_stamps = loaded.profile_frames(&gpu, times.iter().copied(), deferred)
             .map_err(Failure::Device)?.into_iter().skip(warmup as usize).collect::<Vec<_>>();
         Ok(Profile {
             adapter: gpu.adapter.clone(),
             modules: telemetry::collect(&program),
             control_p50_ms,
+            control_p95_ms,
+            hardware_ray_query: loaded.stats.hardware_ray_query,
             device_loads_ms: loads.map(|_| device_loads_ms.clone()),
             pipelines: loads.map(|_| loaded.stats.compute_pipelines + loaded.stats.render_pipelines),
             passes: program.passes.iter().map(|p| format!("{p:?}")).collect(),

@@ -328,10 +328,13 @@ mod corpus {
     #[test]
     fn all_authored_files_replay_verbatim() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        for dir in ["lib", "engines", "agent_notes/2026-11-20_meta/v1_syntax"] {
-            for entry in fs::read_dir(root.join(dir)).unwrap() {
-                let path = entry.unwrap().path();
-                if path.extension().is_some_and(|ext| ext == "loft") {
+        fn replay(dir: &Path) {
+            for entry in fs::read_dir(dir).unwrap() {
+                let entry = entry.unwrap();
+                let path = entry.path();
+                if entry.file_type().unwrap().is_dir() {
+                    replay(&path);
+                } else if path.extension().is_some_and(|ext| ext == "loft") {
                     let source = fs::read_to_string(&path).unwrap();
                     assert_eq!(
                         Cst::parse(0, &source).unwrap().write(&source),
@@ -341,6 +344,10 @@ mod corpus {
                     );
                 }
             }
+        }
+        // The authored library moved into nested modules under stdlib/.
+        for dir in ["stdlib", "scenes", "engines", "agent_notes/2026-11-20_meta/v1_syntax"] {
+            replay(&root.join(dir));
         }
     }
 

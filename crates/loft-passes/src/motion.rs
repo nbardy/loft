@@ -17,6 +17,7 @@ pub fn motion_module(
     let mut laws = vec![];
     let mut checks = vec![];
     let mut fields = vec![];
+    let mut tier = Determinism::Det;
     for pass in &p.schedule.expect("checked schedule").passes {
         let is_law = match pass.verb.name.as_str() {
             "run_laws" => true,
@@ -64,7 +65,9 @@ pub fn motion_module(
                         "row-local laws take the target row and dt",
                     ));
                 }
-                fields.extend(p.laws[n.as_str()].writes.iter().map(|w| w.name.clone()));
+                let law = p.laws[n.as_str()];
+                tier = law.tier;
+                fields.extend(law.writes.iter().map(|w| w.name.clone()));
                 laws.push(f);
             } else {
                 if f.params.len() != 1 {
@@ -90,7 +93,13 @@ pub fn motion_module(
         "@group(2) @binding(0) var<storage, read_write> rows:",
     );
     em.motion = true;
-    em.out.push_str(loft_abi::DET_WGSL);
+    em.motion_tier = tier;
+    if tier.is_det() {
+        em.out.push_str(loft_abi::DET_WGSL);
+    } else {
+        // Both tiers expose tick time; the Det math prelude declares it for Det.
+        em.out.push_str("var<private> loft_tick_time: f32;\n");
+    }
     em.out.push_str(AdvanceArgs::WGSL);
     em.out.push_str(
         r#"
@@ -241,6 +250,7 @@ var<private> loft_tick: u32;
     Ok(Some((
         em.out,
         Dispatch {
+            tier,
             module,
             entry: AdvanceArgs::ENTRY.into(),
             workgroup_x: 64,
