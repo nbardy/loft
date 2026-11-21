@@ -1,0 +1,30 @@
+use stdlib::sdf::solid::{box_sdf, sphere}
+use stdlib::materials::bsdf::{lambert, emit_lobe}
+
+kind Shrine @World () {
+  trace(p) {
+    let plinth = box_sdf(p - [0, 0.10, 0]@World, [0.55, 0.10, 0.44])
+    let left = box_sdf(p - [-0.43, 0.63, 0]@World, [0.04, 0.54, 0.05])
+    let right = box_sdf(p - [0.43, 0.63, 0]@World, [0.04, 0.54, 0.05])
+    let roof = box_sdf(p - [0, 1.20, 0]@World, [0.60, 0.08, 0.43])
+    let lantern = sphere(p - [0, 0.76, 0]@World, 0.25)
+    min(min(plinth, roof), min(min(left, right), lantern))
+  }
+  material(p, n) {
+    let paper = 1.0 - smoothstep(0.24, 0.27, length(p - [0, 0.76, 0]@World))
+    let ribs = 0.72 + 0.28 * cos(93.0 * p.y)
+    lambert([0.16, 0.055, 0.025]) + emit_lobe([1.7, 0.53, 0.10] * paper * ribs)
+  }
+}
+
+kind Ground @World () {
+  trace(p) = box_sdf(p - [0, -0.09, 0]@World, [4, 0.08, 4])
+  material(p, n) = lambert([0.16, 0.19, 0.20])
+}
+
+camera Main { at: [0, 0.58, 0]@World, radius: 3.0m, height: 0.72m, period: 32s, fov: 40deg }
+
+build {
+  emit Shrine()
+  emit Ground()
+}

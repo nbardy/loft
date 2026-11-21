@@ -1,0 +1,47 @@
+use stdlib::sdf::solid::{box_sdf, capsule}
+use stdlib::materials::bsdf::{ggx, lambert, emit_lobe}
+use stdlib::integrators::direct::{sun_sky}
+
+fn sunset(rd: rgb, sun: rgb) -> rgb {
+  let horizon = exp(-5.0 * abs(rd.y))
+  var bands = 0.0
+  for i in 0..12 {
+    let k = f32(i) + 1.0
+    bands = bands + exp(-k * abs(rd.y - 0.03 * sin(k * 2.0 * rd.x))) / 12.0
+  }
+  let disk = pow(max(0.0, dot(rd, sun)), 96.0)
+  mix([0.10, 0.14, 0.38], [0.95, 0.23, 0.06], horizon) + [0.5, 0.14, 0.04] * bands + [1.0, 0.53, 0.16] * disk
+}
+
+kind Lighthouse @World () {
+  trace(p) {
+    let shaft = capsule(p, [0, 0.22, 0]@World, [0, 1.48, 0]@World, 0.23)
+    let deck = box_sdf(p - [0, 1.33, 0]@World, [0.32, 0.045, 0.32])
+    let roof = box_sdf(p - [0, 1.66, 0]@World, [0.30, 0.060, 0.30])
+    min(shaft, min(deck, roof))
+  }
+  material(p, n) {
+    let stripe = step(0.50, fract(p.y * 2.4))
+    let lamp = smoothstep(1.37, 1.45, p.y) * (1.0 - step(1.60, p.y))
+    lambert(mix([0.53, 0.07, 0.03], [0.87, 0.76, 0.61], stripe)) + emit_lobe([2.0, 0.8, 0.18] * lamp)
+  }
+}
+
+kind Ground @World () {
+  trace(p) = box_sdf(p - [0, -0.09, 0]@World, [4, 0.08, 4])
+  material(p, n) = ggx([0.07, 0.12, 0.17], 0.44, 0.1)
+}
+
+build {
+  emit Lighthouse()
+  emit Ground()
+}
+
+schedule Sunset {
+  orbit(at: [0, 0.78, 0]@World, radius: 4.2m, height: 0.45m, period: 32s, fov: 40deg)
+  cull_indirect(Lighthouse, Ground)
+  render_bundle(Vis64) { draw_indirect(Lighthouse, Ground) }
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: sun_sky, sun: [0.50, 0.75, 0.35])
+  tonemap_aces(ColorHdr, sky: sunset)
+}

@@ -1,0 +1,30 @@
+use stdlib::sdf::solid::{box_sdf, capsule, sphere}
+use stdlib::materials::bsdf::{ggx, lambert}
+
+kind Teapot @World () {
+  trace(p) {
+    let belly = sphere(p - [0, 0.38, 0]@World, 0.36)
+    let lid = box_sdf(p - [0, 0.69, 0]@World, [0.23, 0.036, 0.20])
+    let knob = sphere(p - [0, 0.77, 0]@World, 0.07)
+    let spout = capsule(p, [0.26, 0.35, 0]@World, [0.67, 0.63, 0]@World, 0.092)
+    let ring = abs(length([p.x + 0.31, p.y - 0.43]) - 0.22) - 0.043
+    let handle = max(ring, abs(p.z) - 0.045)
+    min(min(belly, lid), min(knob, min(spout, handle)))
+  }
+  material(p, n) {
+    let crack = smoothstep(0.004, 0.016, abs(p.x + 0.17 * p.y + 0.025 * sin(36.0 * p.y)))
+    ggx(mix([0.055, 0.08, 0.075], [0.29, 0.60, 0.48], crack), 0.36, 0.0)
+  }
+}
+
+kind Ground @World () {
+  trace(p) = box_sdf(p - [0, -0.09, 0]@World, [4, 0.08, 4])
+  material(p, n) = lambert([0.26, 0.18, 0.13])
+}
+
+camera Main { at: [0, 0.42, 0]@World, radius: 2.5m, height: 0.55m, period: 32s, fov: 40deg }
+
+build {
+  emit Teapot()
+  emit Ground()
+}

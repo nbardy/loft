@@ -1,0 +1,25 @@
+use stdlib::sdf::solid::{box_sdf, sphere}
+use stdlib::materials::bsdf::{ggx}
+
+kind Segment @World (at: p3@World, radius: m > 0m, station: f) {
+  trace(p) = sphere(p - (at + [0, 0.10 * sin(5.0 * time / 1s + station), 0]), radius)
+  material(p, n) {
+    let crest = smoothstep(0.08, 0.28, p.y - at.y)
+    ggx(mix([0.04, 0.34, 0.32], [0.85, 0.57, 0.14], crest), 0.38, 0.1)
+  }
+}
+
+kind Ground @World () {
+  trace(p) = box_sdf(p - [0, -0.09, 0]@World, [4, 0.08, 4])
+  material(p, n) = ggx([0.096, 0.17, 0.25], 0.38, 0.0)
+}
+
+camera Main { at: [0, 0.35, 0]@World, radius: 3.65m, height: 1.15m, period: 32s, fov: 40deg }
+
+build {
+  build for i in 0..10 {
+    let k = f32(i)
+    emit Segment(at: [k * 0.235 - 1.05, 0.24 + 0.29 * exp(-0.34 * k), 0.24 * sin(k * 0.72)]@World, radius: 0.21 - 0.009 * k, station: k)
+  }
+  emit Ground()
+}

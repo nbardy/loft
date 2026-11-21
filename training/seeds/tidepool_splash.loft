@@ -1,0 +1,35 @@
+use stdlib::sdf::solid::{box_sdf, sphere}
+use stdlib::materials::bsdf::{ggx, lambert}
+
+kind Grain @World (aim: v3, radius: m > 0m, color: rgb) {
+  trace(p) {
+    let t = fract(time / 1.4s + 0.32)
+    let center = [aim.x * t, 0.10 + aim.y * 4.0 * t * (1.0 - t), aim.z * t]@World
+    max(sphere(p - center, radius), box_sdf(p - [0, 0.55, 0]@World, [1.55, 0.85, 1.55]))
+  }
+  material(p, n) = ggx(color, 0.22, 0.09)
+}
+
+kind Pool @World () {
+  trace(p) = max(length(p.xz) - 0.77, abs(p.y - 0.025) - 0.024)
+  material(p, n) = ggx([0.05, 0.28, 0.38], 0.23, 0.18)
+}
+
+kind Ground @World () {
+  trace(p) = box_sdf(p - [0, -0.09, 0]@World, [4, 0.08, 4])
+  material(p, n) = lambert([0.43, 0.31, 0.19])
+}
+
+camera Main { at: [0, 0.47, 0]@World, radius: 3.65m, height: 1.34m, period: 32s, fov: 40deg }
+
+build {
+  emit Pool()
+  build for i in 0..28 {
+    let k = f32(i)
+    let angle = k * 2.39996323
+    let speed = 0.56 + 0.91 * fract(k * 0.37)
+    let wet = fract(k * 0.31)
+    emit Grain(aim: [speed * cos(angle), 0.32 + 0.84 * wet, speed * sin(angle)], radius: 0.036 + 0.025 * wet, color: mix([0.64, 0.40, 0.17], [0.10, 0.59, 0.82], wet))
+  }
+  emit Ground()
+}

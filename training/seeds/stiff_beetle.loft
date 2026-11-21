@@ -1,0 +1,30 @@
+use stdlib::sdf::solid::{box_sdf, capsule, sphere}
+use stdlib::materials::bsdf::{ggx}
+
+kind Beetle @World () {
+  trace(p) {
+    let phase = time / 1s
+    let root = [0.45 * sin(phase), 0.42, 0]@World
+    let q = p - root
+    var field = min(length([q.x, q.y * 1.6, q.z * 1.25]) / 1.6 - 0.23, sphere(p - (root + [0.34, 0, 0]), 0.16))
+    for i in 0..6 {
+      let side = select(-1.0, 1.0, i < 3)
+      let x = (f32(i % 3) - 1.0) * 0.23
+      field = min(field, capsule(p, root + [x, -0.10, side * 0.14], root + [x + 0.12 * sin(phase * 7.0), -0.37, side * 0.48], 0.032))
+    }
+    max(field, box_sdf(p - [0, 0.34, 0]@World, [1.02, 0.52, 0.58]))
+  }
+  material(p, n) = ggx([0.42, 0.18, 0.05], 0.33, 0.67)
+}
+
+kind Ground @World () {
+  trace(p) = box_sdf(p - [0, -0.09, 0]@World, [4, 0.08, 4])
+  material(p, n) = ggx([0.12, 0.16, 0.20], 0.27, 0.33)
+}
+
+camera Main { at: [0, 0.33, 0]@World, radius: 2.7m, height: 1.05m, period: 32s, fov: 40deg }
+
+build {
+  emit Beetle()
+  emit Ground()
+}
