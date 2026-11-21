@@ -941,6 +941,11 @@ fn motion_cpu_and_gpu_match_all_481_ticks() {
                 offset += buffer.size();
             }
             g.queue.submit([enc.finish()]);
+            // Boss reuses three outbox staging slots. Finish each readback before reuse.
+            if scene == "boss" {
+                g.device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+                assert_eq!(runner.drain_events(id).unwrap().1, 0);
+            }
         }
         let gpu = mapped_bytes(&g.device, &samples);
         let mut cpu = tables(&bundle);

@@ -1,4 +1,4 @@
-//! Keep binary32 products observable before an ordinary sum can contract them.
+//! Keep intermediate binary32 results observable in deterministic motion.
 use std::{collections::BTreeMap, fmt::Write};
 
 use naga::{Block, Expression as E, Function, Handle, MathFunction as M, Scalar, Statement as S, TypeInner as T};
@@ -16,33 +16,51 @@ pub(super) fn helpers() -> String {
         let ty = |n, s| if n == 1 { format!("{s}32") } else { format!("vec{n}<{s}32>") };
         let f = ty(n, "f");
         let u = ty(n, "u");
-        let _ = writeln!(wgsl, "fn {PREFIX}mul_{n}(a:{f}, b:{f})->{f} {{
-    return bitcast<{f}>(bitcast<{u}>(a * b) ^ {u}(loft_advance_args.first_row & 0x80000000u));
+        let _ = writeln!(wgsl, "fn {PREFIX}hold_{n}(x:{f})->{f} {{
+    return bitcast<{f}>(bitcast<{u}>(x) ^ {u}(loft_advance_args.first_row & 0x80000000u));
 }}");
+        for (name, op) in [("add", "+"), ("sub", "-"), ("mul", "*")] {
+            let _ = writeln!(wgsl, "fn {PREFIX}{name}_{n}(a:{f}, b:{f})->{f} {{ return {PREFIX}hold_{n}(a {op} b); }}");
+        }
+        // Use a fused residual to recover low bits lost by fast division or sqrt.
+        let _ = writeln!(wgsl, "fn {PREFIX}div_{n}(a:{f}, b:{f})->{f} {{
+    let q = {PREFIX}hold_{n}(a / b);
+    let r = fma(-q, b, a);
+    let exp = bitcast<{u}>(q) & {u}(0x7f800000u);
+    return {PREFIX}hold_{n}(select(q, fma(r, {f}(1.0) / b, q), exp - {u}(1u) < {u}(0x7f7fffffu)));
+}}
+fn {PREFIX}sqrt_{n}(a:{f})->{f} {{
+    let q = {PREFIX}hold_{n}(sqrt(a));
+    let exp = bitcast<{u}>(q) & {u}(0x7f800000u);
+    return {PREFIX}hold_{n}(select(q, fma(fma(-q, q, a), {f}(0.5) / q, q), exp - {u}(1u) < {u}(0x7f7fffffu)));
+}}
+fn {PREFIX}rsqrt_{n}(a:{f})->{f} {{ return {PREFIX}div_{n}({f}(1.0), {PREFIX}sqrt_{n}(a)); }}");
         for m in [1, n] {
             let t = ty(m, "f");
             let _ = writeln!(wgsl, "fn {PREFIX}mix_{n}_{m}(a:{f}, b:{f}, t:{t})->{f} {{
-    return {PREFIX}mul_{n}(a, {f}(1.0) - {f}(t)) + {PREFIX}mul_{n}(b, {f}(t));
+    return {PREFIX}add_{n}({PREFIX}mul_{n}(a, {PREFIX}sub_{n}({f}(1.0), {f}(t))), {PREFIX}mul_{n}(b, {f}(t)));
 }}");
             if m == n { break; }
         }
         if n == 1 {
             wgsl.push_str("fn loft_motion_round_smooth_1(lo:f32, hi:f32, x:f32)->f32 {
-    let t = clamp((x-lo)/(hi-lo), 0.0, 1.0);
-    return loft_motion_round_mul_1(loft_motion_round_mul_1(t,t), 3.0-loft_motion_round_mul_1(2.0,t));
+    let t = clamp(loft_motion_round_div_1(loft_motion_round_sub_1(x,lo),loft_motion_round_sub_1(hi,lo)), 0.0, 1.0);
+    return loft_motion_round_mul_1(loft_motion_round_mul_1(t,t), loft_motion_round_sub_1(3.0,loft_motion_round_mul_1(2.0,t)));
 }\n");
             continue;
         }
-        let _ = writeln!(wgsl, "fn {PREFIX}scale_{n}(a:{f}, b:f32)->{f} {{ return {PREFIX}mul_{n}(a, {f}(b)); }}
-fn {PREFIX}scale_left_{n}(a:f32, b:{f})->{f} {{ return {PREFIX}mul_{n}({f}(a), b); }}");
-        let sum = ["v.x", "v.y", "v.z", "v.w"][..n].join(" + ");
+        for op in ["mul", "div"] {
+            let _ = writeln!(wgsl, "fn {PREFIX}{op}_right_{n}(a:{f}, b:f32)->{f} {{ return {PREFIX}{op}_{n}(a, {f}(b)); }}
+fn {PREFIX}{op}_left_{n}(a:f32, b:{f})->{f} {{ return {PREFIX}{op}_{n}({f}(a), b); }}");
+        }
+        let sum = ["v.y", "v.z", "v.w"][..n - 1].iter().fold("v.x".into(), |sum, lane| format!("{PREFIX}add_1({sum}, {lane})"));
         let _ = writeln!(wgsl, "fn {PREFIX}dot_{n}(a:{f}, b:{f})->f32 {{ let v = {PREFIX}mul_{n}(a,b); return {sum}; }}
-fn {PREFIX}length_{n}(a:{f})->f32 {{ return sqrt({PREFIX}dot_{n}(a,a)); }}
-fn {PREFIX}distance_{n}(a:{f}, b:{f})->f32 {{ return {PREFIX}length_{n}(a-b); }}
-fn {PREFIX}normalize_{n}(a:{f})->{f} {{ return a / {PREFIX}length_{n}(a); }}");
+fn {PREFIX}length_{n}(a:{f})->f32 {{ return {PREFIX}sqrt_1({PREFIX}dot_{n}(a,a)); }}
+fn {PREFIX}distance_{n}(a:{f}, b:{f})->f32 {{ return {PREFIX}length_{n}({PREFIX}sub_{n}(a,b)); }}
+fn {PREFIX}normalize_{n}(a:{f})->{f} {{ return {PREFIX}div_right_{n}(a, {PREFIX}length_{n}(a)); }}");
     }
     wgsl.push_str("fn loft_motion_round_cross_3(a:vec3f, b:vec3f)->vec3f {
-    return loft_motion_round_mul_3(a.yzx,b.zxy) - loft_motion_round_mul_3(a.zxy,b.yzx);
+    return loft_motion_round_sub_3(loft_motion_round_mul_3(a.yzx,b.zxy), loft_motion_round_mul_3(a.zxy,b.yzx));
 }\n");
     wgsl
 }
@@ -56,23 +74,25 @@ fn rewrite(f: &mut Function, info: &FunctionInfo, types: &naga::UniqueArena<naga
     let mut calls = Calls::new();
     for (h, e) in f.expressions.iter() {
         let (name, args) = match *e {
-            E::Binary { op: naga::BinaryOperator::Multiply, left, right } => {
+            E::Binary { op, left, right } => {
+                use naga::BinaryOperator::*;
+                let name = match op { Add => "add", Subtract => "sub", Multiply => "mul", Divide => "div", _ => continue };
                 let (a, b) = (lanes(left), lanes(right));
-                let form = match (a, b) {
+                let suffix = match (a, b) {
                     (0, _) | (_, 0) => continue,
-                    (a, b) if a == b => "mul",
-                    (1, _) => "scale_left",
-                    (_, 1) => "scale",
+                    (a, b) if a == b => "",
+                    (1, _) if matches!(op, Multiply | Divide) => "_left",
+                    (_, 1) if matches!(op, Multiply | Divide) => "_right",
                     _ => continue,
                 };
-                (format!("{form}_{}", a.max(b)), vec![left,right])
+                (format!("{name}{suffix}_{}", a.max(b)), vec![left, right])
             }
             E::Math { fun, arg, arg1, arg2, .. } if lanes(arg) != 0 => {
                 let n = lanes(arg);
                 let form = match fun {
                     M::Dot => "dot", M::Length if n > 1 => "length", M::Distance if n > 1 => "distance",
                     M::Normalize => "normalize", M::Cross => "cross", M::Mix => "mix",
-                    M::SmoothStep if n == 1 => "smooth", _ => continue,
+                    M::SmoothStep if n == 1 => "smooth", M::Sqrt => "sqrt", M::InverseSqrt => "rsqrt", _ => continue,
                 };
                 let name = if fun == M::Mix { format!("{form}_{n}_{}", lanes(arg2.unwrap())) } else { format!("{form}_{n}") };
                 (name, [Some(arg), arg1, arg2].into_iter().flatten().collect())
@@ -115,10 +135,9 @@ fn split_emits(body: &mut Block, calls: &Calls) {
 }
 
 pub(super) fn lower(ir: &mut naga::Module, info: &ModuleInfo) {
-    let symbols = ir.functions.iter().filter_map(|(h, f)| {
-        let name = f.name.as_ref()?.starts_with(PREFIX).then(|| f.name.clone().unwrap())?;
-        Some((name, h))
-    }).collect::<BTreeMap<_, _>>();
+    let symbols = ir.functions.iter().filter_map(|(h, f)|
+        Some((f.name.as_ref().filter(|name| name.starts_with(PREFIX))?.clone(), h))
+    ).collect::<BTreeMap<_, _>>();
     for (h, f) in ir.functions.iter_mut() {
         if !f.name.as_ref().is_some_and(|name| symbols.contains_key(name)) {
             rewrite(f, &info[h], &ir.types, &symbols);
