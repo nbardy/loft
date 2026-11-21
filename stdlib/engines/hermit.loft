@@ -1,3 +1,5 @@
+use stdlib::lighting::emitters
+use stdlib::sky::environment::{sky_color, sky_dome, sky_patch}
 use stdlib::frames::transport::{frame, transport}
 use stdlib::geometry::analytic::{ray_ground, capsule_chain, ray_capsule_chain}
 use stdlib::geometry::layout::{grid_spot, palette}
@@ -6,6 +8,59 @@ use stdlib::noise::value::{fbm2}
 use stdlib::sdf::solid::{sphere, capsule, box_sdf, smin, round_box, ssub}
 
 space World Body Shell Face Claw Leg
+
+# The quadrature samples the same twelve directions for every material.
+# Opposite directions store the half-float residual so a lookup preserves
+# the original patch radiance to float precision. The nearest patch is
+# constant over the filtering footprint at each sample direction.
+fn sky_half(c: rgb) -> rgb = wgsl(c: rgb) -> rgb {
+  // Clear the 13 trailing binary32 mantissa bits. The remaining color
+  // is representable in the cube's half-float channels.
+  return bitcast<vec3f>(bitcast<vec3u>(c) & vec3u(0xffffe000u));
+}
+
+bake_tex HermitSkyPatches cube 32x32 rgba16float on dirty(sky_zenith, sky_horizon) mips(false) (d: d3@World) {
+  var best = 0.0
+  var patch = u32(0)
+  var high = true
+  for i in 0..12 {
+    let alignment = dot(d.xyz, sky_patch(u32(i)))
+    if abs(alignment) > best {
+      best = abs(alignment)
+      patch = u32(i)
+      high = alignment >= 0.0
+    }
+  }
+  let c = sky_dome(sky_patch(patch))
+  let half = sky_half(c)
+  v4(select((c - half) * 4096.0, half, high), 1.0)
+}
+
+fn hermit_sky_patch(i: u) -> rgb {
+  let d = sky_patch(i)
+  let hi = sample(HermitSkyPatches, dir([d]@World)).xyz
+  let lo = sample(HermitSkyPatches, dir([-d]@World)).xyz
+  hi + lo * (1.0 / 4096.0)
+}
+
+fn hermit_light(b: Bsdf, n: rgb, v: rgb, sun: rgb, shadow: f, ao: f) -> rgb {
+  var c = rgb(0.0)
+  for i in 0..14 {
+    var l = rgb(0.0)
+    var e = rgb(1.0)
+    if i == 1 {
+      l = sun
+      e = sun_color() * shadow
+    }
+    if i >= 2 {
+      let patch = u32(i - 2)
+      l = sky_patch(patch)
+      e = hermit_sky_patch(patch) * (0.85 * 1.0471976 * ao)
+    }
+    c = c + eval_bsdf(b, n, v, l) * e
+  }
+  c
+}
 
 const LEG_RADII = [0.075, 0.065, 0.045]
 const SHELL_AXIS = [0, 0.9578, -0.2873]
@@ -167,3 +222,13 @@ build {
 
 camera Main { at: [0, 0.45, 0]@World, radius: 2.6m + 2.4m * sqrt(f32(count)),
   height: 1.1m + 1m * sqrt(f32(count)), period: 24s, fov: 40deg }
+
+pub schedule Realtime {
+  use_camera(Main)
+  cull_indirect(Drawables)
+  render_bundle(Vis64) { draw_indirect(Drawables) }
+  find_shadow_map(Casters, size: 1024)
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: hermit_light, sun: [0.5, 0.75, 0.35])
+  tonemap_aces(ColorHdr, sky: sky_color)
+}

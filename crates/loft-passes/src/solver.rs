@@ -278,7 +278,7 @@ pub fn lower(
         });
     }
     Ok((
-        em.out,
+        motion_round::lower(&em.out, solver.name.span)?,
         crate::program::Dispatch {
             tier: Determinism::Det,
             module,

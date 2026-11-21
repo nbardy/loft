@@ -662,11 +662,14 @@ fn crab_gpu_thousand_row_motion_budget() {
     let mut b = compile_peer(&peer_sources("crab"), &[]);
     let g = loft_cli::native::gpu().unwrap();
     assert!(g.timestamps);
-    let control = g.triangle_control_ms((1280, 800)).unwrap();
+    let [control, control_p95] = g.triangle_control((1280, 800)).unwrap();
     let d = &g.device;
+    let source = std::env::var_os("LOFT_MOTION_BASE_WGSL")
+        .map(|path| std::fs::read_to_string(path).unwrap());
+    let wgsl = source.as_deref().unwrap_or_else(|| std::str::from_utf8(&b.modules[0].bytes).unwrap());
     let module = d.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: None,
-        source: wgpu::ShaderSource::Wgsl(std::str::from_utf8(&b.modules[0].bytes).unwrap().into()),
+        source: wgpu::ShaderSource::Wgsl(wgsl.into()),
     });
     let p = d.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
         label: None,
@@ -780,7 +783,7 @@ fn crab_gpu_thousand_row_motion_budget() {
         .collect::<Vec<_>>();
     ms.sort_by(f64::total_cmp);
     let p95 = ms[284];
-    println!("1000 Crab Scramble rows motion p95 {p95:.6} ms; control p50 {control:.6} ms");
+    println!("1000 Crab Scramble rows motion p95 {p95:.6} ms; control p50/p95 {control:.6}/{control_p95:.6} ms");
     assert!(control > 0.35 || p95 <= 0.15);
 }
 
@@ -902,6 +905,94 @@ fn authored_gpu_heron_and_boss_verdicts() {
             println!(
                 "Boss GPU: windup {windup:.6} m, hit ticks {hit_ticks:?}, grouped state and verdicts bit-identical at every frame boundary"
             );
+        }
+    }
+}
+
+#[test]
+fn motion_cpu_and_gpu_match_all_481_ticks() {
+    let g = loft_cli::native::gpu().unwrap();
+    let mut total = 0;
+    for scene in ["crab", "heron", "boss"] {
+        let bundle = compile_peer(&peer_sources(scene), &[]);
+        let mut runner = Runner::attach(
+            Arc::new(g.device.clone()), Arc::new(g.queue.clone()),
+            HostCaps {
+                depth_convention: DepthConvention::StandardZeroToOne,
+                msaa_samples: 1,
+                features: GpuFeatures::empty(),
+            },
+        );
+        let id = runner.load_bundle(&bundle).unwrap();
+        let buffers = [ROWS, RESULTS].map(|table| runner.export_buffer(id, table).unwrap());
+        let stride: u64 = buffers.iter().map(|buffer| buffer.size()).sum();
+        let samples = g.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Fixed-tick parity"),
+            size: stride * 481,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        for tick in 0..=480u32 {
+            let mut enc = g.device.create_command_encoder(&Default::default());
+            runner.advance_into(id, &mut enc, tick, 0).unwrap();
+            let mut offset = u64::from(tick) * stride;
+            for buffer in &buffers {
+                enc.copy_buffer_to_buffer(buffer, 0, &samples, offset, Some(buffer.size()));
+                offset += buffer.size();
+            }
+            g.queue.submit([enc.finish()]);
+        }
+        let gpu = mapped_bytes(&g.device, &samples);
+        let mut cpu = tables(&bundle);
+        let mut different = 0;
+        let mut first = None;
+        for (tick, result) in (0..=480u32).zip(gpu.chunks_exact(stride as usize)) {
+            step(&bundle, &mut cpu, tick.saturating_sub(1), tick);
+            let (rows, checks) = result.split_at(buffers[0].size() as usize);
+            let differences = cpu[&ROWS].chunks_exact(4).chain(cpu[&RESULTS].chunks_exact(4))
+                .zip(rows[..cpu[&ROWS].len()].chunks_exact(4).chain(checks[..cpu[&RESULTS].len()].chunks_exact(4)))
+                .enumerate().find(|(_, (a, b))| a != b);
+            if let Some((word, (a, b))) = differences {
+                different += 1;
+                first.get_or_insert((tick, word, u32::from_le_bytes(a.try_into().unwrap()), u32::from_le_bytes(b.try_into().unwrap())));
+            }
+        }
+        println!("{scene} CPU/GPU exact ticks {}/481, first mismatch {first:08x?}", 481 - different);
+        total += different;
+    }
+    assert_eq!(total, 0, "differing ticks across the three motion fixtures");
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn contraction_barrier_is_scoped_to_motion_wgsl_and_msl() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let compile = |file: &str| {
+        let src = Graph::file(&root.join(file), "").unwrap();
+        loft_passes::compile(&src, &[]).unwrap_or_else(|e| panic!("{}", e.render(&src))).0
+    };
+    let inspect = |module: &loft_passes::program::ShaderModule, entry: &str, expected| {
+        let binary = &module.naga;
+        let info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::default())
+            .validate(binary).unwrap();
+        let (msl, _) = naga::back::msl::write_string(binary, &info, &naga::back::msl::Options::default(),
+            &naga::back::msl::PipelineOptions { entry_point: Some((naga::ShaderStage::Compute, entry.into())), ..Default::default() }).unwrap();
+        for shader in [module.wgsl.as_str(), msl.as_str()] {
+            assert_eq!(shader.contains("loft_motion_round_mul_"), expected, "{}::{entry}", module.name);
+        }
+        if expected { assert!(msl.contains("as_type<") && msl.contains(" ^ ")); }
+    };
+    for scene in ["scenes/crab.loft", "scenes/heron.loft", "scenes/boss.loft"] {
+        let program = compile(scene);
+        assert!(!program.dispatches.is_empty());
+        for step in &program.dispatches {
+            inspect(&program.modules[step.module], &step.entry, true);
+        }
+    }
+    for scene in ["stdlib/engines/hermit.loft", "stdlib/engines/coral_shrine.loft"] {
+        let program = compile(scene);
+        for kind in &program.kinds {
+            inspect(&program.modules[kind.module], "shade", false);
         }
     }
 }

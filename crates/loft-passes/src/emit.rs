@@ -5,6 +5,8 @@
 use crate::Prog;
 #[path="motion.rs"]
 mod motion;
+#[path = "motion_round.rs"]
+mod motion_round;
 #[path = "solver.rs"]
 pub(crate) mod solver;
 pub use motion::motion_module;
@@ -161,7 +163,7 @@ pub struct Emitter<'p, 'a> {
     priors: Option<&'p std::collections::BTreeMap<String, u32>>,
     locals: Vec<String>,
     temp: u32,
-    prepare_light: bool,
+    prepare_light: Option<&'a FnDecl>,
     in_prepared_light: bool,
     baked_column: Option<u32>,
     sampled_bakes: BTreeSet<String>,
@@ -343,7 +345,7 @@ fn reachable_impl<'a>(p: &Prog<'a>, roots: &[&'a FnDecl], extra: &[&str], proof_
 impl<'p, 'a> Emitter<'p, 'a> {
     pub fn new(p: &'p Prog<'a>, types: &'p [Ty]) -> Self {
         Emitter { p, types, out: String::new(), maps: vec![], luts: &[],motion:false,motion_tier:Determinism::Det,priors:None,locals:vec![],temp:0,
-            prepare_light: false, in_prepared_light: false, baked_column: None, sampled_bakes: BTreeSet::new(), kernel_atomics: BTreeMap::new(), kernel_sampling: false }
+            prepare_light: None, in_prepared_light: false, baked_column: None, sampled_bakes: BTreeSet::new(), kernel_atomics: BTreeMap::new(), kernel_sampling: false }
     }
 
     fn ty_of(&self, e: &Expr) -> &Ty {
@@ -377,7 +379,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
         }
         self.maps.clear();
         self.locals = f.params.iter().map(|p| p.name.name.clone()).collect();
-        self.in_prepared_light = self.prepare_light && f.name.name == "sun_sky"
+        self.in_prepared_light = self.prepare_light.is_some_and(|light| std::ptr::eq(f, light))
             && self.locals.get(..3).is_some_and(|keys| keys == ["b", "n", "v"]);
         if self.in_prepared_light {
             self.line(1, "let loft_lighting = loft_prepare_bsdf(loft_local_b, loft_local_n, loft_local_v);");
@@ -992,8 +994,9 @@ pub(super) fn emit_kind_module(
     let layout = if mesh { Layout::default() } else { material_layout(p, k)? };
     let mut lobes: Vec<_> = layout.lobes.iter().map(|(name, args)| (*name, args.len())).collect();
     if let Some(lobe) = mesh_lobe { lobes.push((lobe, 3)); }
+    let shelf_light = matches!(light, Some("sun_sky" | "hermit_light"));
     let invariants = lobes.iter().map(|(name, _)| {
-        if light == Some("sun_sky") { lighting::invariant_lets(p, p.fns[name]) } else { Vec::new() }
+        if shelf_light { lighting::invariant_lets(p, p.fns[name]) } else { Vec::new() }
     }).collect::<Vec<_>>();
     let mut bfields = vec![];
     let mut evals = String::new();
@@ -1051,7 +1054,7 @@ pub(super) fn emit_kind_module(
         }
         let body = format!("{support}  var c = vec3f(0.0);\n  var emission = vec3f(0.0);\n{prepared_evals}  return {result};\n");
         lighting::emit_prepared(&mut em, &lobes, &invariants, &body);
-        em.prepare_light = true;
+        em.prepare_light = light.map(|name| p.fns[name]);
     }
     em.library(&lib, &consts);
     for f in &k.fns {
@@ -1071,6 +1074,17 @@ pub(super) fn emit_kind_module(
         em.func(f, n);
     }
     em.sampled_textures();
+    let sky_patches = if aov == Aov::Beauty && light == Some("hermit_light") {
+        let sample = fn_symbol(p.linked(p.fns["hermit_light"].name.span, "hermit_sky_patch")?);
+        // Load the twelve invariant patch colors before the per-pixel tile exits.
+        em.out = em.out.replace(&format!("fn {sample}("), "fn loft_load_sky_patch(");
+        writeln!(em.out, "var<workgroup> loft_sky_patches: array<vec3f, 12>;
+fn {sample}(i: u32) -> vec3f {{ return loft_sky_patches[i]; }}").unwrap();
+        "  let lane = lid.x + lid.y * 8u;
+  if lane < 12u { loft_sky_patches[lane] = loft_load_sky_patch(lane); }
+  workgroupBarrier();
+"
+    } else { "" };
     // Draw-form glue: the vis entry points, how shade rebuilds the hit, and the twin's geometry.
     let count_steps = aov == Aov::SdfSteps && draw == Draw::Traced && edit.is_none();
     let uses_world_hit = light.is_none() && aov == Aov::Beauty;
@@ -1398,7 +1412,7 @@ fn loft_shadow(p: vec3<f32>, n: vec3<f32>) -> f32 {{
 {shade_entry}
 @compute @workgroup_size(8, 8) fn shade(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {{
   if frame.cold.x == LOFT_NONCE {{ return; }}
-  let tile = tiles[kp.kind_id * frame.size.w + wg.x];
+{sky_patches}  let tile = tiles[kp.kind_id * frame.size.w + wg.x];
   let px = vec2<u32>(tile & 0xffffu, tile >> 16u) * 8u + lid.xy;
   if px.x >= frame.size.x || px.y >= frame.size.y {{ return; }}
   let v = textureLoad(vis_tex, px, 0).xy;
@@ -1479,6 +1493,10 @@ fn loft_dsample(off: u32, n: u32, lo: f32, hi: f32, t: f32, dt: f32) -> LoftFram
 ";
 
 pub fn cull_module(single_draw: bool) -> String {
+    cull_source(single_draw, false)
+}
+
+pub(crate) fn cull_source(single_draw: bool, clustered: bool) -> String {
     let mut s = PRELUDE.replace("{{NONCE}}", abi::NONCE_PLACEHOLDER);
     s += r"
 struct Inst { lo: vec3<f32>, kind: u32, hi: vec3<f32>, row: u32 }
@@ -1488,12 +1506,7 @@ struct Inst { lo: vec3<f32>, kind: u32, hi: vec3<f32>, row: u32 }
 @group(1) @binding(3) var<storage, read> bases: array<u32>;
 override loft_draw_words: u32 = 4u;
 
-// Every row of every kind: frustum-test its derived AABB and bound the indirect draw.
-@compute @workgroup_size(64) fn cull(@builtin(global_invocation_id) g: vec3<u32>) {
-  if frame.cold.x == LOFT_NONCE { return; }
-  let i = g.x;
-  if i >= arrayLength(&insts) { return; }
-  let b = insts[i];
+fn loft_outside(b: Inst) -> u32 {
   var outside = 0x3fu;
   for (var c = 0u; c < 8u; c++) {
     let corner = vec3<f32>(f32(c & 1u), f32((c >> 1u) & 1u), f32((c >> 2u) & 1u));
@@ -1507,7 +1520,43 @@ override loft_draw_words: u32 = 4u;
     if q.z > q.w { bits |= 32u; }
     outside &= bits;
   }
+  return outside;
+}
 ";
+    if clustered {
+        s += r"
+struct Cluster {
+  lo: vec3f, count: u32,
+  hi: vec3f, pad: u32,
+  rows: array<u32, 64>,
+}
+@group(1) @binding(4) var<storage, read> loft_clusters: array<Cluster>;
+var<workgroup> loft_cluster_outside: u32;
+
+@compute @workgroup_size(64) fn cull(@builtin(global_invocation_id) g: vec3u) {
+  if frame.cold.x == LOFT_NONCE { return; }
+  let group = g.x / 64u;
+  let lane = g.x % 64u;
+  if lane == 0u {
+    let lo = loft_clusters[group].lo;
+    let hi = loft_clusters[group].hi;
+    loft_cluster_outside = loft_outside(Inst(lo, 0u, hi, 0u));
+  }
+  let coarse = workgroupUniformLoad(&loft_cluster_outside);
+  if lane >= loft_clusters[group].count { return; }
+  let b = insts[loft_clusters[group].rows[lane]];
+  var outside = coarse;
+  if outside == 0u { outside = loft_outside(b); }
+";
+    } else {
+        s += r"
+@compute @workgroup_size(64) fn cull(@builtin(global_invocation_id) g: vec3u) {
+  if frame.cold.x == LOFT_NONCE { return; }
+  if g.x >= arrayLength(&insts) { return; }
+  let b = insts[g.x];
+  let outside = loft_outside(b);
+";
+    }
     // A single draw can use row IDs as instance indices. With strict Less,
     // equal stored depths then retain the lower row, independent of GPU cull order.
     if single_draw {
@@ -1654,10 +1703,20 @@ pub(crate) fn bake_module(p: &Prog, types: &[Ty], decl: &BakeDecl, module: usize
         BakeClock::Dirty(names) => {
             let mut words = BTreeSet::new();
             for name in names {
-                let word = p.param_word(&name.name).ok_or_else(|| Diag::new(Code::E011, name.span,
-                    "dirty bake watches an unknown live parameter", "name a live scalar param"))?;
-                if !words.insert(word) {
-                    return Err(Diag::new(Code::E011, name.span, "duplicate dirty parameter", "watch each parameter once"));
+                let range = match p.param_word(&name.name) {
+                    Some(word) => word..word + 1,
+                    None => match name.name.as_str() {
+                        "sun_color" => 0..3,
+                        "sky_zenith" => 4..8, // Includes the has_sky flag.
+                        "sky_horizon" => 8..11,
+                        _ => return Err(Diag::new(Code::E011, name.span,
+                            "dirty bake watches an unknown live parameter", "name a live scalar or sky parameter")),
+                    },
+                };
+                for word in range {
+                    if !words.insert(word) {
+                        return Err(Diag::new(Code::E011, name.span, "duplicate dirty parameter", "watch each parameter once"));
+                    }
                 }
             }
             Clock::Dirty(words.into_iter().collect())

@@ -1463,7 +1463,9 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
         emit::shade_tiles::present_module(&p, &types, sky, aov, paper, film, visibility)
     };
     let shared = texts.len();
-    texts.push(("cull".into(), emit::cull_module(ids.len() == 1)));
+    // Dense, static analytic populations amortize the cluster test over 64 rows.
+    let clustered = dispatches.is_empty() && kinds.iter().any(|k| matches!(k.draw, Draw::Analytic) && k.n_rows >= 512);
+    texts.push(("cull".into(), emit::cull_source(ids.len() == 1, clustered)));
     texts.push(("classify".into(), emit::shade_tiles::classify_module(visibility)));
     texts.push(("present".into(), present));
     let mut bakes = Vec::new();

@@ -247,8 +247,9 @@ var<private> loft_tick: u32;
     if has_events {
         bindings.push((2, 2, DispatchResource::Outbox));
     }
+    let wgsl = if tier.is_det() { motion_round::lower(&em.out, kind.name.span)? } else { em.out };
     Ok(Some((
-        em.out,
+        wgsl,
         Dispatch {
             tier,
             module,

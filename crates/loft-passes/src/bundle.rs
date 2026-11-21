@@ -123,6 +123,13 @@ impl Builder {
         for (i, module) in program.modules.iter().enumerate() {
             let ir = if let Some((_, source)) = edit.filter(|(id, _)| *id == i) {
                 naga::front::wgsl::parse_str(source).map_err(|e| e.emit_to_string(source))?
+            } else if i == program.cull && edit.is_some()
+                && module.wgsl.contains("var<storage, read> loft_clusters:")
+            {
+                // Live trace edits patch individual bounds; cluster unions are for static geometry.
+                let single_draw = program.passes.iter().any(|p| matches!(p, Pass::Vis(ids) if ids.len() == 1));
+                let source = crate::emit::cull_module(single_draw);
+                naga::front::wgsl::parse_str(&source).map_err(|e| e.emit_to_string(&source))?
             } else {
                 module.naga.clone()
             };
@@ -500,6 +507,19 @@ pub fn lower_program(
             ]
         }).chain(program.instances.is_empty().then_some([0; 8]).into_iter().flatten()),
     );
+    let mut cull_resources = Resources::new();
+    let cull_groups = if b.bindings[program.cull][&("cull".into(), ShaderStage::Compute)]
+        .iter().any(|(address, _)| *address == (1, 4))
+    {
+        let mut rows: Vec<_> = (0..program.instances.len() as u32).collect();
+        let mut words = Vec::new();
+        cluster_bounds(&program.instances, &mut rows, &mut words);
+        let count = (words.len() / 72) as u32;
+        cull_resources.insert((1, 4), b.words(72, words));
+        count
+    } else {
+        (program.instances.len() as u32).div_ceil(64)
+    };
     let bases = b.words(1, bases);
     let draw_args = b.words(
         arg_words,
@@ -591,19 +611,11 @@ pub fn lower_program(
     }
     b.bundle.resources.resets.extend([draw_args, shade_args]);
 
+    cull_resources.extend([((1, 0), instances), ((1, 3), bases),
+        ((1, 1), draw_args), ((1, 2), visible)]);
     for pass in &program.passes {
         match pass {
-            Pass::Cull => b.compute(
-                program.cull,
-                "cull",
-                DispatchExtent::Fixed([(program.instances.len() as u32).div_ceil(64), 1, 1]),
-                &Resources::from([
-                    ((1, 0), instances),
-                    ((1, 3), bases),
-                    ((1, 1), draw_args),
-                    ((1, 2), visible),
-                ]),
-            )?,
+            Pass::Cull => b.compute(program.cull, "cull", DispatchExtent::Fixed([cull_groups, 1, 1]), &cull_resources)?,
             // Archived Classify calls its (1,1) buffer data. The address is the ABI.
             Pass::Classify => b.compute(program.classify, "classify", DispatchExtent::Fixed(groups),
                 &Resources::from([((1, 0), vis), ((1, 1), shade_args), ((1, 2), tiles)]))?,
@@ -708,6 +720,44 @@ pub fn lower_program(
     b.bundle.tables.extend(execution.table());
     Ok(Prepared { bundle: b.bundle, instances, visibility: vis, depth, shadow: shadow_bounds, shadow_wave,
         modules: program.kinds.iter().map(|k| ModuleId(k.module as u32)).collect() })
+}
+
+/// Split on the widest center axis until each workgroup covers at most 64 nearby rows.
+fn cluster_bounds(instances: &[crate::program::Instance], rows: &mut [u32], words: &mut Vec<u32>) {
+    let center = |row: u32, axis: usize| {
+        let b = &instances[row as usize];
+        b.lo[axis] * 0.5 + b.hi[axis] * 0.5
+    };
+    if rows.len() > 64 {
+        let extent = |axis| {
+            let (lo, hi) = rows.iter().map(|&r| center(r, axis)).fold(
+                (f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), x| (lo.min(x), hi.max(x)));
+            hi - lo
+        };
+        let axis = (0..3).max_by(|&a, &b| extent(a).total_cmp(&extent(b))).unwrap();
+        let middle = (rows.len() / 2).next_multiple_of(64).min(rows.len() - 1);
+        rows.select_nth_unstable_by(middle, |&a, &b| center(a, axis).total_cmp(&center(b, axis)).then(a.cmp(&b)));
+        let (a, b) = rows.split_at_mut(middle);
+        cluster_bounds(instances, a, words);
+        cluster_bounds(instances, b, words);
+        return;
+    }
+    let start = words.len();
+    let (mut lo, mut hi) = ([f32::INFINITY; 3], [f32::NEG_INFINITY; 3]);
+    for &row in rows.iter() {
+        let b = &instances[row as usize];
+        for i in 0..3 {
+            lo[i] = lo[i].min(b.lo[i]);
+            hi[i] = hi[i].max(b.hi[i]);
+        }
+    }
+    // Expand the union slightly to tolerate projection roundoff at a clip plane.
+    words.extend(lo.map(|x| (x - 1e-4).next_down().to_bits()));
+    words.push(rows.len() as u32);
+    words.extend(hi.map(|x| (x + 1e-4).next_up().to_bits()));
+    words.push(0);
+    words.extend(rows.iter().copied());
+    words.resize(start + 72, 0);
 }
 
 fn append_bake(bundle: &mut Bundle, bake: &crate::bake_tex::Bake, texture: TableId, wave: &mut u16) -> Result<Initializer> {
