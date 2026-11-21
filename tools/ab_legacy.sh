@@ -107,13 +107,11 @@ if [[ $matched == --matched ]]; then
   ln -s "$root/stdlib" "$out/fixture/stdlib"
   ln -s "$root/Cargo.toml" "$out/fixture/Cargo.toml"
   cp "$root/stdlib/engines/capsules.loft" "$out/fixture/engines/"
-  awk '/^schedule Main/{exit} /^use .*::geometry::analytic/ {next} /^use .*::materials::bsdf/ {$0="use stdlib::materials::bsdf::{lambert}"} /^use .*::sky::environment/ {$0="use stdlib::sky::environment::{sky_color, sky_dome}"} {sub(/ggx\(albedo, 0.55, 0\)/,"lambert(albedo)"); sub(/ray_capsule\(/,"matched_capsule("); print}' \
+  awk '/^schedule Main/{exit} /^use .*::geometry::analytic/ {next} /^use .*::materials::bsdf/ {$0="use stdlib::materials::bsdf::{lambert}"} {sub(/ggx\(albedo, 0.55, 0\)/,"lambert(albedo)"); sub(/ray_capsule\(/,"matched_capsule("); print}' \
     "$root/stdlib/engines/capsules.loft" >"$out/fixture/engines/capsules-matched.loft"
   orbit=$(awk '/^  orbit\(/{print; exit}' "$root/stdlib/engines/capsules.loft")
   [[ -n $orbit ]]
   awk -v orbit="$orbit" '
-    /^use .*::integrators::direct/ {next}
-    /^use .*::sky::environment/ {next}
     /^  orbit\(/ {print orbit; next}
     {gsub(/Drawables/, "Capsule"); print}
   ' "$root/stdlib/engines/realtime_matched.loft" >>"$out/fixture/engines/capsules-matched.loft"
@@ -159,6 +157,16 @@ if [[ $matched == --matched ]]; then
     "$root/target/lab/loft" check "$out/fixture/engines/capsules-matched.loft" --set "count=$count" \
       >"$out/b-$count-check.log"
   done
+  # This is a full-screen constant-color triangle in the same native recorder.
+  # Strip every scheduled pass except Present from the compiled control.
+  awk '
+    /^schedule Main/ {print "fn ab_triangle(c: rgb) -> rgb { [0.25, 0.5, 0.75] }"}
+    /tonemap_aces/ {print "  tonemap(ColorHdr, sky: sky_color, film: ab_triangle)"; next}
+    {print}
+  ' "$root/stdlib/engines/capsules.loft" >"$out/fixture/engines/triangle.loft"
+  "$root/target/lab/loft" ir "$out/fixture/engines/triangle.loft" --set count=1 \
+    | sed 's/(passes Cull (Vis 0) Classify (Shade 0) Present)/(passes Present)/' >"$out/triangle.sexp"
+  [[ $(rg -o '\(passes Present\)' "$out/triangle.sexp") == '(passes Present)' ]]
 fi
 
 # Acquire both of the repository's compile slots while holding the shared GPU lock.
@@ -183,6 +191,19 @@ old="$legacy/rust/target/lab/loft-draw"
 scene="$root/stdlib/engines/capsules.loft"
 ps -Ao pid,comm >"$out/processes-before.txt"
 date -u >"$out/gpu-start"
+finish() {
+  date -u >"$out/gpu-end"
+  ps -Ao pid,comm >"$out/processes-after.txt"
+}
+trap finish EXIT
+no_builds() {
+  local status=0
+  pgrep -lx 'cargo|rustc' >"$1" || status=$?
+  if ((status != 1)); then
+    printf 'Cannot verify idle compilers before %s (pgrep status %d)\n' "$1" "$status" >&2
+    return 1
+  fi
+}
 if [[ $matched == --matched ]]; then
   size=1280x800
   old_profile() {
@@ -200,42 +221,56 @@ if [[ $matched == --matched ]]; then
     "$new" profile "$scene" --set "count=$count" --time 0 --size "$size" --frames 1 \
       --warmup 1 --nonce "$nonce" --loads 2 --json "$prefix-new-load.json"
   }
-  for run in 1 2; do
-    counts=(1 20)
-    splits=(a b)
-    if [[ $run == 2 ]]; then
-      counts=(20 1)
-      splits=(b a)
-    fi
-    for count in "${counts[@]}"; do
-      for split in "${splits[@]}"; do
-        bundle="$out/$split-$count-bundle"
-        scene="$out/fixture/engines/capsules.loft"
-        [[ $split == a ]] || scene="$out/fixture/engines/capsules-matched.loft"
-        prefix="$out/$split-$count-r$run"
-        if [[ $run == 1 ]]; then
-          old_profile
-          new_profile
-        else
-          new_profile
-          old_profile
-        fi
-        nonce=$((16777216 + $(od -An -N4 -tu4 /dev/urandom) % 2000000000))
-        if [[ $run == 1 ]]; then
-          old_load
-          new_load
-        else
-          new_load
-          old_load
-        fi
-        "$old" still "$bundle" --view game --time 0 --size "$size" --out "$prefix-old.png" \
-          >"$prefix-old-still.log" 2>&1
-        "$new" still "$scene" "$prefix-new.png" --set "count=$count" --t 0
-      done
+  control() {
+    local file=$1
+    no_builds "$file-pgrep.txt"
+    "$new" profile "$out/triangle.sexp" --time 0 --size "$size" --warmup 10 --frames 40 \
+      --json "$file.json"
+    jq -e '.passes == ["Present"] and (.gpu_pass_ms | length == 40)' "$file.json" >/dev/null
+    jq '[.gpu_pass_ms[][0]] | sort | .[37]' "$file.json" | tee "$file-p95-ms"
+  }
+
+  # Capture lossless stills once. They remain useful if the timing control fails.
+  for count in 1 20; do
+    for split in a b; do
+      bundle="$out/$split-$count-bundle"
+      scene="$out/fixture/engines/capsules.loft"
+      [[ $split == a ]] || scene="$out/fixture/engines/capsules-matched.loft"
+      prefix="$out/$split-$count"
+      "$old" still "$bundle" --view game --time 0 --size "$size" --out "$prefix-old.png" \
+        >"$prefix-old-still.log" 2>&1
+      "$new" still "$scene" "$prefix-new.png" --set "count=$count" --t 0 \
+        >"$prefix-new-still.log" 2>&1
     done
   done
-  date -u >"$out/gpu-end"
-  ps -Ao pid,comm >"$out/processes-after.txt"
+
+  control "$out/triangle-before"
+  if ! jq -e '. < 0.15' "$out/triangle-before-p95-ms" >/dev/null; then
+    echo 'Triangle p95 is at or above 0.15 ms. Skipping paired timings.' >&2
+    exit 0
+  fi
+  for count in 1 20; do
+    for split in a b; do
+      bundle="$out/$split-$count-bundle"
+      scene="$out/fixture/engines/capsules.loft"
+      [[ $split == a ]] || scene="$out/fixture/engines/capsules-matched.loft"
+      prefix="$out/$split-$count"
+      no_builds "$prefix-pgrep-before.txt"
+      # Reverse order between cases while keeping both samples adjacent.
+      if [[ $count-$split == 1-a || $count-$split == 20-b ]]; then
+        old_profile
+        new_profile
+      else
+        new_profile
+        old_profile
+      fi
+      no_builds "$prefix-pgrep-after.txt"
+      nonce=$((16777216 + $(od -An -N4 -tu4 /dev/urandom) % 2000000000))
+      old_load
+      new_load
+    done
+  done
+  control "$out/triangle-after"
   exit
 fi
 
@@ -267,17 +302,85 @@ case $gate_status in 0|2|3|4|7) ;; *) exit "$gate_status" ;; esac
 jq -e 'with_entries(select(.key | startswith("capsules-")) | .value = .value.load)
        | select(length == 2 and all(.[]; . != null))' \
   "$out/gate/out/meta/gate.json" >"$out/new-load.json"
-date -u >"$out/gpu-end"
-ps -Ao pid,comm >"$out/processes-after.txt"
 TIMED
 
 if [[ $matched == --matched ]]; then
   uv run --no-project --with tiktoken==0.13.0 --with pillow==12.0.0 \
-    python tools/ab_legacy/score.py "$out" "$root"
-  for split in a b; do
-    cwebp -quiet -q 95 "$out/$split-sheet.png" -o "$out/$split-sheet.webp"
-  done
+    python - "$out" "$root" <<'PYTHON'
+import hashlib
+import json
+import math
+from pathlib import Path
+import sys
+
+out, root = map(Path, sys.argv[1:])
+sys.path.insert(0, str(root / "tools/ab_legacy"))
+from score import compare, legacy_profile, open_frame, read
+
+
+def p95(values):
+    return sorted(values)[round(0.95 * (len(values) - 1))]
+
+
+def ci95(values):
+    # Equal-tail, distribution-free order-statistic interval for the p95.
+    values = sorted(values)
+    n = len(values)
+    cdf = 0
+    lower, upper = 0, n - 1
+    for k in range(n + 1):
+        cdf += math.comb(n, k) * 0.95**k * 0.05**(n - k)
+        if cdf <= 0.025:
+            lower = k
+        if cdf >= 0.975:
+            upper = min(k, n - 1)
+            break
+    return [values[lower], values[upper]]
+
+
+def control(name):
+    path = out / f"triangle-{name}-p95-ms"
+    return read(path) if path.exists() else None
+
+
+controls = [control("before"), control("after")]
+results = {
+    "triangle_p95_ms": controls,
+    "uncontended": all(value is not None and value < 0.15 for value in controls),
+    "cases": {},
+}
+for split in ("a", "b"):
+    for count in (1, 20):
+        prefix = out / f"{split}-{count}"
+        images = [open_frame(Path(f"{prefix}-{side}.png")) for side in ("old", "new")]
+        case = results["cases"][prefix.name] = {
+            "pictures": compare(*images),
+            "rgb_sha256": [hashlib.sha256(image.tobytes()).hexdigest() for image in images],
+        }
+        native_path = Path(f"{prefix}-new-profile.json")
+        if not native_path.exists():
+            continue
+        old = legacy_profile(Path(f"{prefix}-old-profile.log"))
+        new = read(native_path)
+        samples = new["gpu_frame_ms"]
+        assert old["frames"] == len(samples) == 300
+        assert old["adapter"] in new["adapter"]
+        old_load = legacy_profile(Path(f"{prefix}-old-load.log"))
+        new_load = read(Path(f"{prefix}-new-load.json"))
+        # The tagged profiler exports only four quantiles. Its observed median
+        # and maximum bound the missing 95% order statistics conservatively.
+        case["legacy"] = {"p95_ms": old["gpu_ms"][2], "p95_ci_ms": old["gpu_ms"][1::2],
+                          "loads_ms": old_load["loads_ms"], "pass_ms": old["pass_ms"]}
+        case["native"] = {"p95_ms": p95(samples), "p95_ci_ms": ci95(samples),
+                          "loads_ms": new_load["device_loads_ms"],
+                          "commands": sorted({frame["commands"] for frame in new["frame_stamps"]})}
+(out / "results.json").write_text(json.dumps(results, indent=2) + "\n")
+PYTHON
   printf 'Evidence: %s\n' "$out"
+  if ! jq -e '.uncontended' "$out/results.json" >/dev/null; then
+    echo 'Benchmark requires both triangle controls under 0.15 ms p95.' >&2
+    exit 6
+  fi
   exit
 fi
 

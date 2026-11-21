@@ -17,6 +17,7 @@ pub mod eval;
 pub mod lip;
 pub use loft_parse as parse;
 
+use emit::shade_tiles::{Lighting, Visibility};
 use eval::{Eval, RowVal, Tables, Val};
 use lip::Iv;
 use loft_parse::ast::*;
@@ -587,6 +588,21 @@ fn fn_name_arg<'e>(p: &Prog, pd: &'e PassDecl, name: &str) -> Res<&'e str> {
     }
 }
 
+fn require_schedule_fn(
+    p: &Prog, types: &mut Vec<Ty>, name: &str, span: Span,
+    params: &[Ty], output: Ty, help: &str,
+) -> Res<()> {
+    let f = p.fns[name];
+    let checker = check::Ck::new(p, types);
+    let actual = f.params.iter().map(|a| a.ty.as_ref().map(|t| checker.resolve(t, true)).transpose())
+        .collect::<Res<Vec<_>>>()?;
+    let ret = f.ret.as_ref().map(|t| checker.resolve(t, true)).transpose()?;
+    if f.comptime || !actual.iter().map(Option::as_ref).eq(params.iter().map(Some)) || ret != Some(output) {
+        return Err(Diag::new(Code::E003, span, format!("invalid schedule callback signature for {name}"), help));
+    }
+    Ok(())
+}
+
 /// Stage-0 value of a schedule argument.
 fn stage0(p: &Prog, types: &mut Vec<Ty>, e: &Expr, overrides: &[(String, f64)]) -> Res<RowVal> {
     check::check_stage0_expr(p, types, e)?;
@@ -751,6 +767,7 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
     let mut path = None;
     let mut path_entry = None;
     let mut paper = None;
+    let mut film = None;
     let has_shadow_pass = sched.passes.iter().any(|p| p.verb.name == "find_shadow_map");
     let mut emitted_passes = HashSet::new();
     let mut available: HashSet<&str> = ["FrameUniform", "InputsBuf", "ParamsBuf", "RowTables", "LutTables", "BodyTables", "StateBuf", "PoseBuf"].into_iter().collect();
@@ -763,7 +780,8 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
             return Err(Diag::new(Code::E405, pd.label.span, "custom entry is outside this phase’s renderer", "use a supported schedule operation"));
         }
         let verb = pd.verb.name.as_str();
-        if GPU_ORDER.contains(&verb) && !emitted_passes.insert(verb) {
+        let producer = if verb == "tonemap" { "tonemap_aces" } else { verb };
+        if GPU_ORDER.contains(&producer) && !emitted_passes.insert(producer) {
             return Err(Diag::new(Code::E505, pd.verb.span, format!("duplicate render pass {verb}"), "schedule one producer per renderer resource"));
         }
         match verb {
@@ -854,7 +872,7 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
                 passes.push(Pass::Classify);
             }
             "shade_tiles" => {
-                light = Some(fn_name_arg(&p, pd, "light")?);
+                light = Some(emit::shade_tiles::lighting(&p, &mut types, pd, overrides)?);
                 let s = arg(pd, "sun")?;
                 sun = Some(as_v3(stage0(&p, &mut types, s, overrides)?, s.span)?);
                 passes.push(Pass::Shade(vec![]));
@@ -902,8 +920,14 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
                 }
             }
             "outline_and_paper" => { paper = Some(p.linked(pd.verb.span, "paper_grain")?); }
-            "tonemap_aces" => {
+            "tonemap_aces" | "tonemap" => {
                 sky = Some(fn_name_arg(&p, pd, "sky")?);
+                if verb == "tonemap" {
+                    let name = fn_name_arg(&p, pd, "film")?;
+                    require_schedule_fn(&p, &mut types, name, pd.verb.span,
+                        &[Ty::VecN(3)], Ty::VecN(3), "write fn film(color: rgb) -> rgb")?;
+                    film = Some(name);
+                }
                 passes.push(Pass::Present);
             }
             other => {
@@ -927,7 +951,7 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
             "shade_tiles" => (&["Vis64", "DepthBuf", "TileLists"], &["ColorHdr"]),
             "outline_and_paper" => (&["ColorHdr", "Vis64"], &["ColorHdr"]),
             "screen_pass" => (&["CameraSlot"], &["ColorHdr"]),
-            "tonemap_aces" => (&["ColorHdr"], &["Swapchain"]),
+            "tonemap_aces" | "tonemap" => (&["ColorHdr"], &["Swapchain"]),
             _ => (&[], &[]),
         };
         if let Some(read) = reads.iter().find(|r| !available.contains(**r)) {
@@ -936,7 +960,22 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
         available.extend(writes);
     }
     let camera = camera.ok_or_else(|| Diag::new(Code::E520, sched.name.span, "no camera", "add `pass camera: orbit(at: ..., radius: ..., height: ..., period: ..., fov: ...);`"))?;
-    let (light, sky, sun) = (light.expect("checked order"), sky.expect("checked order"), sun.expect("checked order"));
+    let (Some(light), Some(sky), Some(sun)) = (light, sky, sun) else {
+        return Err(Diag::new(Code::E520, sched.name.span, "incomplete raster schedule",
+            "schedule shade_tiles and a tonemap pass"));
+    };
+    if (matches!(light, Lighting::World { .. }) || film.is_some()) && path.is_some()
+        || film.is_some() && paper.is_some()
+        || matches!(light, Lighting::World { visibility: Visibility::SubpixelEdges, .. }) && paper.is_some()
+    {
+        return Err(Diag::new(Code::E520, sched.name.span, "conflicting raster and presentation recipes",
+            "use one shade and film recipe for the raster schedule"));
+    }
+    let lighting = light;
+    let mut tiled_world = (matches!(lighting, Lighting::World { .. }) && aov == emit::Aov::Beauty).then(|| emit::paths::PathTrace {
+        integrator: emit::paths::Integrator::Reference, bounces: 0, lens: [0.0, 1.0],
+        lamps: vec![], worlds: vec![], media: vec![],
+    });
     lap("schedule", &mut ms);
 
     // Scans, baked in declaration order (a scan may sample one declared before it).
@@ -1011,7 +1050,7 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
         }
     };
     if aov != emit::Aov::Beauty { path = None; }
-    if let Some(path) = &mut path {
+    if let Some(path) = path.as_mut().or(tiled_world.as_mut()) {
         if let Some(medium) = p.kinds.get("FieldMedium") {
             for row in &tables[p.kind_index("FieldMedium")] {
                 let [lo, hi, sigma_t, albedo, g, emission] = row.as_slice() else {
@@ -1095,7 +1134,7 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
     if drawn.len() > abi::MAX_KINDS {
         return Err(Diag::new(Code::E520, sched.name.span, "too many primary and shadow kinds", "use up to 32 kinds"));
     }
-    if let Some(path) = &mut path {
+    if let Some(path) = path.as_mut().or(tiled_world.as_mut()) {
         path.worlds.push(emit::paths::WorldResources { kinds: (0..drawn.len() as u32).collect(), media: true });
         for members in p.worlds.values() {
             path.worlds.push(emit::paths::WorldResources {
@@ -1247,12 +1286,19 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
 
     let mut lut_refs = vec![];
     let asset_words = gltf::words(&meshes);
-    let mut off = asset_words.len().div_ceil(12) as u32;
+    let mut lut_words = match &tiled_world {
+        None => asset_words,
+        Some(_) => {
+            let mut words = vec![0.0; 12];
+            words.extend(asset_words);
+            words
+        }
+    };
+    let mut off = lut_words.len().div_ceil(12) as u32;
     for l in &luts {
         lut_refs.push(emit::LutRef { name: l.name.clone(), offset: off, n: l.frames.len() as u32, lo: l.lo, hi: l.hi });
         off += l.frames.len() as u32;
     }
-    let mut lut_words = asset_words;
     lut_words.resize(lut_words.len().next_multiple_of(12), 0.);
     lut_words.extend(luts.iter().flat_map(|l| l.frames.iter().flatten().copied()));
     let mut priors = BTreeMap::new();
@@ -1261,11 +1307,38 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
             priors.insert((*name).to_string(), prior.header_word);
         }
     }
+    let light = match lighting {
+        Lighting::Bsdf(name) => Some(name),
+        Lighting::World { .. } => None,
+    };
     let mut texts = Vec::new();
     for (name, kt) in drawn.iter().zip(&kinds) {
-        let shader = emit::kind_module(&p, &types, p.kinds[*name], light, &lut_refs, kt.draw, aov)?;
+        let shader = emit::emit_kind_module(&p, &types, p.kinds[*name], light, &lut_refs, kt.draw, aov, None)?;
         texts.push((name.to_string(), shader));
     }
+    let visibility = match (lighting, tiled_world.as_mut()) {
+        (Lighting::World { callback, visibility }, Some(world)) => {
+            // A World view needs the same bounds/rows as the primary raster.
+            if sched.passes.iter().any(|pass| pass.verb.name == "run_laws") && samples.is_empty() {
+                return Err(Diag::new(Code::E405, sched.name.span, "tiled World queries need a geometry snapshot",
+                    "snapshot motion before shading with World queries"));
+            }
+            let primary_world = if drawn.len() == ids.len() {
+                0
+            } else {
+                let index = world.worlds.len() as u32;
+                world.worlds.push(emit::paths::WorldResources { kinds: ids.clone(), media: false });
+                index
+            };
+            let span = p.fns[callback].name.span;
+            let wgsl = emit::shade_tiles::world_source(&p, &types, &kinds, &texts, &instances, world, &mut lut_words, span)?;
+            for (_, source) in &mut texts {
+                *source = emit::shade_tiles::module(&p, &types, &lut_refs, source, &wgsl, callback, sky, visibility, primary_world);
+            }
+            visibility
+        }
+        _ => Visibility::Center,
+    };
     let mut dispatches = vec![];
     if samples.is_empty() {
         for &name in &p.kind_order {
@@ -1313,11 +1386,11 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
         shadow_size = 0;
         emit::paths::module(&p, &types, &kinds, &texts, &lut_refs, path, path_entry.expect("checked path entry"))?
     } else {
-        emit::present_module(&p, &types, sky, aov, paper)
+        emit::shade_tiles::present_module(&p, &types, sky, aov, paper, film, visibility)
     };
     let shared = texts.len();
     texts.push(("cull".into(), emit::cull_module(ids.len() == 1)));
-    texts.push(("classify".into(), emit::classify_module()));
+    texts.push(("classify".into(), emit::shade_tiles::classify_module(visibility)));
     texts.push(("present".into(), present));
     let mut bakes = Vec::new();
     for item in modules.iter().flat_map(|m| &m.items) {

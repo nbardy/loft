@@ -61,20 +61,18 @@ fn row_arena_source(text: &str) -> String {
         .replace("luts[", "world_luts[")
 }
 
-pub(crate) fn module(p: &Prog, types: &[Ty], kinds: &[KindTable], queries: &[(String, String)], luts: &[LutRef], path: &PathTrace, entry: &str) -> Res<String> {
-    let mut em = Emitter::new(p, types);
-    em.header(abi::NONCE_PLACEHOLDER);
+pub(super) fn query_source() -> &'static str {
+    // The path estimator is optional for raster authors using World queries.
+    WORLD.split_once("fn world_direct(").expect("World query source").0
+}
+
+pub(super) fn emit_world(
+    em: &mut Emitter<'_, '_>, kinds: &[KindTable], queries: &[(String, String)], spectral: bool, world: &str, span: Span,
+) -> Res<()> {
+    let p = em.p;
     let prefix_len = em.out.len();
     em.out.push_str(crate::bvh::WGSL);
-    let f = p.fns.get(entry).ok_or_else(|| Diag::new(Code::E011, Span::NONE, format!("missing path function {entry}"), "load the selected engine recipe"))?;
-    let mut world = WORLD.to_owned();
-    let mut helper = vec![p.linked(f.name.span, "sky_dome")?];
-    for name in ["reservoir_add", "reservoir_scale", "reservoir_reuse"] {
-        let key = p.linked(f.name.span, name)?;
-        helper.push(key);
-        world = world.replace(&fn_symbol(name), &fn_symbol(key));
-    }
-    em.out.push_str(&world);
+    em.out.push_str(world);
     em.out.push_str(crate::bsdf::VOLUME_STEP_WGSL);
     // The authored medium arithmetic uses the arena accessors in WORLD.
     let (_, medium) = include_str!("world_medium.wgsl").split_once("struct WorldSigma")
@@ -82,8 +80,8 @@ pub(crate) fn module(p: &Prog, types: &[Ty], kinds: &[KindTable], queries: &[(St
     em.out.push_str("struct WorldSigma");
     em.out.push_str(medium);
     // The path template uses the checked ABI payloads from lighting/world.
-    let world_payload = |name| p.structs.get(name).ok_or_else(|| Diag::new(Code::E011, f.name.span,
-        format!("missing path payload `{name}`"), "import stdlib::lighting::world"));
+    let world_payload = |name| p.structs.get(name).ok_or_else(|| Diag::new(Code::E011, span,
+        format!("missing World payload `{name}`"), "import stdlib::lighting::world"));
     for name in ["Ray", "Hit", "Sigma", "Vol"] {
         let mut fields = Vec::new();
         for field in world_payload(name)?.1 {
@@ -106,9 +104,6 @@ fn loft_authored_volume(world: u32, ray: loft_type_Ray, limit: f32, steps: u32, 
 }
 ");
     }
-    let [radius, focus] = path.lens;
-    let _ = writeln!(em.out, "const LENS_RADIUS: f32 = {}; const FOCUS: f32 = {};", super::f32_lit(f64::from(radius)), super::f32_lit(f64::from(focus)));
-    let spectral = matches!(path.integrator, Integrator::Spectral);
     let mut local_cases = Vec::new();
     let mut field_cases = Vec::new();
     let mut eval_cases = Vec::new();
@@ -194,6 +189,30 @@ fn world_optics(h: PathHit) -> Optics {{
   switch h.kind {{ {} default: {{ return Optics(0.0, 0.0, vec3<f32>(0.0)); }} }}
 }}", optics_cases.join("\n"));
     }
+    Ok(())
+}
+
+fn world_library<'a>(p: &Prog<'a>, span: Span) -> Res<(String, Vec<&'a str>)> {
+    let mut world = WORLD.to_owned();
+    let mut helpers = Vec::new();
+    for name in ["reservoir_add", "reservoir_scale", "reservoir_reuse"] {
+        let key = p.linked(span, name)?;
+        helpers.push(key);
+        world = world.replace(&fn_symbol(name), &fn_symbol(key));
+    }
+    Ok((world, helpers))
+}
+
+pub(crate) fn module(p: &Prog, types: &[Ty], kinds: &[KindTable], queries: &[(String, String)], luts: &[LutRef], path: &PathTrace, entry: &str) -> Res<String> {
+    let f = p.fns.get(entry).ok_or_else(|| Diag::new(Code::E011, Span::NONE, format!("missing path function {entry}"), "load the selected engine recipe"))?;
+    let (world, mut helper) = world_library(p, f.name.span)?;
+    helper.push(p.linked(f.name.span, "sky_dome")?);
+    let mut em = Emitter::new(p, types);
+    em.header(abi::NONCE_PLACEHOLDER);
+    let spectral = matches!(path.integrator, Integrator::Spectral);
+    emit_world(&mut em, kinds, queries, spectral, &world, f.name.span)?;
+    let [radius, focus] = path.lens;
+    let _ = writeln!(em.out, "const LENS_RADIUS: f32 = {}; const FOCUS: f32 = {};", super::f32_lit(f64::from(radius)), super::f32_lit(f64::from(focus)));
     let convert = if spectral {
         let mut text = include_str!("spectral_path.wgsl").to_owned();
         for name in ["spectral_path", "spectral_transition", "spectral_ior", "spectral_band", "spectral_xyz"] {
@@ -209,6 +228,7 @@ fn world_optics(h: PathHit) -> Optics {{
     } else {
         "path_aces(sum / f32(samples))".to_owned()
     };
+
     let (fns, consts) = reachable(p, &[f], &helper);
     em.luts = luts;
     em.library(&fns, &consts);
