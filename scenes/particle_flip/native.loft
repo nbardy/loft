@@ -7,11 +7,10 @@ struct ParticleState { position: v4, velocity: v4 }
 struct Node { before: v4, after: v4 }
 struct FloatCell { mass: f, mx: f, my: f, mz: f }
 
-# Four independent accumulation grids shorten the hot-cell sum.
+# Four grids shorten hot-cell sums. Read bound row fields individually to preserve the kernel storage layout.
 kernel scatter_float(particles: [PackedParticle], control: [Word], grid: [FloatCell]) nondet allow(atomics) {
   let id = global_id(0)
   if control[0].value <= 65536 && id < control[0].value {
-    # Field reads keep the authored storage row in the kernel binding layout.
     let px = particles[id].x
     let py = particles[id].y
     let pz = particles[id].z

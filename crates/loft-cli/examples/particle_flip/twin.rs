@@ -2,7 +2,7 @@ use serde::Serialize;
 
 pub const COUNT: usize = 65_536;
 pub const CELLS: usize = 32 * 32 * 32;
-pub const SCALE: f64 = 4096.;
+const SCALE: i64 = 4096;
 const DT: f64 = 1. / 120.;
 const VELOCITY_UNIT: f64 = 16.;
 const LO: [f64; 3] = [1.25; 3];
@@ -148,9 +148,9 @@ pub fn integer_grid(rows: &[[u32; 4]], stencil: Stencil) -> Vec<[i64; 4]> {
     for &[x, y, z, bits] in rows {
         let v = velocity(bits);
         taps([x, y, z], stencil, |cell, w, den| {
-            grid[cell][0] += (w * 4096 + den / 2) / den;
+            grid[cell][0] += (w * SCALE + den / 2) / den;
             for (a, v) in v.into_iter().enumerate() {
-                let num = w * 4096 * v;
+                let num = w * SCALE * v;
                 let den = den * 63;
                 grid[cell][a + 1] += num.signum() * ((num.abs() + den / 2) / den);
             }

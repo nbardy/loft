@@ -62,17 +62,71 @@ the two key tables, tile histograms, digit offsets and ranges.
 
 ## Source checks
 
-The v15_exec baseline `5e252da` exported all four authored scenes. The exact
+The checkout was created from `origin/main` at `5e252da`, the unified
+v15_exec merge. The subsequent main updates through `78ef244` changed
+orchestration and notes. The baseline exported all four authored scenes. The exact
 consumer fixture returned E504 with the native `pass p2g` producer span.
 Earley and llguidance both accepted all four scenes. The typed native scatter
 reads storage row fields individually. A whole-row local currently refers to
 an undeclared nominal WGSL type in the v15b emitter. This lane uses the existing
 field access and pass ABI. The frozen references were untouched.
 
+## Native readbacks and timing
+
+On Apple M4 Metal, both fixed stencils matched all 3,145,728 words of the
+i64 twin across the two orders and four fixtures, including each capacity
+rejection. Count 65,537 produced Capacity and left each published grid
+intact. The native device granted `SHADER_FLOAT32_ATOMIC` and
+`TIMESTAMP_QUERY`. All 128 f32 readbacks were finite and held the statistical
+budgets. The maximum normalized global error was 8.22e−10 spread and
+5.18e−9 clumped. The maximum absolute cell error was 5.00e−7 spread and
+3.69e−5 clumped, against 1e−4. The maximum cell RMS error across the suite
+was 2.68e−7.
+
+The ordinary native FLIP scene advanced 120 steps against the independent f64
+twin. At step 120, velocity RMS error was 0.00415, maximum particle velocity
+error was 0.19840 and relative total kinetic-energy error was 2.80e−6.
+Across all 120 checkpoints, the maxima were 0.00415, 0.51753 and 6.40e−6.
+The largest component of the mean-velocity difference at step 120 was
+1.03e−4. Velocity uses scene units per second and energy uses unit particle
+mass. These are drift observations for the trilinear f32 solver.
+
+Both managed compile slots were held for the GPU run. The 1280 × 800
+triangle p95 was 0.099 ms before and 0.110 ms after. GPU timing spans the
+first to the last recorded pass, with query resolve and readback outside
+the interval. Values in the table are p50/p95 in ms.
+
+| Fixture and route | P2G | Grid update + G2P | Full GPU interval |
+| --- | ---: | ---: | ---: |
+| Spread, fixed8 | 0.994/1.000 | — | 1.056/1.062 |
+| Spread, native f32 | 0.988/0.992 | — | 1.065/1.069 |
+| Clumped, fixed8 | 1.074/1.098 | — | 1.137/1.194 |
+| Clumped, native f32 | 0.952/0.974 | — | 1.045/1.228 |
+| Splash, fixed8 | 0.980/1.151 | 0.126/0.188 | 4.043/4.743 |
+| Splash, fixed27 | 3.170/3.316 | 0.321/0.378 | 6.438/7.054 |
+
+The 27-tap splash met the 16 ms frame budget. Its p95 penalty versus 8 taps
+had a paired 95% interval of [2.212, 2.416] ms. Its six compute pipelines
+and one render pipeline used 524,288 B of transfer scratch. The P2G
+median represents 20.7 M particles/s and 558 M node contributions/s.
+CPU encode, submit and completion-wait medians were 0.445, 0.081 and
+7.067 ms. The 8-tap showcase deposited 66.9 M particles/s and 535 M
+node contributions/s.
+
+For the transfer fixtures, fixed clear took 0.036/0.037 ms at the spread/clumped
+medians. Native float clear took 0.029/0.029 ms. The float route had four compute
+pipelines and 2,097,152 B of transfer scratch. Fixed8 had three pipelines and
+524,288 B. Float P2G deposited 66.3/68.8 M particles/s and 531/551 M node
+contributions/s spread/clumped, compared with 66.0/61.0 M particles/s and
+528/488 M contributions/s for fixed8. The authors' 8-tap P2G medians were
+about 2× the proposal's 0.46–0.48 ms direct-dispatch medians. The float-minus-fixed
+paired p95 intervals for the complete deposit lists were [0.004, 0.013] ms
+spread and [−0.014, 0.055] ms clumped.
+
 ## Chrome WebGPU
 
 Chrome selected Apple's Metal-3 adapter and granted timestamps. All 1,572,864
-grid words matched the i64 reference across spread, clumped, boundary and
+grid words matched the wide integer CPU reference across spread, clumped, boundary and
 cancellation fixtures in both orders and after capacity rejection. All eight
 accepted runs had unique IDs and stable order within each cell. Each rejected
 run returned Capacity and preserved the preceding grid. The quadratic splash
@@ -107,3 +161,13 @@ and GPU grids are under `out/meta/cap1b/`. Browser transport for this run used
 the prebuilt v15_exec CLI's exported bundles and a projection of the same
 pass ABI while the Rust harness was queued. Naga appends an underscore to
 entry names ending in digits, so the authored entries now end in letters.
+
+## Workspace verification
+
+The lab-profile workspace suite ran once under the GPU lock. All 180 tests
+passed, including both particle twin tests, and one test was skipped. Full
+static checks verified corpus provenance, shell syntax, core vocabulary and
+the Keel dependency pins. The two grammar recognizers initially agreed on
+309/310 outcomes. Moving the rejected comment outside the kernel body restored
+agreement on all four changed scenes in the focused rerun. Full and focused
+logs are retained together.
