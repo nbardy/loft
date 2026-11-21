@@ -415,7 +415,8 @@ impl Loaded {
     }
 
     pub fn pipeline_count(&self) -> Result<usize, String> {
-        let creates = self.runner.lock().unwrap().pipeline_creates(self.id).map_err(runner_error)?;
+        let mut runner = self.runner.lock().unwrap();
+        let creates = runner.pipeline_creates(self.id).map_err(runner_error)?;
         Ok(creates.compute.len() + creates.render.len())
     }
 
