@@ -82,14 +82,8 @@ impl Schedule {
                 return Err(RunnerError::Unsupported("shader target"));
             }
             let src = std::str::from_utf8(&m.bytes).map_err(|_| RunnerError::AbiMismatch)?;
-            let ir = naga::front::wgsl::parse_str(src).map_err(|e| RunnerError::InvalidShader(e.to_string()))?;
-            let info = wgpu_naga_bridge::create_validator(
-                features,
-                wgpu::DownlevelFlags::all(),
-                naga::valid::ValidationFlags::all(),
-            )
-            .validate(&ir)
-            .map_err(|e| RunnerError::InvalidShader(e.to_string()))?;
+            let (ir, info) = loft_format::wgsl::validate(src, &mut bindings::validator(features))
+                .map_err(|e| RunnerError::InvalidShader(e.to_string()))?;
             if shaders.insert(m.id, Shader { ir, info }).is_some() {
                 return Err(RunnerError::AbiMismatch);
             }

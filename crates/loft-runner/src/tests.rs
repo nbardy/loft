@@ -1,6 +1,5 @@
 use super::*;
 use loft_wgpu::edits::Pipelines;
-use wgpu::BufferUsages as U;
 
 const TABLE: TableId = TableId(7);
 const KIND: KindId = KindId(9);
@@ -53,19 +52,7 @@ fn bundle() -> Bundle {
     }
 }
 pub(super) fn read(r: &Runner, buf: &wgpu::Buffer) -> Vec<u32> {
-    let result = r.device.create_buffer(&wgpu::BufferDescriptor {
-        label: None,
-        size: buf.size(),
-        usage: U::COPY_DST | U::MAP_READ,
-        mapped_at_creation: false,
-    });
-    let mut enc = r.device.create_command_encoder(&Default::default());
-    enc.copy_buffer_to_buffer(buf, 0, &result, 0, Some(buf.size()));
-    r.queue.submit([enc.finish()]);
-    result.map_async(wgpu::MapMode::Read, .., |status| status.unwrap());
-    r.device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-    result
-        .get_mapped_range(..)
+    read_buffer(&r.device, &r.queue, buf)
         .unwrap()
         .chunks_exact(4)
         .map(|w| u32::from_le_bytes(w.try_into().unwrap()))

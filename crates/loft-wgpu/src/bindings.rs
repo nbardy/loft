@@ -173,3 +173,19 @@ pub fn merge_bindings(
     }
     Ok(())
 }
+
+pub fn layout(device: &wgpu::Device, entries: &[Entry]) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: None, entries })
+}
+
+pub fn group(device: &wgpu::Device, layout: &wgpu::BindGroupLayout, entries: &[wgpu::BindGroupEntry<'_>]) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor { label: None, layout, entries })
+}
+
+pub(crate) fn validator(features: wgpu::Features) -> naga::valid::Validator {
+    wgpu_naga_bridge::create_validator(
+        features,
+        wgpu::DownlevelFlags::all(),
+        naga::valid::ValidationFlags::all(),
+    )
+}

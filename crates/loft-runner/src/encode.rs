@@ -1,7 +1,7 @@
 use super::*;
-use command::{Dispatch, Pass, Stamps, Work};
+use command::{Dispatch, Pass, Stamps, Work, compute_pipeline as pipeline};
 use loft_std::frame::Templates;
-use loft_wgpu::{timed, bindings::slot, edits::Pipelines, schedule::{self, Order}};
+use loft_wgpu::{timed, bindings::{self, slot}, edits::Pipelines, schedule::{self, Order}};
 use std::collections::{BTreeSet, HashMap};
 use wgpu::util::DeviceExt;
 use std::time::Duration;
@@ -25,7 +25,7 @@ impl Group {
                 t.resource.bind(e, logical, self.ranges.get(&e.binding).copied().unwrap_or((0, logical)), &limits)
             }).collect::<Result<Vec<_>>>()?;
             let entries = self.slots.iter().zip(&handles).map(|((e,_),h)| wgpu::BindGroupEntry { binding:e.binding, resource:h.binding() }).collect::<Vec<_>>();
-            self.cached = Some((epoch, d.create_bind_group(&wgpu::BindGroupDescriptor { label: None, layout: &self.layout, entries: &entries })));
+            self.cached = Some((epoch, bindings::group(d, &self.layout, &entries)));
         }
         Ok(())
     }
@@ -33,11 +33,6 @@ impl Group {
 
 struct Kernel { pipeline: wgpu::ComputePipeline, layout: wgpu::PipelineLayout, module: ModuleId, entry: String }
 
-fn pipeline(d: &wgpu::Device, layout: &wgpu::PipelineLayout, module: &wgpu::ShaderModule, entry: &str, cache: Option<&wgpu::PipelineCache>) -> wgpu::ComputePipeline {
-    d.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: None, layout: Some(layout), module, entry_point: Some(entry), compilation_options: Default::default(), cache,
-    })
-}
 enum Operation {
     Dispatch(Kernel, DispatchExtent),
     Ticks(Kernel, stepping::Fused),
@@ -157,7 +152,7 @@ impl ComputeCache {
             entry.visibility |= wgpu::ShaderStages::VERTEX_FRAGMENT;
             entry
         }).collect::<Vec<_>>();
-        let layout = d.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: None, entries: &entries });
+        let layout = bindings::layout(d, &entries);
         let frame = d.create_buffer(&wgpu::BufferDescriptor { label: None, size: 256, usage: U::UNIFORM | U::COPY_DST, mapped_at_creation: false });
         let limit = d.limits().max_storage_buffer_binding_size;
         let input = inputs::Inputs::new(&b.resources.inputs, limit)?;
@@ -166,14 +161,13 @@ impl ComputeCache {
         let param_buffer = d.create_buffer_init(&wgpu::util::BufferInitDescriptor { label:None, usage:U::STORAGE | U::COPY_DST, contents:params.bytes() });
         let entries = [&frame, &input_buffer, &param_buffer].into_iter().enumerate()
             .map(|(i,buf)| wgpu::BindGroupEntry { binding: i as u32, resource:buf.as_entire_binding() }).collect::<Vec<_>>();
-        let fixed = d.create_bind_group(&wgpu::BindGroupDescriptor { label:None, layout:&layout, entries:&entries });
+        let fixed = bindings::group(d, &layout, &entries);
         let mut layouts = HashMap::new();
         let mut pipelines = HashMap::new();
         let mut link = |id, slots: schedule::Slots| {
             let groups: Vec<_> = slots.into_iter().enumerate().map(|(index, slots)| {
                 let entries: Vec<_> = slots.iter().map(|(e,_)| *e).collect();
-                let layout = layouts.entry(entries.clone()).or_insert_with(|| d.create_bind_group_layout(
-                    &wgpu::BindGroupLayoutDescriptor { label: None, entries:&entries })).clone();
+                let layout = layouts.entry(entries.clone()).or_insert_with(|| bindings::layout(d, &entries)).clone();
                 let ranges = exec.ranges.iter().filter(|r| r.pass == id && usize::from(r.group) == index + 1)
                     .map(|r| (r.slot, (r.offset, r.size))).collect();
                 Group { slots, ranges, layout, cached:None }

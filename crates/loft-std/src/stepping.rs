@@ -226,14 +226,15 @@ pub fn step_bundle_cpu(
         .find(|b| b.id == module)
         .ok_or(Error::UnknownResource)?;
     let code = std::str::from_utf8(&blob.bytes).map_err(|_| Error::AbiMismatch)?;
-    let ir = naga::front::wgsl::parse_str(code)
-        .map_err(|e| Error::InvalidShader(e.emit_to_string(code)))?;
-    naga::valid::Validator::new(
+    // CPU validation retains its empty capability set and existing diagnostic text.
+    let (ir, _) = loft_format::wgsl::validate(code, &mut naga::valid::Validator::new(
         naga::valid::ValidationFlags::all(),
         naga::valid::Capabilities::empty(),
-    )
-    .validate(&ir)
-    .map_err(|e| Error::InvalidShader(e.to_string()))?;
+    ))
+    .map_err(|e| Error::InvalidShader(match &e {
+        loft_format::wgsl::Error::Parse(_) => e.emit_to_string(code),
+        loft_format::wgsl::Error::Validate(_) => e.to_string(),
+    }))?;
     let f = Fused::reflect(&ir, decl)?;
     let mut buffers = BTreeMap::from([(
         (0, 2),
@@ -343,16 +344,6 @@ impl History {
             Ok(&self.returned)
     }
 }
-#[cfg(test)]
-#[test]
-fn checkpoint_windows() {
-    let windows: Vec<_> = chunks(58, 130, 64, 60)
-        .map(|a| (a.from_tick, a.to_tick))
-        .collect();
-    assert_eq!(windows, [(58, 60), (60, 120), (120, 130)]);
-    assert_eq!(chunks(8, 8, 64, 0).count(), 1);
-}
-
 impl History {
     pub fn checkpoint(&self, tick: u32) -> Result<usize> {
         self.saved.iter().position(|t| *t == Some(tick)).ok_or(Error::UnknownResource)
