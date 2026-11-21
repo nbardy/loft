@@ -57,3 +57,7 @@ tools/gpu_lock.sh tools/quiet_gpu.sh uv run --no-project python tools/cap1c.py t
 ```
 
 The driver records the source overrides, per-scene shader text and plans, cold keys, raw frame and pass samples, paired intervals, exported bundles and WebP stills. The hand control writes its pigment and band operations in WGSL and uses the same staged lobe compiler for evaluation. The 100/1,000 specialized entries are E520 controls.
+
+## Baseline controls
+
+The archived `v15_exec` CLI accepted the ten-kind control and reported 13 modules. It returned E520 for 100 and 1,000 specialized kinds and for 33 kinds with distinct sphere radii. At the proposal's 10 µs scheduling slope and 10 ms serial compile cost, the two uncapped extrapolations are 2.00 ms / 1.00 s and 11.00 ms / 10.00 s for shade p95 / cold shader compilation. Both grammar recognizers accepted the six-family library and all three fixtures after the family function names were put in Loft's lowercase syntax.

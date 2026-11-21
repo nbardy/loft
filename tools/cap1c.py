@@ -58,12 +58,13 @@ def plan(label, scene, settings=()):
         (out / f"{label}.{module['name']}.wgsl").write_text(module["wgsl"])
     return doc
 
-def specialize(n):
+def specialize(n, varied_geometry=False):
     kinds = []
     for i in range(n):
+        radius = 0.062 + i * 0.0003 if varied_geometry else 0.068
         kinds.append(f"""kind Ball{i} @Local (pose: xf@Local>World) {{
-  visible(ro, rd) = ray_sphere(ro, rd, [0, 0, 0]@Local, 0.068m)
-  trace(p) = sphere(p - [0, 0, 0]@Local, 0.068m)
+  visible(ro, rd) = ray_sphere(ro, rd, [0, 0, 0]@Local, {radius:.6f}m)
+  trace(p) = sphere(p - [0, 0, 0]@Local, {radius:.6f}m)
   material(p, n) = standard_pbr(rgb({i / n + 0.1}), 0.4, 0.1, coords(p), 40.0, {i}.0)
 }}""")
     s = f"""use stdlib::geometry::analytic::{{ray_sphere}}
@@ -78,7 +79,8 @@ build {{
     for i in range(n):
         s += f"    if i % {n} == {i} {{ emit Ball{i}(pose: place(p)) }}\n"
     s += "  }\n}\n"
-    path = generated / f"specialized-{n}.loft"
+    suffix = "-geometry" if varied_geometry else ""
+    path = generated / f"specialized-{n}{suffix}.loft"
     path.write_text(s)
     return path
 
@@ -136,7 +138,7 @@ cases = {
     "specialized10": (specialize(10), ()),
 }
 for count in [100, 1000, 33]:
-    specialized = specialize(count)
+    specialized = specialize(count, varied_geometry=count == 33)
     with (out / f"specialized-{count}.log").open("w") as log:
         result = run("check", specialized, stdout=log, check=False)
     assert result.returncode == 1 and "E520" in (out / f"specialized-{count}.log").read_text()
@@ -162,6 +164,18 @@ for i, (a, b) in enumerate([("family10", "family1000"), ("hand1000", "family1000
             result[label] = profile(f"pair{i}-{j}-{label}", scene, settings, seed + i*16 + j*2 + k)
         runs.append((result[a], result[b]))
     pairs[f"{a}/{b}"] = {route: intervals(runs, route) for route in ["Classify", "Shade", "Frame"]}
+
+manifest = json.loads(Path("engines/gates.json").read_text())
+capsules = next(scene["budget"] for scene in manifest["scenes"] if scene["name"] == "capsules-1")
+sample = json.loads((out / "pair0-0-family1000.timing.json").read_text())
+observed = {"modules": plans["family1000"]["module_count"], "pipelines": sample["pipelines"]}
+budget_controls = []
+for name in ["modules", "pipelines"]:
+    caps = {**observed, name: capsules[name]}
+    failed = [key for key in caps if observed[key] > caps[key]]
+    assert failed == [name], (observed, caps)
+    budget_controls.append({"observed": observed, "caps": caps, "exceeded": failed})
+(out / "budget-controls.json").write_text(json.dumps(budget_controls, indent=2) + "\n")
 
 for i, label in enumerate(["family100", "specialized10", "pbr-ink200", "atlas", "atlas-shuffled"]):
     profile(label, *cases[label], seed + 100 + i)
