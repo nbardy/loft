@@ -1,0 +1,10 @@
+[package]
+name = "loft-builtins"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Catalog of Loft's pure compiler builtins."
+
+[lints]
+workspace = true
