@@ -15,8 +15,8 @@ generated.mkdir(parents=True, exist_ok=True)
 source = scenes / "variety.loft"
 hand = generated / "hand.loft"
 hand_text = source.read_text().replace(
-    "use stdlib::materials::families::{StandardPbr, LayeredCoat, StylizedInk, DielectricGlass, Emissive, Foliage}",
-    """use stdlib::materials::families::{DielectricGlass, Emissive}
+    "use stdlib::materials::families::{standard_pbr, layered_coat, stylized_ink, dielectric_glass, emissive, foliage}",
+    """use stdlib::materials::families::{dielectric_glass, emissive}
 use stdlib::materials::bsdf::{ggx, lambert, coat, sss, sheen}
 
 fn grain_control(base: rgb, p: v3, scale: f, seed: f) -> rgb =
@@ -28,13 +28,13 @@ fn ink_control(base: rgb, p: v3, scale: f, seed: f) -> rgb =
     return base * (0.55 + 0.45 * smoothstep(-0.05, 0.05, sin(scale * (p.x + 0.3 * p.y) + seed)));
   }""")
 for old, new in [
-    ("StandardPbr(m.base, m.rough, m.metal, coords(p), m.grain, m.seed)",
+    ("standard_pbr(m.base, m.rough, m.metal, coords(p), m.grain, m.seed)",
      "ggx(grain_control(m.base, coords(p), m.grain, m.seed), m.rough, m.metal)"),
-    ("StylizedInk(m.base, coords(p), m.grain, m.seed)",
+    ("stylized_ink(m.base, coords(p), m.grain, m.seed)",
      "lambert(ink_control(m.base, coords(p), m.grain, m.seed))"),
-    ("LayeredCoat(m.base, m.rough, m.metal, 0.6, 0.2, coords(p), m.grain, m.seed)",
+    ("layered_coat(m.base, m.rough, m.metal, 0.6, 0.2, coords(p), m.grain, m.seed)",
      "ggx(grain_control(m.base, coords(p), m.grain, m.seed), m.rough, m.metal) + coat(0.6, 0.2)"),
-    ("Foliage(m.base, m.rough, 0.16, coords(p), m.grain, m.seed)",
+    ("foliage(m.base, m.rough, 0.16, coords(p), m.grain, m.seed)",
      "sss(grain_control(m.base, coords(p), m.grain, m.seed), 0.16) + sheen(grain_control(m.base, coords(p), m.grain, m.seed) * 0.2, m.rough)"),
 ]:
     hand_text = hand_text.replace(old, new)
@@ -64,11 +64,11 @@ def specialize(n):
         kinds.append(f"""kind Ball{i} @Local (pose: xf@Local>World) {{
   visible(ro, rd) = ray_sphere(ro, rd, [0, 0, 0]@Local, 0.068m)
   trace(p) = sphere(p - [0, 0, 0]@Local, 0.068m)
-  material(p, n) = StandardPbr(rgb({i / n + 0.1}), 0.4, 0.1, coords(p), 40.0, {i}.0)
+  material(p, n) = standard_pbr(rgb({i / n + 0.1}), 0.4, 0.1, coords(p), 40.0, {i}.0)
 }}""")
     s = f"""use stdlib::geometry::analytic::{{ray_sphere}}
 use stdlib::sdf::solid::{{sphere}}
-use stdlib::materials::families::{{StandardPbr}}
+use stdlib::materials::families::{{standard_pbr}}
 camera Main {{ eye: [0, 0, 8.9]@World, at: [0, 0, 0]@World, fov: 26deg }}
 {chr(10).join(kinds)}
 build {{

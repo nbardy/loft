@@ -207,10 +207,16 @@ pub(crate) fn show(
     }).flatten().map(|&id| {
         let kind = &program.kinds[id as usize];
         let module = &program.modules[kind.module];
-        let families = ["StandardPbr", "LayeredCoat", "StylizedInk", "DielectricGlass", "Emissive", "Foliage"]
-            .into_iter().filter(|family| module.naga.functions.iter().any(|(_, f)| {
-                f.name.as_deref().is_some_and(|name| name.strip_prefix("loft_user_") == Some(*family))
-            })).collect::<Vec<_>>();
+        let families = [
+            ("StandardPbr", "standard_pbr"),
+            ("LayeredCoat", "layered_coat"),
+            ("StylizedInk", "stylized_ink"),
+            ("DielectricGlass", "dielectric_glass"),
+            ("Emissive", "emissive"),
+            ("Foliage", "foliage"),
+        ].into_iter().filter(|(_, function)| module.naga.functions.iter().any(|(_, f)| {
+            f.name.as_deref().is_some_and(|name| name.strip_prefix("loft_user_") == Some(*function))
+        })).map(|(family, _)| family).collect::<Vec<_>>();
         serde_json::json!({
             "draw_kind": kind.name, "kind_id": id, "module": module.name,
             "families": families, "specialization": "per draw kind",

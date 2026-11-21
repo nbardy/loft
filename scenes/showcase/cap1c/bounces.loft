@@ -1,7 +1,7 @@
 use stdlib::engines::reference::{reference_sample}
 use stdlib::integrators::direct::{sun_sky}
 use stdlib::sky::environment::{sky_color}
-use stdlib::materials::families::{StylizedInk, Emissive}
+use stdlib::materials::families::{stylized_ink, emissive}
 use stdlib::geometry::analytic::{ray_sphere}
 use stdlib::sdf::solid::{sphere}
 
@@ -13,7 +13,7 @@ kind Ink @World (material_id: MaterialTable) {
   trace(p) = sphere(p - [0, 0, 0]@World, 0.7m)
   material(p, n) {
     let m = MaterialTable[material_id]
-    StylizedInk(m.base, coords(p), 0.0, 2.0)
+    stylized_ink(m.base, coords(p), 0.0, 2.0)
   }
 }
 
@@ -28,7 +28,7 @@ kind Room @World (material_id: MaterialTable) {
   trace(p) = sphere(p - [0, 0, 0]@World, 6.0m)
   material(p, n) {
     let m = MaterialTable[material_id]
-    Emissive(m.base, m.power)
+    emissive(m.base, m.power)
   }
 }
 build {

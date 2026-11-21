@@ -5,7 +5,7 @@
 Declare the data as an ordinary query-free kind. The ID returned by `emit` is typed and stored in a drawable row. The material query reads the record once and returns the same staged BSDF used by the CPU evaluator, tiled shading and World. The family is an authored function. The compiler sees a closed lobe graph when the family is already known.
 
 ```loft
-use stdlib::materials::families::{StandardPbr}
+use stdlib::materials::families::{standard_pbr}
 use stdlib::geometry::analytic::{ray_sphere}
 use stdlib::sdf::solid::{sphere}
 
@@ -15,7 +15,7 @@ kind Ball @World (center: p3@World, material_id: MaterialTable) {
   trace(p) = sphere(p - center, 0.5m)
   material(p, n) {
     let m = MaterialTable[material_id]
-    StandardPbr(m.base, m.rough, m.metal, coords(p - center), m.grain, m.seed)
+    standard_pbr(m.base, m.rough, m.metal, coords(p - center), m.grain, m.seed)
   }
 }
 build {

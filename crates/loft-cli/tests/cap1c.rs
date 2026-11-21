@@ -212,8 +212,8 @@ fn queued_frames_keep_their_graph_and_visibility_after_bundle_replacement() {
     let original = scene("variety.loft");
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let edited = include_str!("../../../scenes/showcase/cap1c/variety.loft").replace(
-        "StandardPbr(m.base, m.rough, m.metal, coords(p), m.grain, m.seed)",
-        "Emissive(rgb(0.1, 0.8, 0.1), 2.0)",
+        "standard_pbr(m.base, m.rough, m.metal, coords(p), m.grain, m.seed)",
+        "emissive(rgb(0.1, 0.8, 0.1), 2.0)",
     );
     let edited = Graph::text(&root, Path::new("edited-material.loft"), &edited);
     let settings = [("materials", 10.0), ("families", 2.0)];

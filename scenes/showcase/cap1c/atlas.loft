@@ -1,4 +1,4 @@
-use stdlib::materials::families::{StandardPbr}
+use stdlib::materials::families::{standard_pbr}
 use stdlib::geometry::analytic::{ray_sphere}
 use stdlib::sdf::solid::{sphere}
 
@@ -24,7 +24,7 @@ kind Stud @Local (pose: xf@Local>World, material_id: MaterialTable) {
     let local = clamp(p.xy + [0.5, 0.5], [0.0, 0.0], [1.0, 1.0])
     let uv = (cell * 16.0 + [4.0, 4.0] + local * 8.0) / [64.0, 32.0]
     let color = if m.texture_id < 8 { sample_lod(AtlasA, uv, m.lod) } else { sample_lod(AtlasB, uv, m.lod) }
-    StandardPbr(color.xyz, 0.4, 0.1, coords(p), 24.0, 1.0)
+    standard_pbr(color.xyz, 0.4, 0.1, coords(p), 24.0, 1.0)
   }
 }
 camera Main { eye: [0, 0, 13]@World, at: [0, 0, 0]@World, fov: 24deg }

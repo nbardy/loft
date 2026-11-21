@@ -1,4 +1,4 @@
-use stdlib::materials::families::{StandardPbr, LayeredCoat, StylizedInk, DielectricGlass, Emissive, Foliage}
+use stdlib::materials::families::{standard_pbr, layered_coat, stylized_ink, dielectric_glass, emissive, foliage}
 use stdlib::geometry::analytic::{ray_sphere}
 use stdlib::sdf::solid::{sphere}
 
@@ -19,7 +19,7 @@ kind PbrBall @Local (pose: xf@Local>World, material_id: MaterialTable) {
   trace(p) = sphere(p - [0, 0, 0]@Local, 0.068m)
   material(p, n) {
     let m = MaterialTable[material_id]
-    StandardPbr(m.base, m.rough, m.metal, coords(p), m.grain, m.seed)
+    standard_pbr(m.base, m.rough, m.metal, coords(p), m.grain, m.seed)
   }
 }
 
@@ -28,7 +28,7 @@ kind InkBall @Local (pose: xf@Local>World, material_id: MaterialTable) {
   trace(p) = sphere(p - [0, 0, 0]@Local, 0.068m)
   material(p, n) {
     let m = MaterialTable[material_id]
-    StylizedInk(m.base, coords(p), m.grain, m.seed)
+    stylized_ink(m.base, coords(p), m.grain, m.seed)
   }
 }
 
@@ -37,7 +37,7 @@ kind CoatBall @Local (pose: xf@Local>World, material_id: MaterialTable) {
   trace(p) = sphere(p - [0, 0, 0]@Local, 0.068m)
   material(p, n) {
     let m = MaterialTable[material_id]
-    LayeredCoat(m.base, m.rough, m.metal, 0.6, 0.2, coords(p), m.grain, m.seed)
+    layered_coat(m.base, m.rough, m.metal, 0.6, 0.2, coords(p), m.grain, m.seed)
   }
 }
 
@@ -46,7 +46,7 @@ kind LeafBall @Local (pose: xf@Local>World, material_id: MaterialTable) {
   trace(p) = sphere(p - [0, 0, 0]@Local, 0.068m)
   material(p, n) {
     let m = MaterialTable[material_id]
-    Foliage(m.base, m.rough, 0.16, coords(p), m.grain, m.seed)
+    foliage(m.base, m.rough, 0.16, coords(p), m.grain, m.seed)
   }
 }
 
@@ -55,7 +55,7 @@ kind GlassBall @Local (pose: xf@Local>World, material_id: MaterialTable) {
   trace(p) = sphere(p - [0, 0, 0]@Local, 0.068m)
   material(p, n) {
     let m = MaterialTable[material_id]
-    DielectricGlass(m.base, m.rough, 1.5, 0.006, rgb(0.2))
+    dielectric_glass(m.base, m.rough, 1.5, 0.006, rgb(0.2))
   }
 }
 
@@ -64,7 +64,7 @@ kind GlowBall @Local (pose: xf@Local>World, material_id: MaterialTable) {
   trace(p) = sphere(p - [0, 0, 0]@Local, 0.068m)
   material(p, n) {
     let m = MaterialTable[material_id]
-    Emissive(m.base, 1.4)
+    emissive(m.base, 1.4)
   }
 }
 
