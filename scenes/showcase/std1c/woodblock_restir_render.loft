@@ -1,0 +1,16 @@
+use stdlib::styles::woodblock as ink
+use stdlib::integrators::restir as transport
+use stdlib::lighting::surface::{SurfaceHit, LightSummary}
+use self::bridge::{surface_from, lighting_from}
+use stdlib::schedules::vis_buffer
+use stdlib::post::display
+
+fn shade_hit(h: SurfaceHit, l: LightSummary) -> rgb {
+  let s = surface_from(h, l)
+  ink::shade(s, lighting_from(s, h, l))
+}
+
+pub schedule Harbor {
+  vis_buffer::VisBuffer(transport::estimate, shade_hit)
+  display::PrintPost()
+}

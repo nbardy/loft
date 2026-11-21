@@ -1,0 +1,11 @@
+use stdlib::styles::surface::{Surface, Lighting}
+
+pub fn shade(h: Surface, l: Lighting) -> rgb {
+  let facing = clamp(dot(h.n, h.view), 0.0, 1.0)
+  let ao = clamp(l.ao, 0.0, 1.0)
+  # Bent visibility approximation for environment gloss. At AO=1, both
+  # indirect contributions pass through, as required for traced estimates.
+  let exponent = pow(2.0, -16.0 * clamp(h.rough, 0.0, 1.0) - 1.0)
+  let spec_ao = clamp(pow(facing + ao, exponent) - 1.0 + ao, 0.0, 1.0)
+  l.direct + l.indirect_diffuse * ao + l.indirect_gloss * spec_ao + l.emitted
+}

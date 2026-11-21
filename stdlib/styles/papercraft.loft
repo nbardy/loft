@@ -1,0 +1,39 @@
+use stdlib::styles::surface::{Surface, Lighting}
+use stdlib::styles::print::paint::{print_paint}
+use stdlib::noise::cellular::{facet_site}
+
+const CELL = 0.34
+
+pub fn fold_surface(h: Surface) -> Surface = facet_normal(h, CELL)
+
+fn facet_normal(h: Surface, cell_width: m) -> Surface =
+  wgsl(h: Surface, cell_width: m) -> Surface {
+    let site = loft_user_facet_site(h.anchor / cell_width);
+    let cell = floor(site.xyz);
+    let tilt = fract(dot(cell, vec3f(0.31831, 0.75488, 0.56984)) + 0.5);
+    let axis = vec3f(cos(6.2831853 * tilt), 0.5 - tilt, sin(6.2831853 * tilt));
+    // The value contract has no normal differentials. Quantize the base
+    // normal before projecting a site-stable tilt onto its tangent plane.
+    let flat = normalize(round(4.0 * h.n));
+    let tangent = axis - flat * dot(axis, flat);
+    let filtered = 1.0 - smoothstep(0.05, 0.18, max(h.footprint.x, h.footprint.y));
+    var folded = h;
+    folded.n = normalize(mix(h.n, normalize(flat + 0.24 * tangent), filtered));
+    return folded;
+  }
+
+pub fn shade(h: Surface, l: Lighting) -> rgb {
+  let cell = facet_site(coords(h.anchor) / CELL)
+  let pixel = max(h.footprint.x, h.footprint.y)
+  let seam_width = clamp(pixel / CELL, 0.005, 0.24)
+  let seam = (1.0 - smoothstep(0.025, 0.025 + seam_width, cell.w)) *
+    (1.0 - smoothstep(0.07, 0.16, pixel))
+  let facing = dot(h.n, l.key)
+  let key = clamp((facing + 0.25) / 1.25, 0.0, 1.0) * l.key_visibility
+  let fill = dot(l.indirect_diffuse, [0.2126, 0.7152, 0.0722]) * l.ao
+  let pigment = print_paint(h, 0.05, 0.08)
+  let value = dot(pigment, [0.2126, 0.7152, 0.0722])
+  let card = mix(pigment, value * [1.04, 1.0, 0.93], 0.44) * 0.80 + [0.19, 0.18, 0.16]
+  let lit = card * ([0.48, 0.51, 0.57] + key * [0.67, 0.62, 0.53] + rgb(fill * 0.43))
+  mix(lit, lit * [0.61, 0.64, 0.73], seam * (0.67 - 0.34 * key)) + l.emitted
+}

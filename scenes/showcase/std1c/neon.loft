@@ -1,0 +1,8 @@
+use self::neon_render
+use self::harbor::{harbor, Sail}
+
+camera View { eye: [2.15, 1.95, 5.0], at: [0, 0.24, 0], fov: 34deg }
+build {
+  harbor([0.45, 0.26, 0.62], [0.013, 0.010, 0.033], [0.089, 0.025, 0.15])
+  emit Sail(pose: place([0.90, 0.18, -0.38]@World))
+}

@@ -1,0 +1,22 @@
+use stdlib::styles::sketch as ink
+use stdlib::integrators::direct as transport
+use stdlib::lighting::surface::{SurfaceHit, LightSummary}
+use self::bridge::{surface_from, lighting_from}
+use stdlib::schedules::vis_buffer
+use stdlib::post::display::{paper_grain}
+use stdlib::sky::environment::{sky_dome}
+
+fn shade_hit(h: SurfaceHit, l: LightSummary) -> rgb {
+  let s = surface_from(h, l)
+  ink::shade(s, lighting_from(s, h, l))
+}
+
+fn backdrop(ray: rgb, sun: rgb) -> rgb {
+  sky_dome(ray) * [0.97, 0.99, 1.02]
+}
+
+pub schedule Harbor {
+  vis_buffer::VisBuffer(transport::estimate, shade_hit)
+  outline_and_paper(ColorHdr)
+  tonemap_aces(ColorHdr, sky: backdrop)
+}

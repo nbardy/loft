@@ -1,0 +1,17 @@
+# std1c · Surface styles and print
+
+Base `faba0615b6bdc33f105d51939ecf3af25c5decea` includes the scored std1a merge `f8fc612`. Style source `072cb85`. Metal used std1b `bb1f16e` and std1d `c61c9ba` in an isolated overlay with their source preserved. [Prediction](../../../out/meta/std1c/prediction.md) · [Showcase](../../../scenes/showcase/std1c/README.md)
+
+Apple M4 Metal at 384×240, View, t=0. Woodblock→toon changed 50,666 beauty pixels. Direct→ReSTIR changed 48,734. Both changed zero Vis64/depth texels. The untouched fork matched exactly. Editing one band changed 2,816 pixels and the stock render held. Historical woodblock changed zero beauty, HDR, Vis64 or depth texels. The frozen function is byte-identical. Shrine WGSL differs only in the generated raw-helper file ordinal. [Measurements](../../../out/meta/std1c/measurements.json) · [Fork and diagnostics](../../../out/meta/std1c/fork/diagnostic.log)
+
+The fixed woodblock record returned the same RGB16F in the legacy-compatible, tiled and path stages. Independent CPU woodblock/PBR differences were ≤0.000435 per linear channel. All seven styles preserved the authored emission delta. Papercraft's facet tilted 13.51° and moved the key dot from 0.6000 to 0.3963. Eight motion frames gave 0.0000694 maximum adjacent mean luma change on the matte hull (ROI pixel p95 change ≤0.00281). [Frames and clip](../../../out/meta/std1c/motion/papercraft.mp4)
+
+Path used the same woodblock arithmetic and a trace proxy for the raster sail. At 160×100, RMS to 64 spp over 1,694 hull-interior pixels fell 0.01945→0.00984 from 4→16 spp. The direct RMS was 0.04698. At 128 and 256 spp `PathPrimary` first differed at (0,0): miss distance 1e30→0, depth 1.0→NaN. High-sample convergence is unresolved. [Readbacks](../../../out/meta/std1c/measurements.json) · [Commands](../../../out/meta/std1c/final-scored.log)
+
+One 20-frame timing batch on the first gallery geometry (five warmups, 384×240). Shade/post p95 in ms: woodblock 0.142/0.033, toon 1.378/4.319, papercraft 1.572/6.089. Commands were 13/13/14. Triangle p50 was 0.015/0.743/1.198 ms, so the latter two were contended. [Per-pass timings](../../../out/meta/std1c/timing/)
+
+Seven q95 stills plus historical and 64-spp woodblock controls await lead review. The tagged TypeScript recipes were rendered at the same camera. Their open sea, contact and shadows differ from Harbor's bounded sheet. Differences in the legacy cut-paper sheets, neon rings, biolume plankton/halos, fitted facet normals and sketch outline remain. The impact is a bounded surface mask. [Approval index](../../../out/meta/std1c/approval/index.json) · [Legacy recreation](../../../out/meta/std1c/legacy/harbor.ts)
+
+D emits only `SurfaceHit` and `LightSummary`. The test copy specializes the frozen records to arrays. Its bridge approximates sky gloss and lacks material-resolved indirect lobes and direct area lighting. It runs the papercraft prepare math before estimation and again at style evaluation. The frozen records belong at the shared lighting boundary when the emitter supports them.
+
+`loft-cli` checked, focused module tests passed 2/2, and both recognizers accepted 317/317 inputs in six shards, including 35/35 changed sources. Corpus provenance, shell and host pins passed. Full workspace scoring stays with the integrator. [Static results](../../../out/meta/std1c/static-shards.log) · [Token costs](../../../out/meta/std1c/token-costs.tsv)

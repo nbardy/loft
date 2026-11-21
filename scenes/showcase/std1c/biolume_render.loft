@@ -1,0 +1,22 @@
+use stdlib::styles::biolume as ink
+use stdlib::integrators::direct as transport
+use stdlib::lighting::surface::{SurfaceHit, LightSummary}
+use self::bridge::{surface_from, lighting_from}
+use stdlib::schedules::vis_buffer
+use stdlib::post::optics
+use stdlib::sky::environment::{sky_dome}
+
+fn shade_hit(h: SurfaceHit, l: LightSummary) -> rgb {
+  let s = surface_from(h, l)
+  ink::shade(s, lighting_from(s, h, l))
+}
+
+fn backdrop(ray: rgb, sun: rgb) -> rgb {
+  sky_dome(ray)
+}
+
+pub schedule Harbor {
+  vis_buffer::VisBuffer(transport::estimate, shade_hit)
+  optics::LuminousPost()
+  tonemap_aces(ColorHdr, sky: backdrop)
+}

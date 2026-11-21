@@ -1,0 +1,23 @@
+use stdlib::styles::surface::{Surface, Lighting}
+use stdlib::noise::value::{fbm2}
+
+const CYAN = [0.10, 0.88, 0.94]
+const MAGENTA = [1.0, 0.22, 0.85]
+
+pub fn shade(h: Surface, l: Lighting) -> rgb {
+  let c = h.pigment
+  let vivid = max(max(c.x, c.y), c.z) - min(min(c.x, c.y), c.z)
+  let value = dot(c, [0.2126, 0.7152, 0.0722])
+  let strength = smoothstep(0.42, 0.7, 0.45 * value + 0.60 * vivid)
+  let purple = smoothstep(0.08, 0.22, 0.5 * (c.x + c.z) - c.y)
+  let facing = clamp(dot(h.n, h.view), 0.0, 1.0)
+  let pore = fbm2(coords(h.anchor) * 11.0)
+  let pixel = max(h.footprint.x, h.footprint.y)
+  let membrane = mix(smoothstep(0.34, 0.71, pore), 0.46, smoothstep(0.018, 0.08, pixel))
+  let tissue = mix(CYAN, MAGENTA, purple) * strength * (0.16 + 0.64 * facing * facing) *
+    (0.35 + 0.65 * membrane)
+  let rim = CYAN * (0.38 * pow(1.0 - facing, 3.0))
+  let skin = [0.018, 0.026, 0.045] + c * 0.045 + l.direct * 0.48 +
+    l.indirect_diffuse * (0.28 * l.ao) + l.indirect_gloss * 0.20
+  skin + tissue + rim + l.emitted
+}

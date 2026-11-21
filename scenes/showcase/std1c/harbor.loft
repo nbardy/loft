@@ -1,0 +1,97 @@
+use stdlib::sdf::solid::{sphere, round_box}
+use stdlib::materials::bsdf::{ggx, lambert, emit_lobe}
+use stdlib::styles::print::sea::{swell_lines}
+use stdlib::styles::print::foam::{contact_foam}
+use stdlib::styles::print::whitewater::{rolling_foam, impact_foam}
+
+pub const MATTE_X = -0.72
+pub const GLOSS_X = 0.72
+pub const MATTE_ROUGH = 0.72
+pub const GLOSS_ROUGH = 0.19
+pub const WATER_Y = -0.28
+const SAIL_Y = 0.18
+const SAIL_HEIGHT = 1.34
+
+# The pale stripe uses the same world height on the SDF hulls and raster sail.
+pub fn enamel(y: m) -> rgb {
+  let stripe = 1.0 - smoothstep(0.024, 0.043, abs(y - 0.32))
+  mix([0.68, 0.20, 0.078], [0.89, 0.69, 0.31], stripe)
+}
+
+kind Hull @Local (pose: xf@Local>World, rough: f in 0.05..1) {
+  trace(p) {
+    let q = p - [0]@Local
+    let warp = [q.x, q.y * 1.18, q.z * 0.91]@Local
+    sphere(warp - [0]@Local, 0.63) + 0.011 * cos(13.0 * q.y) * cos(10.0 * q.x)
+  }
+  material(p,n) = ggx(enamel(p.y + 0.12), rough, 0.0)
+}
+
+pub kind Sail @Local (pose: xf@Local>World) {
+  surface(u, v) grid 32x24 {
+    let bulge = 0.18 * sin(3.14159265 * u) * sin(3.14159265 * v)
+    [(u - 0.5) * (0.77 - 0.40 * v) - 0.23 * v, SAIL_HEIGHT * v, bulge]@Local
+  }
+  material(p,n,uv) = lambert(enamel(p.y + SAIL_Y) * [0.97, 0.92, 0.85])
+}
+
+# D's path schedule requires a distance field for every drawable. This thin
+# proxy follows the raster sail's taper and billow at the same row placement.
+pub kind SailTrace @Local (pose: xf@Local>World) {
+  trace(p) {
+    let v = clamp(p.y / SAIL_HEIGHT, 0.0, 1.0)
+    let width = 0.77 - 0.40 * v
+    let x = p.x + 0.23 * v
+    let u = clamp(x / width + 0.5, 0.0, 1.0)
+    let bulge = 0.18 * sin(3.14159265 * u) * sin(3.14159265 * v)
+    max(abs(p.z - bulge) - 0.009, max(abs(x) - 0.5 * width, max(-p.y, p.y - SAIL_HEIGHT))) / 1.8
+  }
+  material(p,n) = lambert(enamel(p.y + SAIL_Y) * [0.97, 0.92, 0.85])
+}
+
+kind Beacon @Local (pose: xf@Local>World, radius: m > 0, glow: rgb) {
+  trace(p) = sphere(p - [0]@Local, radius)
+  material(p,n) = emit_lobe(glow)
+}
+
+kind TidalFlat @Local (pose: xf@Local>World) {
+  trace(p) = round_box(p - [0]@Local, [3.3, 0.025, 2.25], 0.018)
+  material(p,n) {
+    let xz = [p.x, p.z]
+    let phase = dot(xz, [0.71, 2.75]) + 0.10 * sin(p.x * 5.0 - p.z)
+    let crest = cos(TAU * phase) * 0.38
+    let lines = swell_lines(xz, phase, crest, 0.024, [0.017, 0.045], false)
+    let matte = xz - [MATTE_X, 0.0]
+    let gloss = xz - [GLOSS_X, 0.0]
+    let collar = select(gloss, matte, length(matte) < length(gloss))
+    let d = length(collar)
+    let front = 1.0 - smoothstep(0.43, 0.65, d)
+    let foam = contact_foam(xz, front, collar, crest, 0.007)
+    let wake = xz - [0.54, -0.02]
+    let trail = wake.x * wake.x * 2.4 + wake.y * wake.y * 0.31
+    let rolling = rolling_foam(xz, (1.0 - smoothstep(0.05, 0.47, trail)) * smoothstep(0.10, 0.56, -p.z),
+      [-3.5 * wake.x, -0.55 * wake.y], 0.085, 0.007)
+    let impact = impact_foam(xz - [1.65, 0.75], 0.12 + time, 0.38, 0.007)
+    let fill = max(foam.x, max(rolling.x, impact.x))
+    let keyline = max(foam.y, max(rolling.y, impact.y))
+    let water = mix([0.055, 0.16, 0.23], [0.13, 0.31, 0.37], 0.46 + 0.40 * crest)
+    let sea = mix(water, [0.34, 0.53, 0.56], lines.x * 0.72)
+    let key = mix(sea, [0.037, 0.088, 0.14], keyline)
+    ggx(mix(key, [0.87, 0.83, 0.65], fill), 0.41, 0.0)
+  }
+}
+
+kind Plinth @Local (pose: xf@Local>World) {
+  trace(p) = round_box(p - [0]@Local, [0.29, 0.26, 0.30], 0.08)
+  material(p,n) = lambert([0.22, 0.23, 0.19])
+}
+
+pub build fn harbor(key: rgb, zenith: rgb, horizon: rgb) {
+  emit Hull(pose: place([MATTE_X, 0.12, 0.0]@World), rough: MATTE_ROUGH)
+  emit Hull(pose: place([GLOSS_X, 0.12, 0.0]@World), rough: GLOSS_ROUGH)
+  emit TidalFlat(pose: place([0, WATER_Y, 0]@World))
+  emit Plinth(pose: place([-1.58, -0.17, 0.88]@World))
+  emit Beacon(pose: place([-1.58, 0.215, 0.88]@World), radius: 0.13m, glow: [2.0, 0.45, 0.21])
+  emit Sun(dir: dir([0.5, 0.75, 0.35]@World), color: key)
+  emit Sky(zenith: zenith, horizon: horizon)
+}

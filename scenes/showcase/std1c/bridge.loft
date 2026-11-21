@@ -1,0 +1,52 @@
+use stdlib::styles::surface::{Surface, Lighting}
+use stdlib::lighting::surface::{SurfaceHit, LightSummary}
+use stdlib::sky::environment::{sky_dome}
+use stdlib::materials::bsdf::{ggx, lambert}
+use self::harbor::{MATTE_X, GLOSS_X, MATTE_ROUGH, GLOSS_ROUGH, WATER_Y, enamel}
+
+# D exports one footprint, one irradiance and a fitted pigment. The harbor has
+# two known hull rows. Its bridge reconstructs their roughness from placement.
+pub fn surface_from(h: SurfaceHit, l: LightSummary) -> Surface =
+  surface_with_roughness(h, l, [MATTE_X, GLOSS_X], [MATTE_ROUGH, GLOSS_ROUGH], WATER_Y)
+
+fn surface_with_roughness(h: SurfaceHit, l: LightSummary, placements: v2, finish: v2, water_y: m) -> Surface =
+  wgsl(h: SurfaceHit, l: LightSummary, placements: v2, finish: v2, water_y: m) -> Surface {
+    let row_origin = h.p - h.anchor;
+    let hull = any(abs(vec2f(row_origin.x) - placements) < vec2f(0.0001));
+    var rough = 0.82;
+    var pigment = clamp(h.pigment, vec3f(0.0), vec3f(0.95));
+    if hull {
+      rough = select(finish.x, finish.y, row_origin.x > 0.0);
+      pigment = loft_user_enamel(h.p.y);
+    }
+    if abs(row_origin.y - water_y) < 0.0001 { rough = 0.41; }
+    return loft_type_Surface(h.p, h.anchor, h.n, h.view,
+      h.uv, vec2f(l.footprint_m), pigment, rough, l.id >> 24u, l.id & 0xffffffu);
+  }
+
+pub fn lighting_from(s: Surface, h: SurfaceHit, l: LightSummary) -> Lighting =
+  wgsl(s: Surface, h: SurfaceHit, l: LightSummary) -> Lighting {
+    let n = s.n;
+    let v = s.view;
+    let key = l.key_dir;
+    let base = s.pigment;
+    let nv = clamp(dot(n, v), 0.0, 1.0);
+    let kd = base / 3.14159265;
+    let diffuse = kd * l.indirect_irradiance;
+    let direct = loft_user_ggx(base, s.rough, 0.0, n, v, key).xyz * l.key_radiance * l.key_vis;
+
+    // Four reflected sky directions. The reference irradiance in D carries
+    // no gloss channel, so the harbor uses the same approximation in each run.
+    let reflection = reflect(-v, n);
+    let axis = select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(reflection.y) > 0.9);
+    let side = normalize(cross(reflection, axis));
+    let up = cross(side, reflection);
+    let spread = 0.02 + 0.43 * s.rough * s.rough;
+    let sky = (loft_user_sky_dome(normalize(reflection + spread * side))
+      + loft_user_sky_dome(normalize(reflection - spread * side))
+      + loft_user_sky_dome(normalize(reflection + spread * up))
+      + loft_user_sky_dome(normalize(reflection - spread * up))) * 0.25;
+    let fresnel = 0.04 + 0.96 * pow(1.0 - nv, 5.0);
+    let gloss = sky * (fresnel * (1.0 - 0.76 * s.rough));
+    return loft_type_Lighting(key, l.key_vis, l.ao, direct, diffuse, gloss, h.emitted);
+  }

@@ -1,0 +1,8 @@
+use self::sketch_render
+use self::harbor::{harbor, Sail}
+
+camera View { eye: [2.15, 1.95, 5.0], at: [0, 0.24, 0], fov: 34deg }
+build {
+  harbor([2.2, 1.98, 1.67], [0.94, 0.92, 0.87], [0.94, 0.92, 0.87])
+  emit Sail(pose: place([0.90, 0.18, -0.38]@World))
+}

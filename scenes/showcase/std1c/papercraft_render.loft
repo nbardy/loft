@@ -1,0 +1,36 @@
+use stdlib::styles::papercraft as ink
+use stdlib::integrators::direct as transport
+use stdlib::lighting::surface::{SurfaceHit, LightSummary}
+use self::bridge::{surface_from, lighting_from}
+use stdlib::schedules::vis_buffer
+use stdlib::post::optics
+use stdlib::sky::environment::{sky_dome}
+use stdlib::lighting::world::{RngKey}
+
+# The direct estimator receives the folded normal. Visibility and its bias
+# retain their geometric normal, and the style sees the same prepared hit.
+fn estimate_folded(h: SurfaceHit, l: LightSummary, rng: RngKey) -> LightSummary {
+  let s = ink::fold_surface(surface_from(h, l))
+  transport::estimate(replace_normal(h, s.n), l, rng)
+}
+fn replace_normal(h: SurfaceHit, n: n3@World) -> SurfaceHit =
+  wgsl(h: SurfaceHit, n: n3@World) -> SurfaceHit {
+    var folded = h;
+    folded.n = n;
+    return folded;
+  }
+
+fn shade_hit(h: SurfaceHit, l: LightSummary) -> rgb {
+  let s = ink::fold_surface(surface_from(h, l))
+  ink::shade(s, lighting_from(s, h, l))
+}
+
+fn backdrop(ray: rgb, sun: rgb) -> rgb {
+  sky_dome(ray)
+}
+
+pub schedule Harbor {
+  vis_buffer::VisBuffer(estimate_folded, shade_hit)
+  optics::StudioAO()
+  tonemap_aces(ColorHdr, sky: backdrop)
+}
