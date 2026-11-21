@@ -10,3 +10,11 @@ Run `uv run --no-project python tools/check_corpus.py` to verify the partition.
 
 From the repository root, build a port with
 `tools/dev.sh run loft-cli -- build corpus/l5c/bead.loft -o out/bead.loftb`.
+
+Replay the 170 procedural seeds with `tools/regenerate_corpus.sh`. It checks
+both JSONL pins and runs the historical CPU sampler in an isolated directory.
+The seven sampled knot times and original views are preserved. Generated build
+loops import ring samples and sparse paint and exponent overrides. The kind
+declarations hold the modal paint and exponent. `tools/check.sh lint` checks
+Loft lexical tokens and repeated numeric blocks. It enforces the budget on
+regenerated ports and reports warnings on the retained legacy ports.

@@ -207,6 +207,8 @@ pub struct Eval<'p, 'a, S> {
     pub time: S,
     /// Baked scans, for `sample_c2`.
     pub luts: &'p [Lut],
+    pub(crate) source: Option<&'p crate::source::Graph>,
+    imports: std::collections::HashMap<Span, crate::import_table::Rows>,
 }
 
 fn err(span: Span, msg: impl Into<String>, fix: impl Into<String>) -> Diag {
@@ -220,7 +222,7 @@ fn norm<S: Scalar>(v: &[S]) -> f64 {
 
 impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
     pub fn new(p: &'p Prog<'a>, types: &'p [Ty], tables: Tables, overrides: &'p [(String, f64)]) -> Self {
-        Eval { p, types, tables, overrides, env: vec![], cause: None, steps: 0, vector_bound_changed: false, time:S::frame_time(), luts: &[] }
+        Eval { p, types, tables, overrides, env: vec![], cause: None, steps: 0, vector_bound_changed: false, time:S::frame_time(), luts: &[], source: None, imports: Default::default() }
     }
 
     /// Binds a name for the expressions evaluated next (a scan's parameter); `unbind` drops the latest.
@@ -400,6 +402,34 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                         return Ok(Flow::Ret(v));
                     }
                 }
+            }
+            Stmt::ImportTable { kind, path, index, span } => {
+                let Val::U(index_val) = self.expr(index)? else {
+                    unreachable!("checked import_table row index");
+                };
+                let decl = self.p.kinds[kind.name.as_str()];
+                if let std::collections::hash_map::Entry::Vacant(entry) = self.imports.entry(*span) {
+                    let source = self.source.ok_or_else(|| crate::import_table::error(*span, "import_table requires stage-0 row construction"))?;
+                    entry.insert(crate::import_table::load(self.p, decl, source, path, *span)?);
+                }
+                let imported = self.imports[span].get(index_val as usize)
+                    .ok_or_else(|| crate::import_table::error(index.span, format!("row {index_val} is outside {path}")))?
+                    .clone();
+                let mut row = Vec::with_capacity(imported.len());
+                for (field, value) in decl.row.iter().zip(imported) {
+                    let value = match value {
+                        Some(value) => value,
+                        None => {
+                            let default = field.default.as_ref().expect("binary schema checked defaults");
+                            concrete(&self.module_expr(default)?, default.span)?
+                        }
+                    };
+                    if let Some(range) = &field.range {
+                        self.validate_range(&field.name, range, crate::as_f32(value.clone(), *span)?, *span)?;
+                    }
+                    row.push(value);
+                }
+                self.tables[self.p.kind_index(&kind.name)].push(row);
             }
             Stmt::Emit { kind, fields, bind, .. } => {
                 let k = self.p.kind_index(&kind.name);

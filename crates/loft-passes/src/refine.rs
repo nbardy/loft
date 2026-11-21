@@ -253,7 +253,7 @@ impl Proof<'_, '_> {
                 Stmt::Expr(e) => {
                     self.expr(e, env)?;
                 }
-                Stmt::Emit { .. } => {}
+                Stmt::Emit { .. } | Stmt::ImportTable { .. } => {}
             }
         }
         Ok(returns)

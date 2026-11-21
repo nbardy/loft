@@ -78,6 +78,7 @@ full_gate() {
   baseline_root="$(git -C "$(dirname "$LOFT_BASELINE_BIN")" rev-parse --show-toplevel)"
   out="$(mktemp -d "$root/out/check.XXXXXX")"
   tools/dev.sh build --workspace --profile "$profile" --bins --tests --examples --message-format=json-render-diagnostics >"$out/build.jsonl"
+  corpus_lint "$CARGO_TARGET_DIR/$profile/loft" || failed=$?
   tools/gpu_lock.sh uv run --no-project python tools/run_native_tests.py "$out/build.jsonl" || failed=$?
   tools/dev.sh test --workspace --doc --profile "$profile" || failed=$?
   wasm || failed=$?
@@ -94,7 +95,22 @@ full_gate() {
   return "$failed"
 }
 
+corpus_lint() {
+  # Enforce the budget on regenerated ports. Report warnings on legacy ports.
+  find corpus/l5c corpus/l5d -type f -name '*.loft' -print0 |
+    xargs -0 "$1" lint &&
+  find corpus/l5e corpus/seeds -type f -name '*.loft' -print0 |
+    xargs -0 "$1" lint --strict
+}
+
 case "${1:-}" in
+  lint)
+    if [[ $# == 2 ]]; then
+      corpus_lint "$2"
+    else
+      tools/dev.sh build loft-cli --fast --bin loft
+      corpus_lint "$CARGO_TARGET_DIR/lab/loft"
+    fi ;;
   lines) uv run --no-project python tools/lines.py ;;
   static) static_checks ;;
   plan) plan ;;
@@ -107,5 +123,5 @@ case "${1:-}" in
       tools/gpu_lock.sh tools/dev.sh test "$crate" --test-threads 1
     done ;;
   full) static_checks; mkdir -p "$root/out"; full_gate ;;
-  *) echo 'usage: tools/check.sh lines|static|plan|quick|full|parity [controls options]' >&2; exit 2 ;;
+  *) echo 'usage: tools/check.sh lines|static|lint|plan|quick|full|parity [controls options]' >&2; exit 2 ;;
 esac

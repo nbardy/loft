@@ -365,6 +365,7 @@ pub enum Stmt {
     For { comptime: bool, var: Ident, lo: Expr, hi: Expr, body: Block, span: Span },
     /// `emit K(f: e, ...)`, or `let b = emit K(...)` binding the new row's id.
     Emit { kind: Ident, fields: Vec<(Ident, Expr)>, span: Span, bind: Option<Ident> },
+    ImportTable { kind: Ident, path: String, index: Expr, span: Span },
     Expr(Expr),
 }
 

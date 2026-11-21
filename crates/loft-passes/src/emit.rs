@@ -289,6 +289,7 @@ impl<'a> References<'a> {
                     for (_, e) in fields { self.expr(e, locals); }
                     if let Some(n) = bind { locals.push(&n.name); }
                 }
+                Stmt::ImportTable { index, .. } => self.expr(index, locals),
                 Stmt::Expr(e) => self.expr(e, locals),
             }
         }
@@ -482,7 +483,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 self.locals.pop();
                 self.line(d, "}");
             }
-            Stmt::Each{..} | Stmt::Emit { .. } => unreachable!("checked: stage 0 only, never emitted"),
+            Stmt::Each{..} | Stmt::Emit { .. } | Stmt::ImportTable { .. } => unreachable!("checked: stage 0 only, never emitted"),
             Stmt::Expr(e) => {
                 let v = self.expr(e);
                 if matches!(e.kind, ExprKind::Call { .. }) && *self.ty_of(e) == Ty::Void {
@@ -888,7 +889,7 @@ fn material_layout<'k>(p: &Prog<'k>, k: &'k KindDecl) -> Res<Layout<'k>> {
                     otherwise.iter().for_each(|o| returns(o, out));
                 }
                 Stmt::Each{body,..} | Stmt::For { body, .. } => returns(body, out),
-                Stmt::Return(None, _) | Stmt::Let { .. } | Stmt::Assign { .. } | Stmt::Map { .. } | Stmt::Emit { .. } | Stmt::Expr(_) => {}
+                Stmt::Return(None, _) | Stmt::Let { .. } | Stmt::Assign { .. } | Stmt::Map { .. } | Stmt::Emit { .. } | Stmt::ImportTable { .. } | Stmt::Expr(_) => {}
             }
         }
     }

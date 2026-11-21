@@ -279,3 +279,21 @@ fn authored_motion_declarations_preserve_spans_and_write_ownership() {
         assert!(diagnostic.contains(excerpt), "{diagnostic}");
     }
 }
+
+#[test]
+fn diff_preserves_inactive_helper_parameters() {
+    compile(r#"
+space World
+fn powered(x: f, exponent: f) -> f = pow(x, exponent)
+fn alias_power(x: f, exponent: f) -> f {
+    let k = exponent
+    powered(x, k)
+}
+fn test_derivative(x: f, exponent: f) -> f = diff(alias_power, x)(x, exponent)
+kind Sphere @World (expo: f) {
+    trace(p) = sphere(p - [0, 0, 0]@World, 1)
+    material(p, n) = ggx([test_derivative(0.5, expo), 0.2, 0.1], 0.5, 0)
+}
+build { emit Sphere(expo: 2) }
+"#).unwrap();
+}
