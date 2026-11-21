@@ -14,7 +14,7 @@
 
 ## Verification
 
-- `tools/dev.sh check loft-runner --target wasm32-unknown-unknown --features web-sys` passed with zero Metal or Objective-C packages in the target dependency graph. Both witnesses passed Earley and llguidance.
+- `tools/dev.sh check loft-runner --target wasm32-unknown-unknown --features web-sys` passed with zero Metal or Objective-C packages in the target dependency graph. Both witnesses passed Earley and llguidance. The 306 previously scored grammar inputs and recognizers match the v15_exec revision. The static rerun passed the pin and corpus checks before stopping the redundant full grammar sweep.
 - The optimized workspace build produced 33 test executables. The suite passed 179 tests, including the Metal slot test. One test was ignored.
 - Runtime sources added 555 physical lines and removed 84. Crate files added 1,350 lines including the witnesses and benchmark.
 - Build with `tools/dev.sh build loft-native --fast --example native_bridge` and run `tools/quiet_gpu.sh target/lab/examples/native_bridge out/native_bridge`. Timing logs, WebP previews and lossless comparisons are in `out/meta/v15_native/` in the primary checkout.
