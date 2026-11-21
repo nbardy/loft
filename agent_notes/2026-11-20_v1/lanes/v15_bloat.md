@@ -1,6 +1,9 @@
 # v15_bloat
 
-Base `5e252da6db64ace37b1ff874d12998fa1ca7348f`, the unified v15 execution merge on origin/main.
+The implementation started at the unified v15 execution merge `5e252da`.
+The branch includes current `origin/main` at `78ef244`. The intervening
+main commits changed orchestration and notes. The baseline compiler, renderer,
+and corpus are identical between those revisions.
 
 Prediction before regeneration. Each seed keeps its original strip count, declaration order,
 f32 row words, camera, sun, grid and keyframe arithmetic. The source becomes one
@@ -47,11 +50,24 @@ focused run passed the binary decoder regression and stopped on the new AD
 fixture's point/vector mismatch. The corrected AD fixture passed from the
 final build. The normal CLI built a regenerated port into a portable bundle.
 
-All 170 regenerated sources passed strict lint. Corpus lint also reports a
-repeated block in the existing Shatter example. The warning-only invocation
-exits 0, and the explicit strict invocation exits 7 on an original unrolled
-seed. Normal compilation has its own diagnostics.
+All 170 regenerated sources passed strict lint. The full check enforces lint
+on these ports and reports one warning on the retained Shatter example.
+Standalone lint exits 0 by default and exits 7 with `--strict` on an original
+unrolled seed. The token cap and repeated-block check run only in lint.
 
 The final CLI compiled all 187 live sources through `loft show --plan`.
-The stochastic scorer calibration accepted the archived v15-exec control
-sequence at 41.73–42.07 dB and temporal variance 4.4914 × 10⁻⁵.
+Static checks passed, including expected results from Earley and llguidance
+on 307/307 files.
+
+The deterministic v15c gate passed all 854 paired frames across all 170
+regenerated scenes on Apple M4 Metal under the GPU lock. ID and D32 matched
+exactly in every frame. RGBA matched exactly in 556 frames. The maximum
+channel drift was one code, with at most 0.00191% of pixels changed in any
+frame. The stochastic gate accepted the candidate's reference-sphere sequence
+against the v15-exec reference at 41.73–42.07 dB and temporal variance
+4.4914 × 10⁻⁵. It rejected the gain mutant at 6.74 dB.
+
+The optimized native workspace suite had one timing failure. The runner's
+Tier 0 edit-gate overhead measured 0.830 ms p95 against a 0.500 ms cap,
+with zero pixels over 1/255. The v15-exec final suite also recorded a timing
+miss in this test.

@@ -96,8 +96,11 @@ full_gate() {
 }
 
 corpus_lint() {
-  find corpus/l5c corpus/l5d corpus/l5e corpus/seeds -type f -name '*.loft' -print0 |
-    xargs -0 "$1" lint
+  # Enforce the budget on regenerated ports. Report warnings on legacy ports.
+  find corpus/l5c corpus/l5d -type f -name '*.loft' -print0 |
+    xargs -0 "$1" lint &&
+  find corpus/l5e corpus/seeds -type f -name '*.loft' -print0 |
+    xargs -0 "$1" lint --strict
 }
 
 case "${1:-}" in
