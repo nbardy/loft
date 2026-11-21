@@ -29,10 +29,10 @@ fn parser_accepts_the_decoder_corpus_and_rejects_the_same_fixture() {
 }
 
 #[test]
-fn author_card_uses_the_native_parser() {
-    let card=include_str!("../../../AGENT_CARD.md");
+fn authoring_guide_uses_the_native_parser() {
+    let guide = include_str!("../../../docs/context.md");
     let mut blocks=0;
-    for block in card.split("```loft\n").skip(1) {
+    for block in guide.split("```loft\n").skip(1) {
         loft_parse::parse(0,block.split_once("\n```").unwrap().0,&mut 0).unwrap();
         blocks+=1;
     }

@@ -208,17 +208,9 @@ mod tests {
     fn d1_edit_checks_the_source_dependency_slice_and_residual() {
         let here = Path::new(env!("CARGO_MANIFEST_DIR"));
         let fixture = here.join("tests/d1_edit");
-        let probes = here.join("../../out/meta/d1c/probes");
-        let old = if probes.join("edit-old.loft").exists() {
-            probes.join("edit-old.loft")
-        } else {
-            fixture.join("literal-old.loft")
-        };
-        let new = if probes.join("edit-new.loft").exists() {
-            probes.join("edit-new.loft")
-        } else {
-            fixture.join("literal-new.loft")
-        };
+        // Archived probes can predate the explicit stdlib imports in these fixtures.
+        let old = fixture.join("literal-old.loft");
+        let new = fixture.join("literal-new.loft");
         let sources = crate::sources(&old).unwrap();
         let (program, _, checked) = loft_passes::compile(&sources, &[]).unwrap();
         let (session, tape) = TraceSource::new(loft_ir::Sources { files: sources.files.clone() }, checked, &program, "EditSphere").unwrap();
