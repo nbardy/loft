@@ -73,22 +73,27 @@ parity() {
 full_gate() {
   local out cli baseline_root failed=0 profile="${LOFT_GATE_PROFILE:-lab}"
   : "${LOFT_BASELINE_BIN:?full gate requires a prebuilt Loft binary from the baseline checkout}"
-  : "${LOFT_BASELINE_BUILD_LOG:?full gate requires the baseline Cargo JSON artifact log}"
+  if [[ -z ${LOFT_BASELINE_PICTURES:-} ]]; then
+    : "${LOFT_BASELINE_BUILD_LOG:?full gate requires baseline captures or the baseline Cargo artifact log}"
+  fi
   : "${LOFT_TIMING_MARGIN:?full gate requires an allowed paired delta as a fraction of the timing budget}"
   baseline_root="$(git -C "$(dirname "$LOFT_BASELINE_BIN")" rev-parse --show-toplevel)"
   out="$(mktemp -d "$root/out/check.XXXXXX")"
+  tools/dev.sh check --workspace --target wasm32-unknown-unknown --features loft-runner/web-sys || failed=$?
+  tools/dev.sh test --workspace --doc --profile "$profile" || failed=$?
   tools/dev.sh build --workspace --profile "$profile" --bins --tests --examples --message-format=json-render-diagnostics >"$out/build.jsonl"
   corpus_lint "$CARGO_TARGET_DIR/$profile/loft" || failed=$?
   tools/gpu_lock.sh uv run --no-project python tools/run_native_tests.py "$out/build.jsonl" || failed=$?
-  tools/dev.sh test --workspace --doc --profile "$profile" || failed=$?
-  wasm || failed=$?
   cli="${CARGO_TARGET_DIR:-$root/target}/$profile/loft"
   tools/quiet_gpu.sh "$cli" gate >"$out/gates.log" 2>&1 || failed=$?
   [[ ! -f "$root/out/meta/gate.json" ]] || cp "$root/out/meta/gate.json" "$out/gate.json"
   tools/gpu_lock.sh uv run --script tools/parity/d1d/bead.py full "$(dirname "$cli")/examples/phase5_corpus" "$cli" "$out/bead" || failed=$?
-  uv run --script tools/gates/pictures.py capture "$LOFT_BASELINE_BUILD_LOG" "$baseline_root" "$out/main-pictures"
+  local baseline_pictures="${LOFT_BASELINE_PICTURES:-$out/main-pictures}"
+  if [[ -z ${LOFT_BASELINE_PICTURES:-} ]]; then
+    uv run --script tools/gates/pictures.py capture "$LOFT_BASELINE_BUILD_LOG" "$baseline_root" "$baseline_pictures"
+  fi
   uv run --script tools/gates/pictures.py capture "$out/build.jsonl" "$root" "$out/candidate-pictures"
-  uv run --script tools/gates/pictures.py deterministic "$out/main-pictures" "$out/candidate-pictures" --scorer "$cli" >"$out/pictures.json" || failed=$?
+  uv run --script tools/gates/pictures.py deterministic "$baseline_pictures" "$out/candidate-pictures" --scorer "$cli" >"$out/pictures.json" || failed=$?
   tools/gpu_lock.sh uv run --script tools/gates/pictures.py stochastic "$LOFT_BASELINE_BIN" "$cli" "$out/path-pictures" >"$out/stochastic.json" || failed=$?
   uv run --no-project python tools/gates/timing.py "$LOFT_BASELINE_BIN" "$cli" "$out/timing" --margin "$LOFT_TIMING_MARGIN" || failed=$?
   uv run --no-project python tools/lines.py >"$out/lines.log" || failed=$?

@@ -159,14 +159,24 @@ def capture(build_log, root, out):
     else:
         crates.add("loft_native")
     libraries = {crate: set() for crate in crates}
+    capture_binary = None
     with build_log.open() as messages:
         for line in messages:
             message = json.loads(line)
             if message["reason"] != "compiler-artifact":
                 continue
             crate = message["target"]["name"]
+            if crate == "gate_capture" and message.get("executable") and not message["profile"]["test"]:
+                capture_binary = Path(message["executable"]).resolve(strict=True)
             if crate in crates:
                 libraries[crate].update(Path(p) for p in message["filenames"] if p.endswith(".rlib"))
+    if capture_binary is not None:
+        if not capture_binary.is_relative_to(root / "target"):
+            raise ValueError(f"capture executable must come from {root}")
+        out.mkdir(parents=True)
+        subprocess.run([ROOT / "tools/gpu_lock.sh", capture_binary, root, out], check=True)
+        write_capture_inputs(root, out)
+        return
     if any(len(artifacts) != 1 for artifacts in libraries.values()):
         raise ValueError("use a lab build log with exactly one rlib per capture dependency")
     deps = {crate: paths.pop().resolve(strict=True) for crate, paths in libraries.items()}
