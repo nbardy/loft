@@ -1,5 +1,4 @@
 use crate::error::{Result, RunnerError};
-#[cfg(not(target_arch = "wasm32"))]
 pub fn read_buffer(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::Buffer) -> Result<Vec<u8>> {
     if !buffer.usage().contains(wgpu::BufferUsages::COPY_SRC) { return Err(RunnerError::AbiMismatch); }
     read_copy(device, queue, buffer.size(), |encoder, read| {
@@ -7,7 +6,6 @@ pub fn read_buffer(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::Bu
     })
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub fn read_texture(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Texture, level: u32) -> Result<Vec<u8>> {
     if !texture.usage().contains(wgpu::TextureUsages::COPY_SRC) || texture.sample_count() != 1
         || level >= texture.mip_level_count() || texture.format().block_dimensions() != (1, 1) {
@@ -51,4 +49,12 @@ fn read_copy(device: &wgpu::Device, queue: &wgpu::Queue, size: u64,
     rx.recv().map_err(|_| RunnerError::Readback)?.map_err(|_| RunnerError::Readback)?;
     let mapped = read.get_mapped_range(..).map_err(|_| RunnerError::Readback)?;
     Ok(mapped.to_vec())
+}
+
+
+// A browser must return to its event loop to finish a mapping request.
+#[cfg(target_arch = "wasm32")]
+fn read_copy(_: &wgpu::Device, _: &wgpu::Queue, _: u64,
+    _: impl FnOnce(&mut wgpu::CommandEncoder, &wgpu::Buffer)) -> Result<Vec<u8>> {
+    Err(RunnerError::Unsupported("synchronous GPU readback on WebGPU"))
 }

@@ -16,7 +16,6 @@ pub mod storage;
 pub mod web;
 
 pub mod command;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod readback;
 
 pub fn allocate(d: &wgpu::Device, size: u64, usage: wgpu::BufferUsages) -> std::sync::Arc<wgpu::Buffer> {

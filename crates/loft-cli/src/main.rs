@@ -10,6 +10,7 @@
 //! A scene loads the core prelude and its reachable authored modules.
 
 mod diff;
+#[cfg(not(target_arch = "wasm32"))]
 mod edit_cmd;
 mod gates;
 mod build;
@@ -161,6 +162,12 @@ fn command(mut args: Vec<String>) -> Result<(), Failure> {
             if let Some(edit) = edit {
                 exact(&args, 3, 3)?;
                 let kind = kind.ok_or_else(|| Failure::Usage("still --edit needs --kind K".into()))?;
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let _ = (edit, kind);
+                    return Err(Failure::Device("edited stills require native pipeline promotion".into()));
+                }
+                #[cfg(not(target_arch = "wasm32"))]
                 return edit_cmd::edited_still(&scene(&args)?, Path::new(&edit), &kind, &set, time, Path::new(&args[2]), max_frame);
             }
             if kind.is_some() { return Err(Failure::Usage("still --kind needs --edit SOURCE".into())); }

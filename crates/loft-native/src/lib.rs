@@ -1,7 +1,9 @@
 //! Native execution of the Phase 1.5 picture and motion fixtures.
 mod motion;
+#[cfg(not(target_arch = "wasm32"))]
 mod edit;
 mod shadow;
+#[cfg(not(target_arch = "wasm32"))]
 pub use edit::TraceSession;
 use loft_passes::emit::Aov;
 use std::sync::{Mutex, atomic::{AtomicU32, Ordering}};
@@ -9,7 +11,7 @@ pub mod ray_query;
 pub use motion::{sample_motion, sample_motion_timed};
 
 use loft_passes::program::{abi, Pass, Program};
-use loft_ir::{HostCaps, GpuFeatures, DepthConvention, InstanceId, ModuleId, TableId, KindId, ParamId, ParamMeta, IrTy};
+use loft_ir::{HostCaps, GpuFeatures, DepthConvention, InstanceId, TableId, KindId, ParamId, ParamMeta, IrTy};
 use loft_runner::{Runner, frame::FrameOptions};
 use std::sync::Arc;
 use std::time::Instant;
@@ -64,13 +66,15 @@ pub struct Loaded {
     frame_table: TableId,
     runner: Mutex<Runner>,
     id: InstanceId,
-    modules: Vec<ModuleId>,
+    #[cfg(not(target_arch = "wasm32"))]
+    modules: Vec<loft_ir::ModuleId>,
     kind_tables: Vec<TableId>,
     twin_sources: Vec<naga::Module>,
     luts: Vec<f32>,
     kind_words: Vec<[u32; 4]>,
     params: Mutex<(Vec<f32>, bool)>,
     shadow: Option<(u16, u32, Mutex<shadow::Reuse>)>,
+    #[cfg(not(target_arch = "wasm32"))]
     instance_bounds: wgpu::Buffer,
     color: wgpu::Texture,
     planes: [TableId; 2],
@@ -385,12 +389,15 @@ impl Loaded {
             words
         }).collect();
         let frame_table = plan.bundle.resources.frame.as_ref().ok_or("missing frame declaration")?.main;
+        #[cfg(not(target_arch = "wasm32"))]
         let instance_bounds = runner.export_buffer(id, plan.instances).ok_or("missing bounds table")?.as_ref().clone();
         stats.resources_ms = resource_started.elapsed().as_secs_f64() * 1e3;
         Ok(Self { size, camera: p.camera, sun: p.sun, light_view: plan.shadow.map(|(lo, hi, side)| sun_camera(p.sun, lo, hi, side)),
-            frame_table, runner: Mutex::new(runner), id, modules: plan.modules, kind_tables,
+            frame_table, runner: Mutex::new(runner), id, kind_tables,
+            #[cfg(not(target_arch = "wasm32"))] modules: plan.modules,
             twin_sources: p.kinds.iter().map(|k| p.modules[k.module].naga.clone()).collect(),
-            luts: p.luts.clone(), kind_words, params: Mutex::new((p.params.clone(), false)), instance_bounds, shadow,
+            luts: p.luts.clone(), kind_words, params: Mutex::new((p.params.clone(), false)), shadow,
+            #[cfg(not(target_arch = "wasm32"))] instance_bounds,
             color, planes: [plan.visibility, plan.depth], color_view, clock, stats })
     }
 

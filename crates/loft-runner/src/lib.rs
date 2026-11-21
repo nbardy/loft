@@ -9,7 +9,6 @@ mod interop;
 pub use loft_wgpu::mips;
 use loft_wgpu::allocate;
 mod stepping;
-#[cfg(not(target_arch = "wasm32"))]
 pub use loft_wgpu::readback::{read_buffer, read_texture};
 use loft_std::inputs;
 pub use backend::{ExecutionBackend, WgpuBackend};
