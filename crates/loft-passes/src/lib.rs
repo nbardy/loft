@@ -688,7 +688,7 @@ fn naga_module(name: &str, text: String, src: &Sources, features: loft_ir::GpuFe
     let mut caps = naga::valid::Capabilities::default();
     caps.set(naga::valid::Capabilities::SUBGROUP, features.contains(loft_ir::GpuFeatures::SUBGROUPS));
     caps.set(naga::valid::Capabilities::SHADER_FLOAT32_ATOMIC, features.contains(loft_ir::GpuFeatures::FLOAT32_ATOMICS));
-    let validate = |module| naga::valid::Validator::new(naga::valid::ValidationFlags::all(), caps)
+    let validate = |module: &naga::Module| naga::valid::Validator::new(naga::valid::ValidationFlags::all(), caps)
         .validate(module).map_err(|e| diagnostic(e.spans().find_map(|(s,_)| map.origin(*s)), e.emit_to_string(&map.shader)));
     let info = validate(&module)?;
     let origins = map.expressions(&module, src);
