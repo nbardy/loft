@@ -1,0 +1,26 @@
+[package]
+name = "loft-verify"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Loft's verification and benchmarking instruments."
+
+[dependencies]
+blake3 = "1"
+loft-cli = { path = "../../crates/loft-cli" }
+loft-ir = { path = "../../crates/loft-ir" }
+loft-parse = { path = "../../crates/loft-parse" }
+loft-passes = { path = "../../crates/loft-passes" }
+loft-runner = { path = "../../crates/loft-runner" }
+naga.workspace = true
+png.workspace = true
+pollster.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_json.workspace = true
+sha2.workspace = true
+tempfile = "3"
+wgpu.workspace = true
+
+[lints]
+workspace = true

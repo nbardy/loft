@@ -7,7 +7,7 @@ import tomllib
 from pathlib import Path
 
 members = tomllib.loads(Path("Cargo.toml").read_text())["workspace"]["members"]
-counts = {Path(member).name: 0 for member in members}
+counts = {Path(member).name: 0 for member in members if Path(member).parts[0] == "crates"}
 version = subprocess.check_output(["scc", "--version"], text=True).strip()
 rows = subprocess.check_output(
     ["scc", "--include-ext", "rs", "--exclude-dir", "tests", "--by-file", "--format", "csv", "crates"],

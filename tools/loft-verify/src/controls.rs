@@ -1,4 +1,4 @@
-use crate::{budget::Failure, flag, profile, sources};
+use loft_cli::{budget::{self, Failure}, flag, sources, write_json};
 use loft_cli::native::{self, FrameTiming, Gpu, Loaded};
 use loft_passes::{
     emit::Aov,
@@ -896,7 +896,7 @@ fn execute(
     );
     let write = |name, value: &serde_json::Value| {
         let path = out.join(format!("{prefix}-{name}.json"));
-        profile::write_json(&path.to_string_lossy(), value)
+        write_json(&path.to_string_lossy(), value)
     };
     write(
         "parity",
@@ -1057,7 +1057,7 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
         return Ok(());
     }
     let g = native::gpu().map_err(Failure::Device)?;
-    crate::budget::timestamps(g.timestamps)?;
+    budget::timestamps(g.timestamps)?;
     let witness = fma_witness(&g)?;
     if g.adapter.ends_with("(Metal)") && witness != 0xa880_0000 {
         return Err(Failure::Device(format!(

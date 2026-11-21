@@ -1,4 +1,4 @@
-//! Paired ordered GPU captures of the generated corpus, scored by loft gate.
+//! Paired ordered GPU captures of the generated corpus, scored by loft-verify.
 use std::{error::Error, fs, io::Write, path::Path, process::{Command, Stdio}};
 
 use loft_native::Loaded;
@@ -65,7 +65,7 @@ fn score(
             }}));
         }
     }
-    let mut child = Command::new(scorer).args(["gate", "--score-pictures"])
+    let mut child = Command::new(scorer).arg("score-pictures")
         .stdin(Stdio::piped()).stdout(Stdio::piped()).spawn()?;
     child.stdin.take().unwrap().write_all(&serde_json::to_vec(&requests)?)?;
     let output = child.wait_with_output()?;
@@ -78,7 +78,7 @@ fn score(
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     let [main, candidate, scorer, out] = args.as_slice() else {
-        return Err("usage: corpus_pictures BASELINE_ROOT CANDIDATE_ROOT LOFT EVIDENCE_DIR < scene-paths.txt".into());
+        return Err("usage: corpus_pictures BASELINE_ROOT CANDIDATE_ROOT LOFT_VERIFY EVIDENCE_DIR < scene-paths.txt".into());
     };
     let main = Path::new(main);
     let candidate = Path::new(candidate);

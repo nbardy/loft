@@ -12,65 +12,21 @@
 mod diff;
 #[cfg(not(target_arch = "wasm32"))]
 mod edit_cmd;
-mod gates;
 mod build;
 mod render;
 mod clip;
 mod profile;
-mod controls;
 mod fmt;
 mod fork;
 mod context;
-mod budget;
 mod lint;
 
-use loft_ir::{Diag, Sources};
-use loft_passes::source::Graph;
+use loft_cli::{authored_checks, budget, budget::Failure, flag, overrides, render, sources, write_json};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-pub fn sources(scene: &Path) -> Result<Graph, String> {
-    Graph::file(scene, "")
-}
-
-pub fn render(d: &Diag, src: &Sources) -> String {
-    d.render(src)
-}
-
-/// `--set NAME=VALUE` pairs.
-fn overrides(args: &mut Vec<String>) -> Result<Vec<(String, f64)>, String> {
-    let mut out = vec![];
-    while let Some(i) = args.iter().position(|a| a == "--set") {
-        let kv = args.get(i + 1).cloned().ok_or("--set needs NAME=VALUE")?;
-        args.drain(i..i + 2);
-        let (k, v) = kv.split_once('=').ok_or("--set needs NAME=VALUE")?;
-        out.push((k.to_string(), v.parse::<f64>().map_err(|_| format!("--set {k}: `{v}` is not a number"))?));
-    }
-    Ok(out)
-}
-
-use budget::Failure;
-
-fn flag(args: &mut Vec<String>, name: &str) -> Result<Option<String>, Failure> {
-    let Some(i) = args.iter().position(|a| a == name) else { return Ok(None); };
-    let v = args.get(i + 1).filter(|a| !a.starts_with("--")).cloned()
-        .ok_or_else(|| Failure::Usage(format!("{name} requires a value")))?;
-    args.drain(i..i + 2);
-    Ok(Some(v))
-}
-
-fn command(mut args: Vec<String>) -> Result<(), Failure> {
-    // These commands own all of their flags and never read scene overrides.
-    match args.first().map(String::as_str) {
-        Some("context") => return context::run(&args[1..]),
-        Some("fork") => return fork::run(&args[1..]),
-        Some(_) | None => {}
-    }
-    let set = overrides(&mut args).map_err(Failure::Usage)?;
+fn command(mut args: Vec<String>, set: &[(String, f64)]) -> Result<(), Failure> {
     let cmd = args.first().cloned().unwrap_or_default();
-    if matches!(cmd.as_str(), "render" | "check") && build::trace::requested(&args[1..]) {
-        return build::trace::run(&args[1..], &set, cmd == "render");
-    }
     let time = if matches!(cmd.as_str(), "check" | "still") {
         flag(&mut args, "--t")?.map_or(Ok(0.0), |v| {
             v.parse::<f32>().ok().filter(|x| x.is_finite() && *x >= 0.)
@@ -101,10 +57,10 @@ fn command(mut args: Vec<String>) -> Result<(), Failure> {
                 loft_passes::sexp::read(&text).map_err(Failure::Compile)?
             } else {
                 let src = sources(&path).map_err(Failure::Usage)?;
-                loft_passes::compile(&src, &set).map_err(|d| Failure::Compile(render(&d, &src)))?.0
+                loft_passes::compile(&src, set).map_err(|d| Failure::Compile(render(&d, &src)))?.0
             };
             if let Some(path) = telemetry {
-                profile::write_json(&path, &loft_passes::telemetry::collect(&program))?;
+                write_json(&path, &loft_passes::telemetry::collect(&program))?;
             }
             let text = loft_passes::sexp::write(&program).map_err(Failure::Compile)?;
             if let Some(out) = output { std::fs::write(out, text).map_err(|e| Failure::Usage(e.to_string()))?; }
@@ -114,16 +70,15 @@ fn command(mut args: Vec<String>) -> Result<(), Failure> {
         "build" if let Some(path) = flag(&mut args, "--json")? => {
             exact(&args, 2, 2)?;
             let src = sources(&scene(&args)?).map_err(Failure::Usage)?;
-            let (program, _, _) = loft_passes::compile(&src, &set)
+            let (program, _, _) = loft_passes::compile(&src, set)
                 .map_err(|d| Failure::Compile(render(&d, &src)))?;
-            profile::write_json(&path, &loft_passes::telemetry::collect(&program))
+            write_json(&path, &loft_passes::telemetry::collect(&program))
         }
-        "build" => build::run(&args[1..], &set),
-        "render" => render::run(&args[1..], &set),
+        "build" => build::run(&args[1..], set),
+        "render" => render::run(&args[1..], set),
         "diff" => diff::run(&args[1..]),
-        "clip" => clip::run(&args[1..], &set),
-        "profile" => profile::run(&args[1..], &set),
-        "controls" => controls::run(&args[1..], &set),
+        "clip" => clip::run(&args[1..], set),
+        "profile" => profile::run(&args[1..], set),
         "lint" if set.is_empty() => lint::run(&args[1..]),
         "fmt" => fmt::run(&args[1..]),
         "show" => {
@@ -133,14 +88,14 @@ fn command(mut args: Vec<String>) -> Result<(), Failure> {
             args.retain(|a| a != "--json" && a != "--plan");
             exact(&args, 2, if kind.is_some() { 2 } else { 3 })?;
             let src = sources(&scene(&args)?).map_err(Failure::Usage)?;
-            let (program, _, _) = loft_passes::compile(&src, &set)
+            let (program, _, _) = loft_passes::compile(&src, set)
                 .map_err(|d| Failure::Compile(render(&d, &src)))?;
             profile::show(&program, kind.as_deref().or_else(|| args.get(2).map(String::as_str)), plan, json)
         }
         "check" => {
             exact(&args, 2, 2)?;
             let src = sources(&scene(&args)?).map_err(Failure::Usage)?;
-            let (program, report, _) = loft_passes::compile(&src, &set).map_err(|d| Failure::Compile(render(&d, &src)))?;
+            let (program, report, _) = loft_passes::compile(&src, set).map_err(|d| Failure::Compile(render(&d, &src)))?;
             let mut failed = false;
             for (name, &header) in &program.priors {
                 let held = program.luts[header as usize + 3].to_bits() == 1;
@@ -149,7 +104,7 @@ fn command(mut args: Vec<String>) -> Result<(), Failure> {
             }
             if program.dispatches.iter().any(|m| !m.checks.is_empty()) {
                 let g = loft_cli::native::gpu().map_err(Failure::Device)?;
-                for (name, verdict) in gates::authored_checks(&g, &program, time).map_err(Failure::Device)? {
+                for (name, verdict) in authored_checks(&g, &program, time).map_err(Failure::Device)? {
                     println!("check {name} at t={time}: {verdict}");
                     failed |= !matches!(verdict, loft_ir::Verdict::Held { .. });
                 }
@@ -174,25 +129,11 @@ fn command(mut args: Vec<String>) -> Result<(), Failure> {
                     return Err(Failure::Device("edited stills require native pipeline promotion".into()));
                 }
                 #[cfg(not(target_arch = "wasm32"))]
-                return edit_cmd::edited_still(&scene(&args)?, Path::new(&edit), &kind, &set, time, Path::new(&args[2]), max_frame);
+                return edit_cmd::edited_still(&scene(&args)?, Path::new(&edit), &kind, set, time, Path::new(&args[2]), max_frame);
             }
             if kind.is_some() { return Err(Failure::Usage("still --kind needs --edit SOURCE".into())); }
             exact(&args, 3, 3)?;
-            gates::still(&scene(&args)?, &set, time, Path::new(&args[2]), max_frame)
-        }
-        "gate" if args.get(1).is_some_and(|x| x == "--score-pictures") => {
-            if args.len() != 2 || !set.is_empty() {
-                return Err(Failure::Usage("picture scoring reads capture metadata from stdin".into()));
-            }
-            gates::score_pictures()
-        }
-        "gate" => {
-            let only = flag(&mut args, "--only")?;
-            let approve = args.get(1).is_some_and(|s| s == "--approve");
-            if !set.is_empty() || args.len() != 1 + usize::from(approve) {
-                return Err(Failure::Usage("usage: loft gate [--only NAME,...] [--approve]".into()));
-            }
-            gates::run(approve, only.as_deref())
+            render::source_still(&scene(&args)?, set, time, Path::new(&args[2]), max_frame)
         }
         "load" => {
             let nonce: u32 = flag(&mut args, "--nonce")?.and_then(|s| s.parse().ok()).filter(|&n| n != 0)
@@ -202,7 +143,7 @@ fn command(mut args: Vec<String>) -> Result<(), Failure> {
             let g = loft_cli::native::gpu().map_err(Failure::Device)?;
             let t = std::time::Instant::now();
             let src = sources(&path).map_err(Failure::Usage)?;
-            let (p, _, _) = loft_passes::compile(&src, &set).map_err(|d| Failure::Compile(render(&d, &src)))?;
+            let (p, _, _) = loft_passes::compile(&src, set).map_err(|d| Failure::Compile(render(&d, &src)))?;
             let front = t.elapsed().as_secs_f64();
             let l = loft_cli::native::Loaded::new(&g, &p, (1280, 800), Some(nonce)).map_err(Failure::Device)?;
             l.frame(&g, 0.0);
@@ -215,13 +156,80 @@ fn command(mut args: Vec<String>) -> Result<(), Failure> {
     }
 }
 
+fn exec_sibling(name: &str, subcommand: &str, args: &[String]) -> Result<ExitCode, Failure> {
+    let exe = std::env::current_exe().map_err(|e| Failure::Device(e.to_string()))?;
+    let sibling = exe.with_file_name(format!("{name}{}", std::env::consts::EXE_SUFFIX));
+    let mut child = std::process::Command::new(&sibling);
+    child.arg(subcommand).args(args);
+    let launch_error = |e: std::io::Error| match e.kind() {
+        std::io::ErrorKind::NotFound => Failure::Device(format!("{} is missing. Build it with tools/dev.sh build {name} using the same profile as loft.", sibling.display())),
+        _ => Failure::Device(format!("{}: {e}", sibling.display())),
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        Err(launch_error(child.exec()))
+    }
+    #[cfg(not(unix))]
+    child.status().map(|status| status.code().map_or(ExitCode::FAILURE, |code| ExitCode::from(code as u8))).map_err(launch_error)
+}
+
+fn dispatch(mut args: Vec<String>) -> Result<ExitCode, Failure> {
+    match args.first().map(String::as_str) {
+        Some("context") => return context::run(&args[1..]).map(|()| ExitCode::SUCCESS),
+        Some("fork") => return fork::run(&args[1..]).map(|()| ExitCode::SUCCESS),
+        Some(_) | None => {}
+    }
+    // Route using the same argument view as the original commands, then forward overrides unchanged.
+    let mut parsed = args.clone();
+    let set = overrides(&mut parsed).map_err(Failure::Usage)?;
+    let trace_requested = |tail: &[String]| tail.iter().any(|a| {
+        matches!(a.as_str(), "--trace" | "--record" | "--replay" | "--format")
+    });
+    let subcommand = match parsed.as_slice() {
+        [cmd, ..] if matches!(cmd.as_str(), "controls" | "gate") => cmd.as_str(),
+        [cmd, tail @ ..] if cmd == "check" && trace_requested(tail) => "trace-check",
+        [cmd, tail @ ..] if cmd == "render" && trace_requested(tail) => "trace-render",
+        [cmd, speed] if cmd == "profile" && speed == "--speed-gate" && set.is_empty() =>
+            return exec_sibling("loft-verify", "gate", &parsed[1..]),
+        _ => return command(parsed, &set).map(|()| ExitCode::SUCCESS),
+    };
+    // Overrides can precede the subcommand. Forward them in their original order.
+    let i = args.chunks(2).take_while(|pair| pair[0] == "--set").count() * 2;
+    args.remove(i);
+    exec_sibling("loft-verify", subcommand, &args)
+}
+
 fn main() -> ExitCode {
-    match command(std::env::args().skip(1).collect()) {
-        Ok(()) => ExitCode::SUCCESS,
+    match dispatch(std::env::args().skip(1).collect()) {
+        Ok(code) => code,
         Err(failure) => {
             let (code, message) = failure.exit();
             eprintln!("{message}");
             ExitCode::from(code)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fake_foot_20mm() {
+        let fixture = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/fixtures/pin-drift.loft"
+        );
+        let check = |drift: &str| {
+            dispatch(vec![
+                "check".into(),
+                fixture.into(),
+                "--set".into(),
+                format!("drift_m={drift}"),
+            ])
+        };
+        check("0").unwrap();
+        assert_eq!(check("0.020").unwrap_err().exit().0, 2);
     }
 }

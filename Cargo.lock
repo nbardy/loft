@@ -524,7 +524,6 @@ dependencies = [
  "loft-passes",
  "loft-runner",
  "loft-tier0",
- "naga",
  "png",
  "pollster",
  "serde",
@@ -677,6 +676,26 @@ dependencies = [
  "loft-passes",
  "naga",
  "tempfile",
+]
+
+[[package]]
+name = "loft-verify"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "loft-cli",
+ "loft-ir",
+ "loft-parse",
+ "loft-passes",
+ "loft-runner",
+ "naga",
+ "png",
+ "pollster",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "wgpu",
 ]
 
 [[package]]

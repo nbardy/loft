@@ -41,17 +41,17 @@ plan() {
   while IFS= read -r path; do
     case "$path" in
       '') continue ;;
-      crates/*/Cargo.toml) scope=(--workspace); break ;;
-      crates/*/*)
-        crate=${path#crates/}; crate=${crate%%/*}
-        if [[ ! -f "crates/$crate/Cargo.toml" ]]; then scope=(--workspace); break; fi
+      crates/*/Cargo.toml|tools/loft-verify/Cargo.toml) scope=(--workspace); break ;;
+      crates/*/*|tools/loft-verify/*)
+        crate=${path#*/}; crate=${crate%%/*}
+        if [[ ! -f "crates/$crate/Cargo.toml" && ! -f "tools/$crate/Cargo.toml" ]]; then scope=(--workspace); break; fi
         graph="$(cargo tree --locked --workspace --invert "$crate" --edges normal,build,dev --prefix none --format '{p}')"
         while read -r member _; do
-          [[ ! -f "crates/$member/Cargo.toml" ]] || scope+=("$member")
+          if [[ -f "crates/$member/Cargo.toml" || -f "tools/$member/Cargo.toml" ]]; then scope+=("$member"); fi
         done <<< "$graph" ;;
       *) scope=(--workspace); break ;;
     esac
-  done < <(printf '%s\n' "$changed" | awk -F/ '$1 == "crates" && $3 != "Cargo.toml" { if (!seen[$2]++) print; next } { print }')
+  done < <(printf '%s\n' "$changed" | awk -F/ '($1 == "crates" || ($1 == "tools" && $2 == "loft-verify")) && $3 != "Cargo.toml" { if (!seen[$2]++) print; next } { print }')
   if [[ ${#scope[@]} -gt 0 ]]; then
     local unique
     unique="$(printf '%s\n' "${scope[@]}" | sort -u)"
@@ -66,12 +66,12 @@ wasm() {
 }
 
 parity() {
-  tools/dev.sh build loft-cli --fast --bin loft
-  tools/gpu_lock.sh "$CARGO_TARGET_DIR/lab/loft" controls "$@"
+  tools/dev.sh build loft-verify --fast --bin loft-verify
+  tools/gpu_lock.sh "$CARGO_TARGET_DIR/lab/loft-verify" controls "$@"
 }
 
 full_gate() {
-  local out cli baseline_root failed=0 profile="${LOFT_GATE_PROFILE:-lab}"
+  local out cli verify baseline_root failed=0 profile="${LOFT_GATE_PROFILE:-lab}"
   : "${LOFT_BASELINE_BIN:?full gate requires a prebuilt Loft binary from the baseline checkout}"
   if [[ -z ${LOFT_BASELINE_PICTURES:-} ]]; then
     : "${LOFT_BASELINE_BUILD_LOG:?full gate requires baseline captures or the baseline Cargo artifact log}"
@@ -85,7 +85,8 @@ full_gate() {
   corpus_lint "$CARGO_TARGET_DIR/$profile/loft" || failed=$?
   tools/gpu_lock.sh uv run --no-project python tools/run_native_tests.py "$out/build.jsonl" || failed=$?
   cli="${CARGO_TARGET_DIR:-$root/target}/$profile/loft"
-  tools/quiet_gpu.sh "$cli" gate >"$out/gates.log" 2>&1 || failed=$?
+  verify="$(dirname "$cli")/loft-verify"
+  tools/quiet_gpu.sh "$verify" gate >"$out/gates.log" 2>&1 || failed=$?
   [[ ! -f "$root/out/meta/gate.json" ]] || cp "$root/out/meta/gate.json" "$out/gate.json"
   tools/gpu_lock.sh uv run --script tools/parity/d1d/bead.py full "$(dirname "$cli")/examples/phase5_corpus" "$cli" "$out/bead" || failed=$?
   local baseline_pictures="${LOFT_BASELINE_PICTURES:-$out/main-pictures}"
@@ -93,8 +94,8 @@ full_gate() {
     uv run --script tools/gates/pictures.py capture "$LOFT_BASELINE_BUILD_LOG" "$baseline_root" "$baseline_pictures"
   fi
   uv run --script tools/gates/pictures.py capture "$out/build.jsonl" "$root" "$out/candidate-pictures"
-  uv run --script tools/gates/pictures.py deterministic "$baseline_pictures" "$out/candidate-pictures" --scorer "$cli" >"$out/pictures.json" || failed=$?
-  tools/gpu_lock.sh uv run --script tools/gates/pictures.py stochastic "$LOFT_BASELINE_BIN" "$cli" "$out/path-pictures" >"$out/stochastic.json" || failed=$?
+  uv run --script tools/gates/pictures.py deterministic "$baseline_pictures" "$out/candidate-pictures" --scorer "$verify" >"$out/pictures.json" || failed=$?
+  tools/gpu_lock.sh uv run --script tools/gates/pictures.py stochastic "$LOFT_BASELINE_BIN" "$cli" "$out/path-pictures" --scorer "$verify" >"$out/stochastic.json" || failed=$?
   uv run --no-project python tools/gates/timing.py "$LOFT_BASELINE_BIN" "$cli" "$out/timing" --margin "$LOFT_TIMING_MARGIN" || failed=$?
   uv run --no-project python tools/lines.py >"$out/lines.log" || failed=$?
   return "$failed"

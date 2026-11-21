@@ -1,5 +1,5 @@
 //! Exit statuses shared by the CLI operations and their instruments.
-use loft_cli::native::{Gpu, Loaded};
+use crate::native::{Gpu, Loaded};
 
 #[derive(Debug)]
 pub enum Failure {
@@ -42,7 +42,7 @@ pub fn check(g: &Gpu, loaded: &Loaded, budget: f64) -> Result<(), Failure> {
     measured(ms,budget)
 }
 
-pub(crate) fn measured(ms:f64,budget:f64)->Result<(), Failure>{
+pub fn measured(ms:f64,budget:f64)->Result<(), Failure>{
     if ms.is_finite() && ms <= budget {
         println!("GPU frame {ms:.3} ms <= {budget:.3} ms");
         Ok(())

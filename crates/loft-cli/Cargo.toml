@@ -4,7 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
-description = "The `loft` command: check, show, run, still, and the five gates."
+description = "The `loft` command: compile, inspect, and render Loft scenes."
 
 [[bin]]
 name = "loft"
@@ -13,7 +13,6 @@ path = "src/main.rs"
 [dependencies]
 blake3 = "1"
 loft-parse = { path = "../loft-parse" }
-naga.workspace = true
 loft-ir = { path = "../loft-ir" }
 loft-passes = { path = "../loft-passes" }
 loft-tier0 = { path = "../loft-tier0" }

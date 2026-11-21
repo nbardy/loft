@@ -1,9 +1,9 @@
 use crate::{budget::Failure, flag, sources};
+use loft_cli::{shader_hashes, write_json};
 use loft_cli::native::{self, FrameTiming, Loaded};
 use loft_passes::program::Program;
 use loft_passes::telemetry::{self, ModuleTelemetry};
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 use std::{path::Path, time::Instant};
 
 #[derive(Serialize)]
@@ -25,27 +25,7 @@ struct Profile {
     shader_sha256: Vec<(String, String)>,
 }
 
-pub(crate) fn shader_hashes(program: &Program) -> Result<Vec<(String, String)>, String> {
-    program.modules.iter().map(|module| {
-        let bytes = serde_json::to_vec(&module.naga).map_err(|err| err.to_string())?;
-        Ok((module.name.clone(), format!("{:x}", Sha256::digest(bytes))))
-    }).collect()
-}
-
-pub(crate) fn write_json(path: &str, value: &impl Serialize) -> Result<(), Failure> {
-    let data = serde_json::to_string_pretty(value).map_err(|e| Failure::Usage(e.to_string()))?;
-    if path == "-" {
-        println!("{data}");
-        Ok(())
-    } else {
-        std::fs::write(path, data + "\n").map_err(|e| Failure::Usage(format!("{path}: {e}")))
-    }
-}
-
 pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure> {
-    if args == ["--speed-gate"] && set.is_empty() {
-        return crate::gates::speed_gate();
-    }
     let mut args = args.to_vec();
     let json = flag(&mut args, "--json")?;
     let timestamps = flag(&mut args, "--timestamps")?.unwrap_or_else(|| "immediate".into());

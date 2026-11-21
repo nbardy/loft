@@ -1,9 +1,9 @@
 //! The training rollout contract (06 §17). Only a complete clip is published.
 use crate::{
     budget::{self, Failure},
-    flag, gates, sources,
+    flag, sources,
 };
-use loft_cli::native::{self, Loaded};
+use loft_cli::{check_records, native::{self, Loaded}, write_png};
 use loft_ir::Verdict;
 use loft_passes::{emit::Aov, program::Pass};
 use serde_json::json;
@@ -151,7 +151,7 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
     for i in 0..c.frames {
         let t = (c.start + f64::from(i) / c.fps) as f32;
         let (samples, motion_ms) = native::sample_motion_timed(&g, &p, t).map_err(Failure::Device)?;
-        for (name, verdict) in gates::check_records(&p, &samples) {
+        for (name, verdict) in check_records(&p, &samples) {
             let Verdict::Held { margin } = verdict else {
                 return Err(Failure::Truth(format!("frame {i} {name}: {verdict}")));
             };
@@ -184,7 +184,7 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
         if pixels.len() as u64 != u64::from(w) * u64::from(h) * 4 {
             return Err(Failure::Parity(format!("frame {i} has incomplete RGBA pixels")));
         }
-        gates::write_png(&stage.path().join(frame_name(i)), c.size, &pixels).map_err(Failure::Parity)?;
+        write_png(&stage.path().join(frame_name(i)), c.size, &pixels).map_err(Failure::Parity)?;
     }
     times.sort_by(f64::total_cmp);
     let quantile = |percent| (!times.is_empty()).then(|| times[rank(times.len(), percent)]);

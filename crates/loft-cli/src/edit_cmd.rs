@@ -1,7 +1,5 @@
-use crate::{
-    budget::{self, Failure},
-    gates::{quantile, write_png},
-};
+use crate::budget::{self, Failure};
+use loft_cli::{quantile, write_png};
 use loft_cli::native::{Gpu, Loaded, TraceSession};
 use loft_tier0::TraceSource;
 use std::{

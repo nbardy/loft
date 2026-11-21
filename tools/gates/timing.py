@@ -117,6 +117,12 @@ def collect(args, work):
     hashes = tuple(binary_hash(cli) for cli in binaries)
     roots = tuple(checkout(cli) for cli in binaries)
     manifests = [read_json(root / "engines/gates.json") for root in roots]
+    # Older checkouts provide the gate in loft itself.
+    gate_binaries = tuple(
+        cli.with_name("loft-verify") if (root / "tools/loft-verify/Cargo.toml").is_file() else cli
+        for cli, root in zip(binaries, roots)
+    )
+    gate_hashes = tuple(binary_hash(binary) for binary in gate_binaries)
     baseline, candidate = manifests
     selected = args.only.split(",") if args.only else [
         scene["name"] for scene in candidate["scenes"] if "budget" in scene]
@@ -153,7 +159,7 @@ def collect(args, work):
         # Alternate AB and BA so a systematic first-run effect does not favor one arm.
         for arm_index in (range(2) if index % 2 == 0 else (1, 0)):
             arm = arms[arm_index]
-            cli = binaries[arm_index]
+            cli = gate_binaries[arm_index]
             control_file = arm / f"control-{index}.json"
             report_file = arm / "out/meta/gate.json"
             report_file.unlink(missing_ok=True)
@@ -185,10 +191,13 @@ def collect(args, work):
             report.update(preflight_control_p95_ms=control["control_p95_ms"], raw_gate_exit=raw.returncode)
             (arm / f"pair-{index}.json").write_text(json.dumps(report, allow_nan=False) + "\n")
             report_file.unlink()
-    if hashes != tuple(binary_hash(cli) for cli in binaries):
+    if (hashes != tuple(binary_hash(cli) for cli in binaries)
+            or gate_hashes != tuple(binary_hash(binary) for binary in gate_binaries)):
         raise ValueError("a measured binary changed during collection")
     inputs = {"scenes": selected, "budgets": budgets, "margin": args.margin}
     inputs["binaries"] = [{"path": str(cli), "sha256": sha} for cli, sha in zip(binaries, hashes)]
+    inputs["gate_binaries"] = [{"path": str(binary), "sha256": sha}
+                               for binary, sha in zip(gate_binaries, gate_hashes)]
     inputs["other_gate_failures"] = sorted(failures)
     inputs["size"] = candidate["size"]
     inputs["timing_frames"] = candidate["timing_frames"]
