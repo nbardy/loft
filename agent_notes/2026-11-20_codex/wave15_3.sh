@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Wave v1.5-3 conductor (Stage B — Pre-Training Authoring, Crab-Overfit Migration & Creative Trainer Bridge):
-# - creative_v15_runtime runs IMMEDIATELY in parallel (pure Python in ~/git/creative, zero Rust build contention).
+# - creative_v15_runtime runs IMMEDIATELY in parallel (pure Python in ~/git/creative, zero Rust/GPU contention).
 # - Once wave15_2.finished drops (all Phase-2 Loft workers + iv15_2 merged to main):
 #   - Stage B1 (parallel, staggered 25s): v15_context (AST loft context + loft fork) & v15_motion_mood (Disney springs + mood).
 #   - Stage B2 (solo): iv15_3a merges B1 into main, rebuilds release target/release/loft, cleans up worktrees & branches.
@@ -31,14 +31,14 @@ step_sync() {
   log "finished solo step: $name (exit=$(cat "$DIR/${name}.done" 2>/dev/null || echo '?'))"
 }
 
-# Stage B0 (IMMEDIATE, ZERO WAIT): launch creative_v15_runtime in ~/git/creative (pure Python, no Rust build!)
+# Stage B0 (IMMEDIATE, ZERO WAIT): launch creative_v15_runtime in ~/git/creative (pure Python, no Rust/GPU!)
 creative_pid=""
 if [ ! -s "$DIR/creative_v15_runtime.done" ]; then
   if [ -s "$DIR/creative_v15_runtime.log" ]; then
     log "creative_v15_runtime already in progress"
   else
     log "launching IMMEDIATE Stage-B0 worker: creative_v15_runtime (gpt-6.2-sol/high, Python-only)"
-    LOFT_MAX_STEPS=8 "$RUN" creative_v15_runtime gpt-6.2-sol high "$ROOT" &
+    LOFT_MAX_STEPS=8 LOFT_SKIP_QUIET_GPU=1 "$RUN" creative_v15_runtime gpt-6.2-sol high "$ROOT" &
     creative_pid="$!"
   fi
 fi
