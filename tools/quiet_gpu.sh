@@ -44,6 +44,10 @@ for slot in 0 light; do
 done
 unset KEEL_GATE_HELD
 running_builds() {
+  if [[ $OSTYPE == darwin* ]]; then
+    python3 "$root/gates/darwin_builds.py"
+    return
+  fi
   ps -ax -o stat= -o comm= | awk '$1 !~ /(^Z|E)/ && $NF ~ /(^|\/)(cargo|rustc)$/'
 }
 while :; do
@@ -75,7 +79,7 @@ status=0
 LOFT_QUIET_GPU="$LOFT_GPU_HOLDER" "$@" 8>&- 9>&- || status=$?
 kill "$monitor" 2>/dev/null || true
 wait "$monitor" 2>/dev/null || true
-running_builds >>"$interference"
+running_builds >>"$interference" || echo "final build observation failed" >>"$interference"
 if [[ -s "$interference" ]]; then
   echo 'quiet_gpu: build overlap invalidated the timing window' >&2
   cat "$interference" >&2
