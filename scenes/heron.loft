@@ -14,8 +14,8 @@ const HERON_BLOCK_Y = 0.20m
 const HERON_TOE_R = 0.018m
 const HERON_NECK = 1.55m
 
+# Use the same rounded reciprocal of the score's duration in both twins.
 fn heron_fish(t: s) -> p3@World {
-  # Use the same rounded reciprocal of the score's duration in both twins.
   let u = clamp((t - 0.2s) * (1.0 / (2.0s - 0.2s)), 0.0, 1.0)
   let ease = u * u * u * ((6.0 * u - 15.0) * u + 10.0)
   [-1.25 + 4.0 * ease, 0.13, 3.0]@World
