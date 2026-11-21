@@ -1,0 +1,74 @@
+use stdlib::motion::solve::{step_spring_exact}
+
+# Position and velocity (units/s). The target is held during the tick.
+# Zero Hz gives ballistic drift. Negative time leaves the state unchanged.
+pub fn spring_follow(pos: f, vel: f, target: f, hz: f, zeta: f, dt: s) -> v2 {
+  if dt <= 0s { return [pos, vel] }
+  let offset = step_spring_exact(pos - target, vel, 0.0, max(0.0, hz), max(0.0, zeta), dt)
+  [target + offset.x, offset.y]
+}
+
+# Independent Cartesian springs. Read position from origin and velocity from tangent.
+pub fn spring_follow_v3(pos: v3, vel: v3, target: v3, hz: f, zeta: f, dt: s) -> frame@World {
+  let x = spring_follow(pos.x, vel.x, target.x, hz, zeta, dt)
+  let y = spring_follow(pos.y, vel.y, target.y, hz, zeta, dt)
+  let z = spring_follow(pos.z, vel.z, target.z, hz, zeta, dt)
+  let zero = [0]@World
+  frame_axes([x.x, y.x, z.x]@World, [x.y, y.y, z.y]@World - zero, zero - zero, zero - zero)
+}
+
+# Four angular links in radians, base to tip. The frame packs angles in
+# origin.xyz and tangent.x, rates in normal.xyz and tangent.y.
+# Lag (seconds) predicts an earlier parent pose, taper is the per-link Hz ratio.
+pub fn spring_chain_step(pos: v4, vel: v4, target: rad, hz: f, zeta: f, dt: s,
+                         lag: s, taper: f) -> frame@World {
+  let ratio = clamp(taper, 0.25, 1.0)
+  let delay = max(0s, lag)
+  let goals = [target, pos.x - delay * vel.x, pos.y - delay * vel.y, pos.z - delay * vel.z]
+  let a = spring_follow(pos.x, vel.x, goals.x, hz, zeta, dt)
+  let b = spring_follow(pos.y, vel.y, goals.y, hz * ratio, zeta, dt)
+  let c = spring_follow(pos.z, vel.z, goals.z, hz * ratio * ratio, zeta, dt)
+  let d = spring_follow(pos.w, vel.w, goals.w, hz * ratio * ratio * ratio, zeta, dt)
+  let zero = [0]@World
+  frame_axes([a.x, b.x, c.x]@World, [d.x, d.y, 0.0]@World - zero,
+    [a.y, b.y, c.y]@World - zero, zero - zero)
+}
+
+# vel_y in m/s, impact >= 0, amount >= 0. Clamp axial scale before deriving
+# the transverse scales so volume is conserved even at the limits.
+pub fn squash_stretch(vel_y: f, impact: f, amount: f) -> v3 {
+  let axial = clamp(1.0 + max(0.0, amount) * (0.25 * vel_y - max(0.0, impact)), 0.55, 1.6)
+  # 0.74 is below sqrt(0.55) and exposes a positive divisor to the trace checker.
+  let side = 1.0 / max(0.74, sqrt(axial))
+  [side, axial, side]
+}
+
+# Normalised action progress. Landmarks at 0, .24, .62 and 1 have zero
+# speed and acceleration. anticipate and overshoot are positive amplitudes.
+pub fn anticipation_overshoot(u: f, anticipate: f, overshoot: f) -> f {
+  let wind = max(0.0, anticipate)
+  let peak = 1.0 + max(0.0, overshoot)
+  if u < 0.24 { return -wind * smootherstep(0.0, 0.24, u) }
+  if u < 0.62 { return mix(-wind, peak, smootherstep(0.24, 0.62, u)) }
+  mix(peak, 1.0, smootherstep(0.62, 1.0, u))
+}
+
+# Seconds and Hz. Hold consumes 0..0.75 of each beat. The alternating
+# clock and incommensurate tremor break up the mechanical rhythm.
+pub fn restless_pulse(t: s, rate: f, tremor: f, hold: f) -> f {
+  let clock = t * max(0.0, rate)
+  let uneven = clock + 0.11 * sin(2.3 * clock)
+  let phase = fract(uneven)
+  let pause = clamp(hold, 0.0, 0.75)
+  let dart = smootherstep(pause, pause + 0.08, phase) * (1.0 - smootherstep(pause + 0.08, 1.0, phase))
+  let sign_bias = sin(2.41 * floor(uneven) + 1.0)
+  dart * (sign_bias + tremor * sin(41.0 * clock + 0.7 * sin(7.0 * clock)))
+}
+
+# All times in seconds. A fast attack, absolute hold and longer release.
+pub fn strike_envelope(t: s, start: s, dur: s, hold: s) -> f {
+  let span = max(0.001s, dur)
+  let age = t - start
+  let release = 0.30 * span + max(0s, hold)
+  smootherstep(0.0, 0.30 * span, age) * (1.0 - smootherstep(release, release + 0.70 * span, age))
+}

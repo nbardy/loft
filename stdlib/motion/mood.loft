@@ -1,0 +1,45 @@
+use stdlib::motion::solve::{solve_prior_xpbd}
+
+# Packed value contract for Loft's expression twin. origin = gait,
+# tangent = spring/squash, normal = gaze/prior/claw, binormal.x = crest.
+pub type Mood = frame@World
+
+# Cadence and lift are multipliers, lean is radians, spring frequency is Hz.
+# Accent apertures are 0..1. Composure scales inverse XPBD compliance.
+pub fn mood(cadence: f, stride_lift: f, lean_bias: rad, spring_hz: f, spring_zeta: f,
+            squash_gain: f, gaze_dart: f, composure: f, claw_open: f, crest_flare: f) -> Mood {
+  let zero = [0]@World
+  frame_axes([max(0.05, cadence), max(0.0, stride_lift), lean_bias]@World,
+    [max(0.0, spring_hz), max(0.0, spring_zeta), max(0.0, squash_gain)]@World - zero,
+    [max(0.0, gaze_dart), max(0.0, composure), clamp(claw_open, 0.0, 1.0)]@World - zero,
+    [clamp(crest_flare, 0.0, 1.0), 0.0, 0.0]@World - zero)
+}
+
+pub fn mood_jaunty() -> Mood = mood(1.32, 1.48, 0.06, 3.6, 0.40, 0.86, 0.21, 0.72, 0.65, 0.79)
+pub fn mood_timid() -> Mood = mood(0.69, 0.60, -0.16, 3.0, 0.77, 0.30, 0.34, 0.85, 0.12, 0.23)
+pub fn mood_proud() -> Mood = mood(0.87, 0.92, -0.09, 2.3, 0.92, 0.24, 0.06, 1.20, 0.56, 0.99)
+pub fn mood_alert() -> Mood = mood(1.06, 1.02, 0.05, 5.1, 0.68, 0.46, 0.64, 1.04, 0.48, 0.90)
+pub fn mood_exhausted() -> Mood = mood(0.44, 0.49, 0.21, 1.4, 1.23, 0.68, 0.05, 0.38, 0.24, 0.06)
+pub fn mood_ferocious() -> Mood = mood(1.64, 1.27, 0.26, 4.3, 0.48, 1.05, 0.44, 1.14, 0.98, 0.94)
+
+# Quintic transition weight so animated blends ease into and out of each pose.
+pub fn mix_mood(a: Mood, b: Mood, t: f) -> Mood {
+  let u = smootherstep(0.0, 1.0, t)
+  frame_axes(a.origin + (b.origin - a.origin) * u,
+    a.tangent * (1.0 - u) + b.tangent * u,
+    a.normal * (1.0 - u) + b.normal * u,
+    a.binormal * (1.0 - u) + b.binormal * u)
+}
+
+# Return swing duration, lift and pitch. Apply at lift-off to latch the
+# first two channels for the swing. Pitch is safe to read every tick.
+pub fn mood_stride(affect: Mood, duration: s, lift: m, pitch: rad) -> v3 {
+  [max(0.001s, duration) / max(0.05, affect.origin.x), max(0m, lift) * affect.origin.y,
+   clamp(pitch + affect.origin.z, -0.55rad, 0.55rad)]
+}
+
+# XPBD prior step. Alpha is time-scaled compliance; keep lambda per constraint.
+pub fn mood_prior[S](affect: Mood, pos: p3@S, goal: p3@S, inv_mass: f,
+                     alpha: f, lambda: v3@S) -> v3@S {
+  solve_prior_xpbd(pos, goal, affect.normal.y, max(0.0, inv_mass), max(0.0, alpha), lambda)
+}
