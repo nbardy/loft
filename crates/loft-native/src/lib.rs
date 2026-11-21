@@ -292,7 +292,7 @@ impl Loaded {
     }
 
     fn load(g: &Gpu, p: &Program, size: (u32, u32), nonce: Option<u32>,
-        edit: Option<(usize, &loft_passes::tier0::TraceEdit)>, aov: Aov) -> Result<Self, String> {
+        edit: Option<(usize, &loft_tier0::TraceEdit)>, aov: Aov) -> Result<Self, String> {
         let started = Instant::now();
         let d = &g.device;
         if size.0 == 0 || size.1 == 0 || size.0.max(size.1) > d.limits().max_texture_dimension_2d {

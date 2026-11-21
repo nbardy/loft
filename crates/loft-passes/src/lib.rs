@@ -4,18 +4,20 @@
 //!
 //! `compile` runs them all; `Compiled` keeps what the gates need afterwards (the CPU twin of every query).
 
-pub mod ad;
-mod import_table;
-pub mod check;
 mod cache;
-mod defaults;
-pub mod source;
-mod refine;
+mod motion;
 mod provenance;
-mod infer;
-pub mod emit;
-pub mod eval;
-pub mod lip;
+mod shade_schedule;
+pub use loft_check::{Prog, bsdf, check, kind_space, pose_field, source, world, TWIN_LIGHT};
+pub use loft_eval::{ad, eval, lip};
+pub use loft_gltf as gltf;
+use loft_check::{defaults, geometry_fields, infer, unit};
+use loft_eval::{as_f32, pack, refine, stage0};
+
+pub mod emit {
+    pub use loft_emit::emit::*;
+    pub use crate::motion::motion_module;
+}
 pub use loft_parse as parse;
 
 use emit::shade_tiles::{Lighting, Visibility};
@@ -27,204 +29,6 @@ use loft_ir::{Code, Diag, Res, Sources, Span};
 use source::Graph;
 use std::collections::{BTreeMap, HashSet};
 use std::time::Instant;
-
-/// The program's items by name. Built from parsed modules; cheap to rebuild.
-pub struct Prog<'a> {
-    dimensions: std::collections::HashMap<Span, Dimension>,
-    links: BTreeMap<(u16, &'a str), &'a str>,
-    pub fns: BTreeMap<&'a str, &'a FnDecl>,
-    pub kinds: BTreeMap<&'a str, &'a KindDecl>,
-    /// Declaration order; a kind's index here is its stage-0 table.
-    pub kind_order: Vec<&'a str>,
-    pub consts: BTreeMap<&'a str, &'a ConstDecl>,
-    pub worlds: BTreeMap<&'a str, &'a [Ident]>,
-    pub spaces: HashSet<&'a str>,
-    pub structs: BTreeMap<&'a str, (&'a Ident, &'a [RowField])>,
-    pub aliases: BTreeMap<&'a str, (&'a Ident, &'a TyExpr)>,
-    pub units: HashSet<&'a str>,
-    pub scans: BTreeMap<&'a str, &'a ScanDecl>,
-    pub schedule: Option<&'a ScheduleDecl>,
-    pub kernels: BTreeMap<&'a str, &'a KernelDecl>,
-    pub bakes: BTreeMap<&'a str, &'a BakeDecl>,
-    pub bodies: BTreeMap<&'a str, (&'a Ident, &'a [BodyItem])>,
-    pub states: BTreeMap<&'a str, &'a StateDecl>,
-    pub solvers: BTreeMap<&'a str, &'a SolverDecl>,
-    pub plans: BTreeMap<&'a str, &'a PlanDecl>,
-    pub laws:BTreeMap<&'a str,&'a LawDecl>,
-    pub checks:BTreeMap<&'a str,&'a FnDecl>,
-}
-
-impl<'a> Prog<'a> {
-    pub fn index(modules: &'a [Module]) -> Res<Prog<'a>> {
-        let mut p = Prog {
-            dimensions: modules.iter().flat_map(|m| m.dimensions.iter().copied()).collect(),
-            links: modules.iter().filter_map(|m| m.file.map(|file| (file, &m.links))).flat_map(|(file, links)| {
-                links.iter().map(move |(name, key)| ((file, name.as_str()), key.as_str()))
-            }).collect(),
-            fns: BTreeMap::new(),
-            kinds: BTreeMap::new(),
-            kind_order: vec![],
-            consts: BTreeMap::new(),
-            worlds: BTreeMap::new(),
-            spaces: HashSet::new(),
-            structs: BTreeMap::new(),
-            aliases: BTreeMap::new(),
-            units: HashSet::new(),
-            scans: BTreeMap::new(),
-            kernels: BTreeMap::new(),
-            bakes: BTreeMap::new(),
-            bodies: BTreeMap::new(), states: BTreeMap::new(), solvers: BTreeMap::new(), plans: BTreeMap::new(),
-            schedule: None,laws:BTreeMap::new(),checks:BTreeMap::new(),
-        };
-        let mut seen: BTreeMap<&str, Span> = BTreeMap::new();
-        let mut name = |n: &'a Ident| -> Res<()> {
-            if let Some(prev) = seen.insert(&n.name, n.span) {
-                return Err(Diag::new(Code::E011, n.span, format!("`{}` is declared twice", n.name), "rename one")
-                    .note(prev, "first declared here"));
-            }
-            Ok(())
-        };
-        for item in modules.iter().flat_map(|m| &m.items) {
-            match item {
-                // Spaces are their own namespace: `space Blob;` beside `kind Blob` is the natural spelling.
-                Item::Space(names) => {
-                    for n in names {
-                        if !p.spaces.insert(&n.name) {
-                            return Err(Diag::new(Code::E011, n.span, format!("space `{}` is declared twice", n.name), "declare it once"));
-                        }
-                    }
-                }
-                Item::Use(_) => {}
-                Item::Camera(_) => {}
-                Item::Body(n, items) => {
-                    name(n)?;
-                    p.bodies.insert(&n.name, (n, items));
-                }
-                Item::State(state) => {
-                    name(&state.name)?;
-                    p.states.insert(&state.name.name, state);
-                    p.structs.insert(&state.name.name, (&state.name, &state.fields));
-                }
-                Item::Solver(solver) => {
-                    name(&solver.name)?;
-                    p.solvers.insert(&solver.name.name, solver);
-                }
-                Item::Plan(plan) => {
-                    name(&plan.name)?;
-                    p.plans.insert(&plan.name.name, plan);
-                }
-                Item::World(n, kinds) => {
-                    name(n)?;
-                    let mut seen = HashSet::new();
-                    for kind in kinds {
-                        if !seen.insert(&kind.name) {
-                            return Err(Diag::new(Code::E003, kind.span, "duplicate world kind", "list each world kind once"));
-                        }
-                    }
-                    p.worlds.insert(&n.name, kinds.as_slice());
-                }
-                Item::Bake(b) => {
-                    name(&b.texel.name)?;
-                    p.fns.insert(&b.texel.name.name, &b.texel);
-                    p.bakes.insert(&b.texel.name.name, b);
-                }
-                Item::Retarget { name: n, .. } => name(n)?,
-                Item::Kernel(k) => {
-                    name(&k.f.name)?;
-                    p.kernels.insert(&k.f.name.name, k);
-                }
-                Item::Law(l)=>{name(&l.f.name)?;p.laws.insert(&l.f.name.name,l);}
-                Item::Check(f)=>{name(&f.name)?;p.checks.insert(&f.name.name,f);}
-                Item::Struct(n, fields) => {
-                    name(n)?;
-                    p.structs.insert(&n.name, (n, fields));
-                }
-                Item::TypeAlias(n, ty) => {
-                    name(n)?;
-                    p.aliases.insert(&n.name, (n, ty));
-                }
-                Item::Unit(n) => {
-                    name(n)?;
-                    p.units.insert(&n.name);
-                }
-                Item::Const(c) => {
-                    name(&c.name)?;
-                    p.consts.insert(&c.name.name, c);
-                }
-                Item::Build(f) | Item::Fn(f) => {
-                    name(&f.name)?;
-                    p.fns.insert(&f.name.name, f);
-                }
-                Item::Kind(k) => {
-                    name(&k.name)?;
-                    p.kinds.insert(&k.name.name, k);
-                    p.kind_order.push(&k.name.name);
-                }
-                Item::Scan(sc) => {
-                    name(&sc.name)?;
-                    p.scans.insert(&sc.name.name, sc);
-                }
-                Item::Schedule(s) => {
-                    if let Some(prev) = p.schedule {
-                        return Err(Diag::new(Code::E520, s.name.span, "a program has one schedule", "remove one")
-                            .note(prev.name.span, "first schedule here"));
-                    }
-                    p.schedule = Some(s);
-                }
-            }
-        }
-        for kinds in p.worlds.values() {
-            for kind in *kinds {
-                if !p.kinds.contains_key(kind.name.as_str()) {
-                    return Err(Diag::new(Code::E011, kind.span, format!("unknown world kind {}", kind.name), "declare the kind before using it in the world"));
-                }
-            }
-        }
-        if let Some((n, target)) = p.schedule.and_then(|s| s.radiance.as_ref()) {
-            p.aliases.insert(&n.name, (n, target));
-        }
-        Ok(p)
-    }
-
-    pub(crate) fn linked(&self, owner: Span, name: &str) -> Res<&'a str> {
-        self.links.get(&(owner.file, name)).copied().ok_or_else(|| {
-            Diag::new(Code::E011, owner, format!("missing renderer binding `{name}`"), "declare or import it in the engine module")
-        })
-    }
-
-    fn continuous_params(&self) -> impl Iterator<Item = (&str, &ConstDecl)> {
-        self.consts.iter().filter(|(_, c)| c.comptime && matches!(&c.ty, Some(TyExpr::Name(n)) if n.name == "f32")).map(|(&name, &c)| (name, c))
-    }
-
-    fn param_slot(&self, name: &str) -> Option<usize> {
-        self.continuous_params().position(|(key, _)| key == name).map(|i| 3 + i)
-    }
-
-    fn runtime_constant(&self, name: &str) -> bool {
-        let mut pending = vec![name];
-        let mut known = HashSet::new();
-        while let Some(name) = pending.pop() {
-            if !known.insert(name) { continue; }
-            let mut refs = emit::References::default();
-            refs.expr(&self.consts[name].value, &[]);
-            if matches!(self.consts[name].value.kind, ExprKind::If { .. }) || !refs.calls.is_empty()
-                || refs.names.iter().any(|(n, _)| *n == "time" || self.param_slot(n).is_some())
-            {
-                return true;
-            }
-            pending.extend(refs.names.into_iter().map(|(n, _)| n).filter(|n| self.consts.contains_key(n)));
-        }
-        false
-    }
-
-    pub fn param_word(&self, name: &str) -> Option<usize> {
-        self.param_slot(name).map(|slot| slot * 4)
-    }
-
-    pub fn kind_index(&self, name: &str) -> usize {
-        self.kind_order.iter().position(|k| *k == name).expect("checked kind")
-    }
-}
 
 /// Parse every file, then generate the derivative fns `diff` asked for (one more module at the end).
 pub fn parse_all(src: &Graph) -> Res<Vec<Module>> {
@@ -276,99 +80,6 @@ pub fn parse_all(src: &Graph) -> Res<Vec<Module>> {
     Ok(modules)
 }
 
-/// The space a kind's queries are asked in: the surface's point, or the first point parameter.
-pub fn kind_space(k: &KindDecl) -> &str {
-    let t = match k.queries.first() {
-        Some((QueryKind::Surface, f)) => f.ret.as_ref(),
-        Some((QueryKind::Visible | QueryKind::Trace | QueryKind::Material, f)) => f.params.get(1).and_then(|p| p.ty.as_ref()),
-        None => None,
-    };
-    match t {
-        Some(TyExpr::Geo(_, s)) => &s.name,
-        _ => "World",
-    }
-}
-
-/// The row field that places a kind asked in its own space (`Xform[S -> World]`), checked to be unique.
-pub fn pose_field(k: &KindDecl) -> Option<usize> {
-    let s = if k.name.name == "Mesh" && k.queries.is_empty() { "Local" } else { kind_space(k) };
-    if s == "World" {
-        return None;
-    }
-    k.row.iter().position(|f| matches!(&f.ty, TyExpr::Xform(a, b) if a.name == s && b.name == "World"))
-}
-
-/// The row fields a kind's geometry (trace, visible, surface) reads: the key that groups rows into shapes.
-fn geometry_fields(k: &KindDecl) -> Vec<usize> {
-    fn walk(e: &Expr, out: &mut Vec<String>) {
-        match &e.kind {
-            ExprKind::Unproved { step_scale, body } => {
-                walk(step_scale, out);
-                block(&body.body, out);
-                walk(&body.value, out);
-            }
-            ExprKind::FiniteDiff { args, .. } => args.iter().for_each(|a| walk(&a.value, out)),
-            ExprKind::If { condition, then, otherwise } => {
-                walk(condition, out);
-                for arm in [then, otherwise] { block(&arm.body, out); walk(&arm.value, out); }
-            }
-            ExprKind::Member(b, m) => {
-                if matches!(&b.kind, ExprKind::Name(n) if n == "self") {
-                    out.push(m.name.clone());
-                } else {
-                    walk(b, out);
-                }
-            }
-            ExprKind::Call { args, .. } | ExprKind::Ctor { args, .. } => args.iter().for_each(|a| walk(&a.value, out)),
-            ExprKind::Index(a, b) | ExprKind::Binary(_, a, b) => {
-                walk(a, out);
-                walk(b, out);
-            }
-            ExprKind::Unary(_, a) => walk(a, out),
-            // Passing the entire row to a helper (including through a local)
-            // lets its callee read any column. Include all words in this key.
-            ExprKind::Name(n) if n == "self" => out.push(n.clone()),
-            ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::String(_) | ExprKind::Name(_) => {}
-        }
-    }
-    fn block(b: &Block, out: &mut Vec<String>) {
-        for s in &b.stmts {
-            match s {
-                Stmt::Let { value, .. } | Stmt::Assign { value, .. } => walk(value, out),
-                Stmt::Map { head, stages, .. } => {
-                    walk(head, out);
-                    stages.iter().flat_map(|(_, a)| a).for_each(|a| walk(a, out));
-                }
-                Stmt::Return(v, _) => v.iter().for_each(|e| walk(e, out)),
-                Stmt::If { cond, then, otherwise } => {
-                    walk(cond, out);
-                    block(then, out);
-                    otherwise.iter().for_each(|o| block(o, out));
-                }
-                Stmt::Each{values,body,..}=>{for e in values{walk(e,out)}block(body,out);}
-                Stmt::For { lo, hi, body, .. } => {
-                    walk(lo, out);
-                    walk(hi, out);
-                    block(body, out);
-                }
-                Stmt::Expr(e) => walk(e, out),
-                Stmt::ImportTable { index, .. } => walk(index, out),
-                Stmt::Emit { .. } => {}
-            }
-        }
-    }
-    let mut names = vec![];
-    for (q, f) in &k.queries {
-        if *q != QueryKind::Material {
-            block(&f.body, &mut names);
-        }
-    }
-    // A placement applied by the draw is external to this proof. A query
-    // explicitly reading its placement (for world-space wind, for example)
-    // makes those words ordinary shape dependencies.
-    (0..k.row.len()).filter(|i| names.iter().any(|name| name == "self" || name == &k.row[*i].name.name)).collect()
-}
-
 /// Per drawn kind: rows, distinct shapes (one bound derivation each) and the derived L range.
 pub struct KindReport {
     pub name: String,
@@ -396,7 +107,7 @@ pub struct Compiled {
     pub luts: Vec<eval::Lut>,
     /// Drawn kinds by kind id: (stage-0 table index, name).
     pub drawn: Vec<(usize, String)>,
-    meshes: Vec<gltf::Mesh>,
+    pub meshes: Vec<gltf::Mesh>,
     pub compute: AuthoredCompute,
 }
 
@@ -423,14 +134,8 @@ pub struct CpuQuery {
     pub surf_n: [f32; 3],
 }
 
-/// The light direction the twin evaluates materials under (world, normalised in use).
-pub const TWIN_LIGHT: [f32; 3] = [0.3, 0.8, 0.5];
-
-pub(crate) fn unit(v: [f32; 3]) -> [f32; 3] {
-    let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
-    v.map(|x| x / l)
-}
-fn rot(r: &eval::Rigid, v: [f32; 3]) -> [f32; 3] {
+/// Rotate a vector by the rotational component of a rigid transform.
+pub fn rot(r: &eval::Rigid, v: [f32; 3]) -> [f32; 3] {
     [0, 1, 2].map(|i| r.r[i][0] * v[0] + r.r[i][1] * v[1] + r.r[i][2] * v[2])
 }
 fn v3<S: eval::Scalar>(x: [f32; 3]) -> Val<S> {
@@ -572,14 +277,6 @@ impl Compiled {
     }
 }
 
-/// Explicit finite differences inside an opted-out geometry expression.
-fn finite_diff_parameter(f: &FnDecl, parameter: &Ident) -> usize {
-    if parameter.name.is_empty() { return 0; }
-    f.params.iter().position(|p| p.name.name == parameter.name).expect("checked parameter")
-}
-
-const FINITE_DIFF_STEP: f32 = 1e-3;
-
 fn arg<'e>(pd: &'e PassDecl, name: &str) -> Res<&'e Expr> {
     pd.args.iter().find(|a| a.name.as_ref().is_some_and(|n| n.name == name)).map(|a| &a.value).ok_or_else(|| {
         Diag::new(Code::E520, pd.verb.span, format!("`{}` needs `{name}: ...`", pd.verb.name), format!("add `{name}: ...`"))
@@ -607,7 +304,7 @@ fn kind_args<'p>(p: &Prog<'p>, pd: &PassDecl) -> Res<Vec<&'p str>> {
     Ok(kinds)
 }
 
-fn fn_name_arg<'e>(p: &Prog, pd: &'e PassDecl, name: &str) -> Res<&'e str> {
+pub fn fn_name_arg<'e>(p: &Prog, pd: &'e PassDecl, name: &str) -> Res<&'e str> {
     let e = arg(pd, name)?;
     match &e.kind {
         ExprKind::Name(n) if p.fns.contains_key(n.as_str()) => Ok(n),
@@ -630,21 +327,6 @@ fn require_schedule_fn(
     Ok(())
 }
 
-/// Stage-0 value of a schedule argument.
-fn stage0(p: &Prog, types: &mut Vec<Ty>, e: &Expr, overrides: &[(String, f64)]) -> Res<RowVal> {
-    check::check_stage0_expr(p, types, e)?;
-    let mut ev: Eval<f32> = Eval::new(p, types, vec![], overrides);
-    eval::concrete(&ev.expr(e)?, e.span)
-}
-
-fn as_f32(v: RowVal, span: Span) -> Res<f32> {
-    match v {
-        RowVal::F(x) => Ok(x),
-        RowVal::U(u) => Ok(u as f32),
-        RowVal::I(i) => Ok(i as f32),
-        other @ RowVal::V(_) | other @ RowVal::B(_) | other @ RowVal::X(_) => Err(Diag::new(Code::E003, span, format!("expected a number, found {other:?}"), "pass an f32")),
-    }
-}
 fn as_v3(v: RowVal, span: Span) -> Res<[f32; 3]> {
     match v {
         RowVal::V(c) if c.len() == 3 => Ok([c[0], c[1], c[2]]),
@@ -652,25 +334,10 @@ fn as_v3(v: RowVal, span: Span) -> Res<[f32; 3]> {
     }
 }
 
-/// Words of one row in the GPU table: the author's fields in order (Xform: rotation column-major, then t).
-fn pack(row: &[RowVal], out: &mut Vec<f32>) {
-    for v in row {
-        match v {
-            RowVal::F(x) => out.push(*x),
-            RowVal::V(c) => out.extend(c),
-            RowVal::U(u) => out.push(f32::from_bits(*u)),
-            RowVal::I(i) => out.push(f32::from_bits(*i as u32)),
-            RowVal::B(b) => out.push(if *b { 1.0 } else { 0.0 }),
-            RowVal::X(x) => {
-                for j in 0..3 {
-                    for i in 0..3 {
-                        out.push(x.r[i][j]);
-                    }
-                }
-                out.extend(x.t);
-            }
-        }
-    }
+pub use cache::certificate;
+
+pub fn strip_shader_provenance(text: String) -> String {
+    provenance::Map::new(text).shader
 }
 
 fn naga_module(name: &str, text: String, src: &Sources, features: loft_ir::GpuFeatures) -> Res<ShaderModule> {
@@ -914,7 +581,7 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
                 passes.push(Pass::Classify);
             }
             "shade_tiles" => {
-                light = Some(emit::shade_tiles::lighting(&p, &mut types, pd, overrides)?);
+                light = Some(shade_schedule::lighting(&p, &mut types, pd, overrides)?);
                 let s = arg(pd, "sun")?;
                 sun = Some(as_v3(stage0(&p, &mut types, s, overrides)?, s.span)?);
                 passes.push(Pass::Shade(vec![]));
@@ -1408,7 +1075,8 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
                 index
             };
             let span = p.fns[callback].name.span;
-            let wgsl = emit::shade_tiles::world_source(&p, &types, &kinds, &texts, &instances, world, &mut lut_words, span)?;
+            loft_eval::bvh::pack_world(&kinds, &instances, world, &mut lut_words)?;
+            let wgsl = emit::shade_tiles::world_source(&p, &types, &kinds, &texts, span)?;
             for (_, source) in &mut texts {
                 *source = emit::shade_tiles::module(&p, &types, &lut_refs, source, &wgsl, callback, sky, visibility, primary_world);
             }
@@ -1453,7 +1121,8 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
                 return Err(Diag::new(Code::E502, table.span, "the scheduled solver state table has multiple owners",
                     "use one scheduled solver per dedicated state table"));
             }
-            let (entry, dispatch) = emit::solver::lower(&p, &mut types, texts.len(), solver, overrides)?;
+            let (entry, dispatch) = emit::solver::lower(&p, &mut types, texts.len(), solver,
+                |p, types, e| loft_eval::solver::initial_words(p, types, e, overrides))?;
             texts.push((format!("{name}.advance"), entry));
             dispatches.push(dispatch);
         }
@@ -1472,7 +1141,7 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
     let mut bakes = Vec::new();
     for item in modules.iter().flat_map(|m| &m.items) {
         if let Item::Bake(decl) = item {
-            let (bake, wgsl) = emit::bake_module(&p, &types, decl, texts.len())?;
+            let (bake, wgsl) = bake_tex::bake_module(&p, &types, decl, texts.len())?;
             texts.push((bake.name.clone(), wgsl));
             bakes.push(bake);
         }
@@ -1524,15 +1193,11 @@ fn clone_name(e: &Expr) -> Expr {
 
 pub mod program;
 pub mod sexp;
-pub mod tier0;
 pub mod telemetry;
 pub mod fusion;
-pub mod world;
 pub mod bvh;
-pub mod bsdf;
 pub mod quant;
 pub mod bake_tex;
-pub mod gltf;
 #[path = "bundle.rs"]
 mod renderer_bundle;
 pub mod bundle {
@@ -1611,7 +1276,7 @@ impl AuthoredCompute {
             RowVal::I(n) if n > 0 => n as u32,
             _ => return Err(Diag::new(Code::E602, expr.span, "invalid table capacity", "use a positive integer row count")),
         };
-        let layout = emit::table_layout(p, row, decl.verb.span)?;
+        let layout = table_layout(p, row, decl.verb.span)?;
         let stride_bytes = layout.stride_bytes;
         if capacity == 0 || stride_bytes.checked_mul(capacity).is_none() {
             return Err(Diag::new(Code::E602, expr.span, "table byte size is out of range", "use a smaller positive capacity"));
@@ -1739,7 +1404,7 @@ impl AuthoredCompute {
                         table_args.push((name, row.name.as_str(), binding, self.bundle.tables[id.0 as usize].capacity));
                         bindings.push(binding);
                     } else {
-                        arguments.push(check::kernel_argument(p, types, kernel, value, ty, overrides)?);
+                        arguments.push(loft_eval::kernel_argument(p, types, kernel, value, ty, overrides)?);
                     }
                 }
                 if !named.is_empty() { return Err(bad()); }
@@ -1790,6 +1455,20 @@ impl AuthoredCompute {
         self.truth.insert(decl.label.name.clone(), loft_ir::Verdict::Unknown { reason: "NoCpuTwin".into() });
         Ok(())
     }
+}
+
+fn table_layout(p: &Prog<'_>, row: &str, span: Span) -> Res<loft_ir::StructLayout> {
+    let wgsl = emit::table_layout_source(p, row);
+    let ir = naga::front::wgsl::parse_str(&wgsl).map_err(|e| Diag::new(Code::E003, span,
+        format!("invalid storage row {row}: {}", e.message()), "declare a WGSL host-shareable row"))?;
+    let global = ir.global_variables.iter().find(|(_, g)| g.name.as_deref() == Some("loft_table"))
+        .expect("emitted table declaration").1;
+    let naga::TypeInner::Array { base, stride, .. } = ir.types[global.ty].inner else { unreachable!("emitted array") };
+    naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::default())
+        .validate(&ir).map_err(|e| Diag::new(Code::E003, span,
+            format!("invalid storage row {row}: {}", e.emit_to_string(&wgsl)), "declare a WGSL host-shareable row"))?;
+    let naga::TypeInner::Struct { members, .. } = &ir.types[base].inner else { unreachable!("emitted struct") };
+    Ok(loft_ir::StructLayout { stride_bytes: stride, offsets: members.iter().map(|m| m.offset).collect() })
 }
 
 fn link_raw_compute(

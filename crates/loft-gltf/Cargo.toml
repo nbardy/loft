@@ -1,0 +1,18 @@
+[package]
+name = "loft-gltf"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+loft-abi = { path = "../loft-abi" }
+loft-check = { path = "../loft-check" }
+loft-eval = { path = "../loft-eval" }
+loft-ir = { path = "../loft-ir" }
+loft-parse = { path = "../loft-parse" }
+serde = { version = "1", features = ["derive"] }
+serde_json.workspace = true
+
+[lints]
+workspace = true

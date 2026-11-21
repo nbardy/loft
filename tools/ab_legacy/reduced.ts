@@ -3,7 +3,7 @@
 const { find, lighting, raster, resolve, screenDraw, shadePixel, world, write } =
   await import(process.env.LOFT_AB_LEGACY + "/src/render/index.ts");
 
-const energyFile = new URL("../../crates/loft-passes/src/bsdf/energy.in", import.meta.url);
+const energyFile = new URL("../../crates/loft-check/src/bsdf/energy.in", import.meta.url);
 const energy = (await Bun.file(energyFile).text()).match(/\d+/g)!.map(Number);
 const row = Math.floor(Math.fround(0.55) * 32);
 if (energy.length !== 33 * 34) throw new Error("unexpected native GGX table dimensions");

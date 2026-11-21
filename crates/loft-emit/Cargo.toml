@@ -1,0 +1,17 @@
+[package]
+name = "loft-emit"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+blake3 = "1"
+loft-abi = { path = "../loft-abi" }
+loft-check = { path = "../loft-check" }
+loft-ir = { path = "../loft-ir" }
+loft-parse = { path = "../loft-parse" }
+serde = { version = "1", features = ["derive"] }
+
+[lints]
+workspace = true

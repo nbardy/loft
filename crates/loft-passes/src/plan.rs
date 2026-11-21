@@ -1,9 +1,11 @@
 //! Stage 0 lowering for plan declarations. Offsets are word indices in LutTables.
 use loft_abi::{VerdictReason, VerdictRecord, VerdictTag};
 use loft_plan::{COLLOCATION, Plan};
-#[path = "plan_source.rs"]
-mod source;
-pub(crate) use source::{check_source, closed, lower_source};
+pub(crate) fn lower_source(
+    p: &crate::Prog<'_>, decl: &loft_parse::ast::PlanDecl, words: &mut Vec<f32>,
+) -> loft_ir::Res<Option<PriorRef>> {
+    loft_check::plan_source::lower_source(p, decl, words, lower)
+}
 
 const HEADER_WORDS: usize = 8;
 const SAMPLE_WORDS: usize = 12;
@@ -256,5 +258,58 @@ fn fixture() {{ result[0] = sample_prior(0u, 0.3125).pos_compliance; }}
         )
         .validate(&module)
         .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod source_tests {
+    use super::*;
+    use crate::Prog;
+    use loft_abi::VerdictTag;
+
+    #[test]
+    fn authored_hop_binds_assets_and_retains_the_crouch() {
+        let text = r"
+plan HeronHop(
+  keys: PriorSpline = PriorSpline([0, 0.85m, 0]@World, [0, 0.26m, 0]@World,
+                                  [0, 1.62m, 0]@World, [0, 0.85m, 0]@World),
+  rail: Box = Box([2.0m, 0, 0]@World, [0.1m, 0.3m, 0.1m]),
+  block: SurfaceRow = SurfaceRow(0.85m, [0, 0, 0]),
+  dur: s = 2.4s
+) -> PriorTable {
+  knots: 24, duration: dur
+  minimize effort(1.0) + jerk(0.25) + near(keys, pos: 1e-8)
+  subject_to {
+    pos_at(0s, [0, 0.85m, 0]@World, tol: 0m)
+    vel_at(0s, [0, 0, 0]@World, tol: 0m)
+    acc_at(0s, [0, 0, 0]@World)
+    arrive_at(0.770112s, [0, 0.85m, 0]@World, [0, 3.876, 0]@World)
+    acc_at(0.7701119999999999s, [0, 0, 0]@World)
+    clear(rail, margin: 0.08m)
+    land_on(block, at: dur)
+    pitch_in(-12deg, 12deg)
+    flight_ballistic(from: 0.770112s, to: 1.550112s)
+  }
+}";
+        let module = loft_parse::parse(0, text, &mut 0).unwrap();
+        let p = Prog::index(std::slice::from_ref(&module)).unwrap();
+        let mut words = Vec::new();
+        let prior = lower_source(&p, p.plans["HeronHop"], &mut words)
+            .unwrap()
+            .unwrap();
+        assert_eq!(prior.verdict.tag, VerdictTag::Held as u32);
+        let min = (0..=1200)
+            .map(|i| {
+                super::sample_prior_cpu(
+                    &words,
+                    prior.header_word,
+                    0.770112 * i as f32 / 1200.0,
+                )
+                .unwrap()[0][1]
+            })
+            .fold(f32::INFINITY, f32::min);
+        let depth = 0.85 - min;
+        println!("authored HeronHop crouch {depth:.9} m");
+        assert!((depth - 0.59).abs() < 0.005);
     }
 }

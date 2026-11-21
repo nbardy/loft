@@ -95,7 +95,7 @@ fn frame(r: &mut Runner, id: InstanceId, view: &wgpu::TextureView) {
 fn time_edit_and_compare_native_promotion() {
     use std::time::{Duration, Instant};
     let (mut r, view) = device_with_features(wgpu::Features::TIMESTAMP_QUERY);
-    let code = concat!(include_str!("../../../loft-passes/src/tier0/compute.wgsl"), include_str!("../../../loft-passes/src/tier0.wgsl"));
+    let code = concat!(include_str!("../../../loft-tier0/src/tier0/compute.wgsl"), include_str!("../../../loft-tier0/src/tier0.wgsl"));
     let display = "vec4f(clamp(0.5 - 2.0 * DIST.x, 0.0, 1.0))";
     let vm = code.replace(
         "= loft_tier0(gid.x);",

@@ -10,6 +10,7 @@ description = "Native scene host and profiling on the Loft runner."
 blake3 = "1"
 loft-ir = { path = "../loft-ir" }
 loft-passes = { path = "../loft-passes" }
+loft-tier0 = { path = "../loft-tier0" }
 loft-runner = { path = "../loft-runner" }
 naga.workspace = true
 pollster.workspace = true

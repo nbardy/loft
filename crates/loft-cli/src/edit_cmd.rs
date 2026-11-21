@@ -3,7 +3,7 @@ use crate::{
     gates::{quantile, write_png},
 };
 use loft_cli::native::{Gpu, Loaded, TraceSession};
-use loft_passes::tier0::TraceSource;
+use loft_tier0::TraceSource;
 use std::{
     path::Path,
     time::{Duration, Instant},
@@ -204,7 +204,7 @@ fn pixel_count(a: &[u8], b: &[u8], limit: u8) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use loft_passes::tier0::EditClass;
+    use loft_tier0::EditClass;
 
     #[test]
     fn d1_edit_checks_the_source_dependency_slice_and_residual() {

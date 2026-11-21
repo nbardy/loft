@@ -2,18 +2,7 @@
 //! removed before Naga sees its input, so source edits cannot change module text.
 use loft_ir::{Sources, Span};
 use crate::program::ExpressionOrigin;
-const OPEN: char = '\u{fdd0}';
-const END: char = '\u{fdd1}';
-
-pub(crate) fn expression(span: Span, body: String) -> String {
-    format!(
-        "{OPEN}{}:{}:{}{END}{body}{OPEN}{END}",
-        span.file, span.lo, span.hi
-    )
-}
-pub(crate) fn raw(span: Span, body: &str) -> String {
-    expression(span, body.replace(OPEN, &format!("{OPEN}!{END}")))
-}
+use loft_emit::provenance::{END, OPEN};
 pub(crate) struct Map {
     pub shader: String,
     changes: Vec<(usize, Option<Span>)>,

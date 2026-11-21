@@ -1,5 +1,9 @@
 //! Lower consecutive row-local operations to a single fixed-step compute entry.
-use super::*;
+use crate::{Prog, program::abi};
+use loft_emit::emit::{Emitter, References, fn_symbol, reachable, wgsl_name};
+use loft_ir::{Code, Diag, Res, Span};
+use loft_parse::ast::*;
+use std::fmt::Write;
 use crate::program::{Dispatch, DispatchBinding, DispatchResource, DispatchRows};
 use loft_abi::AdvanceArgs;
 
