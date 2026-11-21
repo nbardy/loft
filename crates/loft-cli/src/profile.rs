@@ -16,6 +16,11 @@ struct Profile {
     #[serde(skip_serializing_if = "Option::is_none")]
     device_loads_ms: Option<Vec<f64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pipeline_ms: Option<Vec<(String, f64)>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cpu_compile_ms: Option<f64>,
+    nonce: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pipelines: Option<usize>,
     passes: Vec<String>,
     gpu_frame_ms: Vec<f64>,
@@ -77,6 +82,7 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
         ));
     };
     let path = Path::new(scene);
+    let compile_started = Instant::now();
     let program = if path.extension().is_some_and(|ext| ext == "sexp") {
         if !set.is_empty() {
             return Err(Failure::Usage("--set requires an authored scene".into()));
@@ -87,15 +93,20 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
         let src = sources(path).map_err(Failure::Usage)?;
         loft_passes::compile(&src, set).map_err(|d| Failure::Compile(d.render(&src)))?.0
     };
+    let cpu_compile_ms = compile_started.elapsed().as_secs_f64() * 1e3;
     let gpu = native::gpu().map_err(Failure::Device)?;
     crate::budget::timestamps(gpu.timestamps)?;
     // Keep the device and driver compilation key fixed across the warm loads.
     let mut device_loads_ms = Vec::new();
     let mut loaded = None;
+    let mut pipeline_ms = None;
     for _ in 0..loads.unwrap_or(1) {
         let started = Instant::now();
         loaded = Some(Loaded::new(&gpu, &program, size, nonce).map_err(Failure::Device)?);
         device_loads_ms.push(started.elapsed().as_secs_f64() * 1e3);
+        if pipeline_ms.is_none() {
+            pipeline_ms = Some(loaded.as_ref().expect("newly loaded program").stats.pipeline_ms.clone());
+        }
     }
     let loaded = loaded.expect("at least one device load");
     let times = (0..warmup).map(|i| time.unwrap_or(i as f32 / 30.0))
@@ -112,6 +123,9 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
             control_p95_ms,
             hardware_ray_query: loaded.stats.hardware_ray_query,
             device_loads_ms: loads.map(|_| device_loads_ms.clone()),
+            pipeline_ms: loads.and(pipeline_ms.clone()),
+            cpu_compile_ms: loads.map(|_| cpu_compile_ms),
+            nonce,
             pipelines: loads.map(|_| loaded.stats.compute_pipelines + loaded.stats.render_pipelines),
             passes: program.passes.iter().map(|p| format!("{p:?}")).collect(),
             gpu_frame_ms: frame_stamps.iter().map(|f| f.gpu_ms).collect(),
@@ -183,6 +197,25 @@ pub(crate) fn show(
         })
     }).collect::<Vec<_>>()
     };
+    let material_tables = || program.materials.iter().map(|table| serde_json::json!({
+        "name": table.name, "arena_kind_id": table.arena().0, "rows": table.row_count(),
+        "stride_bytes": table.stride_words * 4, "columns_words": table.columns,
+    })).collect::<Vec<_>>();
+    let shade = || program.passes.iter().filter_map(|pass| match pass {
+        loft_passes::program::Pass::Shade(kinds) => Some(kinds.as_slice()),
+        _ => None,
+    }).flatten().map(|&id| {
+        let kind = &program.kinds[id as usize];
+        let module = &program.modules[kind.module];
+        let families = ["StandardPbr", "LayeredCoat", "StylizedInk", "DielectricGlass", "Emissive", "Foliage"]
+            .into_iter().filter(|family| module.naga.functions.iter().any(|(_, f)| {
+                f.name.as_deref().is_some_and(|name| name.strip_prefix("loft_user_") == Some(*family))
+            })).collect::<Vec<_>>();
+        serde_json::json!({
+            "draw_kind": kind.name, "kind_id": id, "module": module.name,
+            "families": families, "specialization": "per draw kind",
+        })
+    }).collect::<Vec<_>>();
     if json {
         let modules = modules
             .iter()
@@ -197,6 +230,12 @@ pub(crate) fn show(
             output["passes"] =
                 serde_json::to_value(&program.passes).map_err(|e| Failure::Usage(e.to_string()))?;
             output["fixed_steps"] = serde_json::json!(steps());
+            output["material_tables"] = serde_json::json!(material_tables());
+            output["shade"] = serde_json::json!(shade());
+            output["draw_kind_budget"] = serde_json::json!({
+                "count": program.kinds.len(), "limit": loft_passes::program::abi::MAX_KINDS,
+            });
+            output["module_count"] = serde_json::json!(program.modules.len());
             output["priors"] = serde_json::json!(priors().map(|(name, header, samples, verdict)| {
                 serde_json::json!({ "name": name, "header_word": header, "samples": samples, "verdict": verdict })
             }).collect::<Vec<_>>());
@@ -205,6 +244,14 @@ pub(crate) fn show(
     }
     if plan {
         println!("// Passes {:?}", program.passes);
+        println!("// Draw kinds {}/{}; modules {}", program.kinds.len(),
+            loft_passes::program::abi::MAX_KINDS, program.modules.len());
+        for table in material_tables() {
+            println!("// Material table {table}");
+        }
+        for pass in shade() {
+            println!("// Shade {pass}");
+        }
         for step in steps() {
             println!("// Fixed step {step}");
         }

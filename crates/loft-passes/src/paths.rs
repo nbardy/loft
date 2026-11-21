@@ -110,6 +110,7 @@ fn loft_authored_volume(world: u32, ray: loft_type_Ray, limit: f32, steps: u32, 
     let mut intersect_cases = Vec::new();
     let mut optics_cases = Vec::new();
     let mut sampled_bakes = BTreeSet::new();
+    let mut material_buffers = BTreeSet::new();
     for (i, (kind, (_, whole))) in kinds.iter().zip(queries).enumerate() {
         let decl = p.kinds[kind.name.as_str()];
         if matches!(kind.draw, Draw::Surface { .. } | Draw::Mesh { .. }) {
@@ -117,7 +118,12 @@ fn loft_authored_volume(world: u32, ray: loft_type_Ray, limit: f32, steps: u32, 
                 "supply a trace kind or use the raster schedule for surfaces and mesh assets"));
         }
         let (head, _) = whole.split_once(QUERIES_END).expect("kind query section");
-        let body = row_arena_source(&head[prefix_len..]);
+        let head = &head[prefix_len..];
+        // Each query keeps its own namespaced staged type. The material buffer
+        // is global to both the direct and World copies of those queries.
+        material_buffers.extend(head.lines().filter(|line| line.contains(crate::materials::BUFFER_PREFIX)
+            && line.starts_with("@group(1)")).map(str::to_owned));
+        let body = row_arena_source(head);
         let body = body.lines().filter(|line| {
             if let Some((_, global)) = line.split_once(" var ") && line.starts_with("@group(3)") {
                 if let Some((name, _)) = global.strip_prefix(crate::bake_tex::SAMPLE_TEXTURE_PREFIX).and_then(|s| s.split_once(':')) {
@@ -173,6 +179,9 @@ fn loft_authored_volume(world: u32, ray: loft_type_Ray, limit: f32, steps: u32, 
     }}"));
             }
         }
+    }
+    for declaration in material_buffers {
+        let _ = writeln!(em.out, "{declaration}");
     }
     let shared = crate::bake_tex::sampled_declarations(p, &sampled_bakes, false);
     for line in shared.lines().filter(|line| line.starts_with("@group(3)")) {

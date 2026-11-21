@@ -86,6 +86,12 @@ pub(super) fn device_with_features(features: wgpu::Features) -> (Runner, wgpu::T
     let adapter = pollster::block_on(api.request_adapter(&Default::default())).unwrap();
     let (d, q) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         required_features: features,
+        required_limits: wgpu::Limits {
+            max_binding_array_elements_per_shader_stage: if features.contains(wgpu::Features::TEXTURE_BINDING_ARRAY) {
+                adapter.limits().max_binding_array_elements_per_shader_stage.min(16)
+            } else { 0 },
+            ..Default::default()
+        },
         ..Default::default()
     }))
     .unwrap();
@@ -389,4 +395,128 @@ fn host_edits_parameters_and_external_handles_at_frame_boundary() {
     assert_ne!(after[2], rebound[2]);
     assert_eq!(unrelated, r.instances[0].compute.bound_groups(PassId(2)));
     assert_eq!(r.instances[0].compute.pipeline(PassId(1)).unwrap(), &pipe);
+}
+
+#[test]
+fn material_texture_ids_cross_pages_and_mip_edges() {
+    const FEATURES: wgpu::Features = wgpu::Features::TEXTURE_BINDING_ARRAY.union(
+        wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING);
+    const HEAD: &str = r"
+struct Material { indices: vec4u, base: vec4f, coat: vec4f, grain: vec4f }
+@group(1) @binding(0) var<storage, read> materials: array<Material>;
+@group(2) @binding(5) var<storage, read_write> rows: array<u32>;
+";
+    const PORTABLE: &str = r"
+@group(3) @binding(0) var page0: texture_2d_array<u32>;
+@group(3) @binding(1) var page1: texture_2d_array<u32>;
+fn texel(id: u32, xy: vec2i, lod: i32) -> u32 {
+    if id < 4u { return textureLoad(page0, xy, i32(id), lod).x; }
+    return textureLoad(page1, xy, i32(id - 4u), lod).x;
+}";
+    const NATIVE: &str = r"
+@group(3) @binding(0) var pages: binding_array<texture_2d<u32>, 8>;
+fn texel(id: u32, xy: vec2i, lod: i32) -> u32 { return textureLoad(pages[id], xy, lod).x; }
+";
+    const ENTRY: &str = r"
+@compute @workgroup_size(16) fn update(@builtin(global_invocation_id) invocation: vec3u) {
+    let i = invocation.x;
+    let id = materials[i / 2u].indices.x;
+    if id >= 8u {
+        rows[i] = 0xffffffffu;
+    } else {
+        let lod = i32(i % 2u);
+        let last = vec2i(3i >> u32(lod));
+        rows[i] = texel(id, last, lod);
+    }
+}";
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+    let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
+    let native = adapter.features().contains(FEATURES)
+        && adapter.limits().max_binding_array_elements_per_shader_stage >= 8;
+    let mut observed = Vec::new();
+    for bindless in [false, true].into_iter().filter(|&bindless| !bindless || native) {
+        let (mut r, view) = device_with_features(if bindless { FEATURES } else { wgpu::Features::empty() });
+        let layout = |layers| wgpu::TextureDescriptor {
+            label: None, size: wgpu::Extent3d { width: 4, height: 4, depth_or_array_layers: layers },
+            mip_level_count: 2, sample_count: 1, dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R32Uint,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST, view_formats: &[],
+        };
+        let upload = |first, layers| {
+            let desc = layout(layers);
+            let tex = Arc::new(r.device.create_texture(&desc));
+            for level in 0..2 {
+                let side = 4 >> level;
+                let values = (first..first + layers).flat_map(|id| {
+                    (0..side * side).flat_map(move |xy| u32::to_le_bytes(100 * id + 20 * level + xy))
+                }).collect::<Vec<_>>();
+                r.queue.write_texture(
+                    wgpu::TexelCopyTextureInfo { mip_level: level, ..tex.as_image_copy() },
+                    &values, wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(side * 4), rows_per_image: Some(side) },
+                    wgpu::Extent3d { width: side, height: side, depth_or_array_layers: layers },
+                );
+            }
+            tex
+        };
+        let textures = if bindless { (0..8).map(|i| upload(i, 1)).collect() } else { vec![upload(0, 4), upload(4, 4)] };
+        let tex0 = TableId(22);
+        let tex1 = TableId(23);
+        let data = TableId(24);
+        let mut b = bundle();
+        b.state = None;
+        b.tables[0].capacity = 16;
+        b.tables.push(TableDecl {
+            id: data, format: ElemFormat::U32, stride_bytes: 64, capacity: 8,
+            lifetime: TableLifetime::DynamicArena { max_rows: 8 }, initial: Box::new([]),
+        });
+        b.rows.insert(KindId(10), data);
+        let source = if bindless {
+            ["enable wgpu_binding_array;\n", HEAD, NATIVE, ENTRY].concat()
+        } else {
+            [HEAD, PORTABLE, ENTRY].concat()
+        };
+        b.modules[0].bytes = source.into_bytes().into_boxed_slice();
+        b.modules[0].hash = *blake3::hash(&b.modules[0].bytes).as_bytes();
+        let mut bindings = b.passes[0].bindings.to_vec();
+        bindings.push(PassBinding { group: 1, slot: 0, resource: data, access: BindAccess::ReadStorage });
+        for (slot, resource) in [tex0, tex1].into_iter().take(if bindless { 1 } else { 2 }).enumerate() {
+            b.tables.push(TableDecl { id: resource, lifetime: TableLifetime::External, format: ElemFormat::U32,
+                stride_bytes: 4, capacity: 0, initial: Box::new([]) });
+            bindings.push(PassBinding { group: 3, slot: slot as u32, resource,
+                access: if bindless { BindAccess::BindlessTexArray } else { BindAccess::SampledTex } });
+        }
+        b.passes[0].bindings = bindings.into_boxed_slice();
+        let PassRun::Compute { dispatch, .. } = &mut b.passes[0].run else { unreachable!() };
+        *dispatch = DispatchExtent::Fixed([1, 1, 1]);
+        let id = r.load_bundle_bytes(&crate::bundle::encode(&b)).unwrap();
+        if bindless {
+            r.bind_external_textures(id, tex0, &textures).unwrap();
+            assert_eq!(r.bind_external_textures(id, tex0, &textures[..7]), Err(RunnerError::AbiMismatch));
+        } else {
+            for (table, texture) in [tex0, tex1].into_iter().zip(textures) {
+                r.declare_external_texture(id, table, &layout(4)).unwrap();
+                r.bind_external_texture(id, table, texture).unwrap();
+            }
+        }
+        let mut samples = Vec::new();
+        for ids in [[0, 1, 2, 3, 4, 5, 6, 7], [7, 3, 6, 0, 4, 2, 5, 8]] {
+            let records = ids.into_iter().flat_map(|id: u32| {
+                let mut row = [0; 64];
+                row[..4].copy_from_slice(&id.to_le_bytes());
+                row
+            }).collect::<Vec<_>>();
+            r.upsert_rows(id, KindId(10), 0, &records).unwrap();
+            let values = step(&mut r, id, &view);
+            let expected = ids.into_iter().flat_map(|id| {
+                if id == 8 { [u32::MAX; 2] } else { [100 * id + 15, 100 * id + 23] }
+            }).collect::<Vec<_>>();
+            assert_eq!(values, expected);
+            samples.extend(values);
+        }
+        observed.push(samples);
+    }
+    if native {
+        assert_eq!(observed[0], observed[1]);
+    }
+    println!("two portable texture pages, sorted and shuffled IDs, mip edges, bindless supported: {native}");
 }

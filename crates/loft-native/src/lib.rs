@@ -66,6 +66,7 @@ pub struct Loaded {
     id: InstanceId,
     modules: Vec<ModuleId>,
     kind_tables: Vec<TableId>,
+    materials: Vec<(loft_passes::materials::MaterialTable, TableId)>,
     twin_sources: Vec<naga::Module>,
     luts: Vec<f32>,
     kind_words: Vec<[u32; 4]>,
@@ -378,6 +379,7 @@ impl Loaded {
         });
         let clock = g.timestamps.then(|| Clock::new(g, 2 * (p.passes.len() as u32 + u32::from(photons))));
         let kind_tables = (0..p.kinds.len()).map(|i| plan.bundle.rows[&KindId(i as u32)]).collect();
+        let materials = p.materials.iter().map(|table| (table.clone(), plan.bundle.rows[&table.arena()])).collect();
         let mut base = 0;
         let kind_words = p.kinds.iter().enumerate().map(|(i, k)| {
             let words = [i as u32, base, k.n_rows, 0];
@@ -388,7 +390,7 @@ impl Loaded {
         let instance_bounds = runner.export_buffer(id, plan.instances).ok_or("missing bounds table")?.as_ref().clone();
         stats.resources_ms = resource_started.elapsed().as_secs_f64() * 1e3;
         Ok(Self { size, camera: p.camera, sun: p.sun, light_view: plan.shadow.map(|(lo, hi, side)| sun_camera(p.sun, lo, hi, side)),
-            frame_table, runner: Mutex::new(runner), id, modules: plan.modules, kind_tables,
+            frame_table, runner: Mutex::new(runner), id, modules: plan.modules, kind_tables, materials,
             twin_sources: p.kinds.iter().map(|k| p.modules[k.module].naga.clone()).collect(),
             luts: p.luts.clone(), kind_words, params: Mutex::new((p.params.clone(), false)), instance_bounds, shadow,
             color, planes: [plan.visibility, plan.depth], color_view, clock, stats })
@@ -403,6 +405,18 @@ impl Loaded {
             params.1 = true;
         }
         Ok(())
+    }
+
+    /// Upload packed material records in place. Draw rows and pipelines keep their identities.
+    pub fn upsert_materials(&self, table: &str, start: u32, bytes: &[u8]) -> Result<(), String> {
+        let (layout, _) = self.materials.iter().find(|(layout, _)| layout.name == table)
+            .ok_or_else(|| format!("unknown material table {table}"))?;
+        self.runner.lock().unwrap().upsert_rows(self.id, layout.arena(), start, bytes).map_err(runner_error)
+    }
+
+    pub fn pipeline_count(&self) -> Result<usize, String> {
+        let creates = self.runner.lock().unwrap().pipeline_creates(self.id).map_err(runner_error)?;
+        Ok(creates.compute.len() + creates.render.len())
     }
 
     pub fn baked_texture(&self, name: &str) -> Option<wgpu::Texture> {
@@ -552,12 +566,18 @@ impl Loaded {
     pub fn twin(&self, g: &Gpu, k: usize, samples: &[f32]) -> Result<Vec<f32>, String> {
         if samples.is_empty() { return Ok(vec![]); }
         let src_rows = self.rows(k)?;
+        let materials = self.materials.iter().map(|(table, _)| table.clone()).collect::<Vec<_>>();
         let (bundle, rows, output) = loft_passes::bundle::lower_twin(self.twin_sources[k].clone(), &self.luts,
             self.kind_words[k], src_rows.size(), param_words(&self.params.lock().unwrap().0),
-            frame_bytes(self.camera, self.sun, self.size, 0., false, self.light_view), samples)?;
+            frame_bytes(self.camera, self.sun, self.size, 0., false, self.light_view), samples, &materials)?;
         let mut runner = attach_runner(g);
         let id = runner.load_bundle(&bundle).map_err(runner_error)?;
         runner.bind_external_buffer(id, rows, src_rows).map_err(runner_error)?;
+        for (table, source) in &self.materials {
+            let buffer = self.runner.lock().unwrap().export_buffer(self.id, *source)
+                .ok_or("missing material buffer")?;
+            runner.bind_external_buffer(id, bundle.rows[&table.arena()], buffer).map_err(runner_error)?;
+        }
         let mut enc = g.device.create_command_encoder(&Default::default());
         runner.encode_frame(id, &mut enc, &self.color_view, 0., Default::default()).map_err(runner_error)?;
         g.queue.submit([enc.finish()]);

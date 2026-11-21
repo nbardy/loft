@@ -193,6 +193,8 @@ pub struct Program {
     pub path: Option<crate::emit::paths::PathTrace>,
     #[serde(default)]
     pub dispatches: Vec<Dispatch>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub materials: Vec<crate::materials::MaterialTable>,
     pub modules: Vec<ShaderModule>,
     pub kinds: Vec<KindTable>,
     pub instances: Vec<Instance>,

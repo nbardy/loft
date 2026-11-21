@@ -165,6 +165,7 @@ pub struct Emitter<'p, 'a> {
     in_prepared_light: bool,
     baked_column: Option<u32>,
     sampled_bakes: BTreeSet<String>,
+    material_tables: BTreeSet<String>,
     kernel_atomics: BTreeMap<(String, String), AtomicScalar>,
     kernel_sampling: bool,
 }
@@ -343,11 +344,20 @@ fn reachable_impl<'a>(p: &Prog<'a>, roots: &[&'a FnDecl], extra: &[&str], proof_
 impl<'p, 'a> Emitter<'p, 'a> {
     pub fn new(p: &'p Prog<'a>, types: &'p [Ty]) -> Self {
         Emitter { p, types, out: String::new(), maps: vec![], luts: &[],motion:false,motion_tier:Determinism::Det,priors:None,locals:vec![],temp:0,
-            prepare_light: false, in_prepared_light: false, baked_column: None, sampled_bakes: BTreeSet::new(), kernel_atomics: BTreeMap::new(), kernel_sampling: false }
+            prepare_light: false, in_prepared_light: false, baked_column: None, sampled_bakes: BTreeSet::new(), material_tables: BTreeSet::new(), kernel_atomics: BTreeMap::new(), kernel_sampling: false }
     }
 
     fn ty_of(&self, e: &Expr) -> &Ty {
         &self.types[e.id as usize]
+    }
+
+    fn value_type(&self, e: &Expr) -> String {
+        match self.ty_of(e) {
+            Ty::Row(kind) if self.material_tables.contains(kind) => {
+                format!("LoftMaterialRow{}", self.p.kind_index(kind))
+            }
+            ty => wty(ty),
+        }
     }
 
     fn resolve(&self, t: &TyExpr) -> Ty {
@@ -405,7 +415,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
         match s {
             Stmt::Let { mutable, name, value, .. } => {
                 let v = self.expr(value);
-                let t = wty(self.ty_of(value));
+                let t = self.value_type(value);
                 let kw = if *mutable { "var" } else { "let" };
                 self.line(d, &format!("{kw} {}: {t} = {v};", wgsl_name(&name.name)));
                 self.locals.push(name.name.clone());
@@ -533,7 +543,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 }
                 let name = format!("loft_tmp_{}", self.temp);
                 self.temp += 1;
-                let ty = wty(self.ty_of(e));
+                let ty = self.value_type(e);
                 self.line(1, &format!("var {name}: {ty};"));
                 self.line(1, "{");
                 let (locals, maps) = (self.locals.len(), self.maps.len());
@@ -562,7 +572,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 let name = format!("loft_tmp_{}", self.temp);
                 self.temp += 1;
                 let condition = self.expr(condition);
-                let ty = wty(self.ty_of(e));
+                let ty = self.value_type(e);
                 self.line(1, &format!("var {name}: {ty};"));
                 self.line(1, &format!("if {condition} {{"));
                 for (i, arm) in [then, otherwise].into_iter().enumerate() {
@@ -628,7 +638,17 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 }
                 self.member(base, m)
             }
-            ExprKind::Index(a, i) => format!("{}[{}]", self.expr(a), self.expr(i)),
+            ExprKind::Index(a, i) => {
+                if let ExprKind::Name(name) = &a.kind
+                    && self.material_tables.contains(name)
+                    && !self.locals.contains(name)
+                    && matches!(self.ty_of(a), Ty::Table(_))
+                {
+                    format!("loft_load_material{}({})", self.p.kind_index(name), self.expr(i))
+                } else {
+                    format!("{}[{}]", self.expr(a), self.expr(i))
+                }
+            }
             ExprKind::Unary(op, x) => {
                 let o = match op {
                     UnOp::Neg => "-",
@@ -796,14 +816,13 @@ impl<'p, 'a> Emitter<'p, 'a> {
         self.out.push_str(&crate::bake_tex::sampled_declarations(self.p, &self.sampled_bakes, self.kernel_sampling));
     }
 
-    fn row_header(&mut self, k: &KindDecl) {
-        // The row: the author's fields, then the compiler's hidden columns.
+    fn packed_row(&self, k: &KindDecl, storage: &str) -> (Vec<String>, Vec<String>, u32) {
         let mut fields = vec![];
         let mut loads = vec![];
         let mut o = 0u32;
         for rf in &k.row {
             let t = self.resolve(&rf.ty);
-            let w = |i: u32| format!("rows[o + {}u]", o + i);
+            let w = |i: u32| format!("{storage}[o + {}u]", o + i);
             let load = match &t {
                 Ty::F32 => w(0),
                 Ty::U32 | Ty::Id(_) => format!("bitcast<u32>({})", w(0)),
@@ -824,6 +843,35 @@ impl<'p, 'a> Emitter<'p, 'a> {
             loads.push(load);
             o += t.words().expect("checked storable");
         }
+        (fields, loads, o)
+    }
+
+    fn material_header(&mut self, query: &FnDecl) {
+        use crate::materials::{BUFFER_PREFIX, binding, stride};
+
+        self.material_tables.extend(crate::materials::used_by(self.p, query).into_iter().map(str::to_owned));
+        for name in &self.material_tables {
+            let index = self.p.kind_index(name);
+            let kind = self.p.kinds[name.as_str()];
+            let (group, slot) = binding(index as u32);
+            let storage = format!("{BUFFER_PREFIX}{index}");
+            let (fields, loads, words) = self.packed_row(kind, &storage);
+            let _ = writeln!(self.out, r"struct LoftMaterialRow{index} {{
+{}
+}}
+@group({group}) @binding({slot}) var<storage, read> {storage}: array<f32>;
+fn loft_load_material{index}(id: u32) -> LoftMaterialRow{index} {{
+  let o = id * {}u;
+  return LoftMaterialRow{index}({});
+}}",
+                fields.join("
+"), stride(words), loads.join(", "));
+        }
+    }
+
+    fn row_header(&mut self, k: &KindDecl) {
+        // The row: the author's fields, then the compiler's hidden columns.
+        let (mut fields, mut loads, o) = self.packed_row(k, "rows");
         let stride = o + abi::HIDDEN_WORDS;
         fields.push("  loft_lo: vec3<f32>,\n  loft_hi: vec3<f32>,\n  loft_lip: f32,".into());
         loads.push(format!("vec3<f32>(rows[o + {o}u], rows[o + {}u], rows[o + {}u])", o + 1, o + 2));
@@ -988,6 +1036,9 @@ pub(super) fn emit_kind_module(
     extra.extend(mesh_lobe);
     let (lib, consts) = reachable(p, &roots, &extra);
     em.row_header(k);
+    if let Some(material) = k.query(QueryKind::Material) {
+        em.material_header(material);
+    }
     // The Bsdf struct: one field per bound lobe argument, in the material's lobe order.
     let layout = if mesh { Layout::default() } else { material_layout(p, k)? };
     let mut lobes: Vec<_> = layout.lobes.iter().map(|(name, args)| (*name, args.len())).collect();

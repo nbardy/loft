@@ -630,6 +630,18 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 }
             }
             ExprKind::Index(base, i) => {
+                if let (ExprKind::Name(name), Ty::Table(table)) = (&base.kind, self.ty(base))
+                    && name == table && self.lookup(name).is_none()
+                {
+                    let kind = self.p.kind_index(name);
+                    let Val::U(row) = self.expr(i)? else {
+                        return Err(err(i.span, "material id is unknown", "select an emitted material row"));
+                    };
+                    if self.tables.get(kind).and_then(|rows| rows.get(row as usize)).is_none() {
+                        return Err(err(i.span, "material id is outside its table", "select an emitted material row"));
+                    }
+                    return Ok(Val::Row(kind, row as usize));
+                }
                 let (b, i) = (self.expr(base)?, self.expr(i)?);
                 let i = match i {
                     Val::U(x) => x as usize,

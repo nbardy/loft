@@ -23,6 +23,7 @@ pub fn read(text: &str) -> Result<Program, String> {
             naga::back::wgsl::write_string(&m.naga, &info, naga::back::wgsl::WriterFlags::empty())
                 .map_err(|e| format!("cannot emit {}: {e}", m.name))?;
     }
+    crate::materials::validate(&p.materials)?;
     for k in &p.kinds {
         if k.module >= p.modules.len()
             || u64::from(k.stride) * u64::from(k.n_rows) != k.rows.len() as u64
@@ -115,6 +116,7 @@ mod tests {
             bakes: vec![],
             path: None,
             dispatches: vec![],
+            materials: vec![],
             modules: vec![ShaderModule {
                 origins: vec![],
                 name: "example".into(),

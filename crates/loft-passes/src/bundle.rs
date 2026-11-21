@@ -211,6 +211,23 @@ impl Builder {
         )
     }
 
+    fn material_tables(&mut self, materials: &[crate::materials::MaterialTable], external: bool) -> Result<()> {
+        crate::materials::validate(materials)?;
+        for data in materials {
+            let n = data.row_count();
+            let (initial, lifetime) = if external {
+                (vec![], TableLifetime::External)
+            } else {
+                (data.rows.iter().flat_map(|x| x.to_le_bytes()).collect(),
+                    TableLifetime::DynamicArena { max_rows: n })
+            };
+            let table = self.table(data.stride_words * 4, n, initial, lifetime);
+            self.bundle.rows.insert(data.arena(), table);
+            self.baked_inputs.insert(data.binding(), table);
+        }
+        Ok(())
+    }
+
     fn transient(&mut self, stride: u32, capacity: u32) -> TableId {
         self.table(stride, capacity, vec![], TableLifetime::Transient)
     }
@@ -423,6 +440,7 @@ pub fn lower_program(
     let mut b = Builder::new(program, opts.nonce, arg_words,
         opts.edit.map(|(i, source, _)| (program.kinds[i].module, source)))?;
     b.bundle.params = params;
+    b.material_tables(&program.materials, false)?;
     if opts.hardware_ray_query && !opts.overdraw { b.native_world(program)?; }
     let mut execution = Execution::default();
     let mut kinds = Vec::new();
@@ -801,7 +819,7 @@ fn path_words(program: &Program, path: &crate::emit::paths::PathTrace) -> Result
 
 /// Declare the compiler's GPU twin with the same fixed frame ABI and pass-derived groups.
 pub fn lower_twin(ir: naga::Module, lut: &[f32], kind: [u32; 4], rows_bytes: u64,
-    params: Vec<ParamMeta>, frame: Vec<u8>, samples: &[f32]) -> Result<(Bundle, TableId, TableId)> {
+    params: Vec<ParamMeta>, frame: Vec<u8>, samples: &[f32], materials: &[crate::materials::MaterialTable]) -> Result<(Bundle, TableId, TableId)> {
     if !samples.len().is_multiple_of(8) || samples.is_empty() { return Err("invalid twin sample extent".into()); }
     let count = u32::try_from(samples.len() / 8).map_err(|_| "too many twin samples")?;
     let (code, bindings) = shader(ir, "twin", None, 4)?;
@@ -809,6 +827,7 @@ pub fn lower_twin(ir: naga::Module, lut: &[f32], kind: [u32; 4], rows_bytes: u64
     b.bundle.modules.push(ModuleBlob { id: ModuleId(0), target: ShaderTarget::Wgsl,
         hash: *blake3::hash(code.as_bytes()).as_bytes(), bytes: code.into_bytes().into_boxed_slice() });
     b.bundle.params = params;
+    b.material_tables(materials, true)?;
     let rows = b.table(4, u32::try_from(rows_bytes / 4).map_err(|_| "twin row extent")?, vec![], TableLifetime::External);
     let luts = b.words(1, lut.iter().map(|v| v.to_bits()));
     let kp = b.words(4, kind);

@@ -1,0 +1,91 @@
+use stdlib::materials::families::{StandardPbr, LayeredCoat, StylizedInk, DielectricGlass, Emissive, Foliage}
+use stdlib::geometry::analytic::{ray_sphere}
+use stdlib::sdf::solid::{sphere}
+
+camera Main {
+  eye: [0, 0, 8.9]@World
+  at: [0, 0, 0]@World
+  fov: 26deg
+}
+
+param materials: u = 1000
+param families: u = 4
+param shuffle: u = 0
+
+kind MaterialTable @World (base: rgb, rough: f, metal: f, grain: f, seed: f) {}
+
+kind PbrBall @Local (pose: xf@Local>World, material_id: MaterialTable) {
+  visible(ro, rd) = ray_sphere(ro, rd, [0, 0, 0]@Local, 0.068m)
+  trace(p) = sphere(p - [0, 0, 0]@Local, 0.068m)
+  material(p, n) {
+    let m = MaterialTable[material_id]
+    StandardPbr(m.base, m.rough, m.metal, coords(p), m.grain, m.seed)
+  }
+}
+
+kind InkBall @Local (pose: xf@Local>World, material_id: MaterialTable) {
+  visible(ro, rd) = ray_sphere(ro, rd, [0, 0, 0]@Local, 0.068m)
+  trace(p) = sphere(p - [0, 0, 0]@Local, 0.068m)
+  material(p, n) {
+    let m = MaterialTable[material_id]
+    StylizedInk(m.base, coords(p), m.grain, m.seed)
+  }
+}
+
+kind CoatBall @Local (pose: xf@Local>World, material_id: MaterialTable) {
+  visible(ro, rd) = ray_sphere(ro, rd, [0, 0, 0]@Local, 0.068m)
+  trace(p) = sphere(p - [0, 0, 0]@Local, 0.068m)
+  material(p, n) {
+    let m = MaterialTable[material_id]
+    LayeredCoat(m.base, m.rough, m.metal, 0.6, 0.2, coords(p), m.grain, m.seed)
+  }
+}
+
+kind LeafBall @Local (pose: xf@Local>World, material_id: MaterialTable) {
+  visible(ro, rd) = ray_sphere(ro, rd, [0, 0, 0]@Local, 0.068m)
+  trace(p) = sphere(p - [0, 0, 0]@Local, 0.068m)
+  material(p, n) {
+    let m = MaterialTable[material_id]
+    Foliage(m.base, m.rough, 0.16, coords(p), m.grain, m.seed)
+  }
+}
+
+kind GlassBall @Local (pose: xf@Local>World, material_id: MaterialTable) {
+  visible(ro, rd) = ray_sphere(ro, rd, [0, 0, 0]@Local, 0.068m)
+  trace(p) = sphere(p - [0, 0, 0]@Local, 0.068m)
+  material(p, n) {
+    let m = MaterialTable[material_id]
+    DielectricGlass(m.base, m.rough, 1.5, 0.006, rgb(0.2))
+  }
+}
+
+kind GlowBall @Local (pose: xf@Local>World, material_id: MaterialTable) {
+  visible(ro, rd) = ray_sphere(ro, rd, [0, 0, 0]@Local, 0.068m)
+  trace(p) = sphere(p - [0, 0, 0]@Local, 0.068m)
+  material(p, n) {
+    let m = MaterialTable[material_id]
+    Emissive(m.base, 1.4)
+  }
+}
+
+build {
+  build for i in 0..materials {
+    let phase = 0.011 * f32(i)
+    let base = rgb(0.48 + 0.34 * sin(phase), 0.34 + 0.22 * cos(phase * 1.7), 0.46 + 0.3 * sin(phase * 2.3))
+    let material = emit MaterialTable(base: base, rough: 0.18 + 0.5 * f32(i % 73) / 73.0,
+      metal: f32(i % 11) / 18.0, grain: 40.0 + 0.03 * f32(i), seed: 0.17 * f32(i))
+    let repeats = 1000 / materials
+    build for j in 0..repeats {
+      let rank = i * repeats + j
+      let slot = select(rank, (rank * 317 + 79) % 1000, shuffle != 0)
+      let p = [(f32(slot % 40) - 19.5) * 0.15, (f32(slot / 40) - 12.0) * 0.15, 0]@World
+      let family = slot * families / 1000
+      if family == 0 { emit PbrBall(pose: place(p), material_id: material) }
+      if family == 1 { emit InkBall(pose: place(p), material_id: material) }
+      if family == 2 { emit CoatBall(pose: place(p), material_id: material) }
+      if family == 3 { emit LeafBall(pose: place(p), material_id: material) }
+      if family == 4 { emit GlassBall(pose: place(p), material_id: material) }
+      if family == 5 { emit GlowBall(pose: place(p), material_id: material) }
+    }
+  }
+}

@@ -1,0 +1,35 @@
+use stdlib::materials::bsdf::{ggx, coat, lambert, emit_lobe, sss, sheen}
+use stdlib::engines::spectral_caustic::{spectral_dielectric}
+
+# The seed, scale and color belong to the row. The closed lobe layout belongs
+# to the family and is shared by every material id in the drawable kind.
+fn pigment(base: rgb, p: v3, grain: f, seed: f) -> rgb {
+  let ridge = sin(grain * p.x + seed + 0.35 * sin(grain * p.y - seed))
+  base * (0.86 + 0.14 * ridge)
+}
+
+pub fn StandardPbr(base: rgb, rough: f, metal: f, p: v3, grain: f, seed: f) -> Bsdf {
+  ggx(pigment(base, p, grain, seed), rough, metal)
+}
+
+pub fn LayeredCoat(base: rgb, rough: f, metal: f, weight: f, coat_rough: f, p: v3, grain: f, seed: f) -> Bsdf {
+  ggx(pigment(base, p, grain, seed), rough, metal) + coat(weight, coat_rough)
+}
+
+pub fn StylizedInk(base: rgb, p: v3, grain: f, seed: f) -> Bsdf {
+  let band = smoothstep(-0.05, 0.05, sin(grain * (p.x + 0.3 * p.y) + seed))
+  lambert(base * (0.55 + 0.45 * band))
+}
+
+pub fn DielectricGlass(tint: rgb, rough: f, ior: f, dispersion: f, absorption: rgb) -> Bsdf {
+  ggx(tint, rough, 0.0) + spectral_dielectric(ior, dispersion, absorption)
+}
+
+pub fn Emissive(color: rgb, intensity: f) -> Bsdf {
+  emit_lobe(color * intensity)
+}
+
+pub fn Foliage(base: rgb, rough: f, scatter: f, p: v3, grain: f, seed: f) -> Bsdf {
+  let green = pigment(base, p, grain, seed)
+  sss(green, scatter) + sheen(green * 0.2, rough)
+}

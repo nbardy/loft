@@ -172,6 +172,24 @@ pub fn check_texture<'a>(
     Ok(())
 }
 
+pub fn texture_array<'a>(
+    bindings: impl Iterator<Item = &'a wgpu::BindGroupLayoutEntry>,
+    textures: &[std::sync::Arc<wgpu::Texture>],
+    features: wgpu::Features,
+) -> Result<Vec<wgpu::TextureView>> {
+    let mut bindings = bindings.peekable();
+    let ty = bindings.peek().ok_or(RunnerError::UnknownResource)?.ty;
+    if textures.is_empty() || !matches!(ty, BindingType::Texture { .. })
+        || bindings.any(|entry| entry.ty != ty || entry.count.map(|n| n.get() as usize) != Some(textures.len()))
+    {
+        return Err(RunnerError::AbiMismatch);
+    }
+    textures.iter().map(|texture| {
+        TextureShape::from_handle(texture).check(ty, texture.usage(), features)?;
+        texture_view(texture, ty)
+    }).collect()
+}
+
 pub fn buffer_usage(bundle: &Bundle, table: TableId) -> B {
     let mut usage = B::COPY_SRC | B::COPY_DST;
     for pass in crate::bundle::passes(&bundle.passes) {
@@ -285,6 +303,7 @@ pub enum TextureBinding {
     Vacant,
     Declared(TextureContract),
     Bound(TextureContract, Arc<wgpu::Texture>),
+    Array(Vec<wgpu::TextureView>),
 }
 impl Resource {
     pub fn texture(&self) -> Option<Arc<wgpu::Texture>> {
@@ -336,6 +355,7 @@ impl Resource {
 pub enum Bound<'a> {
     Buffer(wgpu::BufferBinding<'a>),
     Image(wgpu::TextureView),
+    Images(Vec<&'a wgpu::TextureView>),
     Sampler(&'a wgpu::Sampler),
     AccelerationStructure(&'a wgpu::Tlas),
 }
@@ -344,6 +364,7 @@ impl<'a> Bound<'a> {
         match self {
             Self::Buffer(binding) => wgpu::BindingResource::Buffer(binding.clone()),
             Self::Image(view) => wgpu::BindingResource::TextureView(view),
+            Self::Images(views) => wgpu::BindingResource::TextureViewArray(views),
             Self::Sampler(sampler) => wgpu::BindingResource::Sampler(sampler),
             Self::AccelerationStructure(tlas) => tlas.as_binding(),
         }
@@ -352,8 +373,13 @@ impl<'a> Bound<'a> {
 
 impl Resource {
     pub fn bind(&self, slot: &wgpu::BindGroupLayoutEntry, logical: u64, range: (u64, u64), limits: &wgpu::Limits) -> Result<Bound<'_>> {
-        if slot.count.is_some() {
-            return Err(RunnerError::Unsupported("texture binding arrays"));
+        if let Some(count) = slot.count {
+            return match self {
+                Self::Texture(TextureBinding::Array(views)) if views.len() == count.get() as usize => {
+                    Ok(Bound::Images(views.iter().collect()))
+                }
+                _ => Err(RunnerError::AbiMismatch),
+            };
         }
         match (self, slot.ty) {
             (Self::Buffer(Some(buf)), BindingType::Buffer { .. }) => {

@@ -54,6 +54,25 @@ impl Runner {
         i.resource_epoch = epoch;
         Ok(())
     }
+    /// Bind an entire sampled-texture binding array. A rejected replacement
+    /// leaves the previous views and the resource generation intact.
+    pub fn bind_external_textures(&mut self, inst: InstanceId, table: TableId, textures: &[Arc<wgpu::Texture>]) -> Result<()> {
+        let features = self.device.features();
+        let i = self.instance(inst)?;
+        let t = i.tables.get_mut(&table).ok_or(RunnerError::UnknownResource)?;
+        if t.decl.lifetime != TableLifetime::External
+            || !matches!(t.resource, Resource::Texture(TextureBinding::Vacant | TextureBinding::Array(_)))
+        {
+            return Err(RunnerError::AbiMismatch);
+        }
+        let views = texture_array(i.compute.resource_bindings(table), textures, features)?;
+        let epoch = next_epoch(i.resource_epoch)?;
+        t.resource = Resource::Texture(TextureBinding::Array(views));
+        t.epoch = epoch;
+        i.resource_epoch = epoch;
+        Ok(())
+    }
+
     pub fn export_buffer(&self, inst: InstanceId, table: TableId) -> Option<Arc<wgpu::Buffer>> {
         self.instances.get(inst.0 as usize)?.tables.get(&table)?.buffer().cloned()
     }

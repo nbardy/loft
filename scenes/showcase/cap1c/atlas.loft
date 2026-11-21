@@ -1,0 +1,39 @@
+use stdlib::materials::families::{StandardPbr}
+use stdlib::geometry::analytic::{ray_sphere}
+use stdlib::sdf::solid::{sphere}
+
+# Two independently mipped pages. 16x16 cells and a four-texel inset keep
+# bilinear taps within the cell through level 2 and at the edges of the page.
+fn checker(uv: v2, page: f) -> v4 {
+  let cell = floor(uv * [4.0, 2.0])
+  let tile = cell.x + 4.0 * cell.y + 8.0 * page
+  let stripe = 0.75 + 0.25 * sin(uv.x * 64.0)
+  v4((0.1 + 0.05 * tile) * stripe, 0.35 * stripe, 0.9 - 0.04 * tile, 1.0)
+}
+bake_tex AtlasA 64x32 rgba8unorm on load mips(true) (uv: v2) { checker(uv, 0.0) }
+bake_tex AtlasB 64x32 rgba8unorm on load mips(true) (uv: v2) { checker(uv, 1.0) }
+
+kind MaterialTable @World (texture_id: u, lod: f) {}
+kind Stud @Local (pose: xf@Local>World, material_id: MaterialTable) {
+  visible(ro, rd) = ray_sphere(ro, rd, [0, 0, 0]@Local, 0.45m)
+  trace(p) = sphere(p - [0, 0, 0]@Local, 0.45m)
+  material(p, n) {
+    let m = MaterialTable[material_id]
+    let tile = f32(m.texture_id % 8)
+    let cell = [tile % 4.0, floor(tile / 4.0)]
+    let local = clamp(p.xy + [0.5, 0.5], [0.0, 0.0], [1.0, 1.0])
+    let uv = (cell * 16.0 + [4.0, 4.0] + local * 8.0) / [64.0, 32.0]
+    let color = if m.texture_id < 8 { sample_lod(AtlasA, uv, m.lod) } else { sample_lod(AtlasB, uv, m.lod) }
+    StandardPbr(color.xyz, 0.4, 0.1, coords(p), 24.0, 1.0)
+  }
+}
+camera Main { eye: [0, 0, 13]@World, at: [0, 0, 0]@World, fov: 24deg }
+param shuffle: u = 0
+build {
+  build for i in 0..16 {
+    let texture = select(i, (i * 5 + 3) % 16, shuffle != 0)
+    let material = emit MaterialTable(texture_id: texture, lod: 0.5 + 0.5 * f32(i % 4))
+    let p = [(f32(i % 4) - 1.5), (f32(i / 4) - 1.5), 0]@World
+    emit Stud(pose: place(p), material_id: material)
+  }
+}

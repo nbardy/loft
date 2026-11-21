@@ -1385,6 +1385,7 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
         Lighting::Bsdf(name) => Some(name),
         Lighting::World { .. } => None,
     };
+    let materials = materials::pack_tables(&p, &tables, &drawn)?;
     let mut texts = Vec::new();
     for (name, kt) in drawn.iter().zip(&kinds) {
         let shader = emit::emit_kind_module(&p, &types, p.kinds[*name], light, &lut_refs, kt.draw, aov, None)?;
@@ -1492,6 +1493,7 @@ fn compile_impl(src: &Graph, overrides: &[(String, f64)], samples: &[crate::prog
         bakes,
         path,
         dispatches,
+        materials,
         modules: shader_modules,
         kinds,
         instances,
@@ -1520,6 +1522,7 @@ fn clone_name(e: &Expr) -> Expr {
 }
 
 pub mod program;
+pub mod materials;
 pub mod sexp;
 pub mod tier0;
 pub mod telemetry;

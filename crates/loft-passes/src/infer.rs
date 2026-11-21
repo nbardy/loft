@@ -80,8 +80,8 @@ pub(crate) fn run(modules: &mut [Module]) -> Res<()> {
             let _ = ck.func(f, None);
         }
         for k in p.kinds.values() {
-            for (_, f) in &k.queries {
-                let _ = ck.func(f, Some(&k.name.name));
+            for (query, f) in &k.queries {
+                let _ = ck.query(k, *query, f);
             }
         }
         for sc in p.scans.values() {

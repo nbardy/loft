@@ -180,6 +180,9 @@ pub(crate) fn module(
     em.library(&functions, &constants);
     let callback = fn_symbol(callback);
     let sky = fn_symbol(sky);
+    let world = world.split_inclusive('\n').filter(|line| {
+        !line.starts_with("@group(1)") || !head.lines().any(|original| original == line.trim_end())
+    }).collect::<String>();
     let mut out = format!(r"{head}{world}
 {}
 fn loft_eval_hit(hit: loft_type_Hit, wo: vec3f, wi: vec3f) -> vec3f {{

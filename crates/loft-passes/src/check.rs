@@ -34,6 +34,7 @@ pub(crate) struct Ck<'p, 'a> {
     scopes: Vec<HashMap<String, Local>>,
     /// The fn being checked is stage 0.
     comptime: bool,
+    material_query: bool,
     ret: Ty,
     fresh: u32,
     /// Space variables of the fn being checked (`'s` in its signature).
@@ -191,7 +192,7 @@ fn e003(span: Span, msg: impl Into<String>, fix: impl Into<String>) -> Diag {
 
 impl<'p,'a> Ck<'p,'a> {
     pub(crate) fn new(p:&'p Prog<'a>, types:&'p mut Vec<Ty>)->Self {
-        Self{p,types,scopes:vec![],comptime:false,ret:Ty::Void,fresh:0,sig_vars:vec![],hints:None,ownership:None,kernel:None,atomic_writes:BTreeMap::new(),pending_lowering:None,local_units:HashMap::new(),expr_units:HashMap::new()}
+        Self{p,types,scopes:vec![],comptime:false,material_query:false,ret:Ty::Void,fresh:0,sig_vars:vec![],hints:None,ownership:None,kernel:None,atomic_writes:BTreeMap::new(),pending_lowering:None,local_units:HashMap::new(),expr_units:HashMap::new()}
     }
 
     fn lookup(&self, n: &str) -> Option<&Local> {
@@ -483,6 +484,13 @@ impl<'p,'a> Ck<'p,'a> {
         }
         Ok(())
     }
+    pub(crate) fn query(&mut self, kind: &KindDecl, query: QueryKind, f: &FnDecl) -> Res<()> {
+        self.material_query = query == QueryKind::Material;
+        let result = self.func(f, Some(&kind.name.name));
+        self.material_query = false;
+        result
+    }
+
     fn kind(&mut self, k: &KindDecl) -> Res<()> {
         let mut variants: u64 = 1;
         for prm in &k.params {
@@ -542,7 +550,7 @@ impl<'p,'a> Ck<'p,'a> {
         let surface = k.query(QueryKind::Surface).is_some();
         let mut world: Option<(Space, Span)> = None;
         for (q, f) in &k.queries {
-            self.func(f, Some(&k.name.name))?;
+            self.query(k, *q, f)?;
             let sig: Vec<Ty> =
                 f.params.iter().skip(1).filter_map(|p| p.ty.as_ref().map(|t| self.resolve(t, true))).collect::<Res<_>>()?;
             let ret = f.ret.as_ref().map(|t| (t, self.resolve(t, true))).map(|(t, r)| (matches!(t, TyExpr::Field(_)), r));
@@ -951,6 +959,24 @@ impl<'p,'a> Ck<'p,'a> {
             }
             ExprKind::Member(base, m) => self.member(base, m),
             ExprKind::Index(base, i) => {
+                if self.material_query
+                    && let ExprKind::Name(name) = &base.kind
+                    && self.lookup(name).is_none()
+                    && let Some(table) = self.p.kinds.get(name.as_str()).filter(|kind| kind.queries.is_empty())
+                {
+                    let id = self.expr(i)?;
+                    if id != Ty::Id(name.clone()) {
+                        return Err(Diag::new(Code::E108, i.span, format!("expected an id of {name}, found {id}"),
+                            "index the material table with an id returned by emit"));
+                    }
+                    let words = crate::materials::row_words(self.p, table)?;
+                    if !(1..=32).contains(&words) {
+                        return Err(e003(base.span, "a material record needs one to 32 words",
+                            "declare up to 128 bytes of material parameters"));
+                    }
+                    self.set(base, Ty::Table(name.clone()));
+                    return Ok(Ty::Row(name.clone()));
+                }
                 let b = self.expr(base)?;
                 let it = self.expr(i)?;
                 if let Ty::Table(k)=b{

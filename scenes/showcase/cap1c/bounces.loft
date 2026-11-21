@@ -1,0 +1,48 @@
+use stdlib::engines::reference::{reference_sample}
+use stdlib::integrators::direct::{sun_sky}
+use stdlib::sky::environment::{sky_color}
+use stdlib::materials::families::{StylizedInk, Emissive}
+use stdlib::geometry::analytic::{ray_sphere}
+use stdlib::sdf::solid::{sphere}
+
+param bounces: u = 2
+kind MaterialTable @World (base: rgb, power: f) {}
+
+kind Ink @World (material_id: MaterialTable) {
+  visible(ro, rd) = ray_sphere(ro, rd, [0, 0, 0]@World, 0.7m)
+  trace(p) = sphere(p - [0, 0, 0]@World, 0.7m)
+  material(p, n) {
+    let m = MaterialTable[material_id]
+    StylizedInk(m.base, coords(p), 0.0, 2.0)
+  }
+}
+
+kind Room @World (material_id: MaterialTable) {
+  visible(ro, rd) {
+    let oc = ro - [0, 0, 0]@World
+    let b = dot(oc, rd)
+    let h = b * b - dot(oc, oc) + 36.0
+    if h < 0.0 { return -1.0 }
+    -b + sqrt(h)
+  }
+  trace(p) = sphere(p - [0, 0, 0]@World, 6.0m)
+  material(p, n) {
+    let m = MaterialTable[material_id]
+    Emissive(m.base, m.power)
+  }
+}
+build {
+  let ink = emit MaterialTable(base: [0.55, 0.1, 0.27], power: 0.0)
+  let lamp = emit MaterialTable(base: [1.0, 0.8, 0.4], power: 2.0)
+  emit Ink(material_id: ink)
+  emit Room(material_id: lamp)
+}
+schedule Main {
+  orbit(at: [0, 0, 0], radius: 3, height: 0, period: 24, fov: 30deg)
+  cull_indirect(Ink, Room)
+  render_bundle(Vis64) { draw_indirect(Ink, Room) }
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: sun_sky, sun: [0.5, 0.75, 0.35])
+  screen_pass(reference_sample, bounces: bounces)
+  tonemap_aces(ColorHdr, sky: sky_color)
+}

@@ -69,6 +69,7 @@ fn stock(path: &str) -> bool {
             | "stdlib/noise/value.loft"
             | "stdlib/motion/solve.loft"
             | "stdlib/materials/bsdf.loft"
+            | "stdlib/materials/families.loft"
             | "stdlib/sky/environment.loft"
             | "stdlib/lighting/world.loft"
             | "stdlib/lighting/emitters.loft"
