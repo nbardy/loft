@@ -202,8 +202,12 @@ def capture(build_log, root, out):
               for word in ("-L", f"dependency={path}")]
     rustc = subprocess.check_output(["rustup", "which", "rustc"], cwd=root, text=True).strip()
     cfg = ["--cfg", "legacy_native_capture"] if legacy else []
+    release = all(path.parent.parent.name == "release" for path in deps.values())
+    # Release rlibs can contain LLVM bitcode the system linker cannot read.
+    # Use rustc's own linker optimization, just as Cargo does for release.
+    codegen = ["-C", "opt-level=3", "-C", "lto=thin", "-C", "codegen-units=1"] if release else ["-C", "opt-level=2"]
     subprocess.run([ROOT / "tools/lib/build_gate.sh", "run", rustc, "--edition=2024", *cfg,
-                    "-C", "opt-level=2", *search, *externs,
+                    *codegen, *search, *externs,
                     scratch / "capture.rs", "-o", executable], cwd=root, check=True)
     subprocess.run([ROOT / "tools/gpu_lock.sh", executable, root, out], check=True)
     write_capture_inputs(root, out)
