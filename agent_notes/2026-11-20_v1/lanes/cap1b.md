@@ -68,3 +68,42 @@ Earley and llguidance both accepted all four scenes. The typed native scatter
 reads storage row fields individually. A whole-row local currently refers to
 an undeclared nominal WGSL type in the v15b emitter. This lane uses the existing
 field access and pass ABI. The frozen references were untouched.
+
+## Chrome WebGPU
+
+Chrome selected Apple's Metal-3 adapter and granted timestamps. All 1,572,864
+grid words matched the i64 reference across spread, clumped, boundary and
+cancellation fixtures in both orders and after capacity rejection. All eight
+accepted runs had unique IDs and stable order within each cell. Each rejected
+run returned Capacity and preserved the preceding grid. The quadratic splash
+also ran in the interactive host at 1280 × 800, and Pause stopped it.
+
+The sorted route allocates 1,836,032 B of scratch and creates 16 compute pipelines.
+Deposit-only runs record 13 of those. Apple Metal-3 GPU measurements below are
+p50/p95 in ms, over 64 paired samples per arm.
+
+| Fixture | Clear + capacity | Sort + ranges | Gather | Grid update + G2P | Full measured dispatch list |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Spread deposit | 0.000/3.015 | 1.638/5.046 | 0.328/0.328 | — | 1.901/5.374 |
+| Clumped deposit | 0.000/2.359 | 0.852/3.670 | 5.112/10.355 | — | 6.160/13.238 |
+| Splash step | 0.066/1.901 | 1.573/1.769 | 0.721/0.852 | 0.131/0.197 | 2.556/4.981 |
+
+Chrome timestamps quantized at 65.536 µs. Full step CPU encode, submit and
+completion-wait medians were 0.10, 0.00 and 7.10 ms respectively. The sorted
+deposit list processed 34.5 M particles/s and 275.9 M node contributions/s
+spread, and 10.6 M particles/s and 85.1 M node contributions/s clumped.
+The proposal's native scatter medians were 0.46–0.48 ms. The observed browser
+sorted deposit lists took roughly 4× spread and 13× clumped as long, including
+clear, radix sort and ranges. The clumped gather dominates its median because
+a destination thread serially reduces long ranges.
+
+The fixed-atomic browser deposit controls measured 1.049/3.801 ms spread and
+0.590/1.376 ms clumped. The sorted-minus-fixed p95 95% intervals were
+[1.049, 2.294] ms for spread, [10.551, 12.976] ms for clumped, and
+[−0.131, 2.163] ms for the full splash step. Both managed build slots were
+held. Triangle p95 was 0.131 ms before and 2.753 ms after, above the quiet
+limit. The speed verdict is Unknown. Raw timings, pass layouts, fixture inputs
+and GPU grids are under `out/meta/cap1b/`. Browser transport for this run used
+the prebuilt v15_exec CLI's exported bundles and a projection of the same
+pass ABI while the Rust harness was queued. Naga appends an underscore to
+entry names ending in digits, so the authored entries now end in letters.
