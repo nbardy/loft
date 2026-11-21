@@ -142,17 +142,16 @@ fn material_upsert_changes_only_selected_hit_and_keeps_pipelines() {
     let after = loaded.pixels(&g).unwrap();
     assert_eq!(loaded.picture_planes(&g).unwrap(), (vis.clone(), depth));
     assert_eq!(loaded.pipeline_count().unwrap(), count);
+    // picture_planes has already reduced Vis64 to one packed kind/row word per pixel.
+    assert_eq!(vis.len(), before.len());
     let mut changed = 0;
-    for (i, (a, b)) in before
+    for ((a, b), id) in before
         .chunks_exact(4)
         .zip(after.chunks_exact(4))
-        .enumerate()
+        .zip(vis.chunks_exact(4))
     {
         if a != b {
-            assert_eq!(
-                u32::from_le_bytes(vis[i * 8..i * 8 + 4].try_into().unwrap()),
-                0
-            );
+            assert_eq!(u32::from_le_bytes(id.try_into().unwrap()), 0);
             changed += 1;
         }
     }
@@ -227,7 +226,8 @@ fn queued_frames_keep_their_graph_and_visibility_after_bundle_replacement() {
             .textures
             .iter()
             .find(|texture| {
-                matches!(texture.format, loft_ir::ImageFormat::Rg32Uint) && texture.extent[0] == size.0
+                matches!(texture.format, loft_ir::ImageFormat::Rg32Uint)
+                    && texture.extent[0] == size.0
             })
             .expect("current visibility plane")
             .table

@@ -1,13 +1,19 @@
 """Run from the lane root with tools/gpu_lock.sh tools/quiet_gpu.sh."""
+import argparse
 import hashlib
 import json
 import os
 from pathlib import Path
 import random
 import subprocess
-import sys
 
-loft, out = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("loft", type=Path)
+parser.add_argument("out", type=Path)
+parser.add_argument("--reuse-timings", action="store_true",
+                    help="score the existing timing samples and finish the picture capture")
+args = parser.parse_args()
+loft, out = args.loft.resolve(), args.out.resolve()
 out.mkdir(parents=True, exist_ok=True)
 scenes = Path("scenes/showcase/cap1c")
 generated = Path("out/cap1c-src")
@@ -82,10 +88,13 @@ build {{
     suffix = "-geometry" if varied_geometry else ""
     path = generated / f"specialized-{n}{suffix}.loft"
     path.write_text(s)
+    (out / path.name).write_text(s)
     return path
 
 def profile(label, scene, settings, nonce, frames=100):
     path = out / f"{label}.timing.json"
+    if args.reuse_timings:
+        return json.loads(path.read_text())
     run("profile", scene, "--time", "0", "--size", "1280x800", "--frames", str(frames),
         "--loads", "2", "--nonce", str(nonce), "--json", str(path), settings=settings)
     doc = json.loads(path.read_text())
@@ -179,6 +188,7 @@ for name in ["modules", "pipelines"]:
 
 for i, label in enumerate(["family100", "specialized10", "pbr-ink200", "atlas", "atlas-shuffled"]):
     profile(label, *cases[label], seed + 100 + i)
+(out / "comparisons.json").write_text(json.dumps(pairs, indent=2) + "\n")
 
 for label in ["family10", "family100", "family1000", "shuffled1000", "pbr-ink200",
               "all-six", "hand1000", "atlas", "atlas-shuffled", "bounces"]:
@@ -186,6 +196,5 @@ for label in ["family10", "family100", "family1000", "shuffled1000", "pbr-ink200
     png = generated / f"{label}.png"
     run("render", scene, "--out", str(png), "--size", "1280x800", settings=settings)
     (out / f"{label}.png.sha256").write_text(hashlib.sha256(png.read_bytes()).hexdigest() + "\n")
-    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(png), "-quality", "95",
+    subprocess.run(["cwebp", "-quiet", "-q", "95", str(png), "-o",
                     str(out / f"{label}.webp")], check=True)
-(out / "comparisons.json").write_text(json.dumps(pairs, indent=2) + "\n")
