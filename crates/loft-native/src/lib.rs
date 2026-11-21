@@ -475,8 +475,11 @@ impl Loaded {
     fn record(&self, runner: &mut Runner, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView,
         t: f32, samples: u32, options: FrameOptions<'_>) -> Result<u32, String> {
         let uniform = |table| self.uniform(t, samples, table != self.frame_table);
-        runner.encode_frame(self.id, encoder, target, t.into(), FrameOptions { uniform: Some(&uniform), ..options })
-            .map(|r| r.commands).map_err(runner_error)
+        // Loaded submits one wgpu buffer. Hosts that split a frame use Runner directly.
+        runner.encode_frame(self.id, encoder, target, t.into(), FrameOptions {
+            uniform: Some(&uniform), timestamps: options.timestamps, timestamp_start: options.timestamp_start,
+            omit_wave: options.omit_wave, host_callback: None,
+        }).map(|r| r.commands).map_err(runner_error)
     }
 
     /// Profile a finite stream on this device's queue. Immediate reads use one

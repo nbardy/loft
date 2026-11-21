@@ -217,7 +217,7 @@ fn scene_bundle(input: [u32; 2]) -> Bundle {
         },
         initial: initial.into_boxed_slice(),
     };
-    let attachment = |table, format, [width, height]| TextureDecl {
+    let attachment = |table, format, [width, height]: [u32; 2]| TextureDecl {
         table,
         format,
         extent: [width, height, 1],
