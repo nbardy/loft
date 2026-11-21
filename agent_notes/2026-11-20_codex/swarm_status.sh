@@ -21,4 +21,4 @@ echo "-- finished in the last 3 h"
 find "$D" -name '*.done' -mmin -180 -exec stat -f '%Sm %N' -t '%H:%M' {} + | sort | sed -E "s#$D/##; s/\.done//" | while read -r t s; do printf "  %s %-14s exit %s\n" "$t" "$s" "$(cat "$D/$s.done")"; done
 echo "-- conductors (markers)"
 for c in "$D"/wave*.sh; do w=$(basename "$c" .sh); [ -e "$D/$w.finished" ] && st=finished || { [ -s "$D/$w.log" ] && st="started, last log $(mins "$D/$w.log")m ago" || st="not started"; }; printf "  %-10s %s\n" "$w" "$st"; done
-gl=/tmp/loft-gpu.lock; [ -e "$gl" ] && echo "-- GPU lock: $(cat "$gl" 2>/dev/null | head -1)  ($(mins "$gl")m)"
+gl=/tmp/loft-gpu.lock; [ -e "$gl" ] && echo "-- GPU lock: $(cat "$gl" 2>/dev/null | head -1)  ($(mins "$gl")m)" || true

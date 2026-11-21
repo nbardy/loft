@@ -21,7 +21,8 @@ Work in `~/git/_wt/loft-v15-perf` on branch `loft/v15-perf` from `origin/main` (
    - **Target:** Motion twin **481 / 481** exact (`0` differing ticks) and 1,000-crab motion dispatch **≤ 0.06 ms** uncontended.
 
 ## Rules
-- Use `git cambium add -b loft/v15-perf -name v15-perf -ephemeral ~/git/_wt/loft-v15-perf origin/main`.
+- Use `git cambium add -b loft/v15-perf -name v15-perf -ephemeral ~/git/_wt/loft-v15-perf ${LOFT_WAVE_BASE:-origin/main}`.
+- **Write ALL code first, compile rarely:** Read all files upfront, implement ALL 3 items (sky cube binding, Shrine cluster culling, motion-only FMA barrier + leak guard) completely BEFORE your first `tools/dev.sh check`. Fix all reported errors in one batch, run focused tests once, then ONE final release build + quiet-GPU measurement. Target ≤ 3 compiles total.
 - Do NOT touch `crates/loft-cli/src/gates.rs`, `tools/quiet_gpu.sh`, `corpus/`, or `stdlib/` language parser/HIR.
 - Write `agent_notes/2026-11-20_v1/lanes/v15_perf.md` (≤ 30 lines) with paired uncontended timings (Hermit-20, Shrine, 1,000-crab), twin counts, and leak-guard result. Push `origin loft/v15-perf`.
 

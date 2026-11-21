@@ -18,7 +18,8 @@ Fix corpus bloat as a **data-serialization bug** (R5), NOT by adding hard compil
    - Implement `loft lint` checking token-count caps and large repeated literal blocks, wired into corpus CI / `./tools/check.sh` as a lint check — **never** failing normal `loft` compilation.
 
 ## Rules
-- Use `git cambium add -b loft/v15-bloat -name v15-bloat -ephemeral ~/git/_wt/loft-v15-bloat`.
+- Use `git cambium add -b loft/v15-bloat -name v15-bloat -ephemeral ~/git/_wt/loft-v15-bloat ${LOFT_WAVE_BASE:-origin/main}`.
+- **Write ALL code first, compile rarely:** Read all relevant files upfront, implement ALL of `import_table`, `ad.rs` hoisting, `loft lint`, and the corpus regeneration script BEFORE your first `tools/dev.sh check`. Fix all errors in one batch, run focused tests once, then regenerate and verify the corpus in ONE pass (≤ 3 compiles total).
 - Do NOT touch `crates/loft-runner` GPU ray-query/sky/MSAA shading code.
 - Write `agent_notes/2026-11-20_v1/lanes/v15_bloat.md` with before/after corpus median & p95 token counts, `ad.rs` savings, and gate verification. Push `origin loft/v15-bloat`.
 

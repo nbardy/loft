@@ -6,8 +6,8 @@ Read CORE.md, docs/PHILOSOPHY.md, docs/spec/README.md, docs/V1_5_GOALS.md G3, ag
 
 Rules
 
-- Use `git cambium add -b loft/cap1c -name loft-cap1c -ephemeral ~/git/_wt/loft-cap1c origin/main`.
-- Write the 10/100/1,000 cost model and author-facing example first. Iterate compile errors with `CARGO_BUILD_JOBS=2 tools/dev.sh check CRATE`. Use existing table and binding descriptors. Preserve kind identity and the authored CPU model.
+- Use `git cambium add -b loft/cap1c -name loft-cap1c -ephemeral ~/git/_wt/loft-cap1c ${LOFT_WAVE_BASE:-origin/main}`.
+- Write the 10/100/1,000 cost model and author-facing example first. **Write ALL code across all files BEFORE your first compile** — do NOT iterate edit-one-file-then-compile! After writing the complete implementation, run ONE `CARGO_BUILD_JOBS=2 tools/dev.sh check CRATE`, fix every error in one batch, run focused tests once, then ONE final release/measurement build (≤ 3 compiles total). Use existing table and binding descriptors. Preserve kind identity and the authored CPU model.
 - Own material layout/family planning, material lookup and generated family shading, associated table/texture binding and the fixtures for this lane. Keep the raster coverage contract shared with cap1a and the World hit interface shared with cap1d.
 - Use `tools/gpu_lock.sh` for every GPU run. Measure quiet paired timings with a triangle p95 <0.15 ms, no concurrent builds and 95% intervals. Preserve reference pictures. Run focused checks and the workspace suite once.
 - Preserve generated shaders, per-scene plans, cold keys and raw timings under the primary checkout's out/meta/cap1c/. Write agent_notes/2026-11-20_v1/lanes/cap1c.md. If two fixes fail without narrowing the cause, report the reproduction and both observations.

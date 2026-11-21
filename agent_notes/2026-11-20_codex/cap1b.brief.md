@@ -6,8 +6,8 @@ Read CORE.md, docs/PHILOSOPHY.md, docs/spec/README.md (including the 20 November
 
 Rules
 
-- Work in a Cambium checkout with `git cambium add -b loft/cap1b -name loft-cap1b -ephemeral ~/git/_wt/loft-cap1b origin/main`.
-- Predict the numerical result, cost and readback before implementation. Iterate compile errors with `CARGO_BUILD_JOBS=2 tools/dev.sh check CRATE`. Use exhaustive variants and explicit unsupported/overflow outcomes.
+- Work in a Cambium checkout with `git cambium add -b loft/cap1b -name loft-cap1b -ephemeral ~/git/_wt/loft-cap1b ${LOFT_WAVE_BASE:-origin/main}`.
+- Predict the numerical result, cost and readback before implementation. **Write ALL code across all files BEFORE your first compile** — do NOT iterate edit-one-file-then-compile! After writing the full implementation, run ONE `CARGO_BUILD_JOBS=2 tools/dev.sh check CRATE`, fix every error in one batch, run focused tests once, then ONE final release/measurement build (≤ 3 compiles total). Use exhaustive variants and explicit unsupported/overflow outcomes.
 - Run one GPU job at a time under `tools/gpu_lock.sh`. For speed acceptance use paired runs, no concurrent build, triangle p95 below 0.15 ms and a 95% interval. Keep correctness observations from noisy runs. Preserve the frozen references.
 - Own the particle transfer library/scene, its grid/twin fixtures and pass-local capability selection for scatter. Coordinate any shared link change with v15b. Keep numerical policy out of the generic runner.
 - Run focused checks and the workspace suite once. Preserve inputs, shader hashes, outputs and raw measurements under the primary checkout's out/meta/cap1b/. Write agent_notes/2026-11-20_v1/lanes/cap1b.md. If two attempts fail without narrowing the cause, report the failing fixture and evidence.

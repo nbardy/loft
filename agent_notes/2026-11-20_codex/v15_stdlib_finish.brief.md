@@ -6,7 +6,7 @@ All three Wave-X4 branches already did 90% of the work and only stalled because 
 
 ## Task
 
-Work in `~/git/_wt/loft-v15-stdlib-finish` on branch `loft/v15-stdlib-finish` from `origin/main`.
+Work in `~/git/_wt/loft-v15-stdlib-finish` on branch `loft/v15-stdlib-finish` from `${LOFT_WAVE_BASE:-origin/main}` (use `git cambium add -b loft/v15-stdlib-finish -name v15-stdlib-finish -ephemeral ~/git/_wt/loft-v15-stdlib-finish ${LOFT_WAVE_BASE:-origin/main}`).
 
 1. **Merge & finish `origin/loft/std1d` (`c61c9ba`) — Integrators + R4 Contract:**
    - Add the missing R4 physical material query `fn material(hit: SurfaceHit) -> Bsdf` alongside `fn shade_style(hit: SurfaceHit, light: LightSummary) -> rgb` (and compile-time refusal when an integrator lacks `LightSummary`).
@@ -18,8 +18,8 @@ Work in `~/git/_wt/loft-v15-stdlib-finish` on branch `loft/v15-stdlib-finish` fr
 3. **Merge & finish `origin/loft/port1` (`3c6f053`) — 5-Crab Lineup, Crab Live & Hermit:**
    - Fix the grammar errors in `scenes/crab_lineup.loft`, `scenes/hermit.loft`, and `scenes/lineup/cast.loft` so **100%** of tracked `.loft` files pass BOTH Earley and llguidance grammar recognizers.
    - Preserve `crab_live`'s 480/480 CPU/GPU twin parity and the existing approval stills in `out/meta/{port1,std1c,std1d}/approval/`.
-4. **Verify:**
-   - Run `CARGO_BUILD_JOBS=2 tools/dev.sh check loft-cli`, focused tests, static checks, and BOTH grammar recognizers (`100%` pass).
+4. **Verify (Write ALL code first, compile rarely!):**
+   - Do NOT compile in small edit-compile loops! Read all files first, perform ALL merges/edits across `stdlib/`, `scenes/`, and crates in one complete pass, and ONLY THEN run ONE `CARGO_BUILD_JOBS=2 tools/dev.sh check loft-cli`, fix every error at once, run focused tests + BOTH grammar recognizers (`100%` pass).
    - Write `agent_notes/2026-11-20_v1/lanes/v15_stdlib_finish.md` (≤ 30 lines) and push `origin loft/v15-stdlib-finish`.
 
 Final message ≤150 words.

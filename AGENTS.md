@@ -6,6 +6,7 @@ decisions live in [the v1 specification](docs/spec/README.md).
 
 ## Build and check
 
+- **Write all code first, compile rarely (MANDATORY):** Compilation is the scarce resource on this machine. Read all relevant files, types, traits, and call sites upfront, design the complete change, and **write ALL code across all files in one big coherent pass BEFORE running your first compile.** Never iterate edit-one-file-then-`cargo check`. Aim for **2–3 total compiles per lane**: (1) one `CARGO_BUILD_JOBS=2 tools/dev.sh check <crate>` after all edits are written (fix every reported error before compiling again), (2) one focused test run, (3) one final verification/release build only when everything is ready.
 - Work from the root Cargo workspace. Use `tools/dev.sh check|lint|test|build|run CRATE`.
   `--workspace` selects every member. `--fast` selects the optimized lab profile.
   The wrapper uses the pinned toolchain, checkout-local Cargo outputs and the shared compile lock.

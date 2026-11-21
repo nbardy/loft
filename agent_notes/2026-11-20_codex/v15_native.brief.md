@@ -21,7 +21,8 @@ Work in `~/git/_wt/loft-v15-native` on branch `loft/v15-native` from `origin/mai
    - `cargo check --target wasm32-unknown-unknown` MUST pass cleanly with zero Metal/ObjC leakage into `HostCaps::WEB_BASELINE`.
 
 ## Rules
-- Use `git cambium add -b loft/v15-native -name v15-native -ephemeral ~/git/_wt/loft-v15-native origin/main`.
+- Use `git cambium add -b loft/v15-native -name v15-native -ephemeral ~/git/_wt/loft-v15-native ${LOFT_WAVE_BASE:-origin/main}`.
+- **Write ALL code first, compile rarely:** Read all files upfront, write ALL code for Rung 2a (`EXPERIMENTAL_COOPERATIVE_MATRIX`), Rung 2b (`bk1b` MSL auto-slots), and Rung 3 (`MetalFX` `HostCallback`) completely BEFORE your first `tools/dev.sh check`. Fix all reported errors in one batch, then ONE focused test + `wasm32` check + ONE final release measurement. Target ≤ 3 compiles total.
 - Do NOT touch `stdlib/`, `corpus/`, or `crates/loft-cli/src/gates.rs`.
 - Write `agent_notes/2026-11-20_v1/lanes/v15_native.md` (≤ 30 lines) with cooperative-matrix timing, MetalFX before/after timing, `wasm32` check result, and LOC added. Push `origin loft/v15-native`.
 
