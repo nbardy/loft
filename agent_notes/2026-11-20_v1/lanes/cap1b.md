@@ -59,3 +59,12 @@ the two key tables, tile histograms, digit offsets and ranges.
   measured pairs (300 for the native showcase), and a paired bootstrap 95%
   interval for the p95 difference. Fixture transfer timing excludes upload
   and readback. Full step timing includes packing, the grid update and G2P.
+
+## Source checks
+
+The v15_exec baseline `5e252da` exported all four authored scenes. The exact
+consumer fixture returned E504 with the native `pass p2g` producer span.
+Earley and llguidance both accepted all four scenes. The typed native scatter
+reads storage row fields individually. A whole-row local currently refers to
+an undeclared nominal WGSL type in the v15b emitter. This lane uses the existing
+field access and pass ABI. The frozen references were untouched.

@@ -11,6 +11,7 @@ struct FloatCell { mass: f, mx: f, my: f, mz: f }
 kernel scatter_float(particles: [PackedParticle], control: [Word], grid: [FloatCell]) nondet allow(atomics) {
   let id = global_id(0)
   if control[0].value <= 65536 && id < control[0].value {
+    # Field reads keep the authored storage row in the kernel binding layout.
     let px = particles[id].x
     let py = particles[id].y
     let pz = particles[id].z
