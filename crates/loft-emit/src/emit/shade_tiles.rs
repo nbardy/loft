@@ -85,26 +85,31 @@ pub fn module(
     out
 }
 
+pub(crate) const HALO_BINDINGS: &str = "@group(1) @binding(3) var hdr: texture_storage_2d<rgba16float, write>;\n";
+
 const NEIGHBORS: &str = include_str!("../../../../stdlib/core/vis_neighbors.wgsl");
 
 pub fn classify_module(visibility: Visibility) -> String {
     match visibility {
         Visibility::Center => super::classify_module(),
-        Visibility::SubpixelEdges => super::classify_with_halo(include_str!("../../../../stdlib/core/classify_halo.wgsl").strip_suffix('\n').unwrap()),
+        // Classify also clears the HDR target's alpha, so present can tell an unshaded pixel from a shaded one by that
+        // alpha alone (shade stores 1.0) instead of rereading the 3x3 visibility neighborhood on every sky pixel.
+        Visibility::SubpixelEdges => super::classify_with_halo(
+            include_str!("../../../../stdlib/core/classify_halo.wgsl").strip_suffix('\n').unwrap(), HALO_BINDINGS),
     }
 }
 
 pub fn present_module(
     p: &Prog, types: &[Ty], sky: &str, aov: Aov, paper: Option<&str>, film: Option<&str>, visibility: Visibility,
 ) -> String {
-    let mut source = super::emit_present(p, types, sky, aov, paper, film);
-    match visibility {
-        Visibility::Center => source,
-        Visibility::SubpixelEdges => {
-            source = source.replace("textureLoad(vis_tex, px, 0).x == LOFT_EMPTY",
-                "textureLoad(vis_tex, px, 0).x == LOFT_EMPTY && loft_vis_neighborhood(px, LOFT_EMPTY).x == LOFT_EMPTY");
-            source.push_str(NEIGHBORS);
-            source
-        }
+    let edges = matches!(visibility, Visibility::SubpixelEdges);
+    // Shade stores alpha 1.0 at exactly the pixels whose 3x3 visibility neighborhood is covered, and classify zeroed
+    // every other pixel's alpha this frame, so beauty present reads that alpha rather than the neighborhood.
+    let mut source = super::emit_present(p, types, sky, aov, paper, film, edges && aov == Aov::Beauty);
+    if edges && aov != Aov::Beauty {
+        source = source.replace("textureLoad(vis_tex, px, 0).x == LOFT_EMPTY",
+            "textureLoad(vis_tex, px, 0).x == LOFT_EMPTY && loft_vis_neighborhood(px, LOFT_EMPTY).x == LOFT_EMPTY");
+        source.push_str(NEIGHBORS);
     }
+    source
 }
