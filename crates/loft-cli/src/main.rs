@@ -148,8 +148,8 @@ fn command(mut args: Vec<String>, set: &[(String, f64)]) -> Result<(), Failure> 
             let l = loft_cli::native::Loaded::new(&g, &p, (1280, 800), Some(nonce)).map_err(Failure::Device)?;
             l.frame(&g, 0.0);
             let gpu = l.gpu_ms(&g).map_err(Failure::Device)?.map_or_else(|| "unavailable".into(), |(ms, _)| format!("{ms:.2} ms"));
-            println!("load {:.3} s  front {front:.3} s  pipelines {:.1} ms  frame {gpu}  ({})",
-                t.elapsed().as_secs_f64(), l.stats.pipelines_ms, g.adapter);
+            println!("load {:.3} s  front {front:.3} s  pipelines {:.1} ms  frame {gpu}  ({}, precision {})",
+                t.elapsed().as_secs_f64(), l.stats.pipelines_ms, g.adapter, l.precision.name());
             Ok(())
         }
         _ => Err(Failure::Usage("usage: loft build|check|show|still|clip|gate|load|ir|render|profile|controls|fmt|fork|context|diff|lint".into())),
@@ -183,6 +183,13 @@ fn dispatch(mut args: Vec<String>) -> Result<ExitCode, Failure> {
     // Route using the same argument view as the original commands, then forward overrides unchanged.
     let mut parsed = args.clone();
     let set = overrides(&mut parsed).map_err(Failure::Usage)?;
+    // The one precision control: widths are decided by role unless the author forces f32 everywhere.
+    if let Some(choice) = flag(&mut parsed, "--precision")? {
+        if choice != "f32" {
+            return Err(Failure::Usage("--precision takes f32, the only choice; without it each role gets the width it needs".into()));
+        }
+        loft_cli::native::set_precision(loft_ir::precision::Precision::F32);
+    }
     let trace_requested = |tail: &[String]| tail.iter().any(|a| {
         matches!(a.as_str(), "--trace" | "--record" | "--replay" | "--format")
     });

@@ -9,6 +9,7 @@ use std::{path::Path, time::Instant};
 #[derive(Serialize)]
 struct Profile {
     adapter: String,
+    precision: &'static str,
     modules: Vec<ModuleTelemetry>,
     control_p50_ms: f64,
     control_p95_ms: f64,
@@ -87,6 +88,7 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
             .map_err(Failure::Device)?.into_iter().skip(warmup as usize).collect::<Vec<_>>();
         Ok(Profile {
             adapter: gpu.adapter.clone(),
+            precision: loaded.precision.name(),
             modules: telemetry::collect(&program),
             control_p50_ms,
             control_p95_ms,

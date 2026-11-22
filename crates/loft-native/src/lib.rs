@@ -36,6 +36,26 @@ pub fn request_gpu(ray_query: bool) -> Result<Gpu, String> {
     ray_query::request_gpu(ray_query)
 }
 
+static F32_ONLY: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(matches!(loft_ir::precision::DEFAULT, loft_ir::precision::Precision::F32));
+
+/// The process-wide precision choice, set once by `loft --precision f32`. Loading reads it.
+pub fn set_precision(p: loft_ir::precision::Precision) {
+    F32_ONLY.store(p == loft_ir::precision::Precision::F32, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn precision() -> loft_ir::precision::Precision {
+    if F32_ONLY.load(std::sync::atomic::Ordering::Relaxed) { loft_ir::precision::Precision::F32 } else { loft_ir::precision::Precision::Decided }
+}
+
+fn device_features(device: &wgpu::Device) -> GpuFeatures {
+    let has = device.features();
+    let mut features = GpuFeatures::empty();
+    features.set(GpuFeatures::RAY_QUERY, has.contains(wgpu::Features::EXPERIMENTAL_RAY_QUERY));
+    features.set(GpuFeatures::F16, has.contains(wgpu::Features::SHADER_F16));
+    features
+}
+
 pub const COLOR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 
 /// What loading built and how long each step took (milliseconds).
@@ -81,6 +101,8 @@ pub struct Loaded {
     color_view: wgpu::TextureView,
     clock: Option<Clock>,
     pub stats: LoadStats,
+    /// The precision this load ran with, including the recorded half-storage fallback.
+    pub precision: loft_ir::precision::Resolved,
 }
 
 /// Timestamps at the start and end of every pass, resolved after the frame.
@@ -269,11 +291,7 @@ impl Gpu {
 fn attach_runner(g: &Gpu) -> Runner {
     Runner::attach(Arc::new(g.device.clone()), Arc::new(g.queue.clone()), HostCaps {
         depth_convention: DepthConvention::StandardZeroToOne, msaa_samples: 1,
-        features: if g.device.features().contains(wgpu::Features::EXPERIMENTAL_RAY_QUERY) {
-            GpuFeatures::RAY_QUERY
-        } else {
-            GpuFeatures::empty()
-        },
+        features: device_features(&g.device),
     }).with_pipeline_clock(|| {
         static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
         START.get_or_init(Instant::now).elapsed()
@@ -307,6 +325,7 @@ impl Loaded {
         let plan = loft_passes::bundle::lower_program(p, params, size, loft_passes::bundle::Options {
             nonce, overdraw: aov == Aov::Overdraw, picture_only: true,
             hardware_ray_query: edit.is_none() && loft_runner::ray_query::has_aabb_capacity(d, p.instances.len()),
+            precision: precision(), features: device_features(d),
             edit: edit.as_ref().map(|(i, source, bytes)| (*i, source.as_str(), bytes.as_slice())),
         }, frame)?;
         let color_format = if aov == Aov::Beauty { COLOR } else { wgpu::TextureFormat::Rgba8Unorm };
@@ -400,7 +419,7 @@ impl Loaded {
             luts: p.luts.clone(), kind_words, params: Mutex::new((p.params.clone(), false)),
             #[cfg(not(target_arch = "wasm32"))] instance_bounds,
             shadow,
-            color, planes: [plan.visibility, plan.depth], color_view, clock, stats })
+            color, planes: [plan.visibility, plan.depth], color_view, clock, stats, precision: plan.precision })
     }
 
     pub fn set_param_word(&self, word: usize, value: f32) -> Result<(), String> {

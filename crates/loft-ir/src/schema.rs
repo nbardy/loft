@@ -184,7 +184,7 @@ macro_rules! bundle_schema {
         });
 
         $sum!(#[derive(Clone, Copy, Debug)]
-        ImageFormat { 0 => Rg32Uint, 1 => Rgba16Float, 2 => Depth32Float });
+        ImageFormat { 0 => Rg32Uint, 1 => Rgba16Float, 2 => Depth32Float, 3 => Rgba32Float });
 
         $record!(#[derive(Clone, Copy, Debug)]
         TextureDecl {
