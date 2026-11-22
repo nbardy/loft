@@ -417,7 +417,7 @@ pub fn lower_program(
     frame: impl Fn(bool, Option<([f32; 3], [f32; 3], u32)>) -> Vec<u8>,
 ) -> Result<Prepared> {
     let indexed = |kind: &crate::program::KindTable| {
-        !opts.overdraw && program.modules[kind.module].naga.entry_points.iter().any(|e| e.name == "vs_indexed")
+        !opts.overdraw && program.modules[kind.module].naga.entry_points.iter().any(|e| e.name == "vs_grid")
     };
     let arg_words = if program.kinds.iter().any(indexed) { 5 } else { 4 };
     let mut b = Builder::new(program, opts.nonce, arg_words,
@@ -549,20 +549,12 @@ pub fn lower_program(
     let mut grid_data = BTreeMap::new();
     for (k, kind) in program.kinds.iter().enumerate().filter(|(_, kind)| indexed(kind)) {
         let Draw::Surface { nu, nv } = kind.draw else { return Err("indexed draw needs a parametric surface".into()); };
-        let count = (nu + 1) * (nv + 1);
-        let points = b.transient(16, count);
         let index = b.words(1, (0..nu * nv).flat_map(|cell| (0..6).map(move |corner| {
             let u = cell % nu + ((0x16_u32 >> corner) & 1);
             let v = cell / nu + ((0x34_u32 >> corner) & 1);
             v * (nu + 1) + u
         })));
-        let (rows, kp) = kinds[k];
-        execution.initializers.push(Initializer { name: format!("{} bake surface", kind.name),
-            passes: vec![PassId(b.bundle.passes.len() as u32)], clock: execution::Clock::Load, image: None });
-        b.compute(kind.module, "bake_surface", DispatchExtent::Fixed([count.div_ceil(64), 1, 1]),
-            &Resources::from([((1, 0), rows), ((1, 2), kp), ((1, 3), luts), ((2, 6), points)]))?;
-        grid_data.insert(k, (points, index));
-        b.wave += 1;
+        grid_data.insert(k, index);
     }
 
     let mut bakes = program.bakes.iter().collect::<Vec<_>>();
@@ -613,7 +605,6 @@ pub fn lower_program(
                     let (rows, kp) = kinds[k];
                     let mut resources =
                         Resources::from([((1, 0), rows), ((1, 2), kp), ((1, 3), luts)]);
-                    if let Some(&(points, _)) = grid_data.get(&k) { resources.insert((2, 5), points); }
                     if (matches!(pass, Pass::Vis(_) | Pass::Shadow(_)) || opts.overdraw)
                         && matches!(program.kinds[k].draw, Draw::Analytic | Draw::Traced)
                     {
@@ -622,8 +613,8 @@ pub fn lower_program(
                             .cull_front
                             .push(PassId(b.bundle.passes.len() as u32));
                     }
-                    let index = grid_data.get(&k).map(|&(_, index)| index);
-                    let vs = if index.is_some() { "vs_indexed" } else { "vs" };
+                    let index = grid_data.get(&k).copied();
+                    let vs = if index.is_some() { "vs_grid" } else { "vs" };
                     let offset = id * arg_words * 4;
                     match pass {
                         Pass::Vis(_) => {

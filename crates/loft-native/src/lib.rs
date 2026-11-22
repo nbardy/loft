@@ -376,7 +376,7 @@ impl Loaded {
             (i > 0 && i + 1 < p.passes.len() && !p.passes[..i].iter().any(|pass| matches!(pass, Pass::Shade(_))))
                 .then(|| {
                     let indexed = |kind: &loft_passes::program::KindTable| aov != Aov::Overdraw
-                        && p.modules[kind.module].naga.entry_points.iter().any(|e| e.name == "vs_indexed");
+                        && p.modules[kind.module].naga.entry_points.iter().any(|e| e.name == "vs_grid");
                     (wave, i as u32 + u32::from(photons), Mutex::new(shadow::Reuse::prepare(p, casters, indexed, editable)))
                 })
         });

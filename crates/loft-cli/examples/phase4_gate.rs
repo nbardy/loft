@@ -71,13 +71,13 @@ fn hermit_grid(g: &Gpu, dir: &Path) -> Result<Value, String> {
     for (label, aov) in [("beauty", Aov::Beauty), ("depth", Aov::Depth), ("id", Aov::Id)] {
         let (mut program, _, _) = loft_passes::compile_aov(&src, &[], aov).map_err(|e| e.render(&src))?;
         let shell = program.kinds.iter().find(|k| k.name == "HermitShell").ok_or("missing Hermit shell")?.module;
-        if !program.modules[shell].naga.entry_points.iter().any(|e| e.name == "vs_indexed") {
+        if !program.modules[shell].naga.entry_points.iter().any(|e| e.name == "vs_grid") {
             return Err("Hermit shell failed the grid dependency analysis".into());
         }
         let candidate = Loaded::with_aov(g, &program, size, None, aov)?;
         candidate.frame(g, 0.0);
         let now = candidate.pixels(g)?;
-        program.modules[shell].naga.entry_points.retain(|e| e.name != "vs_indexed");
+        program.modules[shell].naga.entry_points.retain(|e| e.name != "vs_grid");
         let original = Loaded::with_aov(g, &program, size, None, aov)?;
         original.frame(g, 0.0);
         let old = original.pixels(g)?;

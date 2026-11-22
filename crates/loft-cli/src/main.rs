@@ -141,15 +141,25 @@ fn command(mut args: Vec<String>, set: &[(String, f64)]) -> Result<(), Failure> 
             exact(&args, 2, 2)?;
             let path = scene(&args)?;
             let g = loft_cli::native::gpu().map_err(Failure::Device)?;
-            let t = std::time::Instant::now();
             let src = sources(&path).map_err(Failure::Usage)?;
-            let (p, _, _) = loft_passes::compile(&src, set).map_err(|d| Failure::Compile(render(&d, &src)))?;
-            let front = t.elapsed().as_secs_f64();
-            let l = loft_cli::native::Loaded::new(&g, &p, (1280, 800), Some(nonce)).map_err(Failure::Device)?;
-            l.frame(&g, 0.0);
-            let gpu = l.gpu_ms(&g).map_err(Failure::Device)?.map_or_else(|| "unavailable".into(), |(ms, _)| format!("{ms:.2} ms"));
-            println!("load {:.3} s  front {front:.3} s  pipelines {:.1} ms  frame {gpu}  ({})",
-                t.elapsed().as_secs_f64(), l.stats.pipelines_ms, g.adapter);
+            // The Load gate's pair: a cold load (fresh derivation cache, new driver key), then the same load again.
+            let cache = std::env::temp_dir().join(format!("loft_load_{nonce}"));
+            std::fs::create_dir_all(&cache).map_err(|e| Failure::Usage(e.to_string()))?;
+            for pass in ["cold", "warm"] {
+                let t = std::time::Instant::now();
+                let (p, report, _) = loft_passes::compile_cached(&src, set, &cache).map_err(|d| Failure::Compile(render(&d, &src)))?;
+                let front = t.elapsed().as_secs_f64();
+                let l = loft_cli::native::Loaded::new(&g, &p, (1280, 800), Some(nonce)).map_err(Failure::Device)?;
+                println!("{pass} {:.3} s  front {front:.3} s  pipelines {:.1} ms ({}, slowest {:.0} ms)  ({})",
+                    t.elapsed().as_secs_f64(), l.stats.pipelines_ms, l.stats.pipeline_ms.len(),
+                    l.stats.pipeline_ms.iter().map(|x| x.1).fold(0., f64::max), g.adapter);
+                println!("  front stages (ms): {}", report.ms.iter().map(|(n, ms)| format!("{n} {ms:.0}")).collect::<Vec<_>>().join("  "));
+                if pass == "cold" {
+                    let mut each = l.stats.pipeline_ms.clone();
+                    each.sort_by(|a, b| b.1.total_cmp(&a.1));
+                    for (name, ms) in each { println!("  {ms:9.1} ms  {name}"); }
+                }
+            }
             Ok(())
         }
         _ => Err(Failure::Usage("usage: loft build|check|show|still|clip|gate|load|ir|render|profile|controls|fmt|fork|context|diff|lint".into())),
