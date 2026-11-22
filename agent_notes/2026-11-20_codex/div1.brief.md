@@ -32,3 +32,23 @@ You are the lead on training-seed diversity for Loft v1.5 and Creative. Design f
 **3. Regenerate the 16 authored crab seeds** with the protocol, in batches of 4. Each must pass check, lint, both grammars, the CPU build ≤ 2 s and GPU ≤ 50 ms budgets, AND the variety gate. Render each (512×512 beauty plus depth) and make a WebP q95 contact sheet at ~/git/loft/out/meta/gallery/div1_sheet.webp, showing old versus new. Also propose, but do not implement, how to make the 28 ported seeds useful: frame them at varied action frames or cameras, or retire them from stills.
 
 Builds and tests go through ~/.local/bin/agent-build, one at a time. Commit on loft/seed-diversity in Creative and push that branch. Do not merge into the training branch: the lead reviews the sheet first. Messages end with "Co-Authored-By: GPT (codex) <noreply@openai.com>". Final message ≤150 words: the gate thresholds, current versus new scores, and the sheet path.
+
+**Addendum (owner and lead, 23 Nov; it supersedes step 3's batching where they differ):**
+- **Species shape hints.** The coverage plan's body-plan axis uses REAL crab morphologies, one per seed, each with a one-line structural brief:
+  - spider crab (tiny body, very long thin legs);
+  - fiddler (one giant claw);
+  - boxer (flat, holding anemones);
+  - decorator (debris attached);
+  - coconut (huge, armoured);
+  - porcelain (flat and round, feathery mouthparts);
+  - sponge crab (carrying a sponge);
+  - hermit (2–3 distinct shell types);
+  - pea crab (tiny, round);
+  - king crab (spiny, long legs);
+  - swimming crab (paddle legs);
+  - plus others you choose.
+
+  Cross them with style engine, pose, camera, environment and lighting.
+- **Sequential, seeing all accepted seeds:** every generation call sees the contact sheet plus descriptors of all accepted seeds (old and new) and its cell, and must differ structurally, not by palette.
+- **Best-of-3 per slot:** generate 3 candidates per slot in parallel, keep the one with the LARGEST variety-gate distance to the accepted set that also passes every gate, and record the runner-up distances.
+- Report the per-seed nearest-neighbour distance and silhouette IoU, before and after.
