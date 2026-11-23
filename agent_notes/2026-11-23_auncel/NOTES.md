@@ -133,21 +133,21 @@ added to it as requirements: they are what makes physics cheap.
 
 ## 6. Pending
 
-Status as of this note. Update the table when a row moves.
+Status as of this note. Update the table when a row moves. Rows for the integration lanes were updated by the integrator on `lane/integrate-meta`, 23 Nov evening.
 
 | Item | State | Next step |
 |---|---|---|
-| Local `main` against `origin/main` | Diverged: local has `dea8c8b7`, `8faf634d` and a duplicate of the reward-data note; origin has the lean2 merge `cad2bf4b` | Reconcile inside the integration lane |
-| lean2 cuts 8, 7, 1 and the spike verdict | Merged on `origin/main` (`cad2bf4b`). Verdict: no-go for 18,000; smallest honest target ≤32,500 | Owner decides whether G5.1 is restated; deferred cuts 2, 4, 5, 6 land standalone |
-| `merge-2026-11-23` (perf lanes, N-feet gait) | Not in `origin/main`; the redesign lanes are built on it | Lands with the integration |
-| `probe-door` (Probe A: authored frame passes; cull, classify, present in stdlib) | Committed; module text reported identical for 242 modules | Integrate |
-| `cut-tape` (§7.3: Tier 0 tape VM removed; ratchet 34,285 → 31,163) | Committed; edit refusal path and lint unverified | Integrate; verify the two |
-| `cut-unused` (§7.2 cuts, `docs/spec/CUTS_2026-11-23.md`) | Committed | Integrate |
-| `probe-rows` (Probe B: rows read rows) | WIP commit; P2 held, P3 missed | Integrate if its gates hold; record P3 as a measured miss |
-| Cut 1 (§7.1: delete what A and B superseded) | Not started | After A and B are in |
-| Probe C (a law over an image: TAA) | Not started | After Cut 1 |
-| Ratchet reset | Not done | After the cuts |
-| `tools-agent-build`, `fix/one-shot-errors` | Committed, small | Integrate |
+| Local `main` against `origin/main` | Reconciled on `lane/integrate-meta` (merge `943391b5`, origin tip `51eec94b`); main itself not moved | Lead fast-forwards main to the integration tip, then pushes (commands in `agent_notes/2026-11-23_meta_engine/INTEGRATE.md`) |
+| lean2 cuts 8, 7, 1 and the spike verdict | In `origin/main` and in the integration branch. Its single schedule reader (`check::motion_schedule`) carried probe-rows' table reads in the merge | Owner decides whether G5.1 is restated; deferred cuts 2, 4, 5, 6 land standalone |
+| `merge-2026-11-23-r2` (perf lanes, perf-edges, N-feet gait) | Merged on its own (`b714e4f3`). The branch named `merge-2026-11-23` (`b2dd43c3`) is the abandoned first pass and is **not** merged | Lands with the integration. Its open capsules-20 Speed question is in merge.md |
+| `probe-door` (Probe A) | Merged (`a2ed97fe`); one parser conflict with lean2 resolved | Done. Its follow-ups are Cut 1 rows below |
+| `cut-tape` (§7.3) | Merged (`3c62c2ef`). The edit refusal path and corpus lint were verified on the integrated tree (INTEGRATE.md §5). `EditSession` adjusted for plan's and probe-door's removed `Program` fields | Done |
+| `cut-unused` (§7.2) | Merged (`b4d05743`); `docs/spec/CUTS_2026-11-23.md` now holds both cut lanes' tables | Done. glTF import (394 lines) stays: an owner question in DESIGN §7.2 |
+| `probe-rows` (Probe B, WIP) | Merged (`7127e39f`) with `motion-stride` inside it. P2 held, **P3 missed** (motion 0.475 ms per frame against a 0.15 bound; the fat row costs 0.17). Motion-stride changes the four-site walk (crossing, tidal, tidal_fork) and records a regression in crossing at t = 2 s | Owner reviews motion-stride's four-site stills before the push. Make the lockstep pair cheaper: one compute pass per tick group with both entries, and one argument upload per catch-up instead of per tick (P3's measured cost is the two passes and two uploads, about 150 µs per tick) |
+| Cut 1 (§7.1) | Partly done by other lanes: body/state/retarget/chain/trunk/segment and solver/constrain went with cut-unused; cull, classify and present special cases went with probe-door. What remains is below | Next worker starts from this list, in this order. (1) **Packed-leg gait**, once P3 is fixed: port `scenes/crab_live.loft`, `scenes/showcase/std1e/{crossing,tidal,tidal_fork}.loft` and `scenes/motion_bodies/{crab,hexapod,quadruped,tripod,biped,heron}.loft` to `stdlib/motion/legs.loft` (`Trunk` + `Leg`, `trunk_plan`), with `stdlib/motion/audit.loft` reading `Leg` rows; then delete from `stdlib/motion/body.loft` the `Walker[sites]` lane columns, `walker_plan` and `kind LegChain` (emitted, read by nothing: DESIGN I4), from `stdlib/motion/gait.loft` the `step` law and `present` and every helper that reads Walker lanes (keep `support_hull`, `hold`, `join`, `split_links`, `commanded`, `scripted_bearing`, `wrap_phase`, `uncaught_spill`, `lift_phase_of`, which `legs.loft` imports), and the copy `scenes/showcase/std1e/gait.loft` (646 lines). Gate: Twin record/replay on every ported scene and the owner's look at the walk. (2) **Kind parameters** then have no user (`Walker[sites: u in 1..9]` is the only one): `KindDecl.params`, `Ck::kind_params`, the E402 one-value rule and the `Emitter.fixed` folding from motion-nfeet-2 (`4b525fc7`) become deletable; a language feature, so the owner's word. (3) **`outline_and_paper`** (two-line arm in `crates/loft-passes/src/pipeline/schedule.rs`): it only publishes the `paper` fact that probe-door's `tonemap` hole already reads; make `paper` an argument of `tonemap` in `stdlib/core.loft` and delete the arm and `Schedule.paper`. Gate: the woodblock scene's module text byte-identical. Not deletable yet, and why: `find_shadow_map` and `shade_tiles`' frame part replay per-kind modules (the kind adapters DESIGN keeps in the kernel); `woodblock(...)` needs world-typed schedule parameters; `bake_tex`/`screen_pass` fold into `law` only after Probe C |
+| Probe C (a law over an image: TAA) | Not started | Implement capability D on the probe-door door: a `target History` store and a law over it, run as an authored `pass` with a template; TAA in `stdlib`. Prediction P4: 0.40 ms at 1280×800, falsified above 0.6 ms. Then fold `bake_tex` and `screen_pass` into `law` (DESIGN §7.1 row 4) |
+| Ratchet reset | Not done. Measured on the integration tip: **28,906** (`tools/lines.py`, ceiling 33,880; loft-runner 1,943 / 2,200) | After the lead pushes: set the `Rust core` ceiling in `tools/lines.py` to the measured value of the pushed tip (expected 28,906), with a comment naming the cuts, so growth fails again. The 18,000 G5.1 target stays an owner decision |
+| `tools-agent-build`, `fix/one-shot-errors` | Merged (`500e76e3`, `19c6ae65`), no conflicts | Done |
 | F1, F2, F4, F9, F11 | Not started | Fix lane on the integrated main |
 | F3, F5, F6, F7 and two-second history | Not designed | Add to the meta-engine design as requirements |
 | F12 guide text | Not drafted | After the fixes, with the trainer's owner |
