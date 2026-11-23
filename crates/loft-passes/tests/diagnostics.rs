@@ -272,7 +272,6 @@ fn authored_motion_declarations_preserve_spans_and_write_ownership() {
         (Code::E003, include_str!("motion_source/state-zero-checkpoint.loft"), "checkpoint 0"),
         (Code::E501, include_str!("motion_source/solver-undeclared-write.loft"), "prev[0] = pos[0]"),
         (Code::E503, include_str!("motion_source/solver-race.loft"), "edge(i, i)"),
-        (Code::E003, include_str!("motion_source/plan-objective.loft"), "impossible(1)"),
     ] {
         let (actual, diagnostic) = compile(&format!("{scene}\n{fixture}")).expect_err("invalid motion declaration");
         assert_eq!(actual, code, "{diagnostic}");

@@ -15,7 +15,6 @@ pub fn motion_module(
     p: &Prog,
     types: &[Ty],
     kind: &KindDecl,
-    priors: &std::collections::BTreeMap<String, u32>,
     fixed: &std::collections::BTreeMap<(String, String), String>,
     output: impl FnOnce() -> Res<(usize, DispatchRows)>,
 ) -> Res<Option<(String, Dispatch)>> {
@@ -121,11 +120,6 @@ var<private> loft_tick: u32;
     let has_call = |name| roots.iter().chain(&lib).any(|f|
         References::function(f).calls.iter().any(|c| c.name == name));
     let has_events = has_call("emit_event");
-    let has_priors = has_call("sample_prior");
-    if has_priors {
-        em.priors = Some(priors);
-        em.out.push_str(crate::plan::PRIOR_WGSL);
-    }
     if has_events {
         em.out
             .push_str(&crate::fusion::event_wgsl(2, 2, "loft_tick"));
@@ -246,9 +240,6 @@ var<private> loft_tick: u32;
     ];
     if !checks.is_empty() {
         bindings.push((2, 1, DispatchResource::Results));
-    }
-    if has_priors {
-        bindings.push((1, 3, DispatchResource::Luts));
     }
     if has_events {
         bindings.push((2, 2, DispatchResource::Outbox));

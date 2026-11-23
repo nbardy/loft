@@ -21,8 +21,6 @@ pub enum ArgShape {
     Vec3,
     /// Spatial value of any kind.
     Spatial,
-    /// Named closed motion plan rather than an evaluated value.
-    Plan,
     /// Named verdict reason.
     Reason,
     Bsdf,
@@ -40,7 +38,6 @@ pub enum RetShape {
     Vec4,
     Verdict,
     Bsdf,
-    PriorSample,
 }
 
 /// Rules that depend on operand types, spaces or a referenced declaration.
@@ -298,9 +295,6 @@ catalog! {
         Poly(ScanFrame); Custom; Native; true, true;
     DSample "loft_dsample" 3..=3;
         Poly(ScanFrame); Custom; Native; false, true;
-    SamplePrior "sample_prior" 2..=2;
-        Signature(&[ArgShape::Plan, ArgShape::Float], RetShape::PriorSample);
-        Custom; Native; false, false;
     HasSky "has_sky" 0..=0;
         Signature(&[], RetShape::Bool); Custom; Native; false, true;
     SkyZenith "sky_zenith" 0..=0;

@@ -732,22 +732,6 @@ impl Scope<'_> {
                     &[s.prev.name.clone(), s.at.name.clone(), s.var.name.clone()],
                 )?;
             }
-            Item::Plan(p) => {
-                self.columns(&mut p.params)?;
-                self.ty(&mut p.ret, &[])?;
-                let locals = p
-                    .params
-                    .iter()
-                    .map(|p| p.name.name.clone())
-                    .collect::<Vec<_>>();
-                if let Some((_, dt)) = &mut p.horizon {
-                    self.expr(dt, &locals)?;
-                }
-                self.expr(&mut p.objective, &locals)?;
-                for e in &mut p.holds {
-                    self.expr(e, &locals)?;
-                }
-            }
             Item::Solver(s) => {
                 if let Some(head) = s.table.first_mut() {
                     self.ident(head)?;
@@ -833,7 +817,6 @@ impl Scope<'_> {
             Item::Law(x) => &mut x.f.name,
             Item::State(x) => &mut x.name,
             Item::Solver(x) => &mut x.name,
-            Item::Plan(x) => &mut x.name,
             Item::Kernel(x) => &mut x.f.name,
             Item::Camera(x) => &mut x.name,
             Item::Bake(x) => &mut x.texel.name,

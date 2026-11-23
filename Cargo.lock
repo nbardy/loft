@@ -510,7 +510,6 @@ dependencies = [
  "loft-builtins",
  "loft-ir",
  "loft-parse",
- "loft-plan",
  "serde",
 ]
 
@@ -627,19 +626,11 @@ dependencies = [
  "loft-gltf",
  "loft-ir",
  "loft-parse",
- "loft-plan",
  "naga",
  "serde",
  "serde-lexpr",
  "serde_json",
  "tempfile",
-]
-
-[[package]]
-name = "loft-plan"
-version = "0.1.0"
-dependencies = [
- "loft-abi",
 ]
 
 [[package]]

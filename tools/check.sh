@@ -11,7 +11,7 @@ static_checks() {
     case "$(head -1 "$script")" in *zsh) zsh -n "$script" ;; *) bash -n "$script" ;; esac
   done
   # A host can load bundles without a compiler, and the compiler can run without a device.
-  for crate in loft-runner loft-std loft-passes loft-plan loft-parse loft-abi loft-ir loft-format; do
+  for crate in loft-runner loft-std loft-passes loft-parse loft-abi loft-ir loft-format; do
     reach="$(cargo tree --locked -p "$crate" --edges normal,build --prefix none --format '{p}' | awk '{print $1}')"
     case "$crate" in
       loft-runner) if grep -qx loft-passes <<<"$reach"; then echo "runner links compiler" >&2; return 1; fi ;;

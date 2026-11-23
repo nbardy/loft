@@ -155,7 +155,7 @@ fn lower_dispatches(
 ) -> Res<Vec<Dispatch>> {
     let CompileOptions { samples, overrides, .. } = *opts;
     let Schedule { drawn, decl: sched, .. } = schedule;
-    let Stage0Scene { tables, priors, .. } = scene;
+    let Stage0Scene { tables, .. } = scene;
     let mut dispatches = vec![];
     if samples.is_empty() {
         for &name in &p.kind_order {
@@ -179,7 +179,7 @@ fn lower_dispatches(
                     name: name.into(), n_rows: table.len() as u32, stride: (words.len() / table.len()) as u32, words,
                 }))
             };
-            if let Some((entry, dispatch)) = emit::motion_module(p, types, kind, priors, fixed, output)? {
+            if let Some((entry, dispatch)) = emit::motion_module(p, types, kind, fixed, output)? {
                 texts.push((format!("{name}.advance"), entry));
                 dispatches.push(dispatch);
             }

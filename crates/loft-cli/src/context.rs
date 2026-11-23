@@ -202,7 +202,7 @@ fn signature(out: &mut String, item: &Item, source: &str, roots: &[Node], tokens
             last(&roots[body]).span.hi
         }
         Item::Fn(_) | Item::Kind(_) | Item::Scan(_) | Item::Law(_) | Item::Body(..)
-        | Item::Solver(_) | Item::Plan(_) | Item::Kernel(_) | Item::Check(_)
+        | Item::Solver(_) | Item::Kernel(_) | Item::Check(_)
         | Item::Camera(_) | Item::Bake(_) | Item::Retarget { .. } => {
             let body = body_index(roots, name, source);
             last(&roots[body - 1]).span.hi

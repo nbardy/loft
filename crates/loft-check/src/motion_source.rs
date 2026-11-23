@@ -44,9 +44,6 @@ pub(super) fn check(ck: &mut Ck<'_, '_>) -> Res<()> {
     for spec in ck.p.solvers.values() {
         solver(ck.p, spec)?;
     }
-    for plan in ck.p.plans.values() {
-        crate::plan_source::check_source(plan)?;
-    }
     if let Some(schedule) = ck.p.schedule {
         for pass in schedule
             .passes

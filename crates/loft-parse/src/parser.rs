@@ -487,42 +487,6 @@ impl<'src> Parser<'src, '_> {
         Ok(SolverDecl { name, table, writes, config, steps })
     }
 
-    fn plan(&mut self) -> Res<PlanDecl> {
-        let name = self.upper_ident()?;
-        self.expect("(")?;
-        let params = self.columns(")")?;
-        self.expect("->")?;
-        let ret = self.ty()?;
-        self.expect("{")?;
-        self.seps();
-        let horizon = if self.eat("knots") {
-            self.expect(":")?;
-            let knots = self.integer()?;
-            self.expect(",")?;
-            self.expect("duration")?;
-            self.expect(":")?;
-            let duration = self.expr(0)?;
-            self.end()?;
-            Some((knots, duration))
-        } else {
-            None
-        };
-        self.expect("minimize")?;
-        let objective = self.expr(0)?;
-        self.end()?;
-        self.expect("subject_to")?;
-        self.expect("{")?;
-        self.seps();
-        let mut holds = vec![];
-        while !self.eat("}") {
-            holds.push(self.expr(0)?);
-            self.end()?;
-        }
-        self.seps();
-        self.expect("}")?;
-        Ok(PlanDecl { name, params, ret, horizon, objective, holds })
-    }
-
     fn item(&mut self, public: bool) -> Res<Item> {
         let build = self.eat("build");
         let start = self.cur().span;
@@ -603,9 +567,6 @@ impl<'src> Parser<'src, '_> {
         }
         if self.eat("solver") {
             return self.solver().map(Item::Solver);
-        }
-        if self.eat("plan") {
-            return self.plan().map(Item::Plan);
         }
         if self.eat("bake_tex") {
             return self.bake_tex().map(Item::Bake);

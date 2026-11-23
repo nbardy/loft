@@ -119,7 +119,6 @@ mod tests {
             param_ranges: vec![],
             shadow_size: 0,
             luts: vec![],
-            priors: Default::default(),
             passes: vec![Pass::Cull],
             cull: 0,
             classify: 0,

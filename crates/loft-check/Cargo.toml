@@ -10,7 +10,6 @@ loft-abi = { path = "../loft-abi" }
 loft-builtins = { path = "../loft-builtins" }
 loft-ir = { path = "../loft-ir" }
 loft-parse = { path = "../loft-parse" }
-loft-plan = { path = "../loft-plan" }
 serde = { version = "1", features = ["derive"] }
 
 [lints]

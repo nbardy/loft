@@ -44,7 +44,6 @@ pub enum Item {
     Body(Ident, Vec<BodyItem>),
     State(StateDecl),
     Solver(SolverDecl),
-    Plan(PlanDecl),
     Kernel(KernelDecl),
     /// `check name(h: K, ...) -> unit { ... }`: `ret` is the verdict's unit.
     Check(FnDecl),
@@ -83,7 +82,6 @@ impl Item {
             Self::Law(x) => &x.f.name,
             Self::State(x) => &x.name,
             Self::Solver(x) => &x.name,
-            Self::Plan(x) => &x.name,
             Self::Kernel(x) => &x.f.name,
             Self::Camera(x) => &x.name,
             Self::Bake(x) => &x.texel.name,
@@ -155,16 +153,6 @@ pub struct SolverDecl {
 pub enum SolverStep {
     Statement(Stmt),
     Constraint { name: Ident, a: Ident, b: Ident, lo: Expr, hi: Expr, block: Block },
-}
-
-#[derive(serde::Serialize, Clone, Debug)]
-pub struct PlanDecl {
-    pub name: Ident,
-    pub params: Vec<RowField>,
-    pub ret: TyExpr,
-    pub horizon: Option<(u32, Expr)>,
-    pub objective: Expr,
-    pub holds: Vec<Expr>,
 }
 
 /// Permissions checked at a kernel's typed boundary.
