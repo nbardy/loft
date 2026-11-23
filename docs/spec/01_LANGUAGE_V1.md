@@ -62,7 +62,7 @@
 ### 2.4 Staging, Ownership & Motion Fusion
 
 * **Stage 0 (`build`):** Runs once on CPU/WASM. `build for` emits rows via `emit Kind(...)` and returns `RowId`. Cannot read `time` or GPU state (`E403`).
-* **Stage 1 (`kind`):** `kind K[flag: bool]` allows discrete variants only (cardinality ≤ 8, used variants ≤ 4 by default; `E401`/`E402`).
+* **Stage 1 (`kind`):** `kind K[flag: bool]` or `kind K[n: u in lo..hi]` (upper bound excluded) allows discrete variants only (cardinality ≤ 8; `E401`/`E402`). `emit` supplies a parameter like a column and the row stores it, so CPU evaluation reads it unchanged; every GPU module of the kind folds it to a literal, so a loop over it unrolls exactly. The current compiler builds one variant per kind: rows that disagree are `E402`, a law cannot write a parameter (`E501`), and a host that upserts rows must keep the emitted value.
 * **Stage 2 (`runtime`):** `for` inside `kind`/`law`/`solver` stays a GPU loop.
 * **Law ownership & fusion:** Every `a.f = e` checks `f ∈ writes` (`E501`). Across a schedule, two laws on the same kind must have disjoint `writes` sets (`E502`). Consecutive row-local laws on the same kind with disjoint `writes` **automatically fuse inside one per-tick `advance(from, to)` loop** in schedule order—preserving 1 dispatch/frame and bit-exact multi-tick catch-up.
 
@@ -159,7 +159,8 @@ fn_body:     "=" expr | block
 scan_decl:   "scan" LIDENT LIDENT "in" expr ".." expr "by" INT "on" LIDENT "{" _NL? "init" "=" expr _SEP "step" LIDENT "=" expr _SEP? "}"
 
 kind_decl:   "kind" UIDENT var_params? "@" UIDENT "(" col_list? ")" "{" (_NL? kind_item (_SEP kind_item)* _SEP?)? "}"
-var_params:  "[" param ("," param)* ","? "]"
+var_params:  "[" var_param ("," var_param)* ","? "]"
+var_param:   LIDENT ":" type_expr ("in" expr ".." expr)?
 col_list:    col ("," col)* ","?
 col:         LIDENT ":" type_expr range_ref? ("=" expr)?
 range_ref:   "in" expr ".." expr | (">" | ">=") expr

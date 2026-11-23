@@ -37,7 +37,8 @@ fn_body:     "=" (expr | block) | block
 scan_decl:   "scan" LIDENT LIDENT "in" expr ".." expr "by" INT "on" LIDENT "{" _NL? "init" "=" expr _sep "step" LIDENT "=" expr _sep? "}"
 
 kind_decl:   "kind" UIDENT var_params? "@" kind_ref "(" col_list? ")" "{" (_NL? kind_item (_sep kind_item)* _sep?)? "}"
-var_params:  "[" param ("," param)* ","? "]"
+var_params:  "[" var_param ("," var_param)* ","? "]"
+var_param:   LIDENT ":" type_expr ("in" expr ".." expr)?
 col_list:    col ("," col)* ","?
 col:         LIDENT ":" type_expr range_ref? ("=" expr)?
 range_ref:   "in" expr ".." expr | (">" | ">=") expr

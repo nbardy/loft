@@ -208,18 +208,18 @@ build { emit K(pose: place([0,0,0]@World)) }
     (
         Code::E402,
         r###"space World Local
-kind K[a: bool, b: bool, c: bool] @Local (pose: xf@Local>World, r: f = 1) {
+kind K[a: bool, b: bool, c: bool, d: bool] @Local (pose: xf@Local>World, r: f = 1) {
   trace(p) = sphere(p - [0,0,0]@Local, 0.5)
   material(p,n) = ggx(rgb(0.5), 0.5, 0)
 }
 build { emit K(pose: place([0,0,0]@World)) }
 "###,
-        r###"error[E402]: kind variant budget exceeded (8 > max 4)
-  --> case.loft:2:26
+        r###"error[E402]: kind variant budget exceeded (16 > max 8)
+  --> case.loft:2:35
    |
-  2 | kind K[a: bool, b: bool, c: bool] @Local (pose: xf@Local>World, r: f = 1) {
-   |                          ^
-   = fix: move `c` into the row; each variant is a separate shader module
+  2 | kind K[a: bool, b: bool, c: bool, d: bool] @Local (pose: xf@Local>World, r: f = 1) {
+   |                                   ^
+   = fix: move `d` into the row; each variant is a separate shader module
 "###,
     ),
     (

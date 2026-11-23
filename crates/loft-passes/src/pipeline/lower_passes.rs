@@ -2,9 +2,10 @@ use super::{Timings, schedule::Schedule, stage0::Stage0Scene};
 use crate::{CompileOptions, Prog, bake_tex, emit, shader::naga_module};
 use crate::program::{Dispatch, Draw, Pass, ShaderModule, abi};
 use loft_eval::pack;
+use loft_eval::eval::{RowVal, Tables};
 use loft_ir::{Code, Diag, Res, Sources};
 use loft_parse::ast::*;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use emit::shade_tiles::{Lighting, Visibility};
 
 pub(super) struct LoweredPasses {
@@ -26,13 +27,14 @@ pub(super) fn lower(
         Lighting::Bsdf(name, _) => Some(name),
         Lighting::World { .. } => None,
     };
+    let fixed = fixed_parameters(p, &scene.tables)?;
     let mut texts = Vec::new();
     for (name, kt) in drawn.iter().zip(kinds) {
-        let shader = emit::emit_kind_module(p, types, p.kinds[*name], light, lut_refs, kt.draw, aov, None)?;
+        let shader = emit::emit_kind_module(p, types, p.kinds[*name], light, lut_refs, kt.draw, aov, None, &fixed)?;
         texts.push((name.to_string(), shader));
     }
     let visibility = lower_world(p, types, opts, schedule, scene, &mut texts)?;
-    let dispatches = lower_dispatches(p, types, opts, schedule, scene, &mut texts)?;
+    let dispatches = lower_dispatches(p, types, opts, schedule, scene, &fixed, &mut texts)?;
     let Schedule { path, passes, shadow_size, path_entry, sky, paper, film, ids, .. } = schedule;
     let Stage0Scene { kinds, lut_refs, .. } = scene;
     let present = if let Some(path) = path.as_ref() {
@@ -109,9 +111,47 @@ fn lower_world(
     Ok(visibility)
 }
 
+/// Each kind parameter as a WGSL literal: the one value every row of its kind was emitted with.
+/// Rows still carry the value, so CPU evaluation and live edits read it as a column.
+fn fixed_parameters(p: &Prog<'_>, tables: &Tables) -> Res<BTreeMap<(String, String), String>> {
+    let mut fixed = BTreeMap::new();
+    for &name in &p.kind_order {
+        let kind = p.kinds[name];
+        let rows = &tables[p.kind_index(name)];
+        for prm in &kind.params {
+            let column = kind.row.iter().position(|f| f.name.name == prm.name.name).expect("parsed: a parameter is a column");
+            let mut values: Vec<String> = vec![];
+            for row in rows {
+                let (literal, number) = match &row[column] {
+                    RowVal::U(v) => (format!("{v}u"), f64::from(*v)),
+                    RowVal::I(v) => (format!("{v}i"), f64::from(*v)),
+                    RowVal::B(v) => (v.to_string(), 0.0),
+                    other @ (RowVal::F(_) | RowVal::V(_) | RowVal::X(_)) => {
+                        unreachable!("checked: a kind parameter is bool or an integer, not {other:?}")
+                    }
+                };
+                if let Some((ExprKind::Num { value: lo, .. }, ExprKind::Num { value: hi, .. })) =
+                    prm.range.as_ref().map(|(lo, hi)| (&lo.kind, &hi.kind)) && !(*lo..*hi).contains(&number) {
+                    return Err(Diag::new(Code::E602, prm.span, format!("kind parameter `{}` = {number} lies outside {lo}..{hi}", prm.name.name),
+                        "emit a value in the parameter's domain (the upper bound is excluded)"));
+                }
+                if !values.contains(&literal) { values.push(literal); }
+            }
+            match values.as_slice() {
+                [] => {}
+                [one] => { fixed.insert((name.to_string(), prm.name.name.clone()), one.clone()); }
+                many => return Err(Diag::new(Code::E402, prm.span,
+                    format!("kind parameter `{}` takes {} values in this scene ({})", prm.name.name, many.len(), many.join(", ")),
+                    format!("a scene compiles one variant per kind: emit one value, or move `{}` into the column list", prm.name.name))),
+            }
+        }
+    }
+    Ok(fixed)
+}
+
 fn lower_dispatches(
     p: &Prog<'_>, types: &mut Vec<Ty>, opts: &CompileOptions<'_>, schedule: &Schedule<'_>,
-    scene: &Stage0Scene, texts: &mut Vec<(String, String)>,
+    scene: &Stage0Scene, fixed: &BTreeMap<(String, String), String>, texts: &mut Vec<(String, String)>,
 ) -> Res<Vec<Dispatch>> {
     let CompileOptions { samples, overrides, .. } = *opts;
     let Schedule { drawn, decl: sched, .. } = schedule;
@@ -139,7 +179,7 @@ fn lower_dispatches(
                     name: name.into(), n_rows: table.len() as u32, stride: (words.len() / table.len()) as u32, words,
                 }))
             };
-            if let Some((entry, dispatch)) = emit::motion_module(p, types, kind, priors, output)? {
+            if let Some((entry, dispatch)) = emit::motion_module(p, types, kind, priors, fixed, output)? {
                 texts.push((format!("{name}.advance"), entry));
                 dispatches.push(dispatch);
             }
