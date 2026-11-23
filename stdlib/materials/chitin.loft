@@ -1,16 +1,196 @@
-use stdlib::noise::value::{vnoise}
+use stdlib::noise::value::{noise2, hash3}
+use stdlib::noise::cellular::{cellular2, facet_site}
 
-# Attached pigment in shell coordinates. Broad mineral stains break into smaller
-# pits on the pale worn ridges. Pack linear reflectance and GGX roughness together
-# so a material probe and the beauty evaluate exactly the same surface.
-pub fn chitin_surface(q: v3, pigment: rgb) -> v4 {
-  let broad = vnoise(q * [3.4, 2.8, 4.7] + [3, 6, 2])
-  let fleck = vnoise(q * 16.0 + [7, 1, 9])
-  let pore = smoothstep(0.64, 0.82, vnoise(q * 39.0))
-  let stain = smoothstep(0.32, 0.68, 0.70*broad + 0.30*fleck)
-  let wear = smoothstep(0.58, 0.83, fleck + 0.12*abs(q.x)) * (1.0-pore)
-  let value = mix(0.24, 1.25, stain) * (1.0-0.50*pore)
-  let albedo = pigment * value + [0.16, 0.127, 0.073] * wear
-  let rough = 0.55 + 0.25 * clamp(0.84*(1.0-stain) + 0.45*pore + 0.16*wear, 0.0, 1.0)
-  v4(albedo, rough)
+# Crab chitin, extracted from the lead-matched blue swimmer (match1 final.loft, photo refs/crab/06).
+# Presets for 16 species and the div1 recipe: agent_notes/2026-11-20_v1/design/chitin_howto.md.
+#
+#   carapace(q, axes, n, ground, groove, mark, pattern, gloss, grain)
+#   limb(q, axis, n, colour, mark, banding, taper, tip, gloss, grain)
+#
+# q is the shading point relative to the part (m) and n its normal; the carapace's
+# x is across the body and z points forward.
+# pattern = [kind, cover, scale]: kind 0 none, 1 spots, 2 net (spots joined by vermiculated
+#   lines), 3 transverse bands or ridges; cover in [0, 1]; scale is the mark cell or band
+#   period in carapace half-widths (swimmer 0.07, about 1/30 of the width).
+# gloss = [roughness, coat]: roughness between granules (tips are 40% smoother), coat the
+#   weight of the thin water film (rough 0.12). Limbs take half the roughness and 0.71 coat.
+# grain = [pitch (m), strength]: granules show as specular sparkle; strength 1 is the
+#   swimmer's pinhead granules, 0 a smooth shell.
+# banding = [mottle cover, band strength]: limb marks use the mark colour.
+# taper = tip radius / root radius of the link; strongly tapered links (dactyls, claw
+# fingers, spines) take the tip colour toward their end, every link darkens at its far joint.
+
+const Ventral = [0.50, 0.50, 0.46]
+
+# Wet chitin: Lambert under a GGX base and a thin water film, all on the granule-tilted
+# normal, so granules show as specular sparkle while the albedo stays clean.
+fn ggx_term(nh: f, nv: f, nl: f, rough: f) -> f {
+  let a = max(rough * rough, 0.002)
+  let a2 = a * a
+  let q = nh * nh * (a2 - 1.0) + 1.0
+  let vis = 0.5 / max(nl * sqrt(nv * nv * (1.0 - a2) + a2) + nv * sqrt(nl * nl * (1.0 - a2) + a2), 0.00001)
+  a2 / (3.14159265 * q * q) * vis
+}
+
+pub lobe wet(albedo: rgb, rough: f, coat: f, tilt: rgb, n: rgb, v: rgb, l: rgb) {
+  let m = normalize(n + tilt)
+  let nl = dot(m, l)
+  if nl <= 0.0 || dot(n, l) <= 0.0 {
+    return v4(rgb(0.0), 1.0)
+  }
+  let nv = max(dot(m, v), 0.02)
+  let h = normalize(v + l)
+  let nh = max(dot(m, h), 0.0)
+  let f = 0.04 + 0.96 * pow(1.0 - max(dot(v, h), 0.0), 5.0)
+  let spec = f * (0.25 * ggx_term(nh, nv, nl, rough) + coat * ggx_term(nh, nv, nl, 0.12))
+  v4((albedo * (0.318309886 * (1.0 - f)) + rgb(spec)) * nl, 1.0)
+}
+
+# Hemispherical granules on a jittered lattice of the given pitch (m). The normal tilts away
+# from the nearest granule centre inside its radius; between granules the surface is flat.
+fn bead(q: v3, pitch: f) -> f {
+  let g = facet_site(q / pitch)
+  1.0 - smoothstep(0.30, 0.42, length(q / pitch - g.xyz))
+}
+
+pub fn granules(q: v3, n: rgb, pitch: f, amp: f) -> rgb {
+  let g = facet_site(q / pitch)
+  let d = q / pitch - g.xyz
+  let t = d - n * dot(d, n)
+  t * (amp * 2.0 * (1.0 - smoothstep(0.30, 0.42, length(d))))
+}
+
+# Carapace anatomy in c = [s, u] (half-widths): s = |x| across, u along the midline (+front).
+# Everything below reads s, never x, so the shell is bilaterally symmetric by construction.
+fn cluster(c: v2, at: v2, r: f) -> f {
+  let d = (c - at) / r
+  exp(-dot(d, d))
+}
+
+# Marks gather around the grooves and on the branchial sides.
+fn density(c: v2) -> f {
+  0.45 + 0.55 * min(cluster(c, [0.45, 0.05], 0.22) + cluster(c, [0.30, -0.30], 0.18) + cluster(c, [0.0, -0.22], 0.12)
+    + cluster(c, [0.22, 0.30], 0.14) + cluster(c, [0.75, 0.02], 0.16) + cluster(c, [0.55, 0.38], 0.14), 1.0)
+}
+
+# Distance to the soft butterfly-shaped gastro-cardiac (H) groove; it fades out at every end.
+fn h_groove(u: f, s: f) -> f {
+  let arm = abs(length([s - 0.55, u + 0.04]) - 0.40)
+  let bar = abs(u + 0.06 - 0.5 * s * s) + 0.3 * max(s - 0.12, 0.0)
+  min(arm, bar) + 0.3 * max(abs(u + 0.04) - 0.10, 0.0)
+}
+
+fn bump(c: v2, at: v2, r: f) -> f {
+  let d = (c - at) / r
+  let k = max(1.0 - dot(d, d), 0.0)
+  k * k
+}
+
+# Gastric, branchial and cardiac swellings, with the H-groove pressed in.
+fn relief(s: f, u: f) -> f {
+  let c = [s, u]
+  let lumps = 0.012 * bump(c, [0.0, 0.16], 0.32) + 0.012 * bump(c, [0.48, -0.02], 0.34) + 0.008 * bump(c, [0.0, -0.30], 0.24)
+  lumps - 0.008 * (1.0 - smoothstep(0.0, 0.06, h_groove(u, s)))
+}
+
+# One crisp pale blob per Worley cell, kept with the given chance (hashed per cell).
+fn blob(cell: v4, r0: f, r1: f, ragged: f, chance: f, salt: i) -> f {
+  (1.0 - smoothstep(r0, r1, cell.x + ragged)) * step(1.0 - chance, hash3(i32(cell.z * 9.0), i32(cell.w * 9.0), salt))
+}
+
+fn warp(c: v2, scale: f) -> v2 {
+  let k = 0.98 / scale
+  c + 0.357 * scale * [noise2(c * k + [3.1, 1.7]), noise2(c * k + [7.3, 9.1])]
+}
+
+# Thresholded spots at two sizes (scale and scale / 2), denser where the anatomy gathers them.
+fn spots(c: v2, cover: f, scale: f) -> f {
+  let rho = density(c)
+  let w = warp(c, scale)
+  let ragged = 0.07 * noise2(c * (3.15 / scale))
+  max(blob(cellular2(w / scale), 0.23, 0.29, ragged, cover * rho, 3),
+    blob(cellular2(w / (0.5 * scale) + [0.4, 0.8]), 0.19, 0.26, ragged, 0.667 * cover * rho, 5))
+}
+
+# Spots joined by thin vermiculated lines: a narrow band |n| < w of warped low-octave noise.
+fn net(c: v2, cover: f, scale: f) -> f {
+  let worm = abs(noise2(warp(c, scale) * (0.91 / scale) + [5.0, 2.0]))
+  let reach = smoothstep(0.75, 0.95, density(c) + 0.3 * noise2(c * 8.0) + cover - 0.45)
+  max(spots(c, cover, scale), (1.0 - smoothstep(0.03, 0.06, worm)) * reach)
+}
+
+# Transverse arcs across the midline, period scale, cover the marked fraction of each period.
+fn bands(c: v2, cover: f, scale: f) -> f {
+  let t = (c.y - 0.35 * c.x * c.x) / scale + 0.25 * noise2(c * (0.8 / scale))
+  1.0 - smoothstep(cover - 0.1, cover + 0.1, abs(fract(t) - 0.5) * 2.0)
+}
+
+# Species pattern dispatcher. Any kind other than 1, 2 or 3 is kind 0: no marks.
+fn marks(c: v2, pattern: v3) -> f {
+  let kind = i32(pattern.x + 0.5)
+  if kind == 1 {
+    return spots(c, pattern.y, pattern.z)
+  }
+  if kind == 2 {
+    return net(c, pattern.y, pattern.z)
+  }
+  if kind == 3 {
+    return bands(c, pattern.y, pattern.z)
+  }
+  0.0
+}
+
+# axes = the carapace half-extents (m); x across, y up, z forward.
+pub fn carapace(q: v3, axes: rgb, n: rgb, ground: rgb, groove: rgb, mark: rgb, pattern: v3, gloss: v2, grain: v2) -> Bsdf {
+  let s = abs(q.x) / axes.x
+  let u = q.z / axes.x
+  let ditch = 1.0 - smoothstep(0.0, 0.03, h_groove(u, s))
+  let pale = marks([s, u], pattern) * (1.0 - 0.5 * ditch)
+  let bumps = bead(q, grain.x)
+  let g = bumps * min(grain.y, 1.0)
+  let base = mix(ground, groove, ditch) * (1.0 + 0.35 * g)
+  let top = mix(base, mark * (1.0 - 0.25 * g), pale) * (1.0 - 0.15 * ditch)
+  let albedo = mix(top, Ventral, smoothstep(-0.2, -0.6, q.y / axes.y))
+  let hs = (relief(s + 0.01, u) - relief(s - 0.01, u)) * 50.0 * sign(q.x)
+  let hu = (relief(s, u + 0.01) - relief(s, u - 0.01)) * 50.0
+  let coat = gloss.y * mix(1.0, mix(0.2, 1.0, bumps), min(grain.y, 1.0))
+  wet(albedo, mix(gloss.x, 0.6 * gloss.x, g), coat, granules(q, n, grain.x, 0.45 * grain.y) - [hs, 0.0, hu])
+}
+
+# Crisp pale marks on a 3-D jittered lattice: a round spot per cell whose radius grows with
+# cover, clipped by the cell border so high cover leaves a dark net between pale cells.
+fn mottle(q: v3, pitch: f, cover: f) -> f {
+  let g = facet_site(q / pitch)
+  let r = length(q / pitch - g.xyz)
+  let e = 0.004 / pitch
+  let size = (0.12 + 0.55 * cover) * (0.7 + 0.6 * fract(g.x * 7.13 + g.y * 3.71 + g.z * 5.17))
+  let spot = 1.0 - smoothstep(size - e, size + e, r)
+  spot * smoothstep(0.10 - e, 0.10 + e, g.w) * step(0.01, cover)
+}
+
+# A leg or claw link from its root (q = 0) along axis (m) to its far joint. limb() is
+# wet(limb_albedo, ...) on limb_tilt; call the two parts directly to layer a body's own
+# albedo (setae, algae) between them, since a material cannot mix a helper's lobes.
+pub fn limb_albedo(q: v3, axis: rgb, n: rgb, colour: rgb, mark: rgb, banding: v2, taper: f, tip: rgb) -> rgb {
+  let len2 = max(dot(axis, axis), 0.000001)
+  let along = clamp(dot(q, axis) / len2, 0.0, 1.0)
+  let stretched = q - axis * (dot(q, axis) / len2 * 0.45)
+  let mottled = mix(colour, mark, mottle(stretched, 0.04, banding.x) * smoothstep(-0.1, 0.5, n.y))
+  let banded = mix(mottled, mark, banding.y * (1.0 - smoothstep(0.10, 0.16, abs(along - 0.45))))
+  let tipped = mix(banded, tip, smoothstep(0.55, 0.75, 1.0 - taper) * smoothstep(0.5, 0.95, along))
+  tipped * (1.0 - 0.45 * smoothstep(0.82, 1.0, along))
+}
+
+# Granules plus five shallow facets around the axis for the angular segment highlights.
+pub fn limb_tilt(q: v3, axis: rgb, n: rgb, grain: v2) -> rgb {
+  let dir = normalize(axis + rgb(0.0000001))
+  let radial = normalize(n - dir * dot(n, dir) + rgb(0.00001))
+  let across = normalize(cross(dir, [0.0, 1.0, 0.0]) + rgb(0.00001))
+  let phi = atan2(dot(radial, cross(dir, across)), dot(radial, across))
+  let facet = (floor(phi / 1.2566 + 0.5) * 1.2566 - phi) * 0.8
+  granules(q, n, grain.x, 0.18 * grain.y) + cross(dir, radial) * facet
+}
+
+pub fn limb(q: v3, axis: rgb, n: rgb, colour: rgb, mark: rgb, banding: v2, taper: f, tip: rgb, gloss: v2, grain: v2) -> Bsdf {
+  wet(limb_albedo(q, axis, n, colour, mark, banding, taper, tip), 0.5 * gloss.x, 0.714 * gloss.y, limb_tilt(q, axis, n, grain))
 }
