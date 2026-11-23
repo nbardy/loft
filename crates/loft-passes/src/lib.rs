@@ -15,7 +15,7 @@ pub use loft_check::{Prog, bsdf, check, kind_space, pose_field, source, world, T
 pub use loft_eval::{ad, eval, lip};
 pub use loft_gltf as gltf;
 use loft_check::{FINITE_DIFF_STEP, infer, unit};
-use loft_eval::{as_f32, pack, stage0};
+use loft_eval::{as_f32, pack};
 
 pub mod emit {
     pub use loft_emit::emit::*;

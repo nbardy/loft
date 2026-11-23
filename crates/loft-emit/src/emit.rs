@@ -967,12 +967,16 @@ fn classify_with_halo(halo: &str, bindings: &str) -> String {
 
 /// `sky` is the library fn named by the schedule's present pass.
 pub fn present_module(p: &Prog, types: &[Ty], sky: &str, aov: Aov, paper: Option<&str>) -> String {
-    emit_present(p, types, sky, aov, paper, None, false)
+    emit_present(p, types, sky, aov, paper, None, shade_tiles::Visibility::Center)
 }
 
-/// `shaded_alpha`: shade stores alpha 1.0 at every pixel it owns and classify zeroed the rest, so alpha alone tells sky
-/// from surface (the subpixel-edge path, whose coverage is wider than the center visibility).
-fn emit_present(p: &Prog, types: &[Ty], sky: &str, aov: Aov, paper: Option<&str>, film: Option<&str>, shaded_alpha: bool) -> String {
+/// `visibility` of the beauty resolve. Taps: shade stores alpha 1.0 at every pixel it owns and classify zeroed the rest,
+/// so alpha alone tells sky from surface (the subpixel-edge coverage is wider than the center visibility). Coverage:
+/// the same, plus the blend code shade_coverage.wgsl stores in the alpha.
+fn emit_present(
+    p: &Prog, types: &[Ty], sky: &str, aov: Aov, paper: Option<&str>, film: Option<&str>, visibility: shade_tiles::Visibility,
+) -> String {
+    use shade_tiles::Visibility;
     let mut em = Emitter::new(p, types);
     em.header(abi::NONCE_PLACEHOLDER);
     let mut roots = vec![sky];
@@ -987,10 +991,24 @@ fn emit_present(p: &Prog, types: &[Ty], sky: &str, aov: Aov, paper: Option<&str>
     let hdr = "var c = textureLoad(hdr_tex, px, 0).rgb;";
     // The beauty resolve reads the HDR texel only where something was shaded: a sky pixel then costs one 8-byte
     // visibility read instead of that plus a 8-byte color read it discards.
-    let (load, resolve) = match (aov, paper.map(fn_symbol), shaded_alpha) {
-        (Aov::Beauty, None, true) => ("let hdr_px = textureLoad(hdr_tex, px, 0);\n  var c = hdr_px.rgb;",
+    let (load, resolve) = match (aov, paper.map(fn_symbol), visibility) {
+        (Aov::Beauty, None, Visibility::SubpixelEdges) => ("let hdr_px = textureLoad(hdr_tex, px, 0);\n  var c = hdr_px.rgb;",
             format!("if hdr_px.a == 0.0 {{ c = {sky}(loft_ray(pos.xy), normalize(frame.sun.xyz)); }} return vec4<f32>({film}(c), 1.0);")),
-        (Aov::Beauty, None, false) => ("let covered = textureLoad(vis_tex, px, 0).x != LOFT_EMPTY;\n  var c = vec3<f32>(0.0);\n  if covered { c = textureLoad(hdr_tex, px, 0).rgb; }",
+        // |alpha| = 2 + k + w blends toward 4-neighbour k by w; alpha <= 0 is a sky pixel, at this pixel or the partner.
+        (Aov::Beauty, None, Visibility::Coverage) => ("let hdr_px = textureLoad(hdr_tex, px, 0);\n  var c = hdr_px.rgb;",
+            format!("let sun = normalize(frame.sun.xyz);
+  if hdr_px.a <= 0.0 {{ c = {sky}(loft_ray(pos.xy), sun); }}
+  let code = abs(hdr_px.a) - 2.0;
+  if code >= 0.0 {{
+    var steps = array(vec2<i32>(1, 0), vec2<i32>(-1, 0), vec2<i32>(0, 1), vec2<i32>(0, -1));
+    let q = clamp(vec2<i32>(px) + steps[min(u32(code), 3u)], vec2<i32>(0), vec2<i32>(frame.size.xy) - 1);
+    let other = textureLoad(hdr_tex, q, 0);
+    var b = other.rgb;
+    if other.a <= 0.0 {{ b = {sky}(loft_ray(vec2<f32>(q) + 0.5), sun); }}
+    c = mix(c, b, fract(code));
+  }}
+  return vec4<f32>({film}(c), 1.0);")),
+        (Aov::Beauty, None, Visibility::Center) => ("let covered = textureLoad(vis_tex, px, 0).x != LOFT_EMPTY;\n  var c = vec3<f32>(0.0);\n  if covered { c = textureLoad(hdr_tex, px, 0).rgb; }",
             format!("if !covered {{ c = {sky}(loft_ray(pos.xy), normalize(frame.sun.xyz)); }} return vec4<f32>({film}(c), 1.0);")),
         (_, paper, _) => (hdr, match (aov, paper) {
         (Aov::Beauty, Some(paper)) => render_template(include_str!("../../../stdlib/core/present_paper.wgsl"), &[("SKY", &sky), ("PAPER", &paper)]),
