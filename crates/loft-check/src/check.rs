@@ -447,7 +447,15 @@ impl<'p,'a> Ck<'p,'a> {
         for a in &f.attrs {
             self.attr(a, f, kind.is_some())?;
         }
-        self.block(&f.body)
+        self.block(&f.body)?;
+        // A body that can end without a value reached the evaluator as `unreachable: trace returns f32, got
+        // Void` (exit 101): a crab trace ended on `d = max(d, ...)` instead of `d` (crab-tools-v3).
+        if self.ret != Ty::Void && f.raw.is_none() && !always_returns(&f.body) {
+            let what = if kind.is_some() { format!("`{}(...)`", f.name.name) } else { format!("fn `{}`", f.name.name) };
+            return Err(e003(f.name.span, &format!("{what} can end without returning its value"),
+                "end the body with the value itself, e.g. `d` after the last `d = ...`"));
+        }
+        Ok(())
     }
 
     pub(crate) fn kernel(&mut self, k: &'a KernelDecl) -> Res<BTreeMap<String, Determinism>> {
@@ -1821,4 +1829,14 @@ pub fn check_kernel_argument<'a>(
     ck.expect_unit(value, ck.declared_unit(ty))?;
     ck.set(value, expected);
     Ok(())
+}
+
+/// Every path through the block ends in `return value` (a tail expression parses as one).
+fn always_returns(b: &Block) -> bool {
+    b.stmts.last().is_some_and(|s| match s {
+        Stmt::Return(Some(_), _) => true,
+        Stmt::If { then, otherwise: Some(o), .. } => always_returns(then) && always_returns(o),
+        Stmt::Return(None, _) | Stmt::If { otherwise: None, .. } | Stmt::Let { .. } | Stmt::Assign { .. } | Stmt::Map { .. }
+        | Stmt::Each { .. } | Stmt::For { .. } | Stmt::Emit { .. } | Stmt::ImportTable { .. } | Stmt::Expr(_) => false,
+    })
 }
