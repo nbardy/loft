@@ -358,11 +358,23 @@ impl<'p,'a> Ck<'p,'a> {
                 format!("space mismatch: expected `{to}`, found `{from}`"),
                 format!("move the value into `{b}` with a transform or a map's `to_parent`/`from_parent`"),
             ),
+            // The old hint offered `[x, y, z]@S`, which is a point, for every geometric kind.
             (Ty::VecN(3), Ty::Geo(g, s)) => e104(
                 span,
                 format!("a space-less vec3 where `{to}` is expected"),
-                format!("say which space it is in: `[x, y, z]@{s}` for {}", g.short()),
+                match g {
+                    Geo::Pt => format!("write the point as `[x, y, z]@{s}`"),
+                    _ => format!("derive it from points in `{s}` (`p - at`), or add the space-less offset to one (`p - at - [x, y, z]`)"),
+                },
             ),
+            // `coords` is the explicit way to drop a space; the hint used to say only "convert".
+            (Ty::Geo(..), Ty::VecN(3)) => e003(span, format!("expected `{to}`, found `{from}`"),
+                "drop the space explicitly with `coords(value)`"),
+            // Name the conversion call; "convert the value to `i`" left models guessing.
+            (Ty::F32 | Ty::U32 | Ty::I32, Ty::F32 | Ty::U32 | Ty::I32) => {
+                let call = match to { Ty::F32 => "f32", Ty::U32 => "u32", _ => "i32" };
+                e003(span, format!("expected `{to}`, found `{from}`"), format!("convert with `{call}(value)`"))
+            }
             _ => e003(span, format!("expected `{to}`, found `{from}`"), format!("convert the value to `{to}`")),
         })
     }

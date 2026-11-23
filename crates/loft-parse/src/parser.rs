@@ -1024,9 +1024,13 @@ impl<'src> Parser<'src, '_> {
         }
         self.expect("@")?;
         let space = self.space()?;
-        self.expect("(")?;
+        // A kind without fields may omit `()`: `kind Sand @World { ... }` (2 of 13 fresh crab programs).
+        let fieldless = self.is("{");
+        if !fieldless {
+            self.expect("(")?;
+        }
         let mut row = vec![];
-        while !self.eat(")") {
+        while !fieldless && !self.eat(")") {
             let name = self.ident()?;
             self.expect(":")?;
             let t = self.ty()?;
