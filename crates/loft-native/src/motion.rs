@@ -15,6 +15,34 @@ pub fn sample_motion_timed(g: &Gpu, p: &Program, seconds: f32) -> Result<(Vec<Mo
     sample(g, p, seconds, clock.as_ref())
 }
 
+/// A scene fault, found before any GPU work: native sampling reads law writes back as scalar f32 columns.
+/// Callers report it as a compile failure. Inside `sample` the same condition surfaced as a device error
+/// (exit 6), and the crab trainer stops on device errors, so one model program writing `at` stopped a run.
+pub fn motion_layout(p: &Program) -> Result<(), String> {
+    for step in &p.dispatches {
+        let module = &p.modules[step.module].naga;
+        let Some(row) = module.types.iter().find_map(|(_, ty)| match &ty.inner {
+            naga::TypeInner::Struct { members, .. } if ty.name.as_deref() == Some("Row") => Some(members),
+            _ => None,
+        }) else {
+            continue;
+        };
+        for (field, _) in &step.fields {
+            let name = format!("r_{field}");
+            if !row.iter().any(|m| m.name.as_deref() == Some(&name)
+                && module.types[m.ty].inner == naga::TypeInner::Scalar(naga::Scalar::F32))
+            {
+                return Err(format!(
+                    "law writes `{field}`, which is not a scalar float: native motion sampling reads only \
+                     scalar f32 law writes. Keep the vector field fixed and write scalars (e.g. `phase`, `x`) that \
+                     the pose or trace reads"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn sample(g: &Gpu, p: &Program, seconds: f32, clock: Option<&Clock>) -> Result<(Vec<MotionSample>, f64), String> {
     let mut ms = 0.0;
     if p.dispatches.is_empty() { return Ok((vec![], ms)); }

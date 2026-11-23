@@ -114,6 +114,7 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
     let began = Instant::now();
     let src = sources(&c.scene).map_err(Failure::Usage)?;
     let (p, _, compiled) = loft_passes::compile_aov(&src, set, c.aov).map_err(|d| Failure::Compile(d.render(&src)))?;
+    native::motion_layout(&p).map_err(Failure::Compile)?;
     let mut build_ms = began.elapsed().as_secs_f64() * 1000.;
     limit("CPU build", build_ms, c.max_build)?;
     let g = native::gpu().map_err(Failure::Device)?;

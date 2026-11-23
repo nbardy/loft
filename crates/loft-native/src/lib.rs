@@ -8,7 +8,7 @@ pub use edit::TraceSession;
 use loft_passes::emit::Aov;
 use std::sync::{Mutex, atomic::{AtomicU32, Ordering}};
 pub mod ray_query;
-pub use motion::{sample_motion, sample_motion_timed};
+pub use motion::{motion_layout, sample_motion, sample_motion_timed};
 
 use loft_passes::program::{abi, Pass, Program};
 use loft_ir::{HostCaps, GpuFeatures, DepthConvention, InstanceId, ModuleId, TableId, KindId, ParamId, ParamMeta, IrTy};

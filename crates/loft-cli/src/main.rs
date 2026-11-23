@@ -96,6 +96,7 @@ fn command(mut args: Vec<String>, set: &[(String, f64)]) -> Result<(), Failure> 
             exact(&args, 2, 2)?;
             let src = sources(&scene(&args)?).map_err(Failure::Usage)?;
             let (program, report, _) = loft_passes::compile(&src, set).map_err(|d| Failure::Compile(render(&d, &src)))?;
+            loft_cli::native::motion_layout(&program).map_err(Failure::Compile)?;
             let mut failed = false;
             for (name, &header) in &program.priors {
                 let held = program.luts[header as usize + 3].to_bits() == 1;

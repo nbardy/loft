@@ -346,7 +346,11 @@ impl<'p,'a> Ck<'p,'a> {
         let ok = from == to
             || matches!((from, to), (Ty::AbstractInt, Ty::F32 | Ty::U32 | Ty::I32))
             || matches!((from,to),(Ty::Xform(Space::Open,b),Ty::Xform(_,c)) if b==c)
-            || matches!((from, to), (Ty::Geo(g, a), Ty::Geo(Geo::Vec, b)) if vec_like(*g) && a == b);
+            || matches!((from, to), (Ty::Geo(g, a), Ty::Geo(Geo::Vec, b)) if vec_like(*g) && a == b)
+            // A space-less vec3 parameter (`rgb`, a helper like `vnoise`) takes a spaced value as plain
+            // coordinates: the implicit form of `coords(v)`, which lowers to nothing. Fresh crab programs failed
+            // here on `vnoise(p - at)` and `helper(n)`. Mixing two different spaces is still refused.
+            || matches!((from, to), (Ty::Geo(Geo::Pt | Geo::Vec | Geo::Dir | Geo::Norm, _), Ty::VecN(3)));
         if ok {
             return Ok(());
         }

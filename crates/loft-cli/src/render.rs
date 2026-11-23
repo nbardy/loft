@@ -7,6 +7,7 @@ use std::{path::{Path, PathBuf}, process::Command, time::Instant};
 pub(crate) fn source_still(scene: &Path, set: &[(String, f64)], t: f32, out: &Path, max_frame: Option<f64>) -> Result<(), Failure> {
     let src = sources(scene).map_err(Failure::Usage)?;
     let (mut p, _, _) = loft_passes::compile(&src, set).map_err(|d| Failure::Compile(d.render(&src)))?;
+    native::motion_layout(&p).map_err(Failure::Compile)?;
     let g = native::gpu().map_err(Failure::Device)?;
     if max_frame.is_some() { budget::timestamps(g.timestamps)?; }
     if !p.dispatches.is_empty() {
