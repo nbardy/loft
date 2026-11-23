@@ -5,15 +5,17 @@ use loft_ir::{Res, Span};
 use loft_parse::ast::Ty;
 use std::{collections::BTreeSet, fmt::Write};
 
+/// `edges:` of `shade_tiles`: `none`, `taps` (four BVH rays per edge pixel) or `coverage` (analytic, no extra rays).
 #[derive(Clone, Copy)]
 pub enum Visibility {
     Center,
     SubpixelEdges,
+    Coverage,
 }
 
 #[derive(Clone, Copy)]
 pub enum Lighting<'a> {
-    Bsdf(&'a str),
+    Bsdf(&'a str, Visibility),
     World { callback: &'a str, visibility: Visibility },
 }
 
@@ -61,50 +63,85 @@ pub fn module(
     let mut out = render_template(include_str!("../../../../stdlib/core/tiled_hit.wgsl"), &[
         ("HEAD", head), ("WORLD", world), ("LIBRARY", &em.out), ("CALLBACK", &callback),
     ]);
-    let shade = match visibility {
-        Visibility::Center => r"
+    let (shade, alpha) = match visibility {
+        Visibility::Center => (r"
   if v.x == LOFT_EMPTY || (v.x >> 24u) != kp.kind_id { return; }
   let color = loft_shade_hit(LoftLeafRef(kp.kind_id, v.x & 0xffffffu), center, bitcast<f32>(v.y), -center.d, vec2f(px));
-",
+", "1.0"),
         Visibility::SubpixelEdges => {
             out.push_str(NEIGHBORS);
             let _ = writeln!(out, "const LOFT_PRIMARY_WORLD = {primary_world}u;");
             let _ = writeln!(out, "fn loft_edge_sky(rd: vec3f) -> vec3f {{ return {sky}(rd, normalize(frame.sun.xyz)); }}");
             out.push_str(include_str!("shade_edges.wgsl"));
-            r"
+            (r"
   if v.x != LOFT_EMPTY && (v.x >> 24u) != kp.kind_id { return; }
   let near = loft_vis_neighborhood(px, v.x);
   if near.x == LOFT_EMPTY || (near.x >> 24u) != kp.kind_id { return; }
   let color = loft_shade_samples(center, vec2f(px), v, near.y != 0u);
-"
+", "1.0")
+        }
+        Visibility::Coverage => {
+            out.push_str(NEIGHBORS);
+            // The World path resolves any row's field, so every pair of rows gets coverage.
+            out += &render_template(COVERAGE, &[("USABLE", "true"),
+                ("SETUP", "  let leaf = LoftLeafRef(key >> 24u, key & 0xffffffu);\n  let at = world_at(leaf);"),
+                ("FIELD", "world_field(leaf.kind_id, at, x)")]);
+            (concat!(r"
+", include_str!("shade_coverage_owner.wgsl"), r"  let color = loft_shade_hit(LoftLeafRef(kp.kind_id, v.x & 0xffffffu), center, bitcast<f32>(v.y), -center.d, vec2f(px));
+"), "loft_alpha")
         }
     };
     out += &render_template(include_str!("../../../../stdlib/core/tiled_shade.wgsl").strip_suffix('\n').unwrap(), &[
-        ("SHADE", shade), ("TWIN_BINDINGS", TWIN_BINDINGS), ("TWIN", twin),
+        ("SHADE", shade), ("ALPHA", alpha), ("TWIN_BINDINGS", TWIN_BINDINGS), ("TWIN", twin),
     ]);
     out
 }
 
+/// `edges: coverage` on the `light:` path: a ray kind's module (it has its own `trace` field) also owns the halo
+/// pixels next to its rows and encodes coverage in the HDR alpha. It can resolve only rows of its own kind, so an
+/// occluder of another kind is left to that kind's own-silhouette side.
+pub fn bsdf_coverage(source: &str) -> String {
+    const CENTER: &str = "  if v.x == LOFT_EMPTY || (v.x >> 24u) != kp.kind_id { return; }\n";
+    const STORE: &str = "  textureStore(hdr, px, vec4<f32>(";
+    let (head, rest) = source.split_once(SHADE_ENTRY).expect("kind shade entry");
+    let (entry, rest) = rest.split_once(CENTER).expect("kind shade visibility test");
+    let (body, rest) = rest.split_once(STORE).expect("kind shade store");
+    let (line, tail) = rest.split_once('\n').expect("kind shade store line");
+    let shade = line.strip_suffix(", 1.0));").expect("kind shade opaque store");
+    let coverage = render_template(COVERAGE, &[("USABLE", "(key >> 24u) == kp.kind_id"),
+        ("SETUP", "  let row = load_row(key & 0xffffffu);\n  let xf = loft_xf_inv(loft_pose(row));"),
+        ("FIELD", "q_trace(row, loft_xf_pt(xf, x))")]);
+    format!("{head}{NEIGHBORS}{coverage}{SHADE_ENTRY}{entry}{}{body}{STORE}{shade}, loft_alpha));\n{tail}",
+        include_str!("shade_coverage_owner.wgsl"))
+}
+
+pub(crate) const HALO_BINDINGS: &str = "@group(1) @binding(3) var hdr: texture_storage_2d<rgba16float, write>;\n";
+
 const NEIGHBORS: &str = include_str!("../../../../stdlib/core/vis_neighbors.wgsl");
+const COVERAGE: &str = include_str!("shade_coverage.wgsl");
 
 pub fn classify_module(visibility: Visibility) -> String {
     match visibility {
         Visibility::Center => super::classify_module(),
-        Visibility::SubpixelEdges => super::classify_with_halo(include_str!("../../../../stdlib/core/classify_halo.wgsl").strip_suffix('\n').unwrap()),
+        // Classify also clears the HDR target's alpha, so present can tell an unshaded pixel from a shaded one by that
+        // alpha alone (shade stores 1.0) instead of rereading the 3x3 visibility neighborhood on every sky pixel.
+        Visibility::SubpixelEdges | Visibility::Coverage => super::classify_with_halo(
+            include_str!("../../../../stdlib/core/classify_halo.wgsl").strip_suffix('\n').unwrap(), HALO_BINDINGS),
     }
 }
 
 pub fn present_module(
     p: &Prog, types: &[Ty], sky: &str, aov: Aov, paper: Option<&str>, film: Option<&str>, visibility: Visibility,
 ) -> String {
-    let mut source = super::emit_present(p, types, sky, aov, paper, film);
-    match visibility {
-        Visibility::Center => source,
-        Visibility::SubpixelEdges => {
-            source = source.replace("textureLoad(vis_tex, px, 0).x == LOFT_EMPTY",
-                "textureLoad(vis_tex, px, 0).x == LOFT_EMPTY && loft_vis_neighborhood(px, LOFT_EMPTY).x == LOFT_EMPTY");
-            source.push_str(NEIGHBORS);
-            source
-        }
+    let edges = matches!(visibility, Visibility::SubpixelEdges);
+    // Shade stores alpha 1.0 at exactly the pixels whose 3x3 visibility neighborhood is covered, and classify zeroed
+    // every other pixel's alpha this frame, so beauty present reads that alpha rather than the neighborhood.
+    let resolve = if aov == Aov::Beauty { visibility } else { Visibility::Center };
+    let mut source = super::emit_present(p, types, sky, aov, paper, film, resolve);
+    if edges && aov != Aov::Beauty {
+        source = source.replace("textureLoad(vis_tex, px, 0).x == LOFT_EMPTY",
+            "textureLoad(vis_tex, px, 0).x == LOFT_EMPTY && loft_vis_neighborhood(px, LOFT_EMPTY).x == LOFT_EMPTY");
+        source.push_str(NEIGHBORS);
     }
+    source
 }

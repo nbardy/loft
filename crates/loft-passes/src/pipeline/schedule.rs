@@ -111,7 +111,8 @@ pub(super) fn resolve<'a>(
     };
     if (matches!(light, Lighting::World { .. }) || film.is_some()) && path.is_some()
         || film.is_some() && paper.is_some()
-        || matches!(light, Lighting::World { visibility: Visibility::SubpixelEdges, .. }) && paper.is_some()
+        || matches!(light, Lighting::World { visibility: Visibility::SubpixelEdges | Visibility::Coverage, .. }
+            | Lighting::Bsdf(_, Visibility::Coverage)) && paper.is_some()
     {
         return Err(Diag::new(Code::E520, sched.name.span, "conflicting raster and presentation recipes",
             "use one shade and film recipe for the raster schedule"));
@@ -151,9 +152,6 @@ impl<'a> Draft<'a> {
                     }
                     let fake = PassDecl { label: pd.label.clone(), verb: call.clone(), args: args.iter().map(|a| Arg { name: None, value: clone_name(&a.value) }).collect(), body: vec![], resources: None };
                     for k in kind_args(p, &fake)? {
-                        if let Some(prm) = p.kinds[k].params.first() {
-                            return Err(Diag::new(Code::E405, prm.span, "kind variants are not lowered yet", "move the parameter into the row for now"));
-                        }
                         self.drawn.push(k);
                     }
                 }

@@ -16,6 +16,7 @@ pub fn motion_module(
     types: &[Ty],
     kind: &KindDecl,
     priors: &std::collections::BTreeMap<String, u32>,
+    fixed: &std::collections::BTreeMap<(String, String), String>,
     output: impl FnOnce() -> Res<(usize, DispatchRows)>,
 ) -> Res<Option<(String, Dispatch)>> {
     let mut laws = vec![];
@@ -58,6 +59,7 @@ pub fn motion_module(
 
     let (module, input) = output()?;
     let mut em = Emitter::new(p, types);
+    em.fixed = fixed;
     em.header(abi::NONCE_PLACEHOLDER);
     em.row_header(kind);
     em.out = em.out.replace(

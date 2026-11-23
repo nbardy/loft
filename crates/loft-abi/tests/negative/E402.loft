@@ -2,7 +2,7 @@ use stdlib::materials::bsdf::{ggx}
 use stdlib::sdf::solid::{sphere}
 
 space World Local
-kind K[a: bool, b: bool, c: bool] @Local (pose: xf@Local>World, r: f = 1) {
+kind K[a: bool, b: bool, c: bool, d: bool] @Local (pose: xf@Local>World, r: f = 1) {
   trace(p) = sphere(p - [0,0,0]@Local, 0.5)
   material(p,n) = ggx(rgb(0.5), 0.5, 0)
 }

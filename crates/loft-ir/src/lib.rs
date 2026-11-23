@@ -2,6 +2,7 @@
 mod schema;
 mod bundle;
 pub mod execution;
+pub mod precision;
 pub use bundle::*;
 
 

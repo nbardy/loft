@@ -41,8 +41,9 @@ pub struct Ck<'p, 'a> {
     sig_vars: Vec<String>,
 }
 
-/// Kind parameter variants allowed per kind (draft §3: "E402: kind variant budget exceeded (12 > max 4)").
-pub const VARIANT_BUDGET: u64 = 4;
+/// Values a kind's parameters may jointly take (spec §2.4: "cardinality ≤ 8"). A scene compiles
+/// the one variant its rows use; stage 0 rejects rows that disagree.
+pub const VARIANT_BUDGET: u64 = 8;
 
 pub struct CheckedEffects {
     pub kernels: BTreeMap<String, BTreeMap<String, Determinism>>,
@@ -84,6 +85,7 @@ pub fn check(p: &Prog, types: &mut Vec<Ty>) -> Res<CheckedEffects> {
     }
     motion_source::check(&mut ck)?;
     for sc in p.scans.values() { ck.scan(sc)?; }
+    for k in p.kinds.values() { ck.kind_params(k)?; }
     for f in p.fns.values() { ck.func(f, None)?; }
     for k in p.kinds.values() {
         ck.kind(k)?;
@@ -477,6 +479,8 @@ impl<'p,'a> Ck<'p,'a> {
         let Some(TyExpr::Name(k))=&first.ty else{return Err(e003(first.name.span,"missing target kind","annotate the first parameter with its kind"))};
         let kind=self.p.kinds.get(k.name.as_str()).ok_or_else(||Diag::new(Code::E011,k.span,"unknown target kind","declare this kind first"))?;
         for field in writes.into_iter().flatten(){if !kind.row.iter().any(|f|f.name.name==field.name){return Err(Diag::new(Code::E501,field.span,"writes names an unknown column","use a field of the target kind"))}}
+        // The GPU modules fold a kind parameter to the value its rows were emitted with.
+        for field in writes.into_iter().flatten(){if kind.params.iter().any(|prm|prm.name.name==field.name){return Err(Diag::new(Code::E501,field.span,format!("`{}` is a kind parameter, fixed when the row is emitted",field.name),"move it into the kind's column list to change it at run time"))}}
         self.ownership=writes.map(|w|(first.name.name.clone(),w.iter().map(|i|i.name.clone()).collect()));
         for p in checked.params.iter_mut().skip(1){
             if p.name.name=="dt" && p.ty.is_none(){p.ty=Some(TyExpr::Name(Ident{name:"f32".into(),span:p.name.span}));}
@@ -532,7 +536,9 @@ impl<'p,'a> Ck<'p,'a> {
         }
         Ok(())
     }
-    fn kind(&mut self, k: &KindDecl) -> Res<()> {
+    /// A kind's parameters, before any `emit` is checked: a parameter is also a column, so an
+    /// invalid one must be refused as a parameter rather than as a missing column.
+    fn kind_params(&mut self, k: &KindDecl) -> Res<()> {
         let mut variants: u64 = 1;
         for prm in &k.params {
             let t = self.resolve(&prm.ty, true)?;
@@ -579,6 +585,9 @@ impl<'p,'a> Ck<'p,'a> {
                 ));
             }
         }
+        Ok(())
+    }
+    fn kind(&mut self, k: &KindDecl) -> Res<()> {
         self.scopes=vec![HashMap::new()];self.comptime=true;
         for f in &k.row {
             let t = self.resolve(&f.ty, true)?;

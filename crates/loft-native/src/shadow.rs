@@ -30,7 +30,7 @@ impl Reuse {
             if editable_module == Some(kind.module) {
                 return Self::EveryFrame;
             }
-            let vertex = if indexed(kind) { "vs_indexed" } else { "vs" };
+            let vertex = if indexed(kind) { "vs_grid" } else { "vs" };
             let Some(params) = static_caster(&p.modules[kind.module].naga, vertex) else {
                 return Self::EveryFrame;
             };

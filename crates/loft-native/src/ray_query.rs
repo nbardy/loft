@@ -166,6 +166,9 @@ fn attach(requirements: Option<Requirements>, optional_ray_query: bool) -> Resul
     {
         requested |= wgpu::Features::EXPERIMENTAL_RAY_QUERY;
     }
+    // SHADER_F16 is requested whenever the adapter has it, so `Precision::resolve` can tell a device that lacks it
+    // (recorded as `Resolved::HalfStorage`) from one that has it.
+    requested |= wgpu::Features::SHADER_F16;
     let features = adapter_features & requested;
     // Opt in only for callers that request the unstable native traversal feature.
     let experimental_features = if features.contains(wgpu::Features::EXPERIMENTAL_RAY_QUERY) {

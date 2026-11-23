@@ -101,7 +101,7 @@ fn e402_kind_variant_budget() {
     );
     expect(
         Code::E402,
-        &kind("[a: bool, b: bool, c: bool]", OK_TRACE, OK_MATERIAL),
+        &kind("[a: bool, b: bool, c: bool, d: bool]", OK_TRACE, OK_MATERIAL),
     );
 }
 

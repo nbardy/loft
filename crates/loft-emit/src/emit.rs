@@ -119,12 +119,16 @@ pub struct Emitter<'p, 'a> {
     sampled_bakes: BTreeSet<String>,
     kernel_atomics: BTreeMap<(String, String), AtomicScalar>,
     kernel_sampling: bool,
+    /// Kind parameters as WGSL literals, by (kind, field): the one variant this scene's rows use.
+    pub fixed: &'p BTreeMap<(String, String), String>,
 }
+
+static NO_FIXED: BTreeMap<(String, String), String> = BTreeMap::new();
 
 impl<'p, 'a> Emitter<'p, 'a> {
     pub fn new(p: &'p Prog<'a>, types: &'p [Ty]) -> Self {
         Emitter { p, types, out: String::new(), maps: vec![], luts: &[],motion:false,motion_tier:Determinism::Det,priors:None,locals:vec![],temp:0,
-            prepare_light: false, in_prepared_light: false, baked_column: None, sampled_bakes: BTreeSet::new(), kernel_atomics: BTreeMap::new(), kernel_sampling: false }
+            prepare_light: false, in_prepared_light: false, baked_column: None, sampled_bakes: BTreeSet::new(), kernel_atomics: BTreeMap::new(), kernel_sampling: false, fixed: &NO_FIXED }
     }
 
     fn ty_of(&self, e: &Expr) -> &Ty {
@@ -560,6 +564,10 @@ impl<'p, 'a> Emitter<'p, 'a> {
     }
 
     fn member(&mut self, base: &Expr, name: &Ident) -> String {
+        if let Ty::Row(kind) = self.ty_of(base)
+            && let Some(value) = self.fixed.get(&(kind.clone(), name.name.clone())) {
+            return value.clone();
+        }
         let field = match self.ty_of(base) {
             Ty::Frame(_) => frame_field(&name.name).to_owned(),
             Ty::Row(_) => format!("r_{}", name.name),
@@ -585,7 +593,8 @@ impl<'p, 'a> Emitter<'p, 'a> {
         for rf in &k.row {
             let t = self.resolve(&rf.ty);
             let w = |i: u32| format!("rows[o + {}u]", o + i);
-            let load = match &t {
+            let fixed = self.fixed.get(&(k.name.name.clone(), rf.name.name.clone()));
+            let load = if let Some(value) = fixed { value.clone() } else { match &t {
                 Ty::F32 => w(0),
                 Ty::U32 | Ty::Id(_) => format!("bitcast<u32>({})", w(0)),
                 Ty::I32 => format!("bitcast<i32>({})", w(0)),
@@ -600,7 +609,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                     w(11)
                 ),
                 other @ Ty::Void | other @ Ty::AbstractInt | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Frame(_) | other @ Ty::Table(_) | other @ Ty::Verdict | other @ Ty::Struct(_) | other @ Ty::Array(..) | other @ Ty::Bsdf => unreachable!("checked row field type {other}"),
-            };
+            } };
             fields.push(format!("  r_{}: {},", rf.name.name, wty(&t)));
             loads.push(load);
             o += t.words().expect("checked storable");
@@ -706,14 +715,14 @@ const TWIN_BINDINGS: &str = "@group(3) @binding(0) var<storage, read> twin_in";
 
 /// The text of one kind's module. `light` is the library fn the shade pass calls (named in the schedule).
 pub fn kind_module(p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[LutRef], draw: Draw, aov: Aov) -> Res<String> {
-    emit_kind_module(p, types, k, Some(light), luts, draw, aov, None)
+    emit_kind_module(p, types, k, Some(light), luts, draw, aov, None, &NO_FIXED)
 }
 
 pub fn kind_module_edit(
     p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[LutRef],
     draw: Draw, aov: Aov, edit: &str,
 ) -> Res<String> {
-    emit_kind_module(p, types, k, Some(light), luts, draw, aov, Some(edit))
+    emit_kind_module(p, types, k, Some(light), luts, draw, aov, Some(edit), &NO_FIXED)
 }
 
 fn traced_march(count_steps: bool) -> String {
@@ -724,12 +733,14 @@ fn traced_march(count_steps: bool) -> String {
     ])
 }
 
+/// `fixed` holds kind parameters as literals; a live edit passes none and reads them from the row.
 pub fn emit_kind_module(
     p: &Prog, types: &[Ty], k: &KindDecl, light: Option<&str>, luts: &[LutRef],
-    draw: Draw, aov: Aov, edit: Option<&str>,
+    draw: Draw, aov: Aov, edit: Option<&str>, fixed: &BTreeMap<(String, String), String>,
 ) -> Res<String> {
     let mut em = Emitter::new(p, types);
     em.luts = luts;
+    em.fixed = fixed;
     em.header(abi::NONCE_PLACEHOLDER);
     let q = |which| k.query(which).is_some();
     let mut roots: Vec<&FnDecl> = k.queries.iter().map(|(_, f)| f).collect();
@@ -887,7 +898,7 @@ pub fn emit_kind_module(
     }
     let mut diagnostics = "";
     if let Draw::Surface { nu, nv } = draw {
-        vis.push_str(&surface::cached_grid(p, k.query(QueryKind::Surface).expect("surface query"), nu, nv));
+        vis.push_str(&surface::indexed_grid(p, k.query(QueryKind::Surface).expect("surface query"), nu, nv));
     }
     let shade: String = match aov {
         // The shelf light evaluates an emission-only stack exactly once at zero incident direction.
@@ -957,20 +968,26 @@ pub fn cull_module(single_draw: bool) -> String {
 }
 
 pub fn classify_module() -> String {
-    classify_with_halo("")
+    classify_with_halo("", "")
 }
 
-fn classify_with_halo(halo: &str) -> String {
+fn classify_with_halo(halo: &str, bindings: &str) -> String {
     render_template(PRELUDE, &[("NONCE", abi::NONCE_PLACEHOLDER)])
-        + &render_template(include_str!("../../../stdlib/core/classify.wgsl"), &[("HALO", halo)])
+        + &render_template(include_str!("../../../stdlib/core/classify.wgsl"), &[("HALO", halo), ("BINDINGS", bindings)])
 }
 
 /// `sky` is the library fn named by the schedule's present pass.
 pub fn present_module(p: &Prog, types: &[Ty], sky: &str, aov: Aov, paper: Option<&str>) -> String {
-    emit_present(p, types, sky, aov, paper, None)
+    emit_present(p, types, sky, aov, paper, None, shade_tiles::Visibility::Center)
 }
 
-fn emit_present(p: &Prog, types: &[Ty], sky: &str, aov: Aov, paper: Option<&str>, film: Option<&str>) -> String {
+/// `visibility` of the beauty resolve. Taps: shade stores alpha 1.0 at every pixel it owns and classify zeroed the rest,
+/// so alpha alone tells sky from surface (the subpixel-edge coverage is wider than the center visibility). Coverage:
+/// the same, plus the blend code shade_coverage.wgsl stores in the alpha.
+fn emit_present(
+    p: &Prog, types: &[Ty], sky: &str, aov: Aov, paper: Option<&str>, film: Option<&str>, visibility: shade_tiles::Visibility,
+) -> String {
+    use shade_tiles::Visibility;
     let mut em = Emitter::new(p, types);
     em.header(abi::NONCE_PLACEHOLDER);
     let mut roots = vec![sky];
@@ -982,15 +999,38 @@ fn emit_present(p: &Prog, types: &[Ty], sky: &str, aov: Aov, paper: Option<&str>
     em.library(&lib, &consts);
     let sky=fn_symbol(sky);
     let film = film.map_or_else(|| "loft_aces".to_owned(), fn_symbol);
-    let resolve = match (aov, paper.map(fn_symbol)) {
+    let hdr = "var c = textureLoad(hdr_tex, px, 0).rgb;";
+    // The beauty resolve reads the HDR texel only where something was shaded: a sky pixel then costs one 8-byte
+    // visibility read instead of that plus a 8-byte color read it discards.
+    let (load, resolve) = match (aov, paper.map(fn_symbol), visibility) {
+        (Aov::Beauty, None, Visibility::SubpixelEdges) => ("let hdr_px = textureLoad(hdr_tex, px, 0);\n  var c = hdr_px.rgb;",
+            format!("if hdr_px.a == 0.0 {{ c = {sky}(loft_ray(pos.xy), normalize(frame.sun.xyz)); }} return vec4<f32>({film}(c), 1.0);")),
+        // |alpha| = 2 + k + w blends toward 4-neighbour k by w; alpha <= 0 is a sky pixel, at this pixel or the partner.
+        (Aov::Beauty, None, Visibility::Coverage) => ("let hdr_px = textureLoad(hdr_tex, px, 0);\n  var c = hdr_px.rgb;",
+            format!("let sun = normalize(frame.sun.xyz);
+  if hdr_px.a <= 0.0 {{ c = {sky}(loft_ray(pos.xy), sun); }}
+  let code = abs(hdr_px.a) - 2.0;
+  if code >= 0.0 {{
+    var steps = array(vec2<i32>(1, 0), vec2<i32>(-1, 0), vec2<i32>(0, 1), vec2<i32>(0, -1));
+    let q = clamp(vec2<i32>(px) + steps[min(u32(code), 3u)], vec2<i32>(0), vec2<i32>(frame.size.xy) - 1);
+    let other = textureLoad(hdr_tex, q, 0);
+    var b = other.rgb;
+    if other.a <= 0.0 {{ b = {sky}(loft_ray(vec2<f32>(q) + 0.5), sun); }}
+    c = mix(c, b, fract(code));
+  }}
+  return vec4<f32>({film}(c), 1.0);")),
+        (Aov::Beauty, None, Visibility::Center) => ("let covered = textureLoad(vis_tex, px, 0).x != LOFT_EMPTY;\n  var c = vec3<f32>(0.0);\n  if covered { c = textureLoad(hdr_tex, px, 0).rgb; }",
+            format!("if !covered {{ c = {sky}(loft_ray(pos.xy), normalize(frame.sun.xyz)); }} return vec4<f32>({film}(c), 1.0);")),
+        (_, paper, _) => (hdr, match (aov, paper) {
         (Aov::Beauty, Some(paper)) => render_template(include_str!("../../../stdlib/core/present_paper.wgsl"), &[("SKY", &sky), ("PAPER", &paper)]),
-        (Aov::Beauty, None) => format!("if textureLoad(vis_tex, px, 0).x == LOFT_EMPTY {{ c = {sky}(loft_ray(pos.xy), normalize(frame.sun.xyz)); }} return vec4<f32>({film}(c), 1.0);"),
+        (Aov::Beauty, None) => unreachable!("handled above"),
         (Aov::Overdraw, _) => "return vec4<f32>(c, 1.0);".into(),
         (Aov::Depth, _) => "return vec4<f32>(select(c, vec3<f32>(1.0), textureLoad(vis_tex, px, 0).x == LOFT_EMPTY), 1.0);".into(),
         (Aov::Albedo | Aov::Normal | Aov::Id | Aov::SdfSteps | Aov::LipschitzRatio, _) =>
             "return vec4<f32>(select(c, vec3<f32>(0.0), textureLoad(vis_tex, px, 0).x == LOFT_EMPTY), 1.0);".into(),
+        }),
     };
-    em.out += &render_template(include_str!("../../../stdlib/core/present.wgsl"), &[("RESOLVE", &resolve)]);
+    em.out += &render_template(include_str!("../../../stdlib/core/present.wgsl"), &[("LOAD", load), ("RESOLVE", &resolve)]);
     em.out
 }
 
