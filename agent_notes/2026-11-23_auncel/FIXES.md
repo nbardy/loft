@@ -223,3 +223,38 @@ the secant ratios printed below.
   kinds' work in the pool.
 
 No "Result" line above has been filled: this lane has never finished a build.
+
+## Results, 23 Nov 23:50 (first build of this lane)
+
+Scored by the meta-engine thread on `01e896ca` (this lane on the integrated tree plus main's `cea5fe7e`), lab
+profile. Repro output: [repro/after.txt](repro/after.txt), one `loft check` each.
+
+| Prediction | Measured | Verdict |
+|---|---|---|
+| `f1_atan2` L = 1.0000 | 1.0000 | held |
+| `f1_acos` L ≈ 1.0331 | 1.0331 | held |
+| `f1_heading` passes, L = 2.0000 | **E212**, "the surface reaches the search limit ±1024 m" | **missed** |
+| `f1_pleat` E211 | E211 | held |
+| `f1_quadrant` L ≈ 1.22 | 1.2191 | held |
+| `f9c_tan` L ≈ 1.0343 | 1.0343 | held |
+| `f2_select`, `f2_if`, `f2_ifexpr` L = 1.0000 | 1.0000 each | held |
+| `f2_point` E211, `f2_point_ifexpr` E701, `f2_point_letif` E211 | E211, E701, E211 | held |
+| `f9b_const_loop` L = 1.1500 | 1.1500 | held |
+| `f11_min` L ≈ 1.53 | 1.5177 | held |
+| `f9a/main --set size=2` L = 2.0000; `f9a/dup` E011 naming both files | 2.0000; E011 naming `shot.loft` and `dup.loft` | held |
+| F4: `check` lines gain `derive N.NN s` | present on every kind line | held |
+| No secant above the derived L | six compiled traces, worst ratio 0.9999 (`lipschitz_inverse_trig`) | held |
+
+**The miss.** `f1_heading` no longer panics, but it still does not compile, and `atan2` is not the reason. Any
+rotation by a time-dependent angle inside a trace fails the same way, with or without this lane:
+`map m = p |> rot_y(0.3 * time)` on a unit sphere gives E212 on the integration binary too. The angle's interval is
+all of [−π, π], each rotated coordinate's interval then contains 0 at any distance, and the bound search cannot
+exclude any region. The prediction counted the rotation as an isometry for L and forgot that the box search needs a
+range. This is finding F3's family (let a rotation go into the pose); it stays pending. So the advice above, "an
+angle of something that is not the point: `atan2` now works", is true of the function and not yet of the scene the
+Auncel authors wanted.
+
+**Two fixtures were wrong** and are corrected in `01e896ca`: a one-line `if { return … } return …` (a parse error,
+E001), and `log(1.5 + p.x)`, which is NaN over half the search region and which E212 rightly refuses.
+
+**The gate on this stack** is in `agent_notes/2026-11-23_meta_engine/INTEGRATE.md` §6.

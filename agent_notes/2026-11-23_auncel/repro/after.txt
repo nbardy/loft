@@ -1,0 +1,36 @@
+=== f1_atan2
+kind K            Traced  rows    1  shapes   1  derived L 1.0000..1.0000  bound evals 1584  derive 0.00 s
+=== f1_acos
+kind K            Traced  rows    1  shapes   1  derived L 1.0331..1.0331  bound evals 1647  derive 0.01 s
+=== f1_heading
+error[E212]: row 0: the surface reaches the search limit ±1024 m, so it has no finite bound
+=== f1_pleat
+error[E211]: sphere tracer requires a proven Lipschitz bound; row 0 derives `Unbounded`
+=== f1_quadrant
+kind K            Traced  rows    1  shapes   1  derived L 1.2191..1.2191  bound evals 1957  derive 0.00 s
+=== f9c_tan
+kind K            Traced  rows    1  shapes   1  derived L 1.0343..1.0343  bound evals 1698  derive 0.00 s
+=== f2_select
+kind K            Traced  rows    1  shapes   1  derived L 1.0000..1.0000  bound evals 1584  derive 0.00 s
+=== f2_if
+kind K            Traced  rows    1  shapes   1  derived L 1.0000..1.0000  bound evals 1584  derive 0.00 s
+=== f2_ifexpr
+kind K            Traced  rows    1  shapes   1  derived L 1.0000..1.0000  bound evals 1584  derive 0.00 s
+=== f2_point
+error[E211]: sphere tracer requires a proven Lipschitz bound; row 0 derives `Unbounded`
+=== f2_point_ifexpr
+error[E701]: this branch depends on the point and cannot be decided over a region
+   = fix: Phase 0 derives bounds for straight-line fields; write the branch with min/max/select
+=== f2_point_letif
+error[E211]: sphere tracer requires a proven Lipschitz bound; row 0 derives `Unbounded`
+=== f9b_const_loop
+kind K            Traced  rows    1  shapes   1  derived L 1.1500..1.1500  bound evals 1924  derive 0.01 s
+=== f11_min
+kind K            Traced  rows    1  shapes   1  derived L 1.5177..1.5177  bound evals 1588  derive 0.01 s
+=== f9a/main --set size=2
+kind K            Traced  rows    1  shapes   1  derived L 2.0000..2.0000  bound evals 1584  derive 0.00 s
+=== f9a/dup --set size=2
+error[E011]: `size` names 2 different parameters
+  --> agent_notes/2026-11-23_auncel/repro/f9a/shot.loft:2:11
+  --> agent_notes/2026-11-23_auncel/repro/f9a/dup.loft:4:7
+   |       ---- another parameter with this name
