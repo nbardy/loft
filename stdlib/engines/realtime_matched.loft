@@ -112,20 +112,22 @@ pub schedule RealtimeMatched {
 }
 
 # Low-variance daylight for broad, rough lobes. A cosine-integrated sky and a
-# short two-direction visibility probe keep small contact cavities legible in
+# short normal-cone visibility probe keep small contact cavities legible in
 # single-frame captures. The ray offset clears the primary field tolerance.
 pub fn matched_daylight(w: World, hit: Hit, wo: d3@World, ink: bool, px: v2) -> rgb =
   wgsl(w: World, hit: Hit, wo: d3@World, ink: bool, px: v2) -> rgb {
     let n = hit.n;
     let o = hit.p + 0.004*n;
     let sun = normalize(frame.sun.xyz);
-    let sunvis = world_visibility(w, LoftRay(o, sun, 0.002, 100.0));
-    let tangent = normalize(cross(n,select(vec3f(0,1,0),vec3f(0,0,1),abs(n.y)>0.85)));
+    let blocker = world_secondary(w, LoftRay(o,sun,0.002,100.0),true);
+    let sunvis = select(0.0,1.0,blocker.t == -1.0);
     var occ = 0.0;
-    for (var i=0u; i<2u; i++) {
-      let d = normalize(n + select(-1.1,1.1,i==1u)*tangent);
-      let h = world_secondary(w, LoftRay(o,d,0.002,0.43),false);
-      if h.t >= 0.0 { occ += 0.33*(1.0-smoothstep(0.0,0.43,h.t)); }
+    // Upward-facing bed samples receive their contact from the sun query.
+    // Spend the short sky query on the sides and undersides of the animal.
+    if n.y < 0.92 {
+      let d = normalize(n + vec3f(0.0,0.48,0.0));
+      let h = world_secondary(w, LoftRay(o,d,0.002,0.39),true);
+      if h.t >= 0.0 { occ = 0.58*(1.0-smoothstep(0.0,0.39,h.t)); }
     }
     let dome = mix(vec3f(0.72,0.64,0.53),vec3f(1.34,1.38,1.39),0.5+0.5*n.y);
     let sky = loft_eval_hit(hit,wo,n) * 3.14159 * dome * (1.0-occ);
