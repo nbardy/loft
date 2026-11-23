@@ -295,9 +295,10 @@ impl TraceSession {
         let d = g.device.clone();
         let recipe = self.recipe.clone();
         let wgsl = source.clone();
+        let hdr = loft_ir::precision::Role::Radiance.format(crate::precision().resolve(loft_ir::GpuFeatures::empty()));
         let creates = self.creates.clone();
         let done = promotion::worker(move || {
-            let wgsl = loft_passes::bundle::replacement(&wgsl)?;
+            let wgsl = loft_passes::bundle::replacement(&wgsl, hdr)?;
             let scope = d.push_error_scope(wgpu::ErrorFilter::Validation);
             creates.record();
             creates.record();

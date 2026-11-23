@@ -233,6 +233,7 @@ pub fn load_browser(device: JsValue, bytes: &[u8], source: &Function) -> Result<
             let format = match t.format {
                 ImageFormat::Rg32Uint => "rg32uint",
                 ImageFormat::Rgba16Float => "rgba16float",
+                ImageFormat::Rgba32Float => "rgba32float",
                 ImageFormat::Depth32Float => "depth32float",
             };
             let clear = t

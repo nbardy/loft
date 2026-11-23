@@ -3,7 +3,7 @@ use crate::{
     Compiled,
     program::{DispatchRows, Draw, Pass, Program},
 };
-use loft_ir::{*, execution::{self, Execution, Initializer, Image}};
+use loft_ir::{*, execution::{self, Execution, Initializer, Image}, precision::{Precision, Resolved, Role}};
 use naga::{AddressSpace, ShaderStage, StorageAccess, TypeInner, valid};
 use std::collections::BTreeMap;
 
@@ -19,7 +19,21 @@ struct Builder {
     wave: u16,
 }
 
-fn shader(mut ir: naga::Module, name: &str, nonce: Option<u32>, draw_words: u32) -> Result<(String, Bindings)> {
+/// `Role::Radiance` at `Resolved::F32` is `Rgba32Float`, and the shade modules declare their `hdr` store as
+/// `rgba16float`. Retarget that one global to a new image type, not the shared one: baked textures authored as
+/// `rgba16float` use the same naga type and keep their authored format.
+fn retarget_hdr(ir: &mut naga::Module) {
+    for (_, global) in ir.global_variables.iter_mut() {
+        if global.name.as_deref() != Some("hdr") { continue; }
+        let TypeInner::Image { dim, arrayed, class: naga::ImageClass::Storage { format: naga::StorageFormat::Rgba16Float, access } } =
+            ir.types[global.ty].inner.clone() else { continue };
+        global.ty = ir.types.insert(naga::Type { name: None, inner: TypeInner::Image { dim, arrayed,
+            class: naga::ImageClass::Storage { format: naga::StorageFormat::Rgba32Float, access } } }, naga::Span::UNDEFINED);
+    }
+}
+
+fn shader(mut ir: naga::Module, name: &str, nonce: Option<u32>, draw_words: u32, hdr: ImageFormat) -> Result<(String, Bindings)> {
+    if matches!(hdr, ImageFormat::Rgba32Float) { retarget_hdr(&mut ir); }
     if let Some(nonce) = nonce
         && let Some((_, c)) = ir.constants.iter().find(|(_, c)| c.name.as_deref() == Some("LOFT_NONCE"))
     {
@@ -111,13 +125,14 @@ fn shader(mut ir: naga::Module, name: &str, nonce: Option<u32>, draw_words: u32)
     Ok((code, bindings))
 }
 
-pub fn replacement(source: &str) -> Result<String> {
+/// An edited kind module is lowered like the original: its `hdr` store must match the bundle's radiance format.
+pub fn replacement(source: &str, hdr: ImageFormat) -> Result<String> {
     let ir = naga::front::wgsl::parse_str(source).map_err(|e| e.emit_to_string(source))?;
-    Ok(shader(ir, "replacement", None, 4)?.0)
+    Ok(shader(ir, "replacement", None, 4, hdr)?.0)
 }
 
 impl Builder {
-    fn new(program: &Program, nonce: Option<u32>, draw_words: u32, edit: Option<(usize, &str)>) -> Result<Self> {
+    fn new(program: &Program, nonce: Option<u32>, draw_words: u32, hdr: ImageFormat, edit: Option<(usize, &str)>) -> Result<Self> {
         let mut bundle = Bundle::default();
         let mut bindings = Vec::new();
         for (i, module) in program.modules.iter().enumerate() {
@@ -126,7 +141,7 @@ impl Builder {
             } else {
                 module.naga.clone()
             };
-            let (code, reflected) = shader(ir, &module.name, nonce, draw_words)?;
+            let (code, reflected) = shader(ir, &module.name, nonce, draw_words, hdr)?;
             bindings.push(reflected);
             bundle.modules.push(ModuleBlob {
                 id: ModuleId(i as u32),
@@ -400,6 +415,10 @@ pub struct Options<'a> {
     /// Native motion sampling has its own absolute tick and readback API.
     pub picture_only: bool,
     pub hardware_ray_query: bool,
+    /// The author's opt-out (`--precision f32`); the default decides each role's width.
+    pub precision: Precision,
+    /// The device's features, which decide whether a decided precision gets half arithmetic or half storage only.
+    pub features: GpuFeatures,
 }
 
 pub struct Prepared {
@@ -410,6 +429,8 @@ pub struct Prepared {
     pub modules: Vec<ModuleId>,
     pub shadow: Option<([f32; 3], [f32; 3], u32)>,
     pub shadow_wave: Option<u16>,
+    /// What the build ran with, including the recorded fallback when the adapter lacks `SHADER_F16`.
+    pub precision: Resolved,
 }
 
 pub fn lower_program(
@@ -420,7 +441,10 @@ pub fn lower_program(
         !opts.overdraw && program.modules[kind.module].naga.entry_points.iter().any(|e| e.name == "vs_grid")
     };
     let arg_words = if program.kinds.iter().any(indexed) { 5 } else { 4 };
-    let mut b = Builder::new(program, opts.nonce, arg_words,
+    let precision = opts.precision.resolve(opts.features);
+    // Overdraw counts layers into the HDR attachment, a debug picture, not radiance: it stays on the half format.
+    let hdr_format = Role::Radiance.format(if opts.overdraw { Resolved::HalfStorage } else { precision });
+    let mut b = Builder::new(program, opts.nonce, arg_words, hdr_format,
         opts.edit.map(|(i, source, _)| (program.kinds[i].module, source)))?;
     b.bundle.params = params;
     if opts.hardware_ray_query && !opts.overdraw { b.native_world(program)?; }
@@ -517,14 +541,14 @@ pub fn lower_program(
     let tiles = b.transient(4, count * groups[0] * groups[1]);
     let empty = Some([f64::from(u32::MAX), 0., 0., 0.]);
     let far = Some([1., 0., 0., 0.]);
-    let vis = b.texture(ImageFormat::Rg32Uint, size, empty);
-    let depth = b.texture(ImageFormat::Depth32Float, size, far);
+    let vis = b.texture(Role::Integer.format(precision), size, empty);
+    let depth = b.texture(Role::Depth.format(precision), size, far);
     let side = program.shadow_size.max(1);
-    let shadow = b.texture(ImageFormat::Depth32Float, (side, side), far);
-    let shadow_vis = b.texture(ImageFormat::Rg32Uint, (side, side), empty);
+    let shadow = b.texture(Role::Depth.format(precision), (side, side), far);
+    let shadow_vis = b.texture(Role::Integer.format(precision), (side, side), empty);
     let sampler = b.external();
     b.bundle.resources.comparison_samplers.push(sampler);
-    let hdr = b.texture(ImageFormat::Rgba16Float, size, opts.overdraw.then_some([0.; 4]));
+    let hdr = b.texture(hdr_format, size, opts.overdraw.then_some([0.; 4]));
     let target = b.external();
     let shadow_bounds = program.passes.iter().find_map(|pass| match pass {
         Pass::Shadow(ids) => {
@@ -704,7 +728,7 @@ pub fn lower_program(
     }).collect();
     b.bundle.tables.extend(execution.table());
     Ok(Prepared { bundle: b.bundle, instances, visibility: vis, depth, shadow: shadow_bounds, shadow_wave,
-        modules: program.kinds.iter().map(|k| ModuleId(k.module as u32)).collect() })
+        modules: program.kinds.iter().map(|k| ModuleId(k.module as u32)).collect(), precision })
 }
 
 fn append_bake(bundle: &mut Bundle, bake: &crate::bake_tex::Bake, texture: TableId, wave: &mut u16) -> Result<Initializer> {
@@ -737,7 +761,7 @@ pub(super) fn compute_bakes(program: &Program, tables: &BTreeMap<String, TableId
         bundle.tables.iter_mut().find(|table| table.id == texture)
             .ok_or("unknown compute bake image")?.lifetime = TableLifetime::Transient;
         let original = &program.modules[bake.module];
-        let (code, _) = shader(original.naga.clone(), &original.name, None, 4)?;
+        let (code, _) = shader(original.naga.clone(), &original.name, None, 4, ImageFormat::Rgba16Float)?;
         let mut bake = bake.clone();
         bake.module = bundle.modules.len();
         bundle.modules.push(ModuleBlob {
@@ -801,7 +825,7 @@ pub fn lower_twin(ir: naga::Module, lut: &[f32], kind: [u32; 4], rows_bytes: u64
     params: Vec<ParamMeta>, frame: Vec<u8>, samples: &[f32]) -> Result<(Bundle, TableId, TableId)> {
     if !samples.len().is_multiple_of(8) || samples.is_empty() { return Err("invalid twin sample extent".into()); }
     let count = u32::try_from(samples.len() / 8).map_err(|_| "too many twin samples")?;
-    let (code, bindings) = shader(ir, "twin", None, 4)?;
+    let (code, bindings) = shader(ir, "twin", None, 4, ImageFormat::Rgba16Float)?;
     let mut b = Builder { bundle: Bundle::default(), bindings: vec![bindings], wave: 0, baked_inputs: Resources::new() };
     b.bundle.modules.push(ModuleBlob { id: ModuleId(0), target: ShaderTarget::Wgsl,
         hash: *blake3::hash(code.as_bytes()).as_bytes(), bytes: code.into_bytes().into_boxed_slice() });
