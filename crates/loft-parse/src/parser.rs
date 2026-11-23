@@ -32,7 +32,10 @@ fn continued(prev: &str, next: &str, depth: usize) -> bool {
                 | "="
                 | "|>"
         )
-        || matches!(next, "|>" | "else")
+        // A line that starts with a binary operator cannot start a statement, so it continues the last one:
+        // `ggx(..)\n  + coat(..)`. Models stack lobes this way (4 of 16 fresh crab programs). `-` is excluded
+        // because it can begin a unary expression.
+        || matches!(next, "|>" | "else" | "+" | "*" | "/" | "%" | "==" | "!=" | "<=" | ">=" | "&&" | "||")
 }
 
 pub fn parse(file: u16, source: &str, next: &mut u32) -> Res<Module> {

@@ -3,3 +3,9 @@
 pub const TAU = 6.2831853
 pub kind Sky @World (zenith: rgb, horizon: rgb) {}
 pub kind Sun @World (dir: d3@World, color: rgb) {}
+
+# The renderer's environment defaults (DEFAULT_SUN_COLOR, DEFAULT_ZENITH, DEFAULT_HORIZON) live with their
+# modules. The prelude loads them so a scene that shades without `sun_sky` (e.g. with woodblock_pigment) still
+# has them; before this, such scenes failed with "missing environment default" and no source span.
+use stdlib::lighting::emitters
+use stdlib::sky::environment
