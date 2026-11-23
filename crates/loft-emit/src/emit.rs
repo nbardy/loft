@@ -713,18 +713,6 @@ fn material_layout<'k>(p: &Prog<'k>, k: &'k KindDecl) -> Res<Layout<'k>> {
 const SHADE_ENTRY: &str = "// One workgroup per 8x8 tile that classify listed for this kind.";
 const TWIN_BINDINGS: &str = "@group(3) @binding(0) var<storage, read> twin_in";
 
-/// The text of one kind's module. `light` is the library fn the shade pass calls (named in the schedule).
-pub fn kind_module(p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[LutRef], draw: Draw, aov: Aov) -> Res<String> {
-    emit_kind_module(p, types, k, Some(light), luts, draw, aov, None, &NO_FIXED)
-}
-
-pub fn kind_module_edit(
-    p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[LutRef],
-    draw: Draw, aov: Aov, edit: &str,
-) -> Res<String> {
-    emit_kind_module(p, types, k, Some(light), luts, draw, aov, Some(edit), &NO_FIXED)
-}
-
 fn traced_march(count_steps: bool) -> String {
     render_template(include_str!("../../../stdlib/core/march.wgsl"), &[
         ("STEPS_INIT", if count_steps { "  var steps = 0u;\n" } else { "" }),
@@ -733,10 +721,11 @@ fn traced_march(count_steps: bool) -> String {
     ])
 }
 
-/// `fixed` holds kind parameters as literals; a live edit passes none and reads them from the row.
+/// The text of one kind's module. `light` is the library fn the shade pass calls (named in the schedule).
+/// `fixed` holds kind parameters as literals; the others are read from the row.
 pub fn emit_kind_module(
     p: &Prog, types: &[Ty], k: &KindDecl, light: Option<&str>, luts: &[LutRef],
-    draw: Draw, aov: Aov, edit: Option<&str>, fixed: &BTreeMap<(String, String), String>,
+    draw: Draw, aov: Aov, fixed: &BTreeMap<(String, String), String>,
 ) -> Res<String> {
     let mut em = Emitter::new(p, types);
     em.luts = luts;
@@ -821,10 +810,6 @@ pub fn emit_kind_module(
         em.func(f, "loft_surface_jvp");
     }
     for (which, f) in &k.queries {
-        if *which == QueryKind::Trace && let Some(source) = edit {
-            em.out.push_str(source);
-            continue;
-        }
         let n = match which {
             QueryKind::Visible => "q_visible",
             QueryKind::Trace => "q_trace",
@@ -835,7 +820,7 @@ pub fn emit_kind_module(
     }
     em.sampled_textures();
     // Draw-form glue: the vis entry points, how shade rebuilds the hit, and the twin's geometry.
-    let count_steps = aov == Aov::SdfSteps && draw == Draw::Traced && edit.is_none();
+    let count_steps = aov == Aov::SdfSteps && draw == Draw::Traced;
     let uses_world_hit = light.is_none() && aov == Aov::Beauty;
     let (mut vis, mut geometry, twin_geo) = match draw {
         Draw::Surface { nu, nv } => (
@@ -857,7 +842,6 @@ pub fn emit_kind_module(
 ".to_owned(), false),
                 Draw::Analytic => ("  // Closed form: the author's `visible` query, in the kind's space (a rigid pose keeps t).\n  let t = q_visible(row, lro, lrd);\n  if t < 0.0 { discard; }\n".to_owned(),
                     light == Some("woodblock_pigment") && aov == Aov::Beauty),
-                Draw::Traced if edit.is_some() => ("  let t = loft_edit_march(row, lro, lrd, span);\n  if t < 0.0 { discard; }\n".to_owned(), false),
                 Draw::Traced => (traced_march(count_steps), false),
                 Draw::Surface { .. } | Draw::Mesh { .. } => unreachable!("ray draw"),
             };
@@ -866,9 +850,7 @@ pub fn emit_kind_module(
             let visible_twin = if q(QueryKind::Visible) { "q_visible(row, pl, dl)" } else { "0.0" };
             (
                 render_template(include_str!("../../../stdlib/core/ray_vis.wgsl"), &[("PRIMARY_DIRECTION", primary_direction), ("HIT", &hit), ("DISTANCE", distance)]),
-                if edit.is_some() {
-                    include_str!("../../../stdlib/core/ray_geometry_edit.wgsl").to_owned()
-                } else if split_ao {
+                if split_ao {
                     // The tetrahedral sum and the five AO taps keep their original
                     // order. Separate the loops to compute only the active sample.
                     include_str!("../../../stdlib/core/ray_geometry_split_ao.wgsl").to_owned()

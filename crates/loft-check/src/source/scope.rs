@@ -903,11 +903,6 @@ impl Scope<'_> {
     }
 }
 
-pub(super) fn edited(graph: &Graph, id: u16, mut module: Module) -> Res<Module> {
-    Linker::new(graph)?.scope(id)?.rewrite(&mut module)?;
-    Ok(module)
-}
-
 pub(super) fn link(graph: &Graph) -> Res<(Vec<Module>, u32)> {
     let linker = Linker::new(graph)?;
     let mut recipe = None;

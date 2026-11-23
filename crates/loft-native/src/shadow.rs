@@ -31,7 +31,7 @@ impl Reuse {
         let editable_module = editable.map(|id| p.kinds[id].module);
         for &id in casters {
             let kind = &p.kinds[id as usize];
-            // A tape can start reading time after publication, and promotion replaces its shader.
+            // An edit replaces this caster's shader, which may then read time or params.
             if editable_module == Some(kind.module) {
                 return Self::EveryFrame;
             }

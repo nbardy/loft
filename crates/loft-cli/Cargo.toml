@@ -15,7 +15,6 @@ blake3 = "1"
 loft-parse = { path = "../loft-parse" }
 loft-ir = { path = "../loft-ir" }
 loft-passes = { path = "../loft-passes" }
-loft-tier0 = { path = "../loft-tier0" }
 loft-native = { path = "../loft-native" }
 loft-runner = { path = "../loft-runner" }
 wgpu.workspace = true

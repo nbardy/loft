@@ -3,6 +3,7 @@
 //!   loft check SCENE [--set NAME=VALUE]...      compile and run any scheduled checks at --t (default 0)
 //!   loft show SCENE [MODULE] [--set ...]        print the generated WGSL (every module, or the one named)
 //!   loft still SCENE OUT.png [--t SECONDS] [--set ...]
+//!   loft still SCENE OUT.png --edit EDITED --kind K   recompile kind K from EDITED, swap it in live, check against a fresh load
 //!   loft gate [--approve]                       the five gates on every scene in engines/gates.json
 //!   loft diff REFERENCE.png FRAME.png          compare a Phase 5 frame with its reference
 //!   loft load SCENE --nonce N [--set ...]       one load in this process with driver nonce N (cache experiments)
@@ -127,7 +128,7 @@ fn command(mut args: Vec<String>, set: &[(String, f64)]) -> Result<(), Failure> 
                 #[cfg(target_arch = "wasm32")]
                 {
                     let _ = (edit, kind);
-                    return Err(Failure::Device("edited stills require native pipeline promotion".into()));
+                    return Err(Failure::Device("edited stills need the native renderer".into()));
                 }
                 #[cfg(not(target_arch = "wasm32"))]
                 return edit_cmd::edited_still(&scene(&args)?, Path::new(&edit), &kind, set, time, Path::new(&args[2]), max_frame);

@@ -1,7 +1,7 @@
 use super::*;
 use command::{Dispatch, Pass, Stamps, Work, compute_pipeline as pipeline};
 use loft_std::frame::Templates;
-use loft_wgpu::{timed, bindings::{self, slot}, edits::Pipelines, schedule::{self, Order}};
+use loft_wgpu::{timed, bindings::{self, slot}, schedule::{self, Order}};
 use std::collections::{BTreeSet, HashMap};
 use wgpu::util::DeviceExt;
 use std::time::Duration;
@@ -41,12 +41,6 @@ enum Operation {
 }
 struct Command { groups: Vec<Group>, op: Operation }
 impl Command {
-    fn kernel(&mut self) -> Result<&mut Kernel> {
-        match &mut self.op {
-            Operation::Dispatch(k, _) | Operation::Ticks(k, _) => Ok(k),
-            Operation::Draw(_) | Operation::Mips(..) => Err(RunnerError::UnknownResource),
-        }
-    }
     fn dispatch(&self, fixed: &wgpu::BindGroup, k: &Kernel, work: Work) -> Pass {
         let groups = std::iter::once(fixed).chain(self.groups.iter().map(Group::bound)).cloned().collect();
         Pass::Compute(vec![Dispatch { pipeline: k.pipeline.clone(), groups, work }])
@@ -86,7 +80,7 @@ fn create_all<T: Send + 'static, P: Send + 'static>(recipes: Vec<T>, create: imp
     let create = Arc::new(create);
     let workers = recipes.into_iter().map(|recipe| {
         let create = Arc::clone(&create);
-        loft_wgpu::promotion::worker(move || create(recipe))
+        loft_std::worker(move || create(recipe))
     }).collect::<Vec<_>>();
     workers.into_iter().map(|worker| worker.map_err(|e| RunnerError::InvalidShader(e.to_string()))?
         .recv().map_err(|_| RunnerError::Unsupported("pipeline worker stopped"))).collect()
@@ -277,24 +271,16 @@ impl ComputeCache {
     pub fn fused(&self, id: PassId) -> Option<&stepping::Fused> {
         if let Operation::Ticks(_, f) = &self.passes.get(&id)?.op { Some(f) } else { None }
     }
-    fn kernel(&self, id: PassId) -> Result<&Kernel> {
+    #[cfg(test)]
+    pub fn pipeline(&self, id: PassId) -> Result<&wgpu::ComputePipeline> {
         match &self.passes.get(&id).ok_or(RunnerError::UnknownResource)?.op {
-            Operation::Dispatch(k,_) | Operation::Ticks(k,_) => Ok(k),
+            Operation::Dispatch(k,_) | Operation::Ticks(k,_) => Ok(&k.pipeline),
             Operation::Draw(_) | Operation::Mips(..) => Err(RunnerError::UnknownResource),
         }
     }
     #[cfg(test)]
     pub fn bound_groups(&self, id: PassId) -> Vec<wgpu::BindGroup> {
         self.passes[&id].groups.iter().map(|g| g.bound().clone()).collect()
-    }
-}
-impl Pipelines for ComputeCache {
-    fn pipeline(&self, id: PassId) -> Result<&wgpu::ComputePipeline> { Ok(&self.kernel(id)?.pipeline) }
-    #[cfg(not(target_arch = "wasm32"))]
-    fn pipeline_layout(&self, id: PassId) -> Result<&wgpu::PipelineLayout> { Ok(&self.kernel(id)?.layout) }
-    fn replace_pipeline(&mut self, id: PassId, p: wgpu::ComputePipeline) -> Result<()> {
-        self.passes.get_mut(&id).ok_or(RunnerError::UnknownResource)?.kernel()?.pipeline = p;
-        Ok(())
     }
 }
 pub(super) use loft_wgpu::frame::Clock;
@@ -419,7 +405,6 @@ impl Instance {
         if options.timestamps.is_some_and(|set| !matches!(set.ty(), wgpu::QueryType::Timestamp) || options.timestamp_start >= set.count()) {
             return Err(RunnerError::AbiMismatch);
         }
-        self.edits.update(d, &mut self.compute)?;
         self.prepare(d, target, clock.to)?;
         let c = &mut self.compute;
         let tables = &self.tables;
@@ -533,8 +518,6 @@ fn resolve(d: &wgpu::Device, tables: &Tables, extent: &DispatchExtent) -> Result
     Work::resolve(extent, d.limits().max_compute_workgroups_per_dimension, |id| tables[&id].active, |id| tables[&id].bytes())
 }
 
-#[cfg(all(test, not(target_arch = "wasm32")))]
-mod edit_gate;
 /// Stage bytes in the encoder so two recorded frames may share the queue without overwriting each other.
 fn upload(belt: &mut wgpu::util::StagingBelt, enc: &mut wgpu::CommandEncoder, bytes: &[u8], dst: &wgpu::Buffer, offset: u64) {
     if let Some(size) = wgpu::BufferSize::new(bytes.len() as u64) {

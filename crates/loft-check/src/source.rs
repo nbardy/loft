@@ -150,14 +150,6 @@ impl Graph {
     fn stock(&self, id: u16) -> Option<&str> {
         Some(&self.sources.files[usize::from(id)].0)
     }
-
-    pub fn edited_module(&self, id: u16, next: &mut u32) -> Res<Module> {
-        if let Some(error) = &self.error {
-            return Err(error.clone());
-        }
-        let module = loft_parse::parse(id, &self.sources.files[usize::from(id)].1, next)?;
-        scope::edited(self, id, module)
-    }
 }
 
 struct Loader<'a> {
