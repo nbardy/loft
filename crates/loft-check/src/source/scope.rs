@@ -179,6 +179,7 @@ impl<'a> Linker<'a> {
             stock_public: &self.stock_public,
             imported: Names::default(),
             modules: HashMap::new(),
+            selected_from: Vec::new(),
             intrinsic_modules: HashMap::new(),
             derivatives: HashMap::new(),
         };
@@ -226,6 +227,7 @@ impl<'a> Linker<'a> {
                     }
                 }
                 ImportBinding::Selected(selected) => {
+                    scope.selected_from.extend(dependencies.iter().copied());
                     for n in selected {
                         let mut found = false;
                         for dep in &dependencies {
@@ -333,6 +335,8 @@ struct Scope<'a> {
     stock_public: &'a HashMap<String, Decl>,
     imported: Names,
     modules: HashMap<&'a str, (Vec<&'a Names>, Span)>,
+    /// Modules the file imports a selected list from.
+    selected_from: Vec<&'a Names>,
     intrinsic_modules: HashMap<&'a str, &'a Import>,
     derivatives: HashMap<String, String>,
 }
@@ -383,6 +387,15 @@ impl Scope<'_> {
         // or misplaced `use` (vnoise, smin, ggx, capsule_chain) was the commonest fresh-crab error left.
         if !space && let Some(decl) = self.stock_public.get(name) {
             return Ok(Some(decl.key.clone()));
+        }
+        // A public name of a module the file already imports from resolves as if it were listed, when exactly
+        // one such module has it: models list a few names and call another (`carapace` beside
+        // `use stdlib::materials::chitin::{wet}`, crab-tools-v1c).
+        if !space {
+            let mut found = self.selected_from.iter().filter_map(|m| m.values.get(name).filter(|d| d.public));
+            if let (Some(decl), None) = (found.next(), found.next()) {
+                return Ok(Some(decl.key.clone()));
+            }
         }
         if bare.contains(name) {
             return Err(error(span, name));

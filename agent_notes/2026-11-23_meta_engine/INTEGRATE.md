@@ -167,7 +167,7 @@ is this text.
 2. No trainer run live; rebuild `target/release/loft` with the fast-forward.
 3. A quiet paired `timing.py` run, for Speed and for hermit warm load. Until then both are Unknown, not held.
 4. `loft context` prints a schedule function as its signature.
-5. ~~The trainer's 44 seeds on this tip.~~ Done, 18:5x: each of the 44 programs in Creative's
+5. ~~The trainer's 44 seeds on this tip.~~ Done, 18:42: each of the 44 programs in Creative's
    `seed_programs/crab-overfit-v15` compiled with `loft build` (no device) by main's release binary in main's tree
    and by this tip's lab binary in this tree. **42 compile on both. The same two fail on both**, `bubble-scatter` and
    `sand-scatter`: "the portable artifact needs a standalone authored compute schedule", which is `build` refusing

@@ -170,7 +170,7 @@ fn mottle(q: v3, pitch: f, cover: f) -> f {
 
 # A leg or claw link from its root (q = 0) along axis (m) to its far joint. limb() is
 # wet(limb_albedo, ...) on limb_tilt; call the two parts directly to layer a body's own
-# albedo (setae, algae) between them, since a material cannot mix a helper's lobes.
+# albedo (setae, algae) between them, or blend whole limb() and carapace() results with mix_bsdf.
 pub fn limb_albedo(q: v3, axis: rgb, n: rgb, colour: rgb, mark: rgb, banding: v2, taper: f, tip: rgb) -> rgb {
   let len2 = max(dot(axis, axis), 0.000001)
   let along = clamp(dot(q, axis) / len2, 0.0, 1.0)
