@@ -245,7 +245,8 @@ fn lower_dispatches(
     scene: &Stage0Scene, fixed: &BTreeMap<(String, String), String>, texts: &mut Vec<(String, String)>,
 ) -> Res<Vec<Dispatch>> {
     let CompileOptions { samples, .. } = *opts;
-    let Schedule { drawn, .. } = schedule;
+    // Merge (cut-unused dropped `decl` with the run_solver loop; probe-rows' order_reads still needs it).
+    let Schedule { drawn, decl: sched, .. } = schedule;
     let Stage0Scene { tables, .. } = scene;
     let mut dispatches = vec![];
     if samples.is_empty() {

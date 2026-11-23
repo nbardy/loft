@@ -34,7 +34,10 @@ fn outside_kind(old: &Program, new: &Program, k: usize) -> Option<&'static str> 
         && old.modules.iter().zip(&new.modules).enumerate().all(|(i, (a, b))| i == m || a.wgsl == b.wgsl);
     let kinds = old.kinds.len() == new.kinds.len()
         && old.kinds.iter().zip(&new.kinds).enumerate().all(|(i, (a, b))| a.name == b.name && a.module == b.module
-            && a.stride == b.stride && a.n_rows == b.n_rows && a.draw == b.draw && (i == k || same(&a.rows, &b.rows)));
+            && a.stride == b.stride && a.n_rows == b.n_rows && a.draw == b.draw && (i == k || same(&a.rows, &b.rows))
+            // Merge (cut-tape + probe-rows): a kind's reads of other tables are bindings of its module; the swap
+            // installs pipelines only, so an edit that changes them must reload.
+            && a.reads == b.reads);
     let instances = old.instances.len() == new.instances.len()
         && old.instances.iter().zip(&new.instances).all(|(a, b)| a.kind == b.kind && a.row == b.row
             && (a.kind as usize == k || (a.lo == b.lo && a.hi == b.hi)));
@@ -43,9 +46,12 @@ fn outside_kind(old: &Program, new: &Program, k: usize) -> Option<&'static str> 
         (kinds, "the kind layout or another kind's rows"),
         (instances, "the instance layout or another kind's bounds"),
         (same(&old.params, &new.params) && old.param_ranges == new.param_ranges, "the parameters"),
-        (same(&old.luts, &new.luts) && old.priors == new.priors, "the LUTs"),
-        (old.passes == new.passes && old.shadow_size == new.shadow_size
-            && (old.cull, old.classify, old.present) == (new.cull, new.classify, new.present), "the passes"),
+        // Merge (cut-tape + cut-unused + probe-door): `priors` went with plan, and `cull`/`classify`/`present` became
+        // `Pass::Authored` entries of `passes` whose modules the module check above already compares.
+        // probe-door's `shadow_clock` joins the pass check.
+        (same(&old.luts, &new.luts), "the LUTs"),
+        (old.passes == new.passes && old.shadow_size == new.shadow_size && old.shadow_clock == new.shadow_clock,
+            "the passes"),
         (format!("{:?} {:?}", old.camera, old.sun) == format!("{:?} {:?}", new.camera, new.sun), "the camera or sun"),
         (new.dispatches.is_empty() && new.bakes.is_empty() && new.path.is_none(), "motion, bakes or path tracing"),
     ].into_iter().find(|(unchanged, _)| !unchanged).map(|(_, what)| what)

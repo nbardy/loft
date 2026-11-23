@@ -143,7 +143,7 @@ pub struct GroupTables {
 /// constant rows, or (`previous`) the snapshot the step's own `snapshot` entry takes before each tick.
 pub fn motion_group(program: &Program, steps: &[usize]) -> (Bundle, Vec<GroupTables>) {
     let mut b = Bundle { params: motion_params(program), ..Default::default() };
-    let mut table = |b: &mut Bundle, stride_bytes: u32, capacity: u32, initial: Vec<u8>| {
+    let table = |b: &mut Bundle, stride_bytes: u32, capacity: u32, initial: Vec<u8>| {
         let id = TableId(b.tables.len() as u32);
         b.tables.push(TableDecl { id, lifetime: TableLifetime::Static, format: ElemFormat::U32, stride_bytes, capacity, initial: initial.into() });
         id
