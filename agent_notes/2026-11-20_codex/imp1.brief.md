@@ -33,3 +33,26 @@ Extend the crab-improve-v1 record format into a new frozen export, training/loft
 - Builds and tests go one at a time through ~/.local/bin/agent-build; GPU renders take /tmp/loft-gpu.lock.
 - Commit messages end with "Co-Authored-By: GPT (codex) <noreply@openai.com>".
 - Final message ≤150 words: the chains (seed, rounds, final verdict), the pair counts (chosen/tie), the sheet paths, and anything you could not improve and why.
+
+## Addendum (lead, 23 Nov, after div2 review): realism is the priority
+The owner's verdict on div2's chitin is "terrible: very obviously weird noise patterns, no subtlety, digital camo at best". The lead agrees. That failure came from the brief's metrics: a ≤2% highlight cap drove highlights to 0%, and "albedo variance above a threshold" was satisfied with mid-frequency noise. Both metrics are withdrawn. Do the three chitin seeds (coconut, swimmer, ghost) first and spend the most rounds on them, then fiddler, porcelain, the watercolour three and the woodblock spider.
+
+**Reference first.** Download 6–10 real photos of live crabs on sand or rock from Wikimedia Commons (CC/PD only; record each URL and licence in the export), including one of each chitin species where possible. Every chain sheet shows the references beside the renders. You and the lead judge against them, not against the previous round.
+
+**What makes a real carapace, as a theory. Build it, don't add noise:**
+1. **Colour lives at anatomical scales, not noise scales.** (a) A dorsal-to-ventral gradient: back darker and more saturated, underside, joint membranes and inner claw cream or pale. (b) 2–6 soft, low-contrast patches (ΔL about 10–15%) aligned to carapace regions and grooves, plus rim bands and darker claw fingertips. (c) Fine detail is geometry, not paint: granules, tubercles and pits as small normal or height bumps with slightly lighter tips and AO-darkened pits. There must be zero mid-frequency colour noise; any procedural noise is low-octave, warped by anatomy, and barely visible.
+2. **A wet, thin sheen.** Dorsal roughness about 0.3–0.45 with a light clear coat, drier areas about 0.6. The bumps break highlights into small specks along curvature, with Fresnel at the rims. Highlight pixels (luminance > 0.9 inside the matte) should cover about 0.5–4%. Zero is a failure.
+3. **Form carries realism.** Shallow carapace grooves (the H-shaped gastric/cardiac groove), a toothed front and lateral rim. Legs are segmented (merus, carpus, propodus, dactyl) with narrower, paler joint membranes and dark pointed dactyl tips. Claws have teeth and darker fingers. Setae on the swimmer's paddles.
+4. **Light like a photograph.** Soft sky plus a sun, AO in crevices and under the body, a soft contact shadow, slight wrap or translucency on thin leg edges and claw tips, a neutral filmic tone curve and no oversaturation.
+
+**Instrument (calibrate on the reference photos, register before rendering):**
+- A radial power spectrum of luminance inside the carapace matte: the fraction of variance at wavelengths shorter than 1/12 of the carapace width must be within the reference range. Digital camo fails this; check that it fails on div2's chitin renders before using it.
+- The highlight band above.
+- Colour statistics (median chroma and hue spread) within the reference range.
+
+These are guards only. The decision is visual against the references.
+
+**Other families, same principle (structure, not noise):**
+- Watercolour: transparent layered washes, pigment pooling into darker edges, paper showing through, wet-in-wet bleeds, granulation in the shadows, lost edges.
+- Woodblock spider: carved key lines, flat registered colour blocks, paper grain and slight misregistration.
+- Porcelain: separate the crab from the sand with value contrast and rim light.
