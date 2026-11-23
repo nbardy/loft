@@ -56,6 +56,14 @@ Motion work runs at one of three times, chosen by how often its inputs change:
 - **Every tick, on the GPU.** The controller (foot choice, centre of pressure, capture point), the leash and
   reach checks, IK and the springs. These read time and the previous row, so they cannot move earlier.
 
+Several feet can be aloft at once. A foot is aloft while its `span` column is positive; the phase plan
+(`lead`, `wave`), the sweep and the swing time are build constants, so the duty factor and each foot's
+target lift phase are a few operations per tick. The support test vetoes a lift that would leave the
+pressure point outside the remaining feet (bodies of three sites or fewer step dynamically instead, after
+shifting their weight). `stdlib::motion::audit` folds a run into checks (`margin_held`, `upright`,
+`no_slide`, `cadence`); `scenes/motion_bodies/` is the body test set. Theory and measurements:
+`agent_notes/2026-11-23_motion_stride/THEORY.md`, `agent_notes/2026-11-23_perf/motion-stride.md`.
+
 A consumer who wants a different split, such as a hull recomputed every tick for deforming ground or a
 reach annulus that changes with load, forks the gait file (`loft fork`) and edits the fork. The engine has
 no flag for it: the split is source a consumer owns, and a flag would be one more name to learn for what

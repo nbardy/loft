@@ -1,0 +1,28 @@
+use stdlib::integrators::direct::{sun_sky}
+use stdlib::motion::body::{Walker, walker_plan, planted}
+use stdlib::motion::gait::{step, present}
+use stdlib::motion::audit::{audit, margin_held, upright, no_slide, cadence}
+use self::stage::{SandDeck, stage_sky}
+
+# Six legs, three per side, an insect stance: tripod as the duty factor falls.
+# Gait test: the stdlib Walker plan with the data of this body only. Stick program: forward 0.2-1.7 s, back
+# 1.7-3.2 s, then stand. Checks fold the whole run (stdlib::motion::audit).
+
+camera Main { eye: [2.8, 2.2, 2.4]@World, at: [0.2, 0.3, 0.0]@World, fov: 0.63 }
+build {
+  walker_plan([0, 0, 0]@World, 0.0, 0.45, 0.0, [0.16, 0.36, 0.13], 0.4m, 0.45m, 0.5m, [0.0, 1.0, 0.8], 0.0m, 6,
+    [-0.25, 0, 0.25, 0.25], [0, -0.25, 0.0, 0.0], [-0.2, -0.2, -0.2, 0.2], [0.2, 0.2, 0.0, 0.0],
+    [-0.5, 0, 0.5, 0.5], [0, -0.5, 0.0, 0.0], [-0.62, -0.7, -0.62, 0.62], [0.7, 0.62, 0.0, 0.0])
+  emit SandDeck(radius: 30)
+}
+schedule Main {
+  run_laws(step, present, audit)
+  check(planted, margin_held, upright, no_slide, cadence)
+  use_camera(Main)
+  cull_indirect(Walker, SandDeck)
+  render_bundle(Vis64) { draw_indirect(Walker, SandDeck) }
+  find_shadow_map(Walker, size: 1024)
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: sun_sky, sun: [-0.45, 0.82, -0.35])
+  tonemap_aces(ColorHdr, sky: stage_sky)
+}
