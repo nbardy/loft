@@ -15,7 +15,7 @@ mod surface;
 mod lighting;
 pub mod shade_tiles;
 mod column;
-use material_shape::Layout;
+use material_shape::{Shape, fn_shape, is_lobe, shape_of};
 use loft_parse::ast::*;
 use loft_check::program::{abi, Draw};
 use loft_ir::{Code, Diag, Res};
@@ -122,6 +122,12 @@ pub struct Emitter<'p, 'a> {
     pub tables: BTreeMap<String, String>,
     /// Kinds whose rows have their own struct `Row_K` here (every kind but the module's own `Row`).
     pub foreign_rows: BTreeSet<String>,
+    /// The kind's material shape, stored in the struct named `Bsdf`.
+    material: Option<Shape>,
+    /// Bsdf lets and params in scope, innermost last; `None` for a local of another type that shadows one.
+    bsdf_locals: Vec<(String, Option<Shape>)>,
+    /// Other Bsdf structs this module uses, by name: let-bound stacks and helpers' return values.
+    bsdf_structs: BTreeMap<String, String>,
 }
 
 static NO_FIXED: BTreeMap<(String, String), String> = BTreeMap::new();
@@ -130,7 +136,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
     pub fn new(p: &'p Prog<'a>, types: &'p [Ty]) -> Self {
         Emitter { p, types, out: String::new(), maps: vec![], luts: &[],motion:false,motion_tier:Determinism::Det,locals:vec![],temp:0,
             prepare_light: false, in_prepared_light: false, baked_column: None, sampled_bakes: BTreeSet::new(), kernel_atomics: BTreeMap::new(), kernel_sampling: false, fixed: &NO_FIXED,
-            tables: BTreeMap::new(), foreign_rows: BTreeSet::new() }
+            tables: BTreeMap::new(), foreign_rows: BTreeSet::new(), material: None, bsdf_locals: vec![], bsdf_structs: BTreeMap::new() }
     }
 
     fn ty_of(&self, e: &Expr) -> &Ty {
@@ -172,13 +178,21 @@ impl<'p, 'a> Emitter<'p, 'a> {
         if self.baked_column.is_some() {
             params.push("loft_column_value: f32".into());
         }
-        let ret = f.ret.as_ref().map(|t| format!(" -> {}", self.wt(&self.resolve(t)))).unwrap_or_default();
+        let ret = f.ret.as_ref().map(|t| match self.resolve(t) {
+            Ty::Bsdf => format!(" -> {}", self.fn_struct(f)),
+            t => format!(" -> {}", self.wt(&t)),
+        }).unwrap_or_default();
         let _ = writeln!(self.out, "fn {name}({}){ret} {{", params.join(", "));
         if let Some(raw)=&f.raw{
             self.out.push_str(&crate::provenance::raw(f.name.span,&raw.body[1..raw.body.len()-1]));self.out.push_str("\n}\n");return;
         }
         self.maps.clear();
         self.locals = f.params.iter().map(|p| p.name.name.clone()).collect();
+        // A Bsdf parameter (a light's or a style's `b`) is the kind's material.
+        self.bsdf_locals = f.params.iter().map(|prm| {
+            let bsdf = prm.ty.as_ref().is_some_and(|t| matches!(t, TyExpr::Name(n) if n.name == "Bsdf"));
+            (prm.name.name.clone(), if bsdf { self.material.clone() } else { None })
+        }).collect();
         self.in_prepared_light = self.prepare_light && f.name.name == "sun_sky"
             && self.locals.get(..3).is_some_and(|keys| keys == ["b", "n", "v"]);
         if self.in_prepared_light {
@@ -191,12 +205,13 @@ impl<'p, 'a> Emitter<'p, 'a> {
 
     pub fn block_body(&mut self, b: &Block, depth: usize) {
         let mark = self.maps.len();
-        let local_mark = self.locals.len();
+        let (local_mark, bsdf_mark) = (self.locals.len(), self.bsdf_locals.len());
         for s in &b.stmts {
             self.stmt(s, depth);
         }
         self.maps.truncate(mark);
         self.locals.truncate(local_mark);
+        self.bsdf_locals.truncate(bsdf_mark);
     }
 
     fn line(&mut self, depth: usize, s: &str) {
@@ -207,10 +222,12 @@ impl<'p, 'a> Emitter<'p, 'a> {
         match s {
             Stmt::Let { mutable, name, value, .. } => {
                 let v = self.expr(value);
-                let t = self.wt(self.ty_of(value));
+                let shape = (*self.ty_of(value) == Ty::Bsdf).then(|| self.shape(value));
+                let t = match &shape { Some(s) => self.bsdf_struct(s), None => self.wt(self.ty_of(value)) };
                 let kw = if *mutable { "var" } else { "let" };
                 self.line(d, &format!("{kw} {}: {t} = {v};", wgsl_name(&name.name)));
                 self.locals.push(name.name.clone());
+                self.bsdf_locals.push((name.name.clone(), shape));
             }
             Stmt::Assign { target, op, value } => {
                 let (t, v) = (self.expr(target), self.expr(value));
@@ -296,6 +313,83 @@ impl<'p, 'a> Emitter<'p, 'a> {
         }
     }
 
+    /// The shape of a Bsdf expression in the current fn; the checker proved it static (material_layout).
+    fn shape(&self, e: &Expr) -> Shape {
+        let locals = &self.bsdf_locals;
+        let local = |n: &str| locals.iter().rev().find(|(name, _)| name == n).and_then(|(_, s)| s.clone());
+        shape_of(self.p, e, &local, &mut BTreeSet::new()).expect("checked: a Bsdf expression has a static layout")
+    }
+
+    /// The struct a Bsdf fn returns. A Bsdf fn outside every material chain was never shape-checked; it keeps
+    /// the kind's struct, as before Bsdf values composed, and naga reports a mismatch.
+    fn fn_struct(&mut self, f: &FnDecl) -> String {
+        match fn_shape(self.p, f, &mut BTreeSet::new()) {
+            Ok(shape) => self.bsdf_struct(&shape),
+            Err(_) => "Bsdf".into(),
+        }
+    }
+
+    /// The WGSL struct holding values of `shape`, declared once per module.
+    fn bsdf_struct(&mut self, shape: &Shape) -> String {
+        if self.material.as_ref().is_some_and(|m| m.key() == shape.key()) {
+            return "Bsdf".into();
+        }
+        let key = shape.key();
+        let hash = key.bytes().fold(0xcbf29ce484222325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x100000001b3));
+        let name = format!("LoftBsdf_{hash:016x}");
+        if !self.bsdf_structs.contains_key(&name) {
+            let mut fields = vec![];
+            for (i, (lobe, arity)) in shape.lobes.iter().enumerate() {
+                for (j, prm) in self.p.fns[lobe.as_str()].params.iter().take(*arity).enumerate() {
+                    fields.push(format!("  l{i}_{j}: {},", wty(&self.resolve(prm.ty.as_ref().expect("typed")))));
+                }
+            }
+            fields.extend((0..shape.weights).map(|k| format!("  mix{k}: f32,")));
+            self.bsdf_structs.insert(name.clone(), format!("struct {name} {{\n{}\n}}\n", fields.join("\n")));
+        }
+        name
+    }
+
+    /// A Bsdf expression's shape, its lobe fields and its weight fields, in struct order. A let, a parameter
+    /// or a helper's result contributes the fields of its own struct; a helper call is evaluated once.
+    fn bsdf_fields(&mut self, e: &Expr) -> (Shape, Vec<String>, Vec<String>) {
+        match &e.kind {
+            ExprKind::Binary(BinOp::Add, a, b) => {
+                let ((sa, mut la, mut wa), (sb, lb, wb)) = (self.bsdf_fields(a), self.bsdf_fields(b));
+                la.extend(lb);
+                wa.extend(wb);
+                (Shape::join(sa, sb, false), la, wa)
+            }
+            ExprKind::Call { callee, args } if callee.name == "mix_bsdf" => {
+                let [a, b, w] = args.as_slice() else { unreachable!("checked mix_bsdf arity") };
+                let ((sa, mut la, mut wa), (sb, lb, wb)) = (self.bsdf_fields(&a.value), self.bsdf_fields(&b.value));
+                la.extend(lb);
+                wa.extend(wb);
+                wa.push(self.expr(&w.value));
+                (Shape::join(sa, sb, true), la, wa)
+            }
+            ExprKind::Call { callee, args } if is_lobe(self.p, &callee.name) => {
+                (Shape::lobe(&callee.name, args.len()), args.iter().map(|a| self.expr(&a.value)).collect(), vec![])
+            }
+            _ => {
+                let shape = self.shape(e);
+                let mut value = self.expr(e);
+                if !matches!(e.kind, ExprKind::Name(_)) {
+                    let name = format!("loft_tmp_{}", self.temp);
+                    self.temp += 1;
+                    let ty = self.bsdf_struct(&shape);
+                    self.line(1, &format!("let {name}: {ty} = {value};"));
+                    value = name;
+                }
+                let lobes = shape.lobes.iter().enumerate()
+                    .flat_map(|(i, (_, arity))| (0..*arity).map(move |j| (i, j)))
+                    .map(|(i, j)| format!("{value}.l{i}_{j}")).collect();
+                let weights = (0..shape.weights).map(|k| format!("{value}.mix{k}")).collect();
+                (shape, lobes, weights)
+            }
+        }
+    }
+
     fn map_apply(&self, name: &str, inverse: bool, x: String, point: bool) -> String {
         let stages = &self.maps.iter().rev().find(|(n, _)| n == name).expect("checked: map in scope").1;
         let mut v = x;
@@ -317,16 +411,12 @@ impl<'p, 'a> Emitter<'p, 'a> {
         if self.baked_column == Some(e.id) {
             return "loft_column_value".into();
         }
-        // A Bsdf value is the struct of its lobes' bound arguments, in the module's one layout (checked per kind).
-        let is_lobe = |callee: &Ident| self.p.fns.get(callee.name.as_str()).is_some_and(|f| f.attrs.iter().any(|a| a.name.name == "lobe"));
+        // A built Bsdf value is the struct of its lobes' bound arguments, then its mix weights (material_shape).
         if *self.ty_of(e) == Ty::Bsdf && (matches!(&e.kind, ExprKind::Binary(BinOp::Add, ..))
-            || matches!(&e.kind, ExprKind::Call { callee, .. } if callee.name == "mix_bsdf" || is_lobe(callee))) {
-            let mut shape = Layout::default();
-            let all = shape.add(e) && shape.lobes.iter().all(|(n, _)| self.p.fns.get(*n).is_some_and(|f| f.attrs.iter().any(|a| a.name.name == "lobe")));
-            assert!(all, "checked: a Bsdf expression is a static lobe expression or a name");
-            let a = shape.lobes.iter().flat_map(|(_, args)| args.iter().map(|x| &x.value)).chain(shape.weights)
-                .map(|x| self.expr(x)).collect::<Vec<_>>();
-            return format!("Bsdf({})", a.join(", "));
+            || matches!(&e.kind, ExprKind::Call { callee, .. } if callee.name == "mix_bsdf" || is_lobe(self.p, &callee.name))) {
+            let (shape, mut fields, weights) = self.bsdf_fields(e);
+            fields.extend(weights);
+            return format!("{}({})", self.bsdf_struct(&shape), fields.join(", "));
         }
         match &e.kind {
             ExprKind::Unproved { body, .. } => {
@@ -702,46 +792,8 @@ impl<'p, 'a> Emitter<'p, 'a> {
 }
 
 /// The lobe sequence of a kind's material: every `return` must build the same one (it fixes the `Bsdf` struct).
-fn material_layout<'k>(p: &Prog<'k>, k: &'k KindDecl) -> Res<Layout<'k>> {
-    fn returns<'b>(b: &'b Block, out: &mut Vec<&'b Expr>) {
-        for s in &b.stmts {
-            match s {
-                Stmt::Return(Some(e), _) => out.push(e),
-                Stmt::If { then, otherwise, .. } => {
-                    returns(then, out);
-                    otherwise.iter().for_each(|o| returns(o, out));
-                }
-                Stmt::Each{body,..} | Stmt::For { body, .. } => returns(body, out),
-                Stmt::Return(None, _) | Stmt::Let { .. } | Stmt::Assign { .. } | Stmt::Map { .. } | Stmt::Emit { .. } | Stmt::ImportTable { .. } | Stmt::Expr(_) => {}
-            }
-        }
-    }
-    fn resolve<'a>(p: &Prog<'a>, f: &'a FnDecl, stack: &mut BTreeSet<String>) -> Res<Layout<'a>> {
-        if !stack.insert(f.name.name.clone()) {
-            return Err(Diag::new(Code::E405, f.name.span, "recursive material helper", "return a finite lobe stack"));
-        }
-        let mut rs = vec![];
-        returns(&f.body, &mut rs);
-        let mut layout: Option<Layout<'_>> = None;
-        for e in rs {
-            let mut ls = Layout::default();
-            let is_lobe = |n: &str| p.fns.get(n).is_some_and(|f| f.attrs.iter().any(|a| a.name.name == "lobe"));
-            if let ExprKind::Call { callee, .. } = &e.kind
-                && let Some(helper) = p.fns.get(callee.name.as_str()).filter(|_| !is_lobe(&callee.name))
-            {
-                ls = resolve(p, helper, stack)?;
-            } else if !ls.add(e) || !ls.lobes.iter().all(|(n, _)| is_lobe(n)) {
-                return Err(Diag::new(Code::E405, e.span, "material has no static lobe layout", "return a lobe sum or call a helper that returns one"));
-            }
-            if !layout.as_ref().is_none_or(|l| l.same_as(&ls)) {
-                return Err(Diag::new(Code::E405, e.span, "material paths use different lobes", "keep the same lobes on every path and vary their weights"));
-            }
-            layout = Some(ls);
-        }
-        stack.remove(&f.name.name);
-        layout.ok_or_else(|| Diag::new(Code::E003, f.name.span, "the material returns nothing", "return a sum of lobes"))
-    }
-    resolve(p, k.query(QueryKind::Material).expect("checked material"), &mut BTreeSet::new())
+fn material_layout(p: &Prog, k: &KindDecl) -> Res<Shape> {
+    fn_shape(p, k.query(QueryKind::Material).expect("checked material"), &mut BTreeSet::new())
 }
 
 const SHADE_ENTRY: &str = "// One workgroup per 8x8 tile that classify listed for this kind.";
@@ -795,8 +847,10 @@ pub fn emit_kind_module(
         em.foreign_table(p.kinds[read.as_str()], 1, 4 + j as u32);
     }
     // The Bsdf struct: one field per bound lobe argument, in the material's lobe order.
-    let layout = if mesh { Layout::default() } else { material_layout(p, k)? };
-    let mut lobes: Vec<_> = layout.lobes.iter().map(|(name, args)| (*name, args.len())).collect();
+    let layout = if mesh { Shape::default() } else { material_layout(p, k)? };
+    // A mesh's struct is its one fixed lobe (below); a mesh material written as that lobe still builds `Bsdf`.
+    em.material = Some(mesh_lobe.map_or_else(|| layout.clone(), |lobe| Shape::lobe(lobe, 3)));
+    let mut lobes: Vec<_> = layout.lobes.iter().map(|(name, arity)| (name.as_str(), *arity)).collect();
     if let Some(lobe) = mesh_lobe { lobes.push((lobe, 3)); }
     let invariants = lobes.iter().map(|(name, _)| {
         if light == Some("sun_sky") { lighting::invariant_lets(p, p.fns[name]) } else { Vec::new() }
@@ -818,16 +872,16 @@ pub fn emit_kind_module(
             replacements.push((call.clone(), format!("  let r{i} = loft_prepared_lobe_{i}({args}, prepared);")));
         }
         let _ = writeln!(evals, "{call}");
-        if !layout.weights.is_empty() { continue; }
+        if layout.weights != 0 { continue; }
         if *name == "emit_lobe" {
             let _ = writeln!(evals, "  emission += r{i}.xyz;");
         } else {
             let _ = writeln!(evals, "  c = c * r{i}.w + r{i}.xyz;");
         }
     }
-    let result = if layout.weights.is_empty() { "c + emission".into() } else {
+    let result = if layout.weights == 0 { "c + emission".into() } else {
         em.out.push_str("struct LoftMaterial { c: vec3<f32>, t: f32, e: vec3<f32> }\n");
-        bfields.extend((0..layout.weights.len()).map(|i| format!("  mix{i}: f32,")));
+        bfields.extend((0..layout.weights).map(|i| format!("  mix{i}: f32,")));
         layout.eval(&mut evals)
     };
     // The shelf's reflective lobes vanish behind the surface. The wrapped
@@ -946,7 +1000,7 @@ pub fn emit_kind_module(
             None => "vec3<f32>(0.0)".into(),
         },
         Aov::Albedo => layout.lobes.iter().enumerate().find_map(|(i, (name, _))| {
-            let f = p.fns[*name];
+            let f = p.fns[name.as_str()];
             f.params.iter().take(f.params.len().saturating_sub(3))
                 .position(|p| p.name.name == "albedo").map(|j| format!("b.l{i}_{j}"))
         }).unwrap_or_else(|| "vec3<f32>(0.0)".into()),
@@ -981,6 +1035,10 @@ pub fn emit_kind_module(
             "vec3<f32>(0.0)".into()
         }
     };
+    // Module-scope declarations are order-free in WGSL. The composed Bsdf structs go before the shade entry,
+    // since the path and tiled integrators embed only the text above it (namespacing each `struct` per kind).
+    let structs = std::mem::take(&mut em.bsdf_structs);
+    em.out.extend(structs.into_values());
     let [l0, l1, l2] = unit(TWIN_LIGHT).map(|v| f32_lit(f64::from(v)));
     em.out += &render_template(include_str!("../../../stdlib/core/kind_shade.wgsl"), &[
         ("QUERIES_END", paths::QUERIES_END), ("VIS", &vis), ("DIAGNOSTICS", diagnostics),
