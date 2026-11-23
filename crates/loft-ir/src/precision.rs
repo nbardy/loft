@@ -58,7 +58,7 @@ pub enum Role {
     Radiance,
     /// Visibility words (kind, row, primitive): integer data, never a float.
     Integer,
-    /// Depth and shadow depth: world-space distance, always f32.
+    /// Depth attachments (view and light): world-space distance, always f32.
     Depth,
 }
 
