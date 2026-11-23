@@ -327,6 +327,8 @@ pub struct ScheduleDecl {
     pub radiance: Option<(Ident, TyExpr)>,
     pub implicit: bool,
     pub name: Ident,
+    /// A schedule with parameters is a schedule function: a call to it in another schedule inlines its steps.
+    pub params: Vec<ScheduleParam>,
     pub passes: Vec<PassDecl>,
     pub waivers: Vec<(Ident, Ident)>,
 }
@@ -339,6 +341,15 @@ pub struct PassDecl {
     pub args: Vec<Arg>,
     pub body: Vec<(Ident, Vec<Arg>)>,
     pub resources: Option<PassResources>,
+    /// `on load` / `on dirty(...)`: the stage the step runs at. `None` runs it every frame.
+    pub clock: Option<BakeClock>,
+}
+
+/// A schedule function's parameter: `name`, `name = default`, or `..name` (every remaining positional argument).
+#[derive(serde::Serialize, Clone, Debug)]
+pub enum ScheduleParam {
+    One { name: Ident, default: Option<Expr> },
+    Rest(Ident),
 }
 
 #[derive(serde::Serialize, Clone, Debug)]

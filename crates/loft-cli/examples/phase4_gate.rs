@@ -110,7 +110,8 @@ fn observe(
 ) -> Result<Value, String> {
     // Keep production queries, material evaluation, integrator and runtime bindings. Replace only the
     // fragment observation: encode one linear f32 into four UNORM bytes before exposure or tonemapping.
-    let m = &mut p.modules[p.present];
+    let present = p.module_named("present").ok_or("missing present module")?;
+    let m = &mut p.modules[present];
     let (prefix, _) = m
         .wgsl
         .split_once("@fragment fn fs_present")
@@ -209,7 +210,7 @@ fn retain_all(a:u,b:u) -> rgb = [sums(a,b).x,bf(a).y,lo(a).x + hi(a).y]
         };
         let (mut p, _, c) =
             loft_passes::quant::compile(&src, &[], caps).map_err(|d| d.render(&src))?;
-        let shader = &p.modules[p.present].wgsl;
+        let shader = &p.modules[p.module_named("present").ok_or("missing present module")?].wgsl;
         let packed = features.contains(GpuFeatures::PACKED_INT8_DOT);
         if shader.contains("dot4I8Packed(a, b)") != packed
             || shader.contains("dot4U8Packed(a, b)") != packed
@@ -251,7 +252,7 @@ fn measure(g: &Gpu, gate: &str) -> Result<Value, String> {
         "shrine" => shrine(g),
         "spectral-slots" => {
             let (program, _) = scene("scenes/spectral_caustic_study.loft")?;
-            let usage = loft_passes::telemetry::storage_entries(&program.modules[program.present].naga)?;
+            let usage = loft_passes::telemetry::storage_entries(&program.modules[program.module_named("present").ok_or("missing present module")?].naga)?;
             let loaded = Loaded::new(g, &program, (128, 128), None)?;
             let commands = loaded.frame_samples(g, 0.0, 4);
             let bytes = loaded.pixels(g)?;
@@ -330,7 +331,8 @@ schedule Main {
         }
         "media" => {
             let mut p = compile(SPHERE)?.0;
-            let m = &mut p.modules[p.present];
+            let present = p.module_named("present").ok_or("missing present module")?;
+            let m = &mut p.modules[present];
             // Supply the two World coefficients in both orders to the shipped WGSL marcher.
             let (_, marcher) = loft_passes::bsdf::INSCATTER_WGSL.split_once("struct LoftCoefficients")
                 .expect("joint marcher coefficients");

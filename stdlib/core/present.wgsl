@@ -14,6 +14,6 @@ fn loft_aces(x: vec3<f32>) -> vec3<f32> {
 @fragment fn fs_present(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
   if frame.cold.x == LOFT_NONCE { discard; }
   let px = vec2<u32>(pos.xy);
-  {{LOAD}}
+  {{FETCH}}
   {{RESOLVE}}
 }

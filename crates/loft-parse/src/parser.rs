@@ -615,6 +615,7 @@ impl<'src> Parser<'src, '_> {
         }
         if self.eat("schedule") {
             let name = self.ident()?;
+            let params = if self.is("(") { self.schedule_params()? } else { vec![] };
             self.expect("{")?;
             self.seps();
             let mut radiance = None;
@@ -658,10 +659,11 @@ impl<'src> Parser<'src, '_> {
                         }
                     }
                 }
-                passes.push(PassDecl { label: verb.clone(), verb, args, body, resources });
+                let clock = if self.eat("on") { Some(self.clock()?) } else { None };
+                passes.push(PassDecl { label: verb.clone(), verb, args, body, resources, clock });
                 self.end()?
             }
-            return Ok(Item::Schedule(ScheduleDecl { implicit: false, name, passes, waivers, radiance }));
+            return Ok(Item::Schedule(ScheduleDecl { implicit: false, name, params, passes, waivers, radiance }));
         }
         if self.eat("world") {
             let name = self.upper_ident()?;
@@ -877,18 +879,7 @@ impl<'src> Parser<'src, '_> {
             _ => return Err(Diag::new(Code::E405, format.span, "unsupported bake format", "use r8unorm, r16float, r32float, rgba8unorm or rgba16float")),
         };
         self.expect("on")?;
-        let clock = if self.eat("load") {
-            BakeClock::Load
-        } else {
-            self.expect("dirty")?;
-            self.expect("(")?;
-            let mut names = vec![self.ident()?];
-            while self.eat(",") {
-                names.push(self.ident()?);
-            }
-            self.expect(")")?;
-            BakeClock::Dirty(names)
-        };
+        let clock = self.clock()?;
         self.expect("mips")?;
         self.expect("(")?;
         let mips = if self.eat("true") { true } else { self.expect("false")?; false };
@@ -902,6 +893,40 @@ impl<'src> Parser<'src, '_> {
         self.locals.clear();
         let texel = FnDecl { comptime: false, attrs: vec![], ret: Some(ty(ret, format.span)), name, params, body, raw: None };
         Ok(BakeDecl { texel, dim, format, clock, mips })
+    }
+
+    /// After `on`: `load` or `dirty(name, ...)`.
+    fn clock(&mut self) -> Res<BakeClock> {
+        if self.eat("load") {
+            return Ok(BakeClock::Load);
+        }
+        self.expect("dirty")?;
+        self.expect("(")?;
+        let mut names = vec![self.ident()?];
+        while self.eat(",") {
+            names.push(self.ident()?);
+        }
+        self.expect(")")?;
+        Ok(BakeClock::Dirty(names))
+    }
+
+    fn schedule_params(&mut self) -> Res<Vec<ScheduleParam>> {
+        self.expect("(")?;
+        let mut out = vec![];
+        while !self.eat(")") {
+            if self.eat("..") {
+                out.push(ScheduleParam::Rest(self.ident()?));
+            } else {
+                let name = self.ident()?;
+                let default = if self.eat("=") { Some(self.expr(0)?) } else { None };
+                out.push(ScheduleParam::One { name, default });
+            }
+            if !self.eat(",") {
+                self.expect(")")?;
+                break;
+            }
+        }
+        Ok(out)
     }
 
     fn params(&mut self) -> Res<Vec<Param>> {

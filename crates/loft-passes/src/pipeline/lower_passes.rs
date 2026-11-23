@@ -1,9 +1,11 @@
-use super::{Timings, schedule::Schedule, stage0::Stage0Scene};
+use super::{Timings, schedule::{Schedule, Step}, stage0::Stage0Scene};
 use crate::{CompileOptions, Prog, bake_tex, emit, shader::naga_module};
+use crate::frame_pass::{Facts, FramePass};
 use crate::program::{Dispatch, Draw, Pass, ShaderModule, abi};
+use crate::source::Graph;
 use loft_eval::pack;
 use loft_eval::eval::{RowVal, Tables};
-use loft_ir::{Code, Diag, Res, Sources};
+use loft_ir::{Code, Diag, Res};
 use loft_parse::ast::*;
 use std::collections::{BTreeMap, HashSet};
 use emit::shade_tiles::{Lighting, Visibility};
@@ -12,12 +14,18 @@ pub(super) struct LoweredPasses {
     pub(super) bakes: Vec<bake_tex::Bake>,
     pub(super) dispatches: Vec<Dispatch>,
     pub(super) shader_modules: Vec<ShaderModule>,
-    pub(super) shared: usize,
+    pub(super) passes: Vec<Pass>,
     pub(super) store_energy: bool,
 }
 
+/// A frame step once its module index is known; frame passes become `Pass::Authored` after naga reflects them.
+enum Lowered<'s, 'a> {
+    Stock(Pass),
+    Frame(&'s FramePass<'a>, usize),
+}
+
 pub(super) fn lower(
-    p: &Prog<'_>, modules: &[Module], types: &mut Vec<Ty>, src: &Sources,
+    p: &Prog<'_>, modules: &[Module], types: &mut Vec<Ty>, src: &Graph,
     opts: &CompileOptions<'_>, schedule: &mut Schedule<'_>, scene: &mut Stage0Scene, timings: &mut Timings,
 ) -> Res<LoweredPasses> {
     let CompileOptions { aov, features, .. } = *opts;
@@ -35,19 +43,26 @@ pub(super) fn lower(
     }
     let visibility = lower_world(p, types, opts, schedule, scene, &mut texts)?;
     let dispatches = lower_dispatches(p, types, opts, schedule, scene, &fixed, &mut texts)?;
-    let Schedule { path, passes, shadow_size, path_entry, sky, paper, film, ids, .. } = schedule;
+    let Schedule { path, steps, shadow_size, path_entry, paper, ids, .. } = schedule;
     let Stage0Scene { kinds, lut_refs, .. } = scene;
-    let present = if let Some(path) = path.as_ref() {
-        passes.retain(|pass| matches!(pass, Pass::Present));
+    let mut order = vec![];
+    if let Some(path) = path.as_ref() {
+        // The path integrator draws the whole frame; the raster steps and the present template are not lowered.
         *shadow_size = 0;
-        emit::paths::module(p, types, kinds, &texts, lut_refs, path, path_entry.expect("checked path entry"))?
+        order.push(Lowered::Stock(Pass::Path(texts.len())));
+        texts.push(("present".into(), emit::paths::module(p, types, kinds, &texts, lut_refs, path, path_entry.expect("checked path entry"))?));
     } else {
-        emit::shade_tiles::present_module(p, types, sky, aov, *paper, *film, visibility)
-    };
-    let shared = texts.len();
-    texts.push(("cull".into(), emit::cull_module(ids.len() == 1)));
-    texts.push(("classify".into(), emit::shade_tiles::classify_module(visibility)));
-    texts.push(("present".into(), present));
+        let facts = Facts { drawn: ids.len() as u32, edges: visibility, aov, paper: *paper };
+        for step in steps.iter() {
+            match step {
+                Step::Stock(pass) => order.push(Lowered::Stock(pass.clone())),
+                Step::Frame(frame) => {
+                    order.push(Lowered::Frame(frame, texts.len()));
+                    texts.push((frame.decl.label.name.clone(), frame.module(p, types, src, &facts)?));
+                }
+            }
+        }
+    }
     let mut bakes = Vec::new();
     for item in modules.iter().flat_map(|m| &m.items) {
         if let Item::Bake(decl) = item {
@@ -65,7 +80,11 @@ pub(super) fn lower(
         Ok(m)
     }).collect::<Res<Vec<_>>>()?;
     timings.lap("naga");
-    Ok(LoweredPasses { bakes, dispatches, shader_modules, shared, store_energy })
+    let passes = order.into_iter().map(|step| match step {
+        Lowered::Stock(pass) => Ok(pass),
+        Lowered::Frame(frame, index) => frame.lowered(&shader_modules[index], index).map(Pass::Authored),
+    }).collect::<Res<Vec<_>>>()?;
+    Ok(LoweredPasses { bakes, dispatches, shader_modules, passes, store_energy })
 }
 
 fn lower_world(

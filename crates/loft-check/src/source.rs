@@ -169,7 +169,7 @@ struct Loader<'a> {
 
 fn schedule(module: &Module) -> Option<&ScheduleDecl> {
     module.items.iter().find_map(|item| match item {
-        Item::Schedule(s) => Some(s),
+        Item::Schedule(s) if s.params.is_empty() => Some(s),
         _ => None,
     })
 }
@@ -200,7 +200,7 @@ impl Loader<'_> {
             for id in ids {
                 let node = &self.graph.nodes[usize::from(*id)];
                 let mut exported = node.module.items.iter().filter_map(|item| match item {
-                    Item::Schedule(s) if node.module.public.contains(&s.name.span) => Some(s),
+                    Item::Schedule(s) if node.module.public.contains(&s.name.span) && s.params.is_empty() => Some(s),
                     _ => None,
                 });
                 if let Some(first) = exported.next()

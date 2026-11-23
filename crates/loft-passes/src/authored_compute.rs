@@ -13,7 +13,7 @@ fn schedule_name(expr: &Expr) -> Res<&str> {
     }
 }
 
-fn compute_extent(
+pub(crate) fn compute_extent(
     p: &Prog<'_>, types: &mut Vec<Ty>, overrides: &[(String, f64)], value: &Expr,
 ) -> Res<[u32; 3]> {
     let row = stage0(p, types, value, overrides)?;
