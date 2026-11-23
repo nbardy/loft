@@ -201,7 +201,8 @@ impl Clock {
 
     fn timing(&self, serial: usize, commands: u32, (ticks, required): (Vec<u64>, Vec<bool>)) -> Result<FrameTiming, String> {
         let (first, last) = validate_ticks(&ticks, &required)?;
-        let ms = |a: u64, b: u64| (b - a) as f64 * self.period_ns / 1e6;
+        // Overlapping passes make consecutive ends non-monotonic; saturate as the pre-repair clock did.
+        let ms = |a: u64, b: u64| b.saturating_sub(a) as f64 * self.period_ns / 1e6;
         // Pass starts can overlap on Metal; attribute cost by consecutive ends.
         let pass_ms = ticks.chunks_exact(2).zip(&required).scan(first, |end, (pair, &needed)| {
             Some(if !needed { 0.0 } else { ms(std::mem::replace(end, pair[1]), pair[1]) })
@@ -219,10 +220,12 @@ fn validate_ticks(ticks: &[u64], required: &[bool]) -> Result<(u64, u64), String
     for (pair, &needed) in ticks.chunks_exact(2).zip(required) {
         if !needed { continue; }
         let (start, end) = (pair[0], pair[1]);
-        if start == 0 || end == 0 || end < start || span.is_some_and(|(_, last)| end < last) {
+        if start == 0 || end == 0 || end < start {
             return Err(format!("unusable required timestamps {ticks:?}; required {required:?}"));
         }
-        span = Some((span.map_or(start, |(first, _)| first), end));
+        // Passes overlap on Metal, so a later pass may end before an earlier one (seen in the profile
+        // fixture). The frame spans the earliest required start to the latest required end.
+        span = Some(span.map_or((start, end), |(first, last): (u64, u64)| (first.min(start), last.max(end))));
     }
     span.filter(|(first, last)| last > first).ok_or_else(|| "no positive required GPU timestamp span".into())
 }
@@ -243,6 +246,10 @@ mod timestamp_tests {
         assert!(validate_ticks(&[0; 6], &[false, true, true]).is_err());
         assert!(validate_ticks(&ticks, &[false; 3]).is_err());
         assert!(validate_ticks(&ticks, &[true; 5]).is_err());
+        // A valid frame whose later passes end before an earlier one (loft-cli profile fixture on Metal).
+        let overlap = [93352607917125, 93352607926250, 93352607949250, 93352608450041, 93352608077416,
+                       93352608085291, 93352608450458, 93352608477750, 93352608491250, 93352609391083];
+        assert_eq!(validate_ticks(&overlap, &[true; 5]).unwrap(), (overlap[0], overlap[9]));
     }
 }
 

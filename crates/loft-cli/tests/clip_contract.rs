@@ -63,7 +63,9 @@ fn training_command_writes_sixteen_pngs_and_measured_metadata() {
         assert_eq!((reader.info().width, reader.info().height), (512, 512));
     }
     let meta: Value = serde_json::from_slice(&fs::read(meta).unwrap()).unwrap();
-    assert_eq!(meta.as_object().unwrap().len(), 9);
+    assert_eq!(meta.as_object().unwrap().len(), 10);
+    // One validated timing record per frame (86cfa221): a frame without required timestamps is an error.
+    assert_eq!(meta["frame_timings"].as_array().unwrap().len(), 16);
     for key in
         ["build_cpu_ms", "load_gpu_ms", "frame_gpu_p50_ms", "frame_gpu_p95_ms", "modules", "pipelines", "commands"]
     {
