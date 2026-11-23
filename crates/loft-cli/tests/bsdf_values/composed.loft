@@ -1,0 +1,28 @@
+use stdlib::materials::chitin::{wet}
+
+fn shell(c: rgb) -> Bsdf {
+  ggx(c, 0.4, 0) + coat(0.6, 0.1)
+}
+
+kind Pebble @World () {
+  visible(ro, rd) = ray_sphere(ro, rd, [0, 0.5, 0]@World, 0.5)
+  trace(p) = sphere(p - [0, 0.5, 0]@World, 0.5)
+  material(p, n) {
+    let body = shell([0.2, 0.4, 0.6])
+    let eye = wet([0.9, 0.8, 0.3], 0.2, 0.5, rgb(0.0))
+    let spot = mix_bsdf(body, eye, step(0.3, p.y))
+    var lit = mix_bsdf(spot, ggx([0.02, 0.02, 0.02], 0.3, 0), step(0.9, p.y))
+    lit
+  }
+}
+
+build { emit Pebble() }
+schedule Main {
+  orbit(at: [0, 0.5, 0]@World, radius: 3m, height: 1m, period: 30s, fov: 42deg)
+  cull_indirect(Pebble)
+  render_bundle(Vis64) { draw_indirect(Pebble) }
+  find_shadow_map(Pebble, size: 1024)
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: sun_sky, sun: [-0.42, 0.74, 0.50])
+  tonemap_aces(ColorHdr, sky: sky_color)
+}
