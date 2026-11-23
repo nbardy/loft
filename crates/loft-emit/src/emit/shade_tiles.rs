@@ -1,5 +1,5 @@
 //! Lower the shade callback against the existing raster and World contracts.
-use super::{Aov, Emitter, LutRef, SHADE_ENTRY, TWIN_BINDINGS, fn_symbol, paths, reachable, render_template};
+use super::{Emitter, LutRef, SHADE_ENTRY, TWIN_BINDINGS, fn_symbol, paths, reachable, render_template};
 use loft_check::{Prog, program::{KindTable, abi}};
 use loft_ir::{Res, Span};
 use loft_parse::ast::Ty;
@@ -115,33 +115,5 @@ pub fn bsdf_coverage(source: &str) -> String {
         include_str!("shade_coverage_owner.wgsl"))
 }
 
-pub(crate) const HALO_BINDINGS: &str = "@group(1) @binding(3) var hdr: texture_storage_2d<rgba16float, write>;\n";
-
 const NEIGHBORS: &str = include_str!("../../../../stdlib/core/vis_neighbors.wgsl");
 const COVERAGE: &str = include_str!("shade_coverage.wgsl");
-
-pub fn classify_module(visibility: Visibility) -> String {
-    match visibility {
-        Visibility::Center => super::classify_module(),
-        // Classify also clears the HDR target's alpha, so present can tell an unshaded pixel from a shaded one by that
-        // alpha alone (shade stores 1.0) instead of rereading the 3x3 visibility neighborhood on every sky pixel.
-        Visibility::SubpixelEdges | Visibility::Coverage => super::classify_with_halo(
-            include_str!("../../../../stdlib/core/classify_halo.wgsl").strip_suffix('\n').unwrap(), HALO_BINDINGS),
-    }
-}
-
-pub fn present_module(
-    p: &Prog, types: &[Ty], sky: &str, aov: Aov, paper: Option<&str>, film: Option<&str>, visibility: Visibility,
-) -> String {
-    let edges = matches!(visibility, Visibility::SubpixelEdges);
-    // Shade stores alpha 1.0 at exactly the pixels whose 3x3 visibility neighborhood is covered, and classify zeroed
-    // every other pixel's alpha this frame, so beauty present reads that alpha rather than the neighborhood.
-    let resolve = if aov == Aov::Beauty { visibility } else { Visibility::Center };
-    let mut source = super::emit_present(p, types, sky, aov, paper, film, resolve);
-    if edges && aov != Aov::Beauty {
-        source = source.replace("textureLoad(vis_tex, px, 0).x == LOFT_EMPTY",
-            "textureLoad(vis_tex, px, 0).x == LOFT_EMPTY && loft_vis_neighborhood(px, LOFT_EMPTY).x == LOFT_EMPTY");
-        source.push_str(NEIGHBORS);
-    }
-    source
-}

@@ -817,18 +817,30 @@ impl Scope<'_> {
                 if let Some((_, ty)) = &mut s.radiance {
                     self.ty(ty, &[])?;
                 }
+                // A schedule function's parameters are bound at each call site, not in this module.
+                let params: Vec<String> = s.params.iter().map(|p| match p {
+                    ScheduleParam::One { name, .. } | ScheduleParam::Rest(name) => name.name.clone(),
+                }).collect();
+                for param in &mut s.params {
+                    if let ScheduleParam::One { default: Some(value), .. } = param {
+                        self.expr(value, &[])?;
+                    }
+                }
                 for pass in &mut s.passes {
-                    self.ident(&mut pass.verb)?;
-                    self.args(&mut pass.args, &[])?;
+                    // An explicit `pass` step's label names the pass, not a declaration.
+                    if pass.resources.is_none() && !params.contains(&pass.verb.name) {
+                        self.ident(&mut pass.verb)?;
+                    }
+                    self.args(&mut pass.args, &params)?;
                     for (name, args) in &mut pass.body {
                         self.ident(name)?;
-                        self.args(args, &[])?;
+                        self.args(args, &params)?;
                     }
                     if let Some(resources) = &mut pass.resources {
-                        for texture in &mut resources.reads {
+                        for texture in resources.reads.iter_mut().filter(|t| !params.contains(&t.name)) {
                             self.ident(texture)?;
                         }
-                        self.block(&mut resources.body, &mut vec![])?;
+                        self.block(&mut resources.body, &mut params.clone())?;
                     }
                 }
             }
@@ -899,11 +911,17 @@ pub(super) fn edited(graph: &Graph, id: u16, mut module: Module) -> Res<Module> 
 pub(super) fn link(graph: &Graph) -> Res<(Vec<Module>, u32)> {
     let linker = Linker::new(graph)?;
     let mut recipe = None;
+    let mut library = vec![];
     let mut modules = Vec::with_capacity(graph.nodes.len());
     for &id in &graph.order {
         let node = &graph.nodes[usize::from(id)];
         let mut module = node.module.clone();
         linker.scope(id)?.rewrite(&mut module)?;
+        // Schedule functions from any module, the scene's own included, are inlined where they are called.
+        module.items.retain(|item| match item {
+            Item::Schedule(s) if !s.params.is_empty() => { library.push(s.clone()); false }
+            _ => true,
+        });
         if id == graph.entry {
             for item in &mut module.items {
                 if let Item::Schedule(s) = item
@@ -942,7 +960,7 @@ pub(super) fn link(graph: &Graph) -> Res<(Vec<Module>, u32)> {
     modules.sort_by_key(|(rank, _)| *rank);
     let mut modules = modules.into_iter().map(|(_, module)| module).collect();
     let mut next = graph.next;
-    crate::defaults::schedule(&mut modules, &mut next, recipe)?;
+    crate::defaults::schedule(&mut modules, &mut next, recipe, &library)?;
     Ok((modules, next))
 }
 

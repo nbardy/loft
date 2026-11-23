@@ -30,7 +30,7 @@ fn capture(root: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
         let (mut program, _, _) =
             loft_passes::compile(&graph, &settings.into_iter().collect::<Vec<_>>())
                 .map_err(|error| error.render(&graph))?;
-        order_cull(&mut program)?;
+        order_cull(&mut program, root)?;
         let beauty = Loaded::new(&gpu, &program, size, None)?;
         for time in times {
             let stem = format!("{name}_t{time}");

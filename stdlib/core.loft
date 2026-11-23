@@ -23,3 +23,39 @@ use stdlib::frames::transport
 use stdlib::motion::solve
 use stdlib::integrators::direct
 use stdlib::styles::woodblock
+
+# The stock frame passes, as schedule functions any schedule may call or copy and change. A named argument fills the
+# template hole of the same name in capitals. `drawn`, `edges`, `aov` and `paper` are the frame's compile-time facts.
+
+# Frustum-test every drawn row and bound one indirect draw per kind.
+pub schedule cull_indirect(..kinds) {
+  pass cull reads [CameraSlot, kinds] writes [IndirectBuf] {
+    dispatch("core/cull.wgsl", "cull", Instances, draw: if drawn == 1 { "core/cull_single.wgsl" } else { "core/cull_multi.wgsl" })
+  }
+}
+
+# One workgroup per tile: append the tile to each covering kind's list. With edges, also clear the HDR alpha.
+pub schedule tile_classify(vis, tile = 8) {
+  pass classify reads [vis] writes [TileLists, ColorHdr] {
+    dispatch("core/classify.wgsl", "classify", Pixels, tile: tile,
+      halo: if edges == none { "" } else { "core/classify_halo.wgsl" },
+      bindings: if edges == none { "" } else { "@group(1) @binding(3) var hdr: texture_storage_2d<rgba16float, write>;\n" })
+  }
+}
+
+# Sky behind the surfaces, then `film` from scene-linear to display colour, to the swapchain.
+pub schedule tonemap(hdr, sky, film) {
+  pass present reads [hdr, Vis64] writes [Swapchain] {
+    draw("core/present.wgsl", "vs_present", "fs_present", sky: sky,
+      paper: if paper && aov == beauty { paper } else { "" },
+      film: if aov == beauty { film } else { "" },
+      fetch: if aov != beauty || paper { "var c = textureLoad(hdr_tex, px, 0).rgb;" } else if edges == none { "let covered = textureLoad(vis_tex, px, 0).x != LOFT_EMPTY;\n  var c = vec3<f32>(0.0);\n  if covered { c = textureLoad(hdr_tex, px, 0).rgb; }" } else { "let hdr_px = textureLoad(hdr_tex, px, 0);\n  var c = hdr_px.rgb;" },
+      resolve: if aov != beauty { "{{DEBUG}}" } else if paper { "core/present_paper.wgsl" } else if edges == none { "if !covered { c = {{SKY}}(loft_ray(pos.xy), normalize(frame.sun.xyz)); } return vec4<f32>({{FILM}}(c), 1.0);" } else if edges == taps { "if hdr_px.a == 0.0 { c = {{SKY}}(loft_ray(pos.xy), normalize(frame.sun.xyz)); } return vec4<f32>({{FILM}}(c), 1.0);" } else { "core/present_coverage.wgsl" },
+      debug: if aov == overdraw { "return vec4<f32>(c, 1.0);" } else if aov == depth { "return vec4<f32>(select(c, vec3<f32>(1.0), textureLoad(vis_tex, px, 0).x == LOFT_EMPTY), 1.0);" } else { "return vec4<f32>(select(c, vec3<f32>(0.0), textureLoad(vis_tex, px, 0).x == LOFT_EMPTY), 1.0);" })
+  }
+}
+
+# The ACES filmic fit as the film.
+pub schedule tonemap_aces(hdr, sky) {
+  tonemap(hdr, sky: sky, film: "loft_aces")
+}

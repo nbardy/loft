@@ -159,7 +159,7 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
             };
             verdicts.push(json!({"frame": i, "check": name, "held": margin}));
         }
-        if !p.passes.contains(&Pass::Present) {
+        if !p.passes.iter().any(Pass::presents) {
             return Err(Failure::Parity(format!("missing frame {i}: schedule does not present")));
         }
         if samples.iter().any(|s| !s.fields.is_empty()) {

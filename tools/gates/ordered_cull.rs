@@ -1,23 +1,18 @@
 use loft_passes::program::Program;
-use std::error::Error;
+use std::{error::Error, path::Path};
 
-pub(crate) fn order_cull(program: &mut Program) -> Result<(), Box<dyn Error>> {
+pub(crate) fn order_cull(program: &mut Program, root: &Path) -> Result<(), Box<dyn Error>> {
     // Equal D32 depths retain the first draw. Give compact cull output the same
     // stable row order as the existing control, preserving the arm's frustum test.
-    let shader = &mut program.modules[program.cull];
-    let compact = loft_passes::emit::cull_module(false);
-    let indexed = loft_passes::emit::cull_module(true);
-    let boundary = "  if outside != 0u { return; }";
-    let (prefix, _) = compact
-        .split_once(boundary)
-        .ok_or("missing compact cull tail")?;
-    let indexed_tail = indexed
-        .strip_prefix(prefix)
-        .ok_or("unexpected indexed cull shader")?;
-    let compact_tail = &compact[prefix.len()..];
+    // The stdlib cull fills its `draw` hole with one of these two fragments. This file is
+    // copied out of the checkout to build the capture instrument, so read them from `root`.
+    let compact_tail = &std::fs::read_to_string(root.join("stdlib/core/cull_multi.wgsl"))?;
+    let indexed_tail = &std::fs::read_to_string(root.join("stdlib/core/cull_single.wgsl"))?;
+    let index = program.module_named("cull").ok_or("missing cull module")?;
+    let shader = &mut program.modules[index];
     match (
-        shader.wgsl.matches(compact_tail).count(),
-        shader.wgsl.matches(indexed_tail).count(),
+        shader.wgsl.matches(compact_tail.as_str()).count(),
+        shader.wgsl.matches(indexed_tail.as_str()).count(),
     ) {
         (1, 0) => {
             shader.wgsl = shader.wgsl.replace(compact_tail, indexed_tail);

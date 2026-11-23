@@ -1,7 +1,7 @@
 //! Convert the existing lowered schedule to the pass-derived bundle ABI.
 use crate::{
     Compiled,
-    program::{DispatchRows, Draw, Pass, Program},
+    program::{AuthoredRun, DispatchRows, Draw, Extent, FrameView, Pass, Program},
 };
 use loft_ir::{*, execution::{self, Execution, Initializer, Image}, precision::{Precision, Resolved, Role}};
 use naga::{AddressSpace, ShaderStage, StorageAccess, TypeInner, valid};
@@ -601,7 +601,9 @@ pub fn lower_program(
             let bins = b.transient(4, 4 * 128 * 128);
             present.insert((2, 5), bins);
             b.bundle.resources.resets.push(bins);
-            b.compute(program.present, "photons", DispatchExtent::Fixed([1024, 1, 1]), &present)?;
+            let module = program.passes.iter().find_map(|pass| if let Pass::Path(m) = pass { Some(*m) } else { None })
+                .ok_or("a path-traced program has a path pass")?;
+            b.compute(module, "photons", DispatchExtent::Fixed([1024, 1, 1]), &present)?;
             b.wave += 1;
         }
     }
@@ -609,25 +611,30 @@ pub fn lower_program(
 
     for pass in &program.passes {
         match pass {
-            Pass::Cull => b.compute(
-                program.cull,
-                "cull",
-                DispatchExtent::Fixed([(program.instances.len() as u32).div_ceil(64), 1, 1]),
-                &Resources::from([
-                    ((1, 0), instances),
-                    ((1, 3), bases),
-                    ((1, 1), draw_args),
-                    ((1, 2), visible),
-                ]),
-            )?,
-            // Archived Classify calls its (1,1) buffer data. The address is the ABI.
-            Pass::Classify => {
-                let mut resources = Resources::from([((1, 0), vis), ((1, 1), shade_args), ((1, 2), tiles)]);
-                // The subpixel-edge classifier also zeroes the HDR alpha, which present reads as "unshaded".
-                let clears_hdr = program.modules[program.classify].naga.global_variables.iter()
-                    .any(|(_, g)| g.binding.as_ref().is_some_and(|r| (r.group, r.binding) == (1, 3)));
-                if clears_hdr { resources.insert((1, 3), hdr); }
-                b.compute(program.classify, "classify", DispatchExtent::Fixed(groups), &resources)?
+            // The template's own (group, binding) addresses carry the frame views it bound by name.
+            Pass::Authored(a) => {
+                let resources = a.bindings.iter().map(|&(group, binding, view)| ((group, binding), match view {
+                    FrameView::Instances => instances,
+                    FrameView::KindBases => bases,
+                    FrameView::DrawArgs => draw_args,
+                    FrameView::Visible => visible,
+                    FrameView::Visibility => vis,
+                    FrameView::HdrStore | FrameView::HdrSample => hdr,
+                    FrameView::ShadeArgs => shade_args,
+                    FrameView::Tiles => tiles,
+                })).collect::<Resources>();
+                match &a.run {
+                    AuthoredRun::Compute { entry, extent } => {
+                        let groups = match *extent {
+                            Extent::Groups(groups) => groups,
+                            Extent::Instances { width } => [(program.instances.len() as u32).div_ceil(width), 1, 1],
+                            Extent::Pixels { tile } => [size.0.div_ceil(tile[0]), size.1.div_ceil(tile[1]), 1],
+                        };
+                        b.compute(a.module, entry, DispatchExtent::Fixed(groups), &resources)?
+                    }
+                    AuthoredRun::FullScreen { vertex, fragment } => b.draw(
+                        a.module, (vertex.as_str(), fragment.as_str()), (present_args, 0, None), (target, None), &resources)?,
+                }
             }
             Pass::Vis(ids) | Pass::Shadow(ids) | Pass::Shade(ids) => {
                 for &id in ids {
@@ -696,12 +703,12 @@ pub fn lower_program(
                                 &resources,
                             )?;
                         }
-                        Pass::Cull | Pass::Classify | Pass::Present => unreachable!(),
+                        Pass::Authored(_) | Pass::Path(_) => unreachable!(),
                     }
                 }
             }
-            Pass::Present => b.draw(
-                program.present,
+            Pass::Path(module) => b.draw(
+                *module,
                 ("vs_present", "fs_present"),
                 (present_args, 0, None),
                 (target, None),

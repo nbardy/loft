@@ -73,7 +73,8 @@ schedule Main {",
         let src = crate::source::Graph::text(&root, &entry, &scene);
         let (program, _, compiled) = crate::compile(&src, &[("count".into(), 1.0)])
             .unwrap_or_else(|e| panic!("{}", e.render(&src)));
-        assert!(matches!(&program.passes[..], [Pass::Cull, Pass::Vis(_), Pass::Classify, Pass::Shade(_), Pass::Present]));
+        let labels = program.passes.iter().map(|pass| format!("{pass:?}")).collect::<Vec<_>>();
+        assert!(matches!(&program.passes[..], [Pass::Authored(_), Pass::Vis(_), Pass::Authored(_), Pass::Shade(_), Pass::Authored(_)]), "{labels:?}");
         assert!(program.path.is_none());
         assert!(program.modules[0].wgsl.contains(", hit, wo, false, px)"));
         let bundle = crate::bundle::lower(&program, &compiled, (64, 64), |_, _| vec![0; 256]);

@@ -6,6 +6,7 @@
 
 mod cache;
 mod authored_compute;
+mod frame_pass;
 mod motion;
 mod pipeline;
 mod provenance;

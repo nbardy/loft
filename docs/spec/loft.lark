@@ -75,11 +75,14 @@ retarget_decl: "retarget" UIDENT "from" UIDENT "to" UIDENT "{" field_inits "}"
 world_decl:  "world" UIDENT "{" field_inits "}"
 build_fn:    "build" "fn" LIDENT "(" params? ")" ("->" type_expr)? fn_body
 build_blk:   "build" block
-sched_decl:  "schedule" IDENT ("(" params? ")")? "{" (_NL? sched_stmt (_sep sched_stmt)* _sep?)? "}"
-sched_stmt:  "pass" LIDENT ("reads" "[" resource_list "]")? ("writes" "[" resource_list "]")? block
+sched_decl:  "schedule" IDENT ("(" sched_params? ")")? "{" (_NL? sched_stmt (_sep sched_stmt)* _sep?)? "}"
+sched_params: sched_param ("," sched_param)* ","?
+sched_param: ".." LIDENT | param
+sched_stmt:  "pass" LIDENT ("reads" "[" resource_list "]")? ("writes" "[" resource_list "]")? block step_clock?
            | "type" "Radiance" "=" type_expr
            | waive_stmt
-           | expr block?
+           | expr block? step_clock?
+step_clock:  "on" ("load" | "dirty" "(" resource_list ")")
 waive_stmt: "waive" UIDENT STRING
 resource_list: IDENT ("," IDENT)* ","?
 
