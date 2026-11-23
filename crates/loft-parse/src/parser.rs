@@ -88,8 +88,11 @@ pub fn parse(file: u16, source: &str, next: &mut u32) -> Res<Module> {
     while !p.is("") {
         let public = p.eat("pub");
         let item = p.item(public)?;
+        let names = item.declarations();
+        if let Some(body) = names.first().and_then(|n| p.module.bodies.get_mut(&n.span)) {
+            body.hi = p.tokens[p.at - 1].span.hi;
+        }
         if public {
-            let names = item.declarations();
             if names.is_empty() {
                 return p.err("a named declaration after pub");
             }
@@ -451,6 +454,7 @@ impl<'src> Parser<'src, '_> {
         };
         self.seps();
         self.expect("config")?;
+        self.body_start(&name);
         self.expect("{")?;
         let config = self.fields("}")?;
         self.seps();
@@ -490,6 +494,7 @@ impl<'src> Parser<'src, '_> {
         let params = self.columns(")")?;
         self.expect("->")?;
         let ret = self.ty()?;
+        self.body_start(&name);
         self.expect("{")?;
         self.seps();
         let horizon = if self.eat("knots") {
@@ -554,6 +559,7 @@ impl<'src> Parser<'src, '_> {
         }
         if self.eat("struct") {
             let name = self.upper_ident()?;
+            self.body_start(&name);
             self.expect("{")?;
             self.seps();
             let mut fields = vec![];
@@ -588,12 +594,15 @@ impl<'src> Parser<'src, '_> {
             }));
         }
         if self.eat("body") {
-            return Ok(Item::Body(self.upper_ident()?, self.body_items(false)?));
+            let name = self.upper_ident()?;
+            self.body_start(&name);
+            return Ok(Item::Body(name, self.body_items(false)?));
         }
         if self.eat("state") {
             let name = self.upper_ident()?;
             let checkpoint = self.eat("checkpoint").then(|| self.integer()).transpose()?;
             let home = self.eat("home").then(|| self.ident()).transpose()?;
+            self.body_start(&name);
             self.expect("{")?;
             let fields = self.columns("}")?;
             return Ok(Item::State(StateDecl { name, checkpoint, home, fields }));
@@ -612,6 +621,7 @@ impl<'src> Parser<'src, '_> {
         }
         if self.eat("schedule") {
             let name = self.ident()?;
+            self.body_start(&name);
             self.expect("{")?;
             self.seps();
             let mut radiance = None;
@@ -662,6 +672,7 @@ impl<'src> Parser<'src, '_> {
         }
         if self.eat("world") {
             let name = self.upper_ident()?;
+            self.body_start(&name);
             self.expect("{")?;
             self.seps();
             self.expect("things")?;
@@ -681,6 +692,7 @@ impl<'src> Parser<'src, '_> {
         }
         if self.eat("camera") {
             let name = self.ident()?;
+            self.body_start(&name);
             self.expect("{")?;
             let fields = self.fields("}")?;
             return Ok(Item::Camera(CameraDecl { name, fields }));
@@ -696,6 +708,7 @@ impl<'src> Parser<'src, '_> {
             let steps = self.primary()?;
             self.expect("on")?;
             self.expect("bake_lut")?;
+            self.body_start(&name);
             self.expect("{")?;
             self.seps();
             self.expect("init")?;
@@ -746,6 +759,7 @@ impl<'src> Parser<'src, '_> {
                 }
                 self.expect(")")?;
             }
+            self.body_start(&name);
             let body = self.block(false)?;
             let f = FnDecl { comptime: false, attrs: vec![], name, params, ret: None, body, raw: None };
             return Ok(Item::Kernel(KernelDecl { f, tier, allow, writes: Default::default() }));
@@ -776,6 +790,7 @@ impl<'src> Parser<'src, '_> {
                 }
             }
             self.seps();
+            self.body_start(&name);
             let body = self.block(false)?;
             return Ok(Item::Law(LawDecl {
                 tier,
@@ -796,7 +811,7 @@ impl<'src> Parser<'src, '_> {
             let params = self.params()?;
             self.expect("->")?;
             let ret = Some(self.ty()?);
-            let body = self.body(true)?;
+            let body = self.named_body(&name, true)?;
             return Ok(Item::Check(FnDecl {
                 comptime: false,
                 attrs: vec![],
@@ -813,6 +828,7 @@ impl<'src> Parser<'src, '_> {
             let source = self.upper_ident()?;
             self.expect("to")?;
             let target = self.upper_ident()?;
+            self.body_start(&name);
             self.expect("{")?;
             let fields = self.fields("}")?;
             return Ok(Item::Retarget { name, source, target, fields });
@@ -895,6 +911,7 @@ impl<'src> Parser<'src, '_> {
             return Err(Diag::new(Code::E003, name.span, "bake needs one typed coordinate", "use v2, v3 or d3@World for a 2D, 3D or cube bake"));
         }
         self.locals = params.iter().map(|p| p.name.name.clone()).collect();
+        self.body_start(&name);
         let body = self.block(true)?;
         self.locals.clear();
         let texel = FnDecl { comptime: false, attrs: vec![], ret: Some(ty(ret, format.span)), name, params, body, raw: None };
@@ -957,7 +974,7 @@ impl<'src> Parser<'src, '_> {
             vec![]
         };
         self.locals = params.iter().map(|p| p.name.name.clone()).collect();
-        let body = self.body(!build || ret.is_some())?;
+        let body = self.named_body(&n, !build || ret.is_some())?;
         self.generics.clear();
         self.locals.clear();
         Ok(FnDecl {
@@ -1045,6 +1062,7 @@ impl<'src> Parser<'src, '_> {
             }
         }
         self.fields = row.iter().map(|f| f.name.name.clone()).collect();
+        self.body_start(&name);
         self.expect("{")?;
         self.seps();
         self.proof = GeometryProof::Required;
@@ -1162,7 +1180,7 @@ impl<'src> Parser<'src, '_> {
                 }
                 self.at = query_pos;
                 self.geometry = matches!(q, QueryKind::Trace | QueryKind::Surface);
-                let mut b = self.body(true)?;
+                let mut b = self.named_body(&n, true)?;
                 self.geometry = false;
                 pre.append(&mut b.stmts);
                 b.stmts = pre;
@@ -1201,6 +1219,18 @@ impl<'src> Parser<'src, '_> {
             fns,
         })
     }
+    fn body_start(&mut self, name: &Ident) {
+        let open = self.cur().span;
+        self.module.bodies.insert(name.span, open);
+    }
+
+    fn named_body(&mut self, name: &Ident, value: bool) -> Res<Block> {
+        let start = self.cur().span;
+        let body = self.body(value)?;
+        self.module.bodies.insert(name.span, start.to(self.tokens[self.at - 1].span));
+        Ok(body)
+    }
+
     fn body(&mut self, value: bool) -> Res<Block> {
         let eq = self.eat("=");
         if self.is("{") {

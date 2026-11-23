@@ -17,6 +17,9 @@ pub struct Module {
     pub dimensions: Vec<(Span, Dimension)>,
     pub items: Vec<Item>,
     pub public: Vec<Span>,
+    /// Authored declaration name to body range, including its opening delimiter.
+    #[serde(skip)]
+    pub bodies: std::collections::HashMap<Span, Span>,
     /// Linked names for authored callbacks used by compiler-generated code.
     pub links: Vec<(String, String)>,
     pub file: Option<u16>,
