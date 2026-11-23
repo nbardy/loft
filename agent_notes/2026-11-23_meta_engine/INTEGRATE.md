@@ -271,3 +271,34 @@ relative, not absolute: warm load on the four small scenes is 7–13% above lean
 budgets of 200–400 ms), unattributed. The contended pairs here point the same way (+6% to +16%) and prove nothing.
 
 `lane/fix-auncel` now also contains main's merge commit `afd97544`, so main fast-forwards to it.
+
+## 8. Fourth gate, 24 Nov 04:27–04:36: with `fix/missing-return`
+
+The trainer session landed `d8b4045a` on main (`99021055`): a fn or query whose body can end without its value is
+E003 at the author's fn, where the evaluator used to panic (`lip.rs`, exit 101). `loft-check/src/check.rs` only;
+merged here without conflict.
+
+**A new refusal can break sources, so that was measured first.** Every `.loft` file under `stdlib/`, `scenes/`,
+`corpus/` and the Auncel repros, 289 files, was compiled with `loft build` by the lab binary before the merge
+(`bb88efca`) and after it. **No verdict changed.** 279 compile on both; the same 10 fail on both with the same first
+line (five repros that are meant to be refused, five files in `corpus/quarantine/`).
+
+**Revision.** `ecdcab8a`. One run of `tools/check.sh full`, same baseline and margin. Evidence:
+`loft-fix-auncel/out/check.EG5uWd/`, small reports in `loft-integrate-meta/out/integrate/gate_ecdcab8a/`.
+
+| Step | Result |
+|---|---|
+| static, wasm32, doc tests, lint, bead, native tests | pass; "Passed all 51 native test executables"; bead 9/9 |
+| Pictures | **19/19**, 0 changed pixels against lean2's capture |
+| Twin / Truth | **36/36** / **34/34** |
+| Speed / Load | **12/12** / **33/33** |
+| lines | Rust core 29,353 / 33,895 |
+| paired timing | ran on a mostly quiet machine; the harness still calls five scenes contended, hence the exit 1 |
+
+**Paired medians against lean2, third set.** Frame p95: −2% to −16% on five scenes, capsules-20 +1%. Cold load:
+within ±2.5% on the four small scenes, −8% to −11% on hermit; §6's +15% on capsules-1 did not repeat. **Warm load:
++9% to +12% on the four small scenes (about 1.0–1.5 ms) and +4% to +5% on hermit (about 2 ms)**, lower than lean2 in
+3 of 36 pairs. Three paired runs now agree on the warm-load cost and disagree on everything else that looked like a
+regression, so the warm-load cost is the one real relative change. It is unattributed and inside every budget.
+
+Main (`99021055`) is an ancestor of this lane, so it fast-forwards.
