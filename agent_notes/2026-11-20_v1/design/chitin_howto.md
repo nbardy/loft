@@ -32,7 +32,7 @@ template is the diff between it and `ghost_original.loft`.
 6. **Preset.** After `const Finish = ...`, paste the ten `const` lines of your species from the
    table below.
 7. **Colours at the emit sites.** In the top-level `build { }`, replace the seed's paint literal
-   (the 6th argument of `crab_body` and the 9th of each `chela`) with `Leg`, and the chela accent
+   (the 6th argument of `crab_body` and the 8th of each `chela` (corrected 23 Nov: two agents found 9th was off by one; the ghost example uses the 8th)) with `Leg`, and the chela accent
    literal (its last argument) with `Claw`. Use replace-all on the exact literal.
 8. **Extra plates.** An `emit Plate` in `build { }` that uses the paint literal and sits on the
    body (a brow, extra carapace lobe or abdomen) becomes `emit Shell(at: ..., axes: ..., motion: Motion)`.
