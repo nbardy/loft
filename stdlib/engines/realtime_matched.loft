@@ -49,11 +49,11 @@ fn matched_capsule(ro: p3@World, rd: d3@World, a: p3@World, b: p3@World, r: m) -
     return select(nearest, -1.0, nearest == 1e30);
   }
 
-fn matched_sky(direction: rgb, sun: rgb) -> rgb {
+pub fn matched_sky(direction: rgb, sun: rgb) -> rgb {
   mix([0.62, 0.72, 0.85], [0.13, 0.32, 0.62], pow(clamp(direction.y, 0.0, 1.0), 0.45))
 }
 
-fn matched_film(color: rgb) -> rgb { color / ([1.0, 1.0, 1.0] + color) }
+pub fn matched_film(color: rgb) -> rgb { color / ([1.0, 1.0, 1.0] + color) }
 
 fn matched_bounce(n: n3@World, px: v2) -> v4 =
   wgsl(n: n3@World, px: v2) -> v4 {
@@ -97,7 +97,7 @@ fn matched_transport(w: World, hit: Hit, wo: d3@World, bounce: v4, sky: rgb) -> 
     return color + loft_eval_hit(hit, wo, wi) * (3.141592653589793 / bounce.w) * incident;
   }
 
-fn matched_shade(w: World, hit: Hit, wo: d3@World, ink: bool, px: v2) -> rgb {
+pub fn matched_shade(w: World, hit: Hit, wo: d3@World, ink: bool, px: v2) -> rgb {
   let bounce = matched_bounce(hit.n, px)
   matched_transport(w, hit, wo, bounce, matched_sky(bounce.xyz, [0, 0, 0]))
 }

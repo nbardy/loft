@@ -1,0 +1,16 @@
+use stdlib::noise::value::{vnoise}
+
+# Attached pigment in shell coordinates. Broad mineral stains break into smaller
+# pits on the pale worn ridges. Pack linear reflectance and GGX roughness together
+# so a material probe and the beauty evaluate exactly the same surface.
+pub fn chitin_surface(q: v3, pigment: rgb) -> v4 {
+  let broad = vnoise(q * [3.4, 2.8, 4.7] + [3, 6, 2])
+  let fleck = vnoise(q * 16.0 + [7, 1, 9])
+  let pore = smoothstep(0.64, 0.82, vnoise(q * 39.0))
+  let stain = smoothstep(0.32, 0.68, 0.70*broad + 0.30*fleck)
+  let wear = smoothstep(0.58, 0.83, fleck + 0.12*abs(q.x)) * (1.0-pore)
+  let value = mix(0.24, 1.25, stain) * (1.0-0.50*pore)
+  let albedo = pigment * value + [0.16, 0.127, 0.073] * wear
+  let rough = 0.55 + 0.25 * clamp(0.84*(1.0-stain) + 0.45*pore + 0.16*wear, 0.0, 1.0)
+  v4(albedo, rough)
+}

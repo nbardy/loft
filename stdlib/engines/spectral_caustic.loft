@@ -121,3 +121,28 @@ pub schedule SpectralCaustic {
   screen_pass(spectral_sample, spectral: true, bounces: 16)
   tonemap_aces(ColorHdr, sky: sky_color)
 }
+
+# For a shallow water column the receiver footprint can be found directly.
+# In each wave direction solve u - a*sin(u) = receiver phase. The reciprocal
+# derivative transports flux. Keep a < 1 so the inverse is single valued.
+fn shoal_focus(phase: f, curvature: f) -> f {
+  var u = phase
+  for i in 0..4 {
+    u = u - (u - curvature*sin(u) - phase) / (1.0-curvature*cos(u))
+  }
+  1.0 / (1.0-curvature*cos(u))
+}
+
+fn shoal_band(p: rgb, depth: f, phase: f, nm: f, absorption: f) -> f {
+  let bend = 1.0 - 1.0/spectral_ior(1.322,0.0032,nm)
+  let u = dot(p.xz,[4.8,2.2]) + phase + 0.48*sin(2.7*p.z-phase)
+  let v = dot(p.xz,[-2.0,4.3]) - 0.73*phase
+  let first = shoal_focus(u, min(0.83, depth*2.75*bend))
+  let second = shoal_focus(v, min(0.65, depth*1.80*bend))
+  first * second * exp(-depth*absorption)
+}
+
+pub fn shallow_caustic(p: rgb, water_y: f, phase: f) -> rgb {
+  let d = max(water_y-p.y, 0.0)
+  [shoal_band(p,d,phase,650.0,0.92), shoal_band(p,d,phase,545.0,0.26), shoal_band(p,d,phase,450.0,0.12)]
+}
