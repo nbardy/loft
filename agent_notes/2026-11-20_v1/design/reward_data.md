@@ -34,3 +34,8 @@ They are boss versions of animals, as in game character design (a hermit crab wa
 4. Export: one record per render (program bytes, parent, axis, operator, severity, renders) and one per pair. The image-encoder reward trains on those pairs and is evaluated on the owner votes.
 
 Pilot: the 16 div1 crabs. Extract the chitin material, have Haiku retexture all 16, and pair each div1 original with its retexture (same body). Then apply the operators.
+
+## Lessons from the first vote batch (23 Nov, 59 pairs)
+- **Pattern bias.** The chitin retexture put the same granular speckle on all 16 crabs. The owner won 10 of those 16 votes for the retexture but called the set "kinda speckle biased". A reward trained on it would learn "speckle = good". Every family material must vary its pattern kind per subject (none, spots, net, bands, smooth gloss). Add pairs where the house pattern is the wrong choice (speckle on a smooth species) so the model learns fit, not a texture.
+- **Noise.** Re-voting all 16 div1/div2 pairs gave the same answer 9 times out of 16. Close pairs are noisy even for the owner, so collect repeated votes on a sample and treat ties and both-bad as real labels.
+- **Late rounds add little.** The blue swimmer's rounds 8 and 10 tied the final, and the rust crab's busy round 1 beat its cleaned-up final. Cap rounds at about 6 and keep early, detailed candidates in the pool.
