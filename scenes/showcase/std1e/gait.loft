@@ -9,33 +9,37 @@ const swing_height = 0.185m
 # Persisting at this resolution avoids feeding those ulps into the next tick.
 const row_scale = 8192.0
 
+# A standing body does not re-step for less than this (stride THEORY §2; the old 0.14 m strain threshold).
+const least_stride = 0.12m
+
 # Cached support hull: `links` holds one four-bit link per site, the destination ID plus one
 # (zero means the site starts no edge). Area edges leave every eligible pin on their left.
 # Collinear interiors cannot start an edge, and the lowest ID owns each coincident vertex.
-# Sites are the pairs (xa, xb) and (za, zb); `count` of them are live.
-fn live(i: u, count: u, skip: f, remove: f) -> bool = i < count && f32(i) != skip && f32(i) != remove
+# Sites are the pairs (xa, xb) and (za, zb); `count` of them are live, less those set in `out`
+# (one digit per site, as in `links`: the aloft set).
+fn live(i: u, count: u, out: u) -> bool = i < count && link(out, i) == 0
 
-fn link(links: u, i: u) -> u = (links / nibble(i)) % 16
+pub fn link(links: u, i: u) -> u = (links / nibble(i)) % 16
 
 # Sites 0..3 of a hull live in one f32 column and 4..7 in another, so each half stays exact.
-fn join(halves: v2) -> u = u32(halves.x) + u32(halves.y) * 65536
+pub fn join(halves: v2) -> u = u32(halves.x) + u32(halves.y) * 65536
 
 fn split(links: u) -> v2 = [f32(links % 65536), f32(links / 65536)]
 
-fn hull(xa: v4, xb: v4, za: v4, zb: v4, count: u, skip: f, remove: f) -> u {
+fn hull(xa: v4, xb: v4, za: v4, zb: v4, count: u, out: u) -> u {
   var links: u = 0
   var point: u = 0
   var segment: u = 0
   var longest = 1e-12
   var edges = 0
   for i in 0..8 {
-    if live(i, count, skip, remove) {
+    if live(i, count, out) {
       let a = [lane(xa, xb, i), lane(za, zb, i)]
       var first = true
       var edge: u = 0
       point = (i + 1) * nibble(i)
       for j in 0..8 {
-        if live(j, count, skip, remove) {
+        if live(j, count, out) {
           let e = [lane(xa, xb, j), lane(za, zb, j)] - a
           let l2 = dot(e, e)
           first = first && !(j < i && l2 <= 1e-12)
@@ -47,7 +51,7 @@ fn hull(xa: v4, xb: v4, za: v4, zb: v4, count: u, skip: f, remove: f) -> u {
             var left = true
             var area = false
             for k in 0..8 {
-              if live(k, count, skip, remove) {
+              if live(k, count, out) {
                 let b = [lane(xa, xb, k), lane(za, zb, k)] - a
                 let side = e.x * b.y - e.y * b.x
                 let along = dot(b, e)
@@ -72,7 +76,7 @@ fn hull(xa: v4, xb: v4, za: v4, zb: v4, count: u, skip: f, remove: f) -> u {
 }
 
 # Closest deck X/Z, signed distance, and affine case (flight/point/line/area).
-fn contact(xa: v4, xb: v4, za: v4, zb: v4, links: u, q: v2) -> v4 {
+pub fn contact(xa: v4, xb: v4, za: v4, zb: v4, links: u, q: v2) -> v4 {
   var kind = 0.0
   var margin = 1e10
   var nearest = q
@@ -103,98 +107,6 @@ fn contact(xa: v4, xb: v4, za: v4, zb: v4, links: u, q: v2) -> v4 {
   v4(q, margin, 3.0)
 }
 
-# Share of the load at site i when the sites in `keep` (one digit each) fit the pressure point q:
-# an affine fit around their mean. The rank-one branch uses the covariance pseudoinverse along
-# the supporting segment. The share can be negative; `kept` drops such sites.
-fn share(xa: v4, xb: v4, za: v4, zb: v4, keep: u, q: v2, i: u) -> f {
-  if link(keep, i) == 0 { return 0.0 }
-  var n = 0.0
-  var sx = 0.0
-  var sz = 0.0
-  for k in 0..8 {
-    if link(keep, k) != 0 {
-      n = n + 1.0
-      sx = sx + lane(xa, xb, k)
-      sz = sz + lane(za, zb, k)
-    }
-  }
-  let mean = [sx, sz] / n
-  var xx = 0.0
-  var zz = 0.0
-  var xz = 0.0
-  for k in 0..8 {
-    if link(keep, k) != 0 {
-      let dx = lane(xa, xb, k) - mean.x
-      let dz = lane(za, zb, k) - mean.y
-      xx = xx + dx * dx
-      zz = zz + dz * dz
-      xz = xz + dx * dz
-    }
-  }
-  let trace = xx + zz
-  let det = xx * zz - xz * xz
-  let d = q - mean
-  var scale = [0.0, 0.0]
-  if det > 1e-6 * trace * trace {
-    scale = [zz * d.x - xz * d.y, xx * d.y - xz * d.x] / det
-  } else if trace > 1e-8 {
-    scale = [xx * d.x + xz * d.y, xz * d.x + zz * d.y] / (trace * trace)
-  }
-  1.0 / n + (lane(xa, xb, i) - mean.x) * scale.x + (lane(za, zb, i) - mean.y) * scale.y
-}
-
-# Drop the most negative share, lowest ID first, until every kept share is nonnegative.
-fn kept(xa: v4, xb: v4, za: v4, zb: v4, count: u, skip: f, q: v2) -> u {
-  var keep: u = 0
-  for i in 0..8 {
-    if i < count && f32(i) != skip { keep = keep + nibble(i) }
-  }
-  var settled = false
-  for round in 0..8 {
-    if !settled {
-      var worst = -1
-      var least = -1e-6
-      for i in 0..8 {
-        let s = share(xa, xb, za, zb, keep, q, i)
-        if i < count && s < least {
-          least = s
-          worst = i32(i)
-        }
-      }
-      if worst < 0 { settled = true } else { keep = keep - nibble(u32(worst)) }
-    }
-  }
-  keep
-}
-
-# Compare displacement from each rest site before ranking. Equal strains keep
-# the lower site ID. Test the remaining hull at the existing pressure point.
-fn choose_foot(w: Walker, xa: v4, xb: v4, za: v4, zb: v4, aa: v4, ab: v4, cop: v2, capture: v2) -> f {
-  let keep = kept(xa, xb, za, zb, w.sites, w.foot, cop)
-  var winner = -1.0
-  var strongest = 0.14m
-  for i in 0..8 {
-    let site = f32(i)
-    let shift = [lane(xa, xb, i) - lane(w.home_xa, w.home_xb, i),
-                 lane(za, zb, i) - lane(w.home_za, w.home_zb, i)]
-    # Equal rest-relative strains must keep the lower ID even if the
-    # adapter reassociates subtraction at the two mirrored homes.
-    let strain = length(shift - capture)
-    let stride = floor(strain * row_scale + 0.5) / row_scale
-    let clear = w.foot != lane(w.previous_a, w.previous_b, i) && w.foot != lane(w.next_a, w.next_b, i)
-    if i < w.sites && stride > strongest && clear && lane(aa, ab, i) >= 0.12 {
-      if max(share(xa, xb, za, zb, keep, cop, i), 0.0) <= 0.30 {
-        let remaining = contact(xa, xb, za, zb, hull(xa, xb, za, zb, w.sites, w.foot, site), cop)
-        if remaining.w == 3.0 && remaining.z >= -0.5mm {
-          strongest = stride
-          winner = site
-        }
-      }
-    }
-  }
-  winner
-}
-
 # Head state preserves continuous bearing across the wrap. Turn hysteresis is
 # editable here and the neck absorbs only as much yaw as its joint allows.
 fn gaze(w: Walker, bearing: rad, dt: s, supported: bool) -> v3 {
@@ -215,26 +127,26 @@ fn bearing_at(t: s, scale: f) -> rad {
   0.0rad
 }
 
-fn commanded(t: s, scale: f) -> v2 {
+pub fn commanded(t: s, scale: f) -> v2 {
   if t <= 0.2s { return [0.0, 0.0] }
   if t <= 1.7s { return [0.82, 0.11] * scale }
   if t <= 3.2s { return [-0.88, -0.12] * scale }
   [0.0, 0.0]
 }
 
-fn root_at(w: Walker, i: u, centre: v2, turn: v2, lean: rad) -> p3@Deck {
+pub fn root_at(w: Walker, i: u, centre: v2, turn: v2, lean: rad) -> p3@Deck {
   let x = lane(w.socket_xa, w.socket_xb, i)
   let z = lane(w.socket_za, w.socket_zb, i)
   [centre.x + (turn.x * x + turn.y * z), w.rest_h + lean * x,
    centre.y + (-turn.y * x + turn.x * z)]@Deck
 }
 
-fn leash(w: Walker, start: v2, turn: v2, lean: rad, xa: v4, xb: v4, za: v4, zb: v4, active: f) -> v2 {
+fn leash(w: Walker, start: v2, turn: v2, lean: rad, xa: v4, xb: v4, za: v4, zb: v4, out: u) -> v2 {
   var centre = start
   let cap = 0.96 * w.reach_hi
   for sweep in 0..2 {
     for i in 0..8 {
-      if i < w.sites && f32(i) != active {
+      if i < w.sites && link(out, i) == 0 {
         let root = root_at(w, i, centre, turn, lean)
         let delta = [lane(xa, xb, i), lane(za, zb, i)] - [root.x, root.z]
         let horizontal = length(delta)
@@ -248,9 +160,9 @@ fn leash(w: Walker, start: v2, turn: v2, lean: rad, xa: v4, xb: v4, za: v4, zb: 
 
 # The leash iterates a soft bound. Check the hard annulus after rounding the
 # proposed centre, since the last projection can move an earlier pin out of range.
-fn fits_stance(w: Walker, centre: v2, turn: v2, lean: rad, xa: v4, xb: v4, za: v4, zb: v4) -> bool {
+fn fits_stance(w: Walker, centre: v2, turn: v2, lean: rad, xa: v4, xb: v4, za: v4, zb: v4, out: u) -> bool {
   for i in 0..8 {
-    if i < w.sites && f32(i) != w.foot {
+    if i < w.sites && link(out, i) == 0 {
       let reach = dist(root_at(w, i, centre, turn, lean), [lane(xa, xb, i), 0.0, lane(za, zb, i)]@Deck)
       if reach < w.reach_lo || reach > w.reach_hi { return false }
     }
@@ -290,13 +202,111 @@ fn pose(w: Walker, root: p3@Deck, anchor: v2, goal: v2, u: f, lift: m) -> p3@Dec
   [p.x, p.y, p.z]@Deck
 }
 
-pub law step(w: Walker, dt: s) writes w.{x, z, vx, vz, lean, lean_rate, last_bearing, unwrapped, yaw, neck, turn, ax0, ax1, ax2, ax3, ax4, ax5, ax6, ax7, az0, az1, az2, az3, az4, az5, az6, az7, foot, age0, age1, age2, age3, age4, age5, age6, age7, swing, span, aim_x, aim_z, lift, rest_time, steps, boundary_a, boundary_b, support_kind, cop_margin} {
+# Sole: the support is the hull dilated by the contact radius. The pressure point is q while q is within
+# `sole` of the hull, else the nearest point of the dilated hull. Kind and signed distance as `contact`.
+pub fn pressure(c: v4, q: v2, sole: m) -> v4 {
+  if c.w == 0.0 { return c }
+  let d = c.z + sole
+  if d >= 0.0 { return v4(q, d, c.w) }
+  v4(c.xy + (q - c.xy) * (sole / -c.z), d, c.w)
+}
+
+pub fn hold(xa: v4, xb: v4, za: v4, zb: v4, links: u, q: v2, sole: m) -> v4 = pressure(contact(xa, xb, za, zb, links, q), q, sole)
+
+# Duty factor (stride THEORY §2): the full-sweep law, capped at 3/4 so the cycle never exceeds four swings.
+pub fn duty(w: Walker, speed: f) -> f = min(0.75, 1.0 / (1.0 + speed * w.swing_time / w.sweep))
+
+# The stride a foot takes at this speed, and the lead of its landing ahead of its home.
+pub fn stride_at(w: Walker, speed: f) -> m {
+  let beta = duty(w, speed)
+  max(speed * w.swing_time * beta / (1.0 - beta), least_stride)
+}
+
+pub fn stride_lead(w: Walker, v: v2, tc: s) -> v2 {
+  let beta = duty(w, length(v))
+  v * (tc + 0.5 * w.swing_time * beta / (1.0 - beta))
+}
+
+# Predicted cycle: one swing plus the stance that covers a stride.
+pub fn cycle_time(w: Walker, speed: f) -> s {
+  let stride = stride_at(w, speed)
+  w.swing_time * clamp(1.0 + 0.16 * stride, 0.56, 1.12) + stride / max(speed, 1e-3)
+}
+
+# Where foot i should stand now in steady travel: its home under the turned trunk, plus the lead.
+pub fn goal(w: Walker, i: u, centre: v2, turn: v2, lead: v2) -> v2 {
+  let x = lane(w.home_xa, w.home_xb, i)
+  let z = lane(w.home_za, w.home_zb, i)
+  centre + [turn.x * x + turn.y * z, -turn.y * x + turn.x * z] + lead
+}
+
+fn wrap(x: f) -> f = x - floor(x + 0.5)
+
+# The part of a spill a step cannot catch: across the travel `axis` (unit), and backward along it.
+# A forward spill is the fall that walking is; the next landing catches it.
+fn uncaught(spill: v2, axis: v2) -> v2 {
+  let along = dot(spill, axis)
+  spill - axis * max(along, 0.0)
+}
+
+# Target lift phase of a site from its packed wave (rank + side offset) and the per-rank lag 1 - beta.
+fn lift_phase(wave: f, lag: f) -> f {
+  let rank = floor(wave)
+  fract(wave - rank + rank * lag)
+}
+
+# The veto (stride THEORY §4). `out` is the aloft set with foot i added. If the rest is an area, the
+# pressure point now must sit 2 mm inside it, and the centre at touchdown 2 mm inside the rest plus the
+# landing point `target`. If it is a segment or a point (only bodies of three sites or fewer), the
+# capture point (`wanted`) must already be within 3 cm of it across the travel and behind (weight
+# transfer put it there; ahead is the fall walking catches), and the foot must reach it at touchdown:
+# its goal plus the divergence of that spill over the swing must lie inside the horizontal reach of its hip.
+fn supports(w: Walker, xa: v4, xb: v4, za: v4, zb: v4, out: u, cop: v2, ahead: v2, wanted: v2,
+            i: u, target: v2, turn: v2, lean: rad, grow: f, overdue: bool, axis: v2) -> bool {
+  let rest = hull(xa, xb, za, zb, w.sites, out)
+  let now = hold(xa, xb, za, zb, rest, cop, w.sole)
+  # Only a body whose every lift leaves a segment or a point (three sites or fewer) steps dynamically;
+  # a larger one waits for a lift that keeps an area, so it never needs to catch a fall.
+  if now.w == 0.0 || (now.w < 3.0 && w.sites > 3) { return false }
+  # Area: the pressure point starts inside the rest, and the centre at touchdown is inside it too. A foot
+  # overdue by 0.15 of a stride is held only to Theorem B: the centre at touchdown inside the rest plus
+  # the landing. Between the two it may graze the edge of the rest (`swing_margin` in the audit). Without
+  # this a narrow quadruped never lifts a front foot while moving forward.
+  if now.w == 3.0 {
+    let strict = hold(xa, xb, za, zb, rest, ahead, w.sole)
+    let landed = hull(put(xa, 0, i, target.x), put(xb, 4, i, target.x), put(za, 0, i, target.y), put(zb, 4, i, target.y),
+                      w.sites, out - nibble(i))
+    let later = hold(put(xa, 0, i, target.x), put(xb, 4, i, target.x), put(za, 0, i, target.y), put(zb, 4, i, target.y),
+                     landed, ahead, w.sole)
+    return now.z >= 2mm && (strict.z >= 2mm || (overdue && later.z >= 2mm))
+  }
+  let held = hold(xa, xb, za, zb, rest, wanted, w.sole)
+  if length(uncaught(wanted - held.xy, axis)) > 30mm { return false }
+  let caught = target + (wanted - held.xy) * grow
+  let root = root_at(w, i, ahead, turn, lean)
+  let hi = 0.98 * w.reach_hi
+  length(caught - [root.x, root.z]) <= sqrt(max(0.0, hi * hi - root.y * root.y))
+}
+
+pub law step(w: Walker, dt: s) writes w.{x, z, vx, vz, lean, lean_rate, last_bearing, unwrapped, yaw, neck, turn, ax0, ax1, ax2, ax3, ax4, ax5, ax6, ax7, az0, az1, az2, az3, az4, az5, az6, az7, age0, age1, age2, age3, age4, age5, age6, age7, clock0, clock1, clock2, clock3, clock4, clock5, clock6, clock7, span0, span1, span2, span3, span4, span5, span6, span7, aim_x0, aim_x1, aim_x2, aim_x3, aim_x4, aim_x5, aim_x6, aim_x7, aim_z0, aim_z1, aim_z2, aim_z3, aim_z4, aim_z5, aim_z6, aim_z7, steps, boundary_a, boundary_b, support_kind, cop_margin, stalls} {
   let xa = [w.ax0, w.ax1, w.ax2, w.ax3]
   let xb = [w.ax4, w.ax5, w.ax6, w.ax7]
   let za = [w.az0, w.az1, w.az2, w.az3]
   let zb = [w.az4, w.az5, w.az6, w.az7]
   let aa = [w.age0, w.age1, w.age2, w.age3]
   let ab = [w.age4, w.age5, w.age6, w.age7]
+  let ca = [w.clock0, w.clock1, w.clock2, w.clock3]
+  let cb = [w.clock4, w.clock5, w.clock6, w.clock7]
+  let sa = [w.span0, w.span1, w.span2, w.span3]
+  let sb = [w.span4, w.span5, w.span6, w.span7]
+  let ga = [w.aim_x0, w.aim_x1, w.aim_x2, w.aim_x3]
+  let gb = [w.aim_x4, w.aim_x5, w.aim_x6, w.aim_x7]
+  let ha = [w.aim_z0, w.aim_z1, w.aim_z2, w.aim_z3]
+  let hb = [w.aim_z4, w.aim_z5, w.aim_z6, w.aim_z7]
+  var out: u = 0
+  for i in 0..8 {
+    if i < w.sites && lane(sa, sb, i) > 0.0 { out = out + nibble(i) }
+  }
   let c = [w.x, w.z]
   let v = [w.vx, w.vz]
   let tc2 = w.rest_h / 9.81
@@ -304,60 +314,146 @@ pub law step(w: Walker, dt: s) writes w.{x, z, vx, vz, lean, lean_rate, last_bea
   let want = (commanded(time, w.stick_scale) - v) / (0.5 * tc)
   let limited = want * min(1.0, 5.4 / max(length(want), 1e-6))
   let links = join([w.boundary_a, w.boundary_b])
-  let current = contact(xa, xb, za, zb, links, c - limited * tc2)
+  let speed = length(v)
+  let beta = duty(w, speed)
+  let lag = 1.0 - beta
+  let stride = stride_at(w, speed)
+  let lead = stride_lead(w, v, tc)
+  let facing = [cos(w.yaw), sin(w.yaw)]
+  let capture = c + v * tc
+  # Weight transfer (stride THEORY §4), for bodies whose every lift leaves a segment or a point: once the
+  # next foot to lift is past half its stride, the wanted pressure point also pushes the capture point onto
+  # the support that will remain, d(xi)/dt = -(xi - P(xi)) / tc, across the travel and from behind, so the lift
+  # starts with no sideways or backward fall to catch.
+  var next: u = 8
+  var eager = 0.3
+  for i in 0..8 {
+    if w.sites <= 3 && i < w.sites && lane(sa, sb, i) == 0.0 {
+      let progress = length(goal(w, i, c, facing, lead) - [lane(xa, xb, i), lane(za, zb, i)]) / stride
+      if progress > eager {
+        eager = progress
+        next = i
+      }
+    }
+  }
+  let remain = hold(xa, xb, za, zb, hull(xa, xb, za, zb, w.sites, out + select(0, nibble(next % 8), next < 8)), capture, w.sole)
+  # The travel axis is the commanded direction: the velocity of the sway itself must not tilt it.
+  let stick = commanded(time, w.stick_scale)
+  let axis = if length(stick) > 1e-3 { stick / length(stick) } else { [facing.x, -facing.y] }
+  let sway = if next < 8 && remain.w > 0.0 { uncaught(capture - remain.xy, axis) } else { [0.0, 0.0] }
+  let wanted = c - limited * tc2 + sway * 3.0
+  let current = hold(xa, xb, za, zb, links, wanted, w.sole)
   let cop = current.xy
   let acceleration = if current.w == 0.0 { [0.0, 0.0] } else { (c - cop) / tc2 }
+  # How far the capture point is beyond the support: it diverges over a swing by (e^(T/tc) - 1), and a
+  # landing aims there. (Not `wanted - cop`: `wanted` carries the weight-transfer push.)
+  let beyond = hold(xa, xb, za, zb, links, capture, w.sole)
+  let spill = if beyond.w == 0.0 { [0.0, 0.0] } else { capture - beyond.xy }
   let bearing = floor(bearing_at(time, w.look_scale) * row_scale + 0.5) / row_scale
   let head = floor(gaze(w, bearing, dt, current.w >= 2.0) * row_scale + v3(0.5)) / row_scale
   let wanted_turn = [cos(head.y), sin(head.y)]
   let spring = step_spring_exact(w.lean, w.lean_rate, 19.0 * acceleration.x, 2.0, 1.0, dt)
   let wanted_lean = floor(spring * row_scale + v2(0.5)) / row_scale
-  let capture = c + v * tc
-  let candidate = if w.foot < 0.0 && w.rest_time >= 0.035s {
-    choose_foot(w, xa, xb, za, zb, aa, ab, cop, capture)
-  } else { -1.0 }
-  let starting = candidate >= 0.0
-  let flight_site = u32(max(0, i32(max(candidate, w.foot))))
-  let rest = [lane(w.home_xa, w.home_xb, flight_site), lane(w.home_za, w.home_zb, flight_site)]
-  let anchor = [lane(xa, xb, flight_site), lane(za, zb, flight_site)]
-  let stride = length(rest + capture - anchor)
-  let urgency = clamp((length(capture - cop) - 0.14) * 2.0, 0.0, 1.0)
-  let duration = if starting { floor(clamp(0.25 + 0.04 * stride - 0.11 * urgency, 0.14, 0.28) * row_scale + 0.5) / row_scale } else { w.span }
-  let height = if starting { swing_height * clamp(1.0 + 0.30 * stride - 0.45 * urgency, 0.5, 1.5) } else { w.lift }
-  let elapsed = if starting { 0.0 } else { min(w.swing + dt, duration) }
-  let u = min(1.0, elapsed / duration)
-  let in_air = starting || w.foot >= 0.0
-  let previous_goal = [w.aim_x, w.aim_z]
-  let retarget = if starting { rest + c + v * (0.25 + duration) } else {
-    let next = rest + c + v * (0.25 + (1.0 - u) * duration)
-    previous_goal + (next - previous_goal) * (1.0 - smoothstep(0.5, 0.85, u))
+  # Cycle phase per site: stance progress scaled by beta, or the swing clock past beta.
+  var pa = v4(0.0)
+  var pb = v4(0.0)
+  for i in 0..8 {
+    let span = lane(sa, sb, i)
+    let progress = length(goal(w, i, c, facing, lead) - [lane(xa, xb, i), lane(za, zb, i)]) / stride
+    let theta = if span > 0.0 { beta + lag * lane(ca, cb, i) / span } else { beta * progress }
+    pa = put(pa, 0, i, theta)
+    pb = put(pb, 4, i, theta)
   }
+  # Of the planted feet past their phase threshold, the furthest past that the support allows lifts.
+  let grow = exp(w.swing_time / tc) - 1.0
+  let ahead = c + v * w.swing_time
+  var lifter: u = 8
+  var best = -1.0
+  for i in 0..8 {
+    if i < w.sites && lane(sa, sb, i) == 0.0 && lane(aa, ab, i) >= 0.12 {
+      let target = goal(w, i, c, facing, lead)
+      let progress = length(target - [lane(xa, xb, i), lane(za, zb, i)]) / stride
+      let leader = u32(lane(w.lead_a, w.lead_b, i))
+      let offset = fract(lift_phase(lane(w.wave_a, w.wave_b, i), lag) - lift_phase(lane(w.wave_a, w.wave_b, leader), lag))
+      let error = select(wrap(lane(pa, pb, i) - lane(pa, pb, leader) + offset), 0.0, leader == i)
+      let past = progress - (1.0 + clamp(error, -0.30, 0.15))
+      if past >= 0.0 && past > best {
+        if supports(w, xa, xb, za, zb, out + nibble(i), cop, ahead, capture, i, target + v * w.swing_time,
+                    facing, w.lean, grow, past >= 0.15, axis) {
+          best = past
+          lifter = i
+        }
+      }
+    }
+  }
+  let starting = lifter < 8
+  let lifted = out + select(0, nibble(lifter % 8), starting)
+  let urgency = clamp((length(capture - cop) - 0.14) * 2.0, 0.0, 1.0)
   let free = c + dt * (v + 0.5 * dt * acceleration)
-  let leashed = leash(w, free, wanted_turn, wanted_lean.x, xa, xb, za, zb, w.foot)
+  let leashed = leash(w, free, wanted_turn, wanted_lean.x, xa, xb, za, zb, lifted)
   let proposed = floor(leashed * row_scale + v2(0.5)) / row_scale
-  let fits = fits_stance(w, proposed, wanted_turn, wanted_lean.x, xa, xb, za, zb)
+  let fits = fits_stance(w, proposed, wanted_turn, wanted_lean.x, xa, xb, za, zb, lifted)
   let centre = if fits { proposed } else { c }
   let yaw = select(w.yaw, head.y, fits)
   let tilt = select(w.lean, wanted_lean.x, fits)
   let heading = [cos(yaw), sin(yaw)]
-  # Metal can implement division with an approximate reciprocal. Compare
-  # the clock directly so a completed span always lands on the same tick.
-  let landing = in_air && elapsed >= duration
-  let limited_goal = if in_air {
-    touchdown(w, root_at(w, flight_site, centre, heading, tilt), retarget)
-  } else { retarget }
-  let aim = floor(limited_goal * row_scale + v2(0.5)) / row_scale
-  let active = if in_air && !landing { f32(flight_site) } else { -1.0 }
-  # Only a landing changes an anchor or an age; 8 names no site, so `put` leaves its lane alone.
-  let nowhere: u = 8
-  let landed = if landing { flight_site } else { nowhere }
-  let nxa = put(xa, 0, landed, aim.x)
-  let nxb = put(xb, 4, landed, aim.x)
-  let nza = put(za, 0, landed, aim.y)
-  let nzb = put(zb, 4, landed, aim.y)
   let tick = dt / 1s
-  let naa = put(min(v4(0.12), aa + v4(tick)), 0, landed, 0.0)
-  let nab = put(min(v4(0.12), ab + v4(tick)), 4, landed, 0.0)
+  var nxa = xa
+  var nxb = xb
+  var nza = za
+  var nzb = zb
+  var naa = min(v4(0.12), aa + v4(tick))
+  var nab = min(v4(0.12), ab + v4(tick))
+  var nca = ca
+  var ncb = cb
+  var nsa = sa
+  var nsb = sb
+  var nga = ga
+  var ngb = gb
+  var nha = ha
+  var nhb = hb
+  var landed = 0.0
+  var aloft: u = 0
+  for i in 0..8 {
+    let lifting = i == lifter
+    let held = lane(sa, sb, i)
+    if i < w.sites && (lifting || held > 0.0) {
+      let anchor = [lane(xa, xb, i), lane(za, zb, i)]
+      let home = goal(w, i, centre, heading, lead)
+      let reach = length(home + v * w.swing_time - anchor)
+      let duration = if lifting {
+        floor(w.swing_time * clamp(1.0 + 0.16 * reach - 0.44 * urgency, 0.56, 1.12) * row_scale + 0.5) / row_scale
+      } else { held }
+      # Metal can implement division with an approximate reciprocal. Compare
+      # the clock directly so a completed span always lands on the same tick.
+      let elapsed = if lifting { 0.0 } else { min(lane(ca, cb, i) + dt, duration) }
+      let u = min(1.0, elapsed / duration)
+      let remaining = (1.0 - u) * duration
+      let next = home + v * remaining + spill * (exp(remaining / tc) - 1.0)
+      let previous_goal = [lane(ga, gb, i), lane(ha, hb, i)]
+      let retarget = if lifting { next } else { previous_goal + (next - previous_goal) * (1.0 - smoothstep(0.5, 0.85, u)) }
+      # A landing is a new pin, admitted inside the reach annulus of the trunk the pose law reads.
+      let aim = floor(touchdown(w, root_at(w, i, centre, heading, tilt), retarget) * row_scale + v2(0.5)) / row_scale
+      let landing = !lifting && elapsed >= duration
+      let lands: u = select(8, i, landing)
+      nxa = put(nxa, 0, lands, aim.x)
+      nxb = put(nxb, 4, lands, aim.x)
+      nza = put(nza, 0, lands, aim.y)
+      nzb = put(nzb, 4, lands, aim.y)
+      naa = put(naa, 0, lands, 0.0)
+      nab = put(nab, 4, lands, 0.0)
+      nca = put(nca, 0, i, select(elapsed, 0.0, landing))
+      ncb = put(ncb, 4, i, select(elapsed, 0.0, landing))
+      nsa = put(nsa, 0, i, select(duration, 0.0, landing))
+      nsb = put(nsb, 4, i, select(duration, 0.0, landing))
+      nga = put(nga, 0, i, select(aim.x, 0.0, landing))
+      ngb = put(ngb, 4, i, select(aim.x, 0.0, landing))
+      nha = put(nha, 0, i, select(aim.y, 0.0, landing))
+      nhb = put(nhb, 4, i, select(aim.y, 0.0, landing))
+      landed = landed + select(0.0, 1.0, landing)
+      aloft = aloft + select(nibble(i), 0, landing)
+    }
+  }
   # Derive constrained velocity from the accepted, grid-aligned displacement.
   # Dividing the unrounded projection magnifies an ulp into a state change.
   let accepted_velocity = if !fits { [0.0, 0.0] } else if length(leashed - free) > 1e-6 {
@@ -365,8 +461,8 @@ pub law step(w: Walker, dt: s) writes w.{x, z, vx, vz, lean, lean_rate, last_bea
   } else { v + dt * acceleration }
   let next_velocity = floor(accepted_velocity * row_scale + v2(0.5)) / row_scale
   # The hull changes only when a foot lifts or lands; otherwise the cached links stand.
-  let boundary = if active == w.foot { links } else { hull(nxa, nxb, nza, nzb, w.sites, active, -1.0) }
-  let final_support = if active == w.foot { current } else { contact(nxa, nxb, nza, nzb, boundary, cop) }
+  let boundary = if aloft == out { links } else { hull(nxa, nxb, nza, nzb, w.sites, aloft) }
+  let final_support = if aloft == out { current } else { hold(nxa, nxb, nza, nzb, boundary, cop, w.sole) }
   w.x = centre.x
   w.z = centre.y
   w.vx = next_velocity.x
@@ -394,7 +490,6 @@ pub law step(w: Walker, dt: s) writes w.{x, z, vx, vz, lean, lean_rate, last_bea
   w.az5 = nzb.y
   w.az6 = nzb.z
   w.az7 = nzb.w
-  w.foot = active
   w.age0 = naa.x
   w.age1 = naa.y
   w.age2 = naa.z
@@ -403,38 +498,88 @@ pub law step(w: Walker, dt: s) writes w.{x, z, vx, vz, lean, lean_rate, last_bea
   w.age5 = nab.y
   w.age6 = nab.z
   w.age7 = nab.w
-  w.swing = select(0.0, elapsed, active >= 0.0)
-  w.span = duration
-  w.aim_x = select(0.0, aim.x, in_air && !landing)
-  w.aim_z = select(0.0, aim.y, in_air && !landing)
-  w.lift = select(0.0, floor(height * row_scale + 0.5) / row_scale, active >= 0.0)
-  w.rest_time = select(min(0.12s, w.rest_time + dt), 0.0, in_air)
-  w.steps = w.steps + select(0.0, 1.0, landing)
+  w.clock0 = nca.x
+  w.clock1 = nca.y
+  w.clock2 = nca.z
+  w.clock3 = nca.w
+  w.clock4 = ncb.x
+  w.clock5 = ncb.y
+  w.clock6 = ncb.z
+  w.clock7 = ncb.w
+  w.span0 = nsa.x
+  w.span1 = nsa.y
+  w.span2 = nsa.z
+  w.span3 = nsa.w
+  w.span4 = nsb.x
+  w.span5 = nsb.y
+  w.span6 = nsb.z
+  w.span7 = nsb.w
+  w.aim_x0 = nga.x
+  w.aim_x1 = nga.y
+  w.aim_x2 = nga.z
+  w.aim_x3 = nga.w
+  w.aim_x4 = ngb.x
+  w.aim_x5 = ngb.y
+  w.aim_x6 = ngb.z
+  w.aim_x7 = ngb.w
+  w.aim_z0 = nha.x
+  w.aim_z1 = nha.y
+  w.aim_z2 = nha.z
+  w.aim_z3 = nha.w
+  w.aim_z4 = nhb.x
+  w.aim_z5 = nhb.y
+  w.aim_z6 = nhb.z
+  w.aim_z7 = nhb.w
+  w.steps = w.steps + landed
   w.boundary_a = split(boundary).x
   w.boundary_b = split(boundary).y
   w.support_kind = final_support.w
   w.cop_margin = floor(final_support.z * row_scale + 0.5) / row_scale
+  w.stalls = w.stalls + select(1.0, 0.0, fits)
 }
 
-pub law present(w: Walker, dt: s) writes w.{toe_x0, toe_x1, toe_x2, toe_x3, toe_x4, toe_x5, toe_x6, toe_x7, toe_y0, toe_y1, toe_y2, toe_y3, toe_y4, toe_y5, toe_y6, toe_y7, toe_z0, toe_z1, toe_z2, toe_z3, toe_z4, toe_z5, toe_z6, toe_z7} {
+pub law present(w: Walker, dt: s) writes w.{toe_x0, toe_x1, toe_x2, toe_x3, toe_x4, toe_x5, toe_x6, toe_x7, toe_y0, toe_y1, toe_y2, toe_y3, toe_y4, toe_y5, toe_y6, toe_y7, toe_z0, toe_z1, toe_z2, toe_z3, toe_z4, toe_z5, toe_z6, toe_z7, slide} {
   let centre = [w.x, w.z]
   let turn = [cos(w.yaw), sin(w.yaw)]
-  let aim = [w.aim_x, w.aim_z]
-  let phase = w.swing / w.span
   let xa = [w.ax0, w.ax1, w.ax2, w.ax3]
   let xb = [w.ax4, w.ax5, w.ax6, w.ax7]
   let za = [w.az0, w.az1, w.az2, w.az3]
   let zb = [w.az4, w.az5, w.az6, w.az7]
+  let aa = [w.age0, w.age1, w.age2, w.age3]
+  let ab = [w.age4, w.age5, w.age6, w.age7]
+  let ca = [w.clock0, w.clock1, w.clock2, w.clock3]
+  let cb = [w.clock4, w.clock5, w.clock6, w.clock7]
+  let sa = [w.span0, w.span1, w.span2, w.span3]
+  let sb = [w.span4, w.span5, w.span6, w.span7]
+  let ga = [w.aim_x0, w.aim_x1, w.aim_x2, w.aim_x3]
+  let gb = [w.aim_x4, w.aim_x5, w.aim_x6, w.aim_x7]
+  let ha = [w.aim_z0, w.aim_z1, w.aim_z2, w.aim_z3]
+  let hb = [w.aim_z4, w.aim_z5, w.aim_z6, w.aim_z7]
+  let ox = [w.toe_x0, w.toe_x1, w.toe_x2, w.toe_x3]
+  let ox2 = [w.toe_x4, w.toe_x5, w.toe_x6, w.toe_x7]
+  let oy = [w.toe_y0, w.toe_y1, w.toe_y2, w.toe_y3]
+  let oy2 = [w.toe_y4, w.toe_y5, w.toe_y6, w.toe_y7]
+  let oz = [w.toe_z0, w.toe_z1, w.toe_z2, w.toe_z3]
+  let oz2 = [w.toe_z4, w.toe_z5, w.toe_z6, w.toe_z7]
   var pxa = v4(0.0)
   var pxb = v4(0.0)
   var pya = v4(0.0)
   var pyb = v4(0.0)
   var pza = v4(0.0)
   var pzb = v4(0.0)
+  var slide = w.slide
   for i in 0..8 {
     if i < w.sites {
-      let end = pose(w, root_at(w, i, centre, turn, w.lean), [lane(xa, xb, i), lane(za, zb, i)], aim,
-        select(0.0, phase, w.foot == f32(i)), w.lift)
+      let span = lane(sa, sb, i)
+      let anchor = [lane(xa, xb, i), lane(za, zb, i)]
+      let aim = if span > 0.0 { [lane(ga, gb, i), lane(ha, hb, i)] } else { anchor }
+      let u = if span > 0.0 { lane(ca, cb, i) / span } else { 0.0 }
+      let lift = swing_height * (w.rest_h / 0.45) * clamp(1.0 + 0.30 * length(aim - anchor), 0.5, 1.5)
+      let end = pose(w, root_at(w, i, centre, turn, w.lean), anchor, aim, u, lift)
+      # Foot slide: travel of a toe planted on this tick and the last (a landing resets its age to 0).
+      if span == 0.0 && lane(aa, ab, i) > 0.0 {
+        slide = slide + dist(end, [lane(ox, ox2, i), lane(oy, oy2, i), lane(oz, oz2, i)]@Deck)
+      }
       pxa = put(pxa, 0, i, end.x)
       pxb = put(pxb, 4, i, end.x)
       pya = put(pya, 0, i, end.y)
@@ -467,10 +612,11 @@ pub law present(w: Walker, dt: s) writes w.{toe_x0, toe_x1, toe_x2, toe_x3, toe_
   w.toe_z5 = pzb.y
   w.toe_z6 = pzb.z
   w.toe_z7 = pzb.w
+  w.slide = slide
 }
 
-# Analytical controls for the same hull query used during support exchange. The last pair
-# puts a collinear midpoint on each edge of the square in lane b.
+# Analytical controls for the same hull query used during support exchange. The last case
+# puts a collinear midpoint on each edge of the square in lane b; the sole cases dilate it.
 pub check support_cases(w: Walker) -> m {
   let xs = [0.0, 1.0, 1.0, 0.0]
   let zs = [0.0, 0.0, 1.0, 1.0]
@@ -478,31 +624,23 @@ pub check support_cases(w: Walker) -> m {
   let mid_x = [0.5, 1.0, 0.5, 0.0]
   let mid_z = [0.0, 0.5, 1.0, 0.5]
   let q = [2.0, 0.5]
-  let flight = contact(xs, nil, zs, nil, hull(xs, nil, zs, nil, 0, -1.0, -1.0), q)
-  let point = contact(xs, nil, zs, nil, hull(xs, nil, zs, nil, 1, -1.0, -1.0), q)
-  let line = contact(xs, nil, zs, nil, hull(xs, nil, zs, nil, 2, -1.0, -1.0), q)
-  let area = contact(xs, nil, zs, nil, hull(xs, nil, zs, nil, 4, -1.0, -1.0), q)
-  let centre = contact(xs, nil, zs, nil, hull(xs, nil, zs, nil, 4, -1.0, -1.0), [0.5, 0.5])
-  let eight = contact(xs, mid_x, zs, mid_z, hull(xs, mid_x, zs, mid_z, 8, -1.0, -1.0), q)
-  let line_x = [0.0, 1.0, 1.0, 0.0]
-  let line_z = v4(0.0)
-  let line_at = [0.25, 0.0]
-  let line_keep = kept(line_x, nil, line_z, nil, 4, -1.0, line_at)
-  let line_weights = [share(line_x, nil, line_z, nil, line_keep, line_at, 0),
-                      share(line_x, nil, line_z, nil, line_keep, line_at, 1),
-                      share(line_x, nil, line_z, nil, line_keep, line_at, 2),
-                      share(line_x, nil, line_z, nil, line_keep, line_at, 3)]
-  let area_at = [0.5, 0.5]
-  let area_keep = kept(xs, nil, zs, nil, 4, -1.0, area_at)
-  let area_weights = [share(xs, nil, zs, nil, area_keep, area_at, 0), share(xs, nil, zs, nil, area_keep, area_at, 1),
-                      share(xs, nil, zs, nil, area_keep, area_at, 2), share(xs, nil, zs, nil, area_keep, area_at, 3)]
+  let flight = contact(xs, nil, zs, nil, hull(xs, nil, zs, nil, 0, 0), q)
+  let point = contact(xs, nil, zs, nil, hull(xs, nil, zs, nil, 1, 0), q)
+  let line = contact(xs, nil, zs, nil, hull(xs, nil, zs, nil, 2, 0), q)
+  let area = contact(xs, nil, zs, nil, hull(xs, nil, zs, nil, 4, 0), q)
+  let centre = contact(xs, nil, zs, nil, hull(xs, nil, zs, nil, 4, 0), [0.5, 0.5])
+  let eight = contact(xs, mid_x, zs, mid_z, hull(xs, mid_x, zs, mid_z, 8, 0), q)
+  let lifted = contact(xs, nil, zs, nil, hull(xs, nil, zs, nil, 4, nibble(1) + nibble(2)), q)
+  let soled = hold(xs, nil, zs, nil, hull(xs, nil, zs, nil, 4, 0), q, 0.5)
+  let inside = hold(xs, nil, zs, nil, hull(xs, nil, zs, nil, 4, 0), [1.25, 0.5], 0.5)
   var error = length(flight - v4(q, -1e10, 0.0))
   error = max(error, length(point - [0.0, 0.0, -sqrt(4.25), 1.0]))
   error = max(error, length(line - [1.0, 0.0, -sqrt(1.25), 2.0]))
   error = max(error, length(area - [1.0, 0.5, -1.0, 3.0]))
   error = max(error, length(centre - [0.5, 0.5, 0.5, 3.0]))
   error = max(error, length(eight - [1.0, 0.5, -1.0, 3.0]))
-  error = max(error, length(line_weights - [0.375, 0.125, 0.125, 0.375]))
-  error = max(error, length(area_weights - [0.25, 0.25, 0.25, 0.25]))
+  error = max(error, length(lifted - [0.0, 0.5, -2.0, 2.0]))
+  error = max(error, length(soled - [1.5, 0.5, -0.5, 3.0]))
+  error = max(error, length(inside - [1.25, 0.5, 0.25, 3.0]))
   return if error > 1e-6m { missed(error) } else { held(1e-6m - error) }
 }

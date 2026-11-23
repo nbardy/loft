@@ -17,31 +17,37 @@ kind LegChain @Body (
 # scalar f32 columns a law writes. So per-site state a law writes is eight scalar columns
 # (`ax0`..`ax7`), and per-site constants a law only reads are pairs of v4: `_a` carries sites 0..3
 # and `_b` sites 4..7. `lane` reads site i of a pair and `put` replaces it.
-# Plans list sites counterclockwise in the (x, z) plane (x right, z up); a site's neighbours
-# are the ring neighbours.
+# Plans list sites counterclockwise in the (x, z) plane (x right, z up).
+# A site is aloft while its `span` is positive; its `clock` runs from 0 to `span` and it lands on `aim`.
+# `lead` and `wave` are the phase plan of the gait (stride THEORY §3), `sweep` and `swing_time` its two
+# timing constants, `knee` the knee pole in the body frame (z mirrored per side), `sole` the contact radius.
+# The last group is written only by `stdlib::motion::audit` (and `slide` by `present`, `stalls` by `step`).
 pub kind Walker[sites: u in 1..9] @World (
   deck_pose: xf@Deck>World, deck_speed: f in 0..1, stick_scale: f in 0..1,
-  look_scale: f in 0..1, paint: rgb, rest_h: m in 0.3..0.65,
+  look_scale: f in 0..1, paint: rgb, rest_h: m in 0.3..1.0,
   upper: m in 0.1..1.2, lower: m in 0.1..1.2,
-  reach_lo: m, reach_hi: m,
+  reach_lo: m, reach_hi: m, sweep: m, swing_time: s, knee: v3, sole: m, torso: rgb,
   socket_xa: v4, socket_xb: v4, socket_za: v4, socket_zb: v4,
   home_xa: v4, home_xb: v4, home_za: v4, home_zb: v4,
-  previous_a: v4, previous_b: v4, next_a: v4, next_b: v4,
+  lead_a: v4, lead_b: v4, wave_a: v4, wave_b: v4,
   x: m = 0m, z: m = 0m, vx: f = 0.0, vz: f = 0.0,
   lean: rad = 0rad, lean_rate: f = 0.0,
   last_bearing: rad = 0rad, unwrapped: rad = 0rad, yaw: rad = 0rad,
   neck: rad = 0rad, turn: f = 0.0,
   ax0: m, ax1: m, ax2: m, ax3: m, ax4: m, ax5: m, ax6: m, ax7: m,
   az0: m, az1: m, az2: m, az3: m, az4: m, az5: m, az6: m, az7: m,
-  foot: f in -1.0..7.0 = -1.0,
   age0: s = 0.12s, age1: s = 0.12s, age2: s = 0.12s, age3: s = 0.12s, age4: s = 0.12s, age5: s = 0.12s, age6: s = 0.12s, age7: s = 0.12s,
-  swing: s = 0s, span: s > 0s = 0.2s,
-  aim_x: m = 0m, aim_z: m = 0m, lift: m = 0m, rest_time: s = 0.12s,
+  clock0: s = 0s, clock1: s = 0s, clock2: s = 0s, clock3: s = 0s, clock4: s = 0s, clock5: s = 0s, clock6: s = 0s, clock7: s = 0s,
+  span0: s = 0s, span1: s = 0s, span2: s = 0s, span3: s = 0s, span4: s = 0s, span5: s = 0s, span6: s = 0s, span7: s = 0s,
+  aim_x0: m = 0m, aim_x1: m = 0m, aim_x2: m = 0m, aim_x3: m = 0m, aim_x4: m = 0m, aim_x5: m = 0m, aim_x6: m = 0m, aim_x7: m = 0m,
+  aim_z0: m = 0m, aim_z1: m = 0m, aim_z2: m = 0m, aim_z3: m = 0m, aim_z4: m = 0m, aim_z5: m = 0m, aim_z6: m = 0m, aim_z7: m = 0m,
   steps: f = 0.0, boundary_a: f in 0.0..65535.0, boundary_b: f in 0.0..65535.0,
   support_kind: f = 3.0, cop_margin: m = 0m,
   toe_x0: m, toe_x1: m, toe_x2: m, toe_x3: m, toe_x4: m, toe_x5: m, toe_x6: m, toe_x7: m,
   toe_y0: m = 0m, toe_y1: m = 0m, toe_y2: m = 0m, toe_y3: m = 0m, toe_y4: m = 0m, toe_y5: m = 0m, toe_y6: m = 0m, toe_y7: m = 0m,
-  toe_z0: m, toe_z1: m, toe_z2: m, toe_z3: m, toe_z4: m, toe_z5: m, toe_z6: m, toe_z7: m
+  toe_z0: m, toe_z1: m, toe_z2: m, toe_z3: m, toe_z4: m, toe_z5: m, toe_z6: m, toe_z7: m,
+  slide: m = 0m, stalls: f = 0.0, low_margin: m = 1m, swing_margin: m = 1m, escape: m = 0m, airborne: f = 0.0,
+  cruise: s = 0s, cruise_steps: f = 0.0, cycle: s = 0s, cycle_pred: s = 0s, trail: m = 0m
 ) {
   trace(p) {
     let drift = [clamp(time, 0.0, 4.0) * deck_speed, 0.0, 0.0]@Deck - [0]@Deck
@@ -51,7 +57,7 @@ pub kind Walker[sites: u in 1..9] @World (
     let s = sin(yaw)
     let d = here - trunk
     let q = [c * d.x - s * d.z, d.y - lean * d.x, s * d.x + c * d.z]@Body
-    var field = round_box(q - [0]@Body, [0.37, 0.19, 0.33], 0.12)
+    var field = round_box(q - [0]@Body, torso, 0.12)
     let tx = [toe_x0, toe_x1, toe_x2, toe_x3]
     let tx2 = [toe_x4, toe_x5, toe_x6, toe_x7]
     let ty = [toe_y0, toe_y1, toe_y2, toe_y3]
@@ -63,7 +69,10 @@ pub kind Walker[sites: u in 1..9] @World (
       let rx = lane(socket_xa, socket_xb, i)
       let rz = lane(socket_za, socket_zb, i)
       let hip = trunk + [c * rx + s * rz, lean * rx, -s * rx + c * rz]
-      let pole = dir([0.28 * (tip.x - hip.x), 1.0, 0.28 * (tip.z - hip.z)]@Deck)
+      # The knee vector of the plan, mirrored per side and turned with the trunk. [0, 1, 0] is the old pole exactly.
+      let side = select(-1.0, 1.0, rz > 0.0)
+      let bend = [c * knee.x + s * knee.z * side, knee.y, -s * knee.x + c * knee.z * side]
+      let pole = dir([0.28 * (tip.x - hip.x) + bend.x, bend.y, 0.28 * (tip.z - hip.z) + bend.z]@Deck)
       let knee = solve_2bone_ik(hip, tip, upper, lower, pole)
       field = min(field, min(capsule(here, hip, knee, 0.054), capsule(here, knee, tip, 0.036)))
       field = min(field, sphere(here - tip, 0.047))
@@ -119,9 +128,11 @@ pub check planted(w: Walker) -> m {
   let ty2 = [w.toe_y4, w.toe_y5, w.toe_y6, w.toe_y7]
   let tz = [w.toe_z0, w.toe_z1, w.toe_z2, w.toe_z3]
   let tz2 = [w.toe_z4, w.toe_z5, w.toe_z6, w.toe_z7]
+  let sa = [w.span0, w.span1, w.span2, w.span3]
+  let sb = [w.span4, w.span5, w.span6, w.span7]
   var drift = 0m
   for i in 0..w.sites {
-    if f32(i) != w.foot {
+    if lane(sa, sb, i) == 0.0 {
       drift = max(drift, dist([lane(tx, tx2, i), lane(ty, ty2, i), lane(tz, tz2, i)]@Deck,
                               [lane(ax, ax2, i), 0.0, lane(az, az2, i)]@Deck))
     }
@@ -131,17 +142,26 @@ pub check planted(w: Walker) -> m {
 
 # Build any site layout. Per-site data arrive as lane pairs (`rx`/`rx2` hold sites 0..3 / 4..7):
 # socket (rx, rz) on the body and home (hx, hz) on the deck, `sites` of them, counterclockwise.
-# Everything the gait would otherwise recompute per tick is fixed here: neighbour IDs, the reach
-# annulus and the starting support hull (every site a vertex of the ring: four bits per link,
-# sites 0..3 in `boundary_a`, 4..7 in `boundary_b`, so each stays exact in an f32 column).
+# Everything the gait would otherwise recompute per tick is fixed here: the reach annulus, the sweep
+# and swing time (stride THEORY §1), the phase plan (§3) and the starting support hull (every site a
+# vertex of the ring: four bits per link, sites 0..3 in `boundary_a`, 4..7 in `boundary_b`, so each
+# stays exact in an f32 column; two sites make a segment and one a point).
+# `knee` is the knee pole in the body frame ([0, 1, 0] bends knees toward the foot, a positive z
+# spreads them sideways, crab-like); `sole` is the contact radius (0 for point feet, a biped needs one).
 pub build fn walker_plan(origin: p3@World, deck_speed: f, stick_scale: f, look_scale: f,
-                         paint: rgb, rest_h: m, upper: m, lower: m, sites: u,
+                         paint: rgb, rest_h: m, upper: m, lower: m, knee: v3, sole: m, sites: u,
                          rx: v4, rx2: v4, rz: v4, rz2: v4, hx: v4, hx2: v4, hz: v4, hz2: v4) -> Walker {
   var prev_a = v4(0.0)
   var prev_b = v4(0.0)
   var next_a = v4(0.0)
   var next_b = v4(0.0)
+  var rank_a = v4(0.0)
+  var rank_b = v4(0.0)
   var ring: u = 0
+  var near = 0.0
+  var sweep = 10.0
+  var wide = 0.0
+  var deep = 0.0
   build for i in 0..sites {
     let before = (i + sites - 1) % sites
     let after = (i + 1) % sites
@@ -149,14 +169,52 @@ pub build fn walker_plan(origin: p3@World, deck_speed: f, stick_scale: f, look_s
     prev_b = put(prev_b, 4, i, f32(before))
     next_a = put(next_a, 0, i, f32(after))
     next_b = put(next_b, 4, i, f32(after))
-    ring = ring + (after + 1) * nibble(i)
+    ring = ring + select(0, (after + 1) * nibble(i), sites >= 3 || i == 0)
+    # Side A is z <= 0, side B z > 0; rank counts same-side sites behind this one (smaller x, then lower ID).
+    let side = select(0.0, 1.0, lane(rz, rz2, i) > 0.0)
+    near = near + 1.0 - side
+    var rank = 0.0
+    for j in 0..8 {
+      let same = j < sites && select(0.0, 1.0, lane(rz, rz2, j) > 0.0) == side
+      let behind = lane(rx, rx2, j) < lane(rx, rx2, i) || (lane(rx, rx2, j) == lane(rx, rx2, i) && j < i)
+      rank = rank + select(0.0, 1.0, same && behind)
+    }
+    rank_a = put(rank_a, 0, i, rank + side * 0.5)
+    rank_b = put(rank_b, 4, i, rank + side * 0.5)
+    let span = dist([lane(rx, rx2, i), rest_h, lane(rz, rz2, i)]@Deck, [lane(hx, hx2, i), 0.0, lane(hz, hz2, i)]@Deck)
+    sweep = min(sweep, 2.0 * min(min(0.5 * span, 0.98 * (upper + lower) - span), span - abs(upper - lower)))
+    wide = max(wide, abs(lane(rx, rx2, i)))
+    deep = max(deep, abs(lane(rz, rz2, i)))
+  }
+  # Leader tree: a rank follows the rank behind it on its side; the hindmost of side B follows that of side A,
+  # which is the root (it leads itself). `wave` packs rank + side offset, the offset n_A/N on side B.
+  var lead_a = v4(0.0)
+  var lead_b = v4(0.0)
+  var wave_a = v4(0.0)
+  var wave_b = v4(0.0)
+  build for i in 0..sites {
+    let packed = lane(rank_a, rank_b, i)
+    let rank = floor(packed)
+    let side = select(0.0, 1.0, packed > rank)
+    var lead = f32(i)
+    for j in 0..8 {
+      let other = lane(rank_a, rank_b, j)
+      let other_side = select(0.0, 1.0, other > floor(other))
+      let follows = (other_side == side && floor(other) == rank - 1.0) || (side == 1.0 && rank == 0.0 && other_side == 0.0 && floor(other) == 0.0)
+      lead = select(lead, f32(j), j < sites && follows)
+    }
+    lead_a = put(lead_a, 0, i, lead)
+    lead_b = put(lead_b, 4, i, lead)
+    wave_a = put(wave_a, 0, i, rank + side * near / f32(sites))
+    wave_b = put(wave_b, 4, i, rank + side * near / f32(sites))
   }
   let actor = emit Walker(deck_pose: place(origin), deck_speed: deck_speed, stick_scale: stick_scale, look_scale: look_scale,
     paint: paint, rest_h: rest_h, upper: upper, lower: lower, sites: sites,
-    reach_lo: abs(upper - lower), reach_hi: upper + lower,
+    reach_lo: abs(upper - lower), reach_hi: upper + lower, sweep: sweep,
+    swing_time: 0.25 * sqrt(rest_h / 0.45), knee: knee, sole: sole, torso: [wide + 0.06, 0.19, deep + 0.07],
     socket_xa: rx, socket_xb: rx2, socket_za: rz, socket_zb: rz2,
     home_xa: hx, home_xb: hx2, home_za: hz, home_zb: hz2,
-    previous_a: prev_a, previous_b: prev_b, next_a: next_a, next_b: next_b,
+    lead_a: lead_a, lead_b: lead_b, wave_a: wave_a, wave_b: wave_b,
     boundary_a: f32(ring % 65536), boundary_b: f32(ring / 65536),
     ax0: lane(hx, hx2, 0), ax1: lane(hx, hx2, 1), ax2: lane(hx, hx2, 2), ax3: lane(hx, hx2, 3), ax4: lane(hx, hx2, 4), ax5: lane(hx, hx2, 5), ax6: lane(hx, hx2, 6), ax7: lane(hx, hx2, 7),
     az0: lane(hz, hz2, 0), az1: lane(hz, hz2, 1), az2: lane(hz, hz2, 2), az3: lane(hz, hz2, 3), az4: lane(hz, hz2, 4), az5: lane(hz, hz2, 5), az6: lane(hz, hz2, 6), az7: lane(hz, hz2, 7),
@@ -174,10 +232,10 @@ pub build fn walker_plan(origin: p3@World, deck_speed: f, stick_scale: f, look_s
   actor
 }
 
-# The authored four-site plan: a rectangle in counterclockwise order.
+# The authored four-site plan: a rectangle in counterclockwise order, point feet, knees toward the feet.
 pub build fn walker(origin: p3@World, deck_speed: f, stick_scale: f, look_scale: f,
                     paint: rgb, rest_h: m, upper: m, lower: m) -> Walker {
-  walker_plan(origin, deck_speed, stick_scale, look_scale, paint, rest_h, upper, lower, 4,
+  walker_plan(origin, deck_speed, stick_scale, look_scale, paint, rest_h, upper, lower, [0.0, 1.0, 0.0], 0m, 4,
     [-0.31, 0.31, 0.31, -0.31], v4(0.0), [-0.26, -0.26, 0.26, 0.26], v4(0.0),
     [-0.86, 0.86, 0.86, -0.86], v4(0.0), [-0.67, -0.67, 0.67, 0.67], v4(0.0))
 }
