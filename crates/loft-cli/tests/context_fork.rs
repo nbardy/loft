@@ -27,14 +27,18 @@ fn context_is_compact_and_every_loft_fence_checks() {
     assert!(context.contains("pub fn sphere[S](v:v3@S,r:f)->f\n"));
     assert!(context.contains("pub kind Sun@World(dir:d3@World,color:rgb)"));
     assert!(context.contains("pub schedule Realtime"));
-    assert!(context.contains("pub schedule SpectralCaustic Radiance=v4"));
+    assert!(context.contains("pub schedule SpectralCaustic {type Radiance=v4; orbit("));
+    // Pass calls keep their arguments; a bare `find_shadow_map` hid its required `size:`.
+    assert!(context.contains("find_shadow_map(Casters,size:1024)"));
     assert!(context.contains("# Hit.t is -1 on a miss and -2 on unresolved marches.\npub struct Hit"));
-    let builtins = context.lines().find_map(|line| line.strip_prefix("Builtins: ")).unwrap();
+    let builtins = context.lines().find_map(|line| line.strip_prefix("Builtins (always in scope, never imported): ")).unwrap();
     for name in ["held", "missed"] {
         assert!(builtins.split_whitespace().any(|word| word == name));
     }
     assert!(context.contains("Types: f32 u32 i32"));
-    assert!(context.contains("pub lobe lambert"));
+    // Lobes print at material-call arity; the declared n, v, l tail made models pass six arguments to ggx.
+    assert!(context.contains("pub lobe ggx(albedo:rgb,rough:f,metal:f)\n"));
+    assert!(context.contains("pub lobe lambert(albedo:rgb)\n"));
     assert!(context.contains("pub law step(w:Walker,dt:s) writes w.{"));
 
     let passes = stdout(run(root, &["context", "--section", "passes"]));

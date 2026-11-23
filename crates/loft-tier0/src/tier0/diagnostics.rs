@@ -31,7 +31,7 @@ build { emit K(pose: place([0,0,0]@World)) }
    |
   3 |   trace(q) { let wrong = q + q; wrong.x }
    |                          ^^^^^
-   = fix: subtract an origin from one side (`Pt - Pt` is a Vec), or use `mix(p, q, t)`
+   = fix: write an offset without a space (`at + [0, 1, 0]`), subtract an origin (`Pt - Pt` is a Vec), or use `mix(p, q, t)`
 "###,
     ),
     (

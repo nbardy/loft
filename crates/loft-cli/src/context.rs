@@ -75,7 +75,9 @@ fn core(out: &mut String) {
     let aliases = loft_parse::TYPE_ALIASES.iter().map(|&(short, _)| short);
     let types = builtin_types().chain(aliases).collect::<Vec<_>>();
     out.push_str("## Compiler vocabulary\n\n");
-    writeln!(out, "Builtins: {}", names.join(" ")).unwrap();
+    // Builtins are listed as bare names; say they need no import. Without this, a model filed `mix_bsdf`
+    // under the catalog heading it belongs to (`use stdlib::materials::bsdf::{mix_bsdf}`), an E011.
+    writeln!(out, "Builtins (always in scope, never imported): {}", names.join(" ")).unwrap();
     writeln!(out, "Types: {}", types.join(" ")).unwrap();
     writeln!(out, "Units: {}", loft_parse::UNIT_SYMBOLS.join(" ")).unwrap();
     writeln!(out, "Map stages: {}\n", MAP_OPS.join(" ")).unwrap();
@@ -152,28 +154,41 @@ fn signature(out: &mut String, item: &Item, source: &str, roots: &[Node], tokens
     }
 
     if let Item::Schedule(schedule) = item {
-        write!(out, "pub schedule {}", schedule.name.name).unwrap();
-        if let Some((radiance, _)) = &schedule.radiance {
-            let Node::Group { children, .. } = &roots[body_index(roots, name, source)] else {
-                unreachable!("schedule body is a group");
-            };
-            let alias = children.iter().position(|node| first(node).span == radiance.span)
-                .expect("schedule has a Radiance token");
-            let end = type_end(children, alias + 2, source);
-            out.push(' ');
-            compact(out, source, tokens, radiance.span.lo, end);
+        // Print each pass as called, with its arguments. Bare verbs hid required arguments: models wrote
+        // `find_shadow_map` without `size:` (E520) because the catalog showed only `find_shadow_map`.
+        let Node::Group { children, .. } = &roots[body_index(roots, name, source)] else {
+            unreachable!("schedule body is a group");
+        };
+        write!(out, "pub schedule {} {{", schedule.name.name).unwrap();
+        let mut statements: Vec<(u32, u32)> = Vec::new();
+        for child in children {
+            let (lo, hi) = (first(child).span.lo, last(child).span.hi);
+            match statements.last_mut() {
+                Some(open) if !first(child).leading.iter().any(|(kind, _)| *kind == Trivia::Newline) => open.1 = hi,
+                _ => statements.push((lo, hi)),
+            }
         }
-        out.push_str(" {");
-        for (i, pass) in schedule.passes.iter().enumerate() {
+        for (i, &(lo, hi)) in statements.iter().enumerate() {
             if i > 0 {
-                out.push(';');
+                out.push_str("; ");
             }
-            if pass.resources.is_some() {
-                out.push_str("pass ");
-            }
-            out.push_str(&pass.verb.name);
+            compact(out, source, tokens, lo, hi);
         }
         out.push('}');
+        return;
+    }
+
+    if let Item::Fn(f) = item
+        && f.attrs.iter().any(|a| a.name.name == "lobe")
+        && let Some(light) = f.params.len().checked_sub(3).map(|i| &f.params[i])
+    {
+        // Print a lobe as a material calls it. The renderer appends the last three parameters (n, v, l);
+        // printing the declared arity taught models to pass them (crab64: 9 of 20 Generate programs).
+        compact(out, source, tokens, first(&roots[start]).span.lo, light.name.span.lo);
+        if out.ends_with(',') {
+            out.pop();
+        }
+        out.push(')');
         return;
     }
 

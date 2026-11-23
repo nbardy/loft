@@ -74,7 +74,13 @@ pub(super) fn resolve<'a>(
         let verb = pd.verb.name.as_str();
         let producer = if verb == "tonemap" { "tonemap_aces" } else { verb };
         if GPU_ORDER.contains(&producer) && !emitted_passes.insert(producer) {
-            return Err(Diag::new(Code::E505, pd.verb.span, format!("duplicate render pass {verb}"), "schedule one producer per renderer resource"));
+            // Models write one `cull_indirect` per kind; say that the pass takes every kind at once.
+            let fix = if verb == "cull_indirect" {
+                "list every drawn kind in one call: `cull_indirect(Shell, Claw)` and `draw_indirect(Shell, Claw)`"
+            } else {
+                "schedule one producer per renderer resource"
+            };
+            return Err(Diag::new(Code::E505, pd.verb.span, format!("duplicate render pass {verb}"), fix));
         }
         match verb {
             "table" => {

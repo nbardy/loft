@@ -1560,8 +1560,14 @@ fn binary(op: BinOp, a: &Ty, b: &Ty, sa: Span, sb: Span, span: Span) -> Res<Ty> 
         (Add, Ty::Geo(Pt, _), Ty::Geo(Pt, _)) => Err(Diag::new(Code::E101,
             span,
             "`Pt + Pt` has no meaning: points do not add",
-            "subtract an origin from one side (`Pt - Pt` is a Vec), or use `mix(p, q, t)`",
+            "write an offset without a space (`at + [0, 1, 0]`), subtract an origin (`Pt - Pt` is a Vec), or use `mix(p, q, t)`",
         )),
+        // A space-less vec3 beside an offset takes the offset's space, as it already does beside a point
+        // (`at + [0, 1, 0]` above). Without this, `p - at - [0, 1, 0]` was E104 and an offset literal could
+        // only be spelled `[x, y, z]@S - [0]@S`; crab64 programs failed on both.
+        (Add | Sub, Ty::Geo(g, s), Ty::VecN(3)) | (Add | Sub, Ty::VecN(3), Ty::Geo(g, s)) if vec_like(*g) => {
+            Ok(Ty::Geo(Vec, s.clone()))
+        }
         (Add | Sub, Ty::Geo(g, x), Ty::Geo(h, y)) if vec_like(*g) && vec_like(*h) => {
             if x == y { Ok(Ty::Geo(Vec, x.clone())) } else { Err(mismatch(x, y)) }
         }
@@ -1589,7 +1595,8 @@ fn binary(op: BinOp, a: &Ty, b: &Ty, sa: Span, sb: Span, span: Span) -> Res<Ty> 
         (Add | Sub, Ty::Geo(_, s), Ty::VecN(3)) | (Add | Sub, Ty::VecN(3), Ty::Geo(_, s)) => Err(e104(
             span,
             format!("a space-less vec3 combined with a value in `{s}`"),
-            format!("say which space the vector is in: `Vec[{s}](...)`"),
+            // The old hint named `Vec[S](...)`, which does not parse.
+            format!("put the space-less offset after the point (`at + [x, y, z]`), or write a point as `[x, y, z]@{s}`"),
         )),
         _ => Err(e003(span, format!("no operator `{}` for `{a}` and `{b}`", op.wgsl()), "convert the operands")),
     }

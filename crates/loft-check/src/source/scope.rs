@@ -231,9 +231,19 @@ impl<'a> Linker<'a> {
                                 }
                             }
                         }
-                        if !found && !intrinsic_alias(import, &n.name) {
-                            return Err(error(n.span, &n.name));
+                        if found || intrinsic_alias(import, &n.name) {
+                            continue;
                         }
+                        // Models import builtins from the catalog module they resemble (`mix_bsdf` from bsdf).
+                        if crate::check::builtin_names().any(|b| b == n.name) {
+                            return Err(Diag::new(
+                                Code::E011,
+                                n.span,
+                                format!("`{}` is a builtin, not a member of this module", n.name),
+                                "builtins are always in scope; remove it from the import list",
+                            ));
+                        }
+                        return Err(error(n.span, &n.name));
                     }
                 }
                 ImportBinding::Wildcard => {
