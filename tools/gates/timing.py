@@ -175,9 +175,12 @@ def collect(args, work):
             with log_path.open("w") as log:
                 # The candidate can record a p95 control for an older baseline whose
                 # profile command only emitted a median. Use it in both arms.
-                subprocess.run([binaries[1], "profile", arm / first["file"], "--size", size,
+                # It compiles the candidate's own sources in both arms: the control measures machine
+                # load, and a candidate cannot compile a baseline stdlib that predates a stock pass
+                # moving into stdlib (E520 unknown pass `cull_indirect`, 23 Nov integration).
+                subprocess.run([binaries[1], "profile", arms[1] / first["file"], "--size", size,
                                 "--frames", "1", "--warmup", "0", "--json", control_file,
-                                *overrides], cwd=arm, stdout=log, stderr=subprocess.STDOUT, check=True)
+                                *overrides], cwd=arms[1], stdout=log, stderr=subprocess.STDOUT, check=True)
                 preflight = number(read_json(control_file)["control_p95_ms"])
                 # A loaded preflight is recorded, not fatal: the gate's bracketed blocks classify contention.
                 raw = subprocess.run([cli, "gate", *selection],

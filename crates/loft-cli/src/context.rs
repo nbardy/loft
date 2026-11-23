@@ -161,6 +161,14 @@ fn signature(out: &mut String, ast: &Module, item: &Item, source: &str, roots: &
         let Node::Group { children, .. } = &roots[index] else {
             unreachable!("schedule body is a group");
         };
+        if !schedule.params.is_empty() {
+            // A schedule function prints as its signature, like a `fn`. Its body is pass plumbing (template paths
+            // and WGSL fragments), and printed without the parameter list it named `kinds`, `vis` and `tile` that
+            // the guide never declared: 1,746 characters of the trainer's prompt on the 23 Nov integration.
+            out.push_str("pub schedule ");
+            compact(out, source, tokens, names[0].span.lo, body.lo);
+            return;
+        }
         write!(out, "pub schedule {} {{", schedule.name.name).unwrap();
         let mut statements: Vec<(u32, u32)> = Vec::new();
         for child in children {
