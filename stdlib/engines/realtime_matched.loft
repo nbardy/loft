@@ -49,11 +49,11 @@ fn matched_capsule(ro: p3@World, rd: d3@World, a: p3@World, b: p3@World, r: m) -
     return select(nearest, -1.0, nearest == 1e30);
   }
 
-fn matched_sky(direction: rgb, sun: rgb) -> rgb {
+pub fn matched_sky(direction: rgb, sun: rgb) -> rgb {
   mix([0.62, 0.72, 0.85], [0.13, 0.32, 0.62], pow(clamp(direction.y, 0.0, 1.0), 0.45))
 }
 
-fn matched_film(color: rgb) -> rgb { color / ([1.0, 1.0, 1.0] + color) }
+pub fn matched_film(color: rgb) -> rgb { color / ([1.0, 1.0, 1.0] + color) }
 
 fn matched_bounce(n: n3@World, px: v2) -> v4 =
   wgsl(n: n3@World, px: v2) -> v4 {
@@ -97,7 +97,7 @@ fn matched_transport(w: World, hit: Hit, wo: d3@World, bounce: v4, sky: rgb) -> 
     return color + loft_eval_hit(hit, wo, wi) * (3.141592653589793 / bounce.w) * incident;
   }
 
-fn matched_shade(w: World, hit: Hit, wo: d3@World, ink: bool, px: v2) -> rgb {
+pub fn matched_shade(w: World, hit: Hit, wo: d3@World, ink: bool, px: v2) -> rgb {
   let bounce = matched_bounce(hit.n, px)
   matched_transport(w, hit, wo, bounce, matched_sky(bounce.xyz, [0, 0, 0]))
 }
@@ -110,3 +110,26 @@ pub schedule RealtimeMatched {
   shade_tiles(Vis64, shade: matched_shade, samples: 4, sun: [0.45, 0.8, 0.35])
   tonemap(ColorHdr, sky: matched_sky, film: matched_film)
 }
+
+# Low-variance daylight for broad, rough lobes. A cosine-integrated sky and a
+# short normal-cone visibility probe keep small contact cavities legible in
+# single-frame captures. The ray offset clears the primary field tolerance.
+pub fn matched_daylight(w: World, hit: Hit, wo: d3@World, ink: bool, px: v2) -> rgb =
+  wgsl(w: World, hit: Hit, wo: d3@World, ink: bool, px: v2) -> rgb {
+    let n = hit.n;
+    let o = hit.p + 0.004*n;
+    let sun = normalize(frame.sun.xyz);
+    let blocker = world_secondary(w, LoftRay(o,sun,0.002,100.0),true);
+    let sunvis = select(0.0,1.0,blocker.t == -1.0);
+    var occ = 0.0;
+    // Upward-facing bed samples receive their contact from the sun query.
+    // Spend the short sky query on the sides and undersides of the animal.
+    if n.y < 0.92 {
+      let d = normalize(n + vec3f(0.0,0.48,0.0));
+      let h = world_secondary(w, LoftRay(o,d,0.002,0.39),true);
+      if h.t >= 0.0 { occ = 0.58*(1.0-smoothstep(0.0,0.39,h.t)); }
+    }
+    let dome = mix(vec3f(0.72,0.64,0.53),vec3f(1.34,1.38,1.39),0.5+0.5*n.y);
+    let sky = loft_eval_hit(hit,wo,n) * 3.14159 * dome * (1.0-occ);
+    return sky + loft_eval_hit(hit,wo,sun)*loft_params[0].xyz*sunvis;
+  }

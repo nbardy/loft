@@ -1,0 +1,12 @@
+# lean2 design review (lead, 23 Nov)
+
+The design is accepted as analysis. Its central result stands: the present architecture cannot reach G5.1. The eight cuts save 592 lines, and deleting the checker, evaluator, emitter and passes entirely would still leave 18,721. The target is **not** edited (V1_5_GOALS rule). G5.1 stays a Miss with this dated finding, and the route to it is the redesign, gated on evidence.
+
+## Disposition
+1. **Approved now, serially, outside the perf diffs: cuts 8, 7 and 1.** Each removes a duplicated decision (a body span found twice, a second expression walk, solver/plan operands interpreted twice). That is worth doing at any line count. Apply the scorecard and checks in the design. Build budget: write all three, then one check/clippy pass, one touched-tests run, and one `tools/check.sh full` at the end. Merge to main only if every gate holds.
+2. **Approved: the falsification spike, on branch `loft/lean2-spike`, never merged.** Price one complete `blobs-1` route through the redesign (one typed program consumed by checking, evaluation, emission and tape; an authored pass producing the Table/Kernel/Pass plan; a compiler-free host reading an old bundle; a reversible Tier 0 edit). Also price one fixed-tick solver with an opted-in Det trace and a raw WGSL twin. Use working code, not estimates, and count it with the same scc gate. Report each subsystem against its redesign ceiling (compiler 7,520; hosts 7,170; frozen 3,226), plus any caller lost. The deliverable is a go/no-go: either a redesign plan whose spike extrapolation lands ≤18,000 with margin, or the evidence that it cannot, with the smallest honest alternative target and its reason for the scientist.
+3. **Deferred: cuts 2, 4, 5 and 6.** They are the first steps of redesign items 1 and 2 (checked call targets → one typed program; authored material, solver and raster passes → engine as plan producer). Do them inside the redesign if the spike says go. If it says no-go, land them standalone after the perf owner's branches land, because they still move recipes into the library and remove repeated decisions.
+4. **Perf branches:** do not touch them. Reprice any overlap only after their owner lands or holds them.
+
+## Why this order
+The redesign is the meta-engine direction anyway (a tiny core, with engines authored as rewritable library code). The spike tests that direction at the scale of one route before anyone schedules a 17,916-line rewrite. Lean1 missed exactly at the checked-call and executor boundary, which is the part the spike exercises.

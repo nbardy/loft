@@ -1,0 +1,9 @@
+# Two transparent pigment loads on warm paper. The denser pigment settles
+# along the shadow-side drying front; untouched highlights show the paper.
+pub fn watercolour(b: Bsdf, n: rgb, v: rgb, sun: rgb, shadow: f, ao: f) -> rgb {
+  let pigment = clamp(eval_bsdf(b, n, v, n) * 3.14159, rgb(0.008), rgb(0.95))
+  let facing = max(dot(n, sun), 0.0) * (0.3 + 0.7*shadow)
+  let front = 1.0 - smoothstep(0.0, 0.13, abs(facing-0.36))
+  let load = 0.32 + 0.64*(1.0-smoothstep(0.13, 0.85, facing)) + 0.29*front
+  [0.97, 0.90, 0.76] * exp(log(pigment) * (load + 0.15*(1.0-ao)))
+}

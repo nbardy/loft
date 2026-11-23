@@ -48,7 +48,7 @@ The 21 November [integration scoreboard](../agent_notes/2026-11-20_v1/V1_5_CLOSE
 
 | ID | Target | Check | Status |
 |---|---|---|---|
-| G5.1 | Rust ≤ 18,000 lines (lean1 ceilings), enforced by `tools/check.sh lines` | Was 33,151 on 20 Nov | Miss. The reduced tree contains 37,984 Rust code lines, 19,984 above budget. The tested candidate with v15-perf contained 38,249. |
+| G5.1 | Rust ≤ 18,000 lines (lean1 ceilings), enforced by `tools/check.sh lines` | Was 33,151 on 20 Nov | Miss. The reduced tree contains 37,984 Rust code lines, 19,984 above budget. The tested candidate with v15-perf contained 38,249. **23 Nov (lean2 design):** the present architecture cannot reach it: 8 incremental cuts save 592 lines (33,881 → 33,289), and the four compiler crates alone exceed the margin. The route is a redesign (one typed program; engine authored as plan producer; hosts read the linked plan), priced at ≤17,916 and gated on the lean2 spike. Target unchanged. |
 | G5.2 | loft-std has no wgpu code; the loft-cli duplicate renderer is deleted | grep plus lines | Unified executor. loft-std has zero wgpu dependencies across targets and features. The CLI native subtree has zero Rust code lines. |
 | G5.3 | Whole raw WGSL `pass` with custom bindings works from `.loft` | s1-escapes merged | Unified runtime. Raw binding readbacks [21, 33], logical storage ranges, and native versus decoded-bundle StudyInk pixels verified in v15-exec. |
 | G5.4 | `msl(...)` passthrough with Metal slots auto-generated from PassDecl.bindings | bk1b design → lane | Held on v15-native. v15-native sparse-slot witness returned [29, 1] on Metal and [29, 0] through the web-baseline WGSL fallback. |
