@@ -33,6 +33,22 @@ pub(super) fn lower(
         let shader = emit::emit_kind_module(p, types, p.kinds[*name], light, lut_refs, kt.draw, aov, None, &fixed)?;
         texts.push((name.to_string(), shader));
     }
+    // Rows a kind's queries read (`K[i]`) bind to the read kind's table in the vis, shadow and shade passes. The tiled
+    // World and the path tracer compile every kind into one module, which has no such binding.
+    for (i, name) in drawn.iter().enumerate() {
+        let k = p.kinds[*name];
+        let mut reads = vec![];
+        for read in emit::kind_reads(p, k) {
+            let index = drawn.iter().position(|d| *d == read).ok_or_else(|| Diag::new(Code::E405, k.name.span,
+                format!("`{}` reads rows of `{read}`, which is not drawn", k.name.name), format!("draw `{read}`, or copy the column into `{}`", k.name.name)))?;
+            if light.is_none() || schedule.path.is_some() {
+                return Err(Diag::new(Code::E405, k.name.span, format!("`{}` reads another kind's rows under World shading", k.name.name),
+                    "shade with a BSDF light (`shade_tiles(Vis64, light: ...)`), or copy the column into the kind"));
+            }
+            reads.push(index as u32);
+        }
+        scene.kinds[i].reads = reads;
+    }
     let visibility = lower_world(p, types, opts, schedule, scene, &mut texts)?;
     let dispatches = lower_dispatches(p, types, opts, schedule, scene, &fixed, &mut texts)?;
     let Schedule { path, passes, shadow_size, path_entry, sky, paper, film, ids, .. } = schedule;
@@ -149,6 +165,62 @@ fn fixed_parameters(p: &Prog<'_>, tables: &Tables) -> Res<BTreeMap<(String, Stri
     Ok(fixed)
 }
 
+/// Rows read rows (DESIGN §5.3): a read of kind S sees S after the last earlier law in schedule order that writes
+/// S, else as the previous tick left it. Dispatches that read a kind written by another dispatch, are read by one,
+/// or read their own kind run in lockstep, one tick at a time, ordered by their kind's first scheduled law or check.
+/// That order delivers the rule only if each reader sees S on one side of all of S's laws; anything else is E505.
+fn order_reads(p: &Prog<'_>, sched: &ScheduleDecl, drawn: &[&str], dispatches: &mut [Dispatch]) -> Res<()> {
+    use crate::program::DispatchRows;
+    if dispatches.iter().all(|d| d.reads.is_empty()) { return Ok(()); }
+    // Schedule position of each law and check, with the kind it runs on.
+    let mut steps: Vec<(usize, &str, &FnDecl, bool)> = vec![];
+    for pass in sched.passes.iter().filter(|pass| matches!(pass.verb.name.as_str(), "run_laws" | "check")) {
+        let law = pass.verb.name == "run_laws";
+        for arg in &pass.args {
+            let ExprKind::Name(n) = &arg.value.kind else { continue };
+            let f = if law { p.laws.get(n.as_str()).map(|l| &l.f) } else { p.checks.get(n.as_str()).copied() };
+            let Some(f) = f else { continue };
+            let Some(TyExpr::Name(k)) = f.params.first().and_then(|prm| prm.ty.as_ref()) else { continue };
+            steps.push((steps.len(), k.name.as_str(), f, law));
+        }
+    }
+    let position = |kind: &str| steps.iter().find(|s| s.1 == kind).map(|s| s.0);
+    let writers = |kind: &str| steps.iter().filter(|s| s.1 == kind && s.3).map(|s| s.0).collect::<Vec<_>>();
+    let mut lockstep: Vec<&str> = vec![];
+    for &(r, kind, f, _) in &steps {
+        for prm in &f.params {
+            let Some(TyExpr::Table(read)) = &prm.ty else { continue };
+            let read = read.name.as_str();
+            if read == kind {
+                lockstep.push(kind);
+                continue;
+            }
+            // A kind no law writes is constant: any order reads the same rows.
+            let laws = writers(read);
+            if laws.is_empty() { continue; }
+            lockstep.extend([kind, read]);
+            let before = laws.iter().any(|&w| w < r);
+            let first = position(read) < position(kind);
+            if before != first || (before && laws.iter().any(|&w| w > r)) {
+                return Err(Diag::new(Code::E505, f.name.span,
+                    format!("`{}` reads `{read}`, whose laws are scheduled on both sides of it or of `{kind}`'s first law", f.name.name),
+                    format!("schedule every law that writes `{read}` together, all before or all after the laws of `{kind}`")));
+            }
+        }
+    }
+    let kind_of = |d: &Dispatch| match &d.input {
+        DispatchRows::Table { name, .. } => name.clone(),
+        DispatchRows::Drawable(i) => drawn[*i].to_owned(),
+    };
+    let kinds: Vec<String> = dispatches.iter().map(kind_of).collect();
+    let slots: Vec<usize> = (0..dispatches.len()).filter(|&i| lockstep.contains(&kinds[i].as_str())).collect();
+    let mut sorted = slots.clone();
+    sorted.sort_by_key(|&i| position(&kinds[i]));
+    let moved: Vec<Dispatch> = sorted.iter().map(|&i| Dispatch { lockstep: true, ..dispatches[i].clone() }).collect();
+    for (slot, d) in slots.into_iter().zip(moved) { dispatches[slot] = d; }
+    Ok(())
+}
+
 fn lower_dispatches(
     p: &Prog<'_>, types: &mut Vec<Ty>, opts: &CompileOptions<'_>, schedule: &Schedule<'_>,
     scene: &Stage0Scene, fixed: &BTreeMap<(String, String), String>, texts: &mut Vec<(String, String)>,
@@ -158,32 +230,38 @@ fn lower_dispatches(
     let Stage0Scene { tables, priors, .. } = scene;
     let mut dispatches = vec![];
     if samples.is_empty() {
+        use crate::program::DispatchRows;
+        let packed = |name: &str, span| -> Res<DispatchRows> {
+            let table = &tables[p.kind_index(name)];
+            if table.is_empty() {
+                return Err(Diag::new(Code::E602, span, "scheduled table has no rows", "emit a row or remove its scheduled operation"));
+            }
+            let mut words = vec![];
+            for row in table {
+                pack(row, &mut words);
+                words.extend([0.; abi::HIDDEN_WORDS as usize]);
+            }
+            Ok(DispatchRows::Table { name: name.into(), n_rows: table.len() as u32, stride: (words.len() / table.len()) as u32, words })
+        };
+        let rows_of = |name: &str, span| match drawn.iter().position(|&n| n == name) {
+            Some(draw) => Ok(DispatchRows::Drawable(draw)),
+            None => packed(name, span),
+        };
         for &name in &p.kind_order {
-            use crate::program::DispatchRows;
             let kind = p.kinds[name];
             let draw = drawn.iter().position(|&n| n == name);
-            let table = &tables[p.kind_index(name)];
             let output = || {
                 if let Some(draw) = draw {
                     return Ok((texts.len(), DispatchRows::Drawable(draw)));
                 }
-                if table.is_empty() {
-                    return Err(Diag::new(Code::E602, kind.name.span, "scheduled table has no rows", "emit a row or remove its scheduled operation"));
-                }
-                let mut words = vec![];
-                for row in table {
-                    pack(row, &mut words);
-                    words.extend([0.; abi::HIDDEN_WORDS as usize]);
-                }
-                Ok((texts.len(), DispatchRows::Table {
-                    name: name.into(), n_rows: table.len() as u32, stride: (words.len() / table.len()) as u32, words,
-                }))
+                Ok((texts.len(), packed(name, kind.name.span)?))
             };
-            if let Some((entry, dispatch)) = emit::motion_module(p, types, kind, priors, fixed, output)? {
+            if let Some((entry, dispatch)) = emit::motion_module(p, types, kind, priors, fixed, output, &rows_of)? {
                 texts.push((format!("{name}.advance"), entry));
                 dispatches.push(dispatch);
             }
         }
+        order_reads(p, sched, drawn, &mut dispatches)?;
         let mut solver_tables = HashSet::new();
         for pass in sched.passes.iter().filter(|p| p.verb.name == "run_solver") {
             let ExprKind::Name(name) = &pass.args[0].value.kind else { unreachable!("checked solver name"); };

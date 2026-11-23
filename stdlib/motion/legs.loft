@@ -1,0 +1,511 @@
+use stdlib::geometry::analytic::{ray_capsule, ray_sphere, hit_min}
+use stdlib::materials::bsdf::{ggx, coat}
+use stdlib::motion::body::{Deck, lane, put, nibble}
+use stdlib::motion::gait::{hull, hold, join, split, commanded, bearing_at, wrap, uncaught, lift_phase, row_scale, least_stride, swing_height}
+use stdlib::motion::solve::{ik_reachable_end, quintic_plan, solve_2bone_ik, step_spring_exact}
+use stdlib::engines::roam::{default_turn}
+use stdlib::sdf::solid::{capsule, round_box, sphere}
+
+space Torso
+
+# Legs as rows (DESIGN §5.2). A `Trunk` owns the contiguous Leg rows first_leg..first_leg + leg_count; each `Leg`
+# names its trunk in `actor`. Per tick, `stride` (one thread per trunk) reads its legs as the last tick left them,
+# moves the trunk and picks at most one foot to lift; then `swing` (one thread per leg) reads the trunk `stride`
+# just wrote and moves its own foot, hip and knee. The gait is the multi-swing gait of `stdlib::motion::gait`
+# (stride THEORY §2-4) with its per-site columns moved into Leg rows. A body plan is how many Legs the build emits.
+# Columns a law writes are scalar f32 (stills, clips and the trace twin sample those).
+# `lifter` is the site that lifts this tick (8 for none); `drift` the trunk velocity at the start of the tick, and
+# `spill`, `urgency` the landing terms the legs need; `aloft` the lifted set the cached `boundary` was built for.
+pub kind Trunk @World (
+  deck_pose: xf@Deck>World, stick_scale: f in 0..1, look_scale: f in 0..1, paint: rgb, rest_h: m in 0.3..1.0,
+  upper: m in 0.1..1.2, lower: m in 0.1..1.2, reach_lo: m, reach_hi: m, sweep: m, swing_time: s, knee: v3, sole: m,
+  torso: rgb, first_leg: u, leg_count: u in 1..9,
+  x: m = 0m, z: m = 0m, vx: f = 0.0, vz: f = 0.0, lean: rad = 0rad, lean_rate: f = 0.0,
+  last_bearing: rad = 0rad, unwrapped: rad = 0rad, yaw: rad = 0rad, neck: rad = 0rad, turn: f = 0.0,
+  lifter: f = 8.0, drift_x: f = 0.0, drift_z: f = 0.0, spill_x: f = 0.0, spill_z: f = 0.0, urgency: f = 0.0,
+  boundary_a: f in 0.0..65535.0, boundary_b: f in 0.0..65535.0, aloft: f = 0.0,
+  support_kind: f = 3.0, cop_margin: m = 0m, steps: f = 0.0, stalls: f = 0.0
+) {
+  trace(p) {
+    let here = inv(deck_pose) * p
+    let trunk = [x, rest_h, z]@Deck
+    let c = cos(yaw)
+    let s = sin(yaw)
+    let d = here - trunk
+    let q = [c * d.x - s * d.z, d.y - lean * d.x, s * d.x + c * d.z]@Torso
+    var field = round_box(q - [0]@Torso, torso, 0.12)
+    for i in 0..2 {
+      let side = select(-1.0, 1.0, i == 1)
+      let palm = [0.46, -0.07, side * 0.36]@Torso
+      field = min(field, capsule(q, [0.25, -0.04, side * 0.20]@Torso, palm, 0.075))
+      field = min(field, capsule(q, palm, [0.63, -0.09, side * 0.46]@Torso, 0.078))
+      field = min(field, capsule(q, palm, [0.64, -0.06, side * 0.32]@Torso, 0.066))
+      let eye_yaw = yaw + neck
+      let eye = trunk + [0.26 * cos(eye_yaw) + side * 0.15 * sin(eye_yaw), 0.28,
+                        -0.26 * sin(eye_yaw) + side * 0.15 * cos(eye_yaw)]
+      field = min(field, capsule(here, trunk + [0.18, 0.11, side * 0.12], eye, 0.032))
+      field = min(field, sphere(here - eye, 0.047))
+    }
+    field
+  }
+  material(p, n) {
+    let height = (inv(deck_pose) * p).y
+    let pigment = mix(paint * 0.36, paint, smoothstep(0.07, 0.63, height))
+    ggx(pigment, 0.39, 0.0) + coat(0.32, 0.13)
+  }
+}
+
+# One leg: its trunk, its site on the body (`socket`) and on the deck (`home`), its place in the phase plan
+# (`leader`, `wave`), its swing state, and the hip, knee and toe in World that `swing` solves once per tick, so the
+# drawn leg is two closed-form capsules and a ball with its own bound.
+pub kind Leg @World (
+  actor: Trunk, site: u in 0..8, socket_x: m, socket_z: m, home_x: m, home_z: m, leader: u in 0..8, wave: f,
+  anchor_x: m, anchor_z: m, age: f = 0.12, clock: f = 0.0, span: f = 0.0, aim_x: m = 0m, aim_z: m = 0m,
+  hip_x: m, hip_y: m, hip_z: m, knee_x: m, knee_y: m, knee_z: m, toe_x: m, toe_y: m, toe_z: m, slide: m = 0m
+) {
+  visible(ro, rd) {
+    let hip = [hip_x, hip_y, hip_z]@World
+    let knee = [knee_x, knee_y, knee_z]@World
+    let toe = [toe_x, toe_y, toe_z]@World
+    hit_min(hit_min(ray_capsule(ro, rd, hip, knee, 0.054), ray_capsule(ro, rd, knee, toe, 0.036)), ray_sphere(ro, rd, toe, 0.047))
+  }
+  trace(p) {
+    let hip = [hip_x, hip_y, hip_z]@World
+    let knee = [knee_x, knee_y, knee_z]@World
+    let toe = [toe_x, toe_y, toe_z]@World
+    min(min(capsule(p, hip, knee, 0.054), capsule(p, knee, toe, 0.036)), sphere(p - toe, 0.047))
+  }
+  material(p, n) {
+    # The paint of a leg is that of its trunk: a query reads a row of another kind through the row reference.
+    let t = Trunk[actor]
+    let height = (inv(t.deck_pose) * p).y
+    let pigment = mix(t.paint * 0.36, t.paint, smoothstep(0.07, 0.63, height))
+    ggx(pigment, 0.39, 0.0) + coat(0.32, 0.13)
+  }
+}
+
+# The knee of a leg from hip to toe in any space: the knee vector of the plan, mirrored per side (`side` is the sign of
+# the socket z) and turned with the trunk (c, s = cos, sin of its yaw). [0, 1, 0] bends knees toward the foot.
+pub fn leg_knee[S](hip: p3@S, toe: p3@S, upper: m, lower: m, knee: v3, c: f, s: f, side: f) -> p3@S {
+  let bend = [c * knee.x + s * knee.z * side, knee.y, -s * knee.x + c * knee.z * side]
+  let pole = dir([0.28 * (toe.x - hip.x) + bend.x, bend.y, 0.28 * (toe.z - hip.z) + bend.z]@S)
+  solve_2bone_ik(hip, toe, upper, lower, pole)
+}
+
+pub fn root_at(t: Trunk, x: m, z: m, centre: v2, turn: v2, lean: rad) -> p3@Deck {
+  [centre.x + (turn.x * x + turn.y * z), t.rest_h + lean * x,
+   centre.y + (-turn.y * x + turn.x * z)]@Deck
+}
+
+# Where a foot with this home should stand now in steady travel: its home under the turned trunk, plus the lead.
+pub fn goal(x: m, z: m, centre: v2, turn: v2, lead: v2) -> v2 = centre + [turn.x * x + turn.y * z, -turn.y * x + turn.x * z] + lead
+
+pub fn duty(t: Trunk, speed: f) -> f = min(0.75, 1.0 / (1.0 + speed * t.swing_time / t.sweep))
+
+pub fn stride_at(t: Trunk, speed: f) -> m {
+  let beta = duty(t, speed)
+  max(speed * t.swing_time * beta / (1.0 - beta), least_stride)
+}
+
+pub fn stride_lead(t: Trunk, v: v2, tc: s) -> v2 {
+  let beta = duty(t, length(v))
+  v * (tc + 0.5 * t.swing_time * beta / (1.0 - beta))
+}
+
+fn gaze(t: Trunk, bearing: rad, dt: s, supported: bool) -> v3 {
+  let delta = bearing - t.last_bearing
+  let continuous = t.unwrapped + atan2(sin(delta), cos(delta))
+  let limit = 0.72rad
+  let turn = default_turn(continuous - t.yaw, limit, t.turn > 0.0)
+  let yaw = t.yaw + select(0.0, turn.x * dt, supported)
+  [continuous, yaw, turn.y]
+}
+
+# Sockets arrive as lane pairs (sx, sz), pins as (xa, xb, za, zb), as in the fat-row gait.
+fn leash(t: Trunk, sxa: v4, sxb: v4, sza: v4, szb: v4, start: v2, turn: v2, lean: rad, xa: v4, xb: v4, za: v4, zb: v4, out: u) -> v2 {
+  var centre = start
+  let cap = 0.96 * t.reach_hi
+  for sweep in 0..2 {
+    for i in 0..8 {
+      if i < t.leg_count && link_of(out, i) == 0 {
+        let root = root_at(t, lane(sxa, sxb, i), lane(sza, szb, i), centre, turn, lean)
+        let delta = [lane(xa, xb, i), lane(za, zb, i)] - [root.x, root.z]
+        let horizontal = length(delta)
+        let limit = sqrt(max(0.0, cap * cap - root.y * root.y))
+        if horizontal > limit { centre = centre + delta * ((horizontal - limit) / horizontal) }
+      }
+    }
+  }
+  centre
+}
+
+fn link_of(links: u, i: u) -> u = (links / nibble(i)) % 16
+
+fn fits_stance(t: Trunk, sxa: v4, sxb: v4, sza: v4, szb: v4, centre: v2, turn: v2, lean: rad, xa: v4, xb: v4, za: v4, zb: v4, out: u) -> bool {
+  for i in 0..8 {
+    if i < t.leg_count && link_of(out, i) == 0 {
+      let reach = dist(root_at(t, lane(sxa, sxb, i), lane(sza, szb, i), centre, turn, lean), [lane(xa, xb, i), 0.0, lane(za, zb, i)]@Deck)
+      if reach < t.reach_lo || reach > t.reach_hi { return false }
+    }
+  }
+  true
+}
+
+fn touchdown(t: Trunk, root: p3@Deck, target: v2) -> v2 {
+  let delta = target - [root.x, root.z]
+  let hi = 0.98 * t.reach_hi
+  let lo = t.reach_lo + 1mm
+  let cap = sqrt(max(0.0, hi * hi - root.y * root.y))
+  let floor_radius = sqrt(max(0.0, lo * lo - root.y * root.y))
+  let span = length(delta)
+  let axis = if span > 1e-6 { delta / span } else { [1.0, 0.0] }
+  let offset = if span >= floor_radius && span <= cap { delta } else { axis * clamp(span, floor_radius, cap) }
+  [root.x, root.z] + offset
+}
+
+fn pose(t: Trunk, root: p3@Deck, anchor: v2, aim: v2, u: f, lift: m) -> p3@Deck {
+  let blend = quintic_plan(1m, 0.0, 1s, u).x
+  let at = anchor + (aim - anchor) * blend
+  let arch = 16.0 * u * u * (1.0 - u) * (1.0 - u)
+  let wanted = [at.x, lift * arch, at.y]@Deck
+  let span = dist(root, wanted)
+  if span >= t.reach_lo && span <= t.reach_hi { return if u == 0.0 { wanted } else {
+      let p = floor(wanted.xyz * row_scale + v3(0.5)) / row_scale
+      [p.x, p.y, p.z]@Deck
+    }
+  }
+  let end = ik_reachable_end(root, wanted, t.upper, t.lower, dir([0.0, 1.0, 0.0]@Deck))
+  let p = floor(end.xyz * row_scale + v3(0.5)) / row_scale
+  [p.x, p.y, p.z]@Deck
+}
+
+# The veto of the fat-row gait (stride THEORY §4), over gathered lanes.
+fn supports(t: Trunk, sxa: v4, sxb: v4, sza: v4, szb: v4, xa: v4, xb: v4, za: v4, zb: v4, out: u, cop: v2, ahead: v2,
+            wanted: v2, i: u, target: v2, turn: v2, lean: rad, grow: f, overdue: bool, axis: v2) -> bool {
+  let rest = hull(xa, xb, za, zb, t.leg_count, out)
+  let now = hold(xa, xb, za, zb, rest, cop, t.sole)
+  if now.w == 0.0 || (now.w < 3.0 && t.leg_count > 3) { return false }
+  if now.w == 3.0 {
+    let strict = hold(xa, xb, za, zb, rest, ahead, t.sole)
+    let landed = hull(put(xa, 0, i, target.x), put(xb, 4, i, target.x), put(za, 0, i, target.y), put(zb, 4, i, target.y),
+                      t.leg_count, out - nibble(i))
+    let later = hold(put(xa, 0, i, target.x), put(xb, 4, i, target.x), put(za, 0, i, target.y), put(zb, 4, i, target.y),
+                     landed, ahead, t.sole)
+    return now.z >= 2mm && (strict.z >= 2mm || (overdue && later.z >= 2mm))
+  }
+  let held = hold(xa, xb, za, zb, rest, wanted, t.sole)
+  if length(uncaught(wanted - held.xy, axis)) > 30mm { return false }
+  let caught = target + (wanted - held.xy) * grow
+  let root = root_at(t, lane(sxa, sxb, i), lane(sza, szb, i), ahead, turn, lean)
+  let hi = 0.98 * t.reach_hi
+  length(caught - [root.x, root.z]) <= sqrt(max(0.0, hi * hi - root.y * root.y))
+}
+
+# The trunk half of the gait: everything the fat-row `step` decided that needs all the legs at once.
+pub law stride(t: Trunk, dt: s, legs: [Leg]) writes t.{x, z, vx, vz, lean, lean_rate, last_bearing, unwrapped, yaw, neck, turn, lifter, drift_x, drift_z, spill_x, spill_z, urgency, boundary_a, boundary_b, aloft, support_kind, cop_margin, steps, stalls} {
+  var xa = v4(0.0)
+  var xb = v4(0.0)
+  var za = v4(0.0)
+  var zb = v4(0.0)
+  var aa = v4(0.0)
+  var ab = v4(0.0)
+  var ca = v4(0.0)
+  var cb = v4(0.0)
+  var sa = v4(0.0)
+  var sb = v4(0.0)
+  var sxa = v4(0.0)
+  var sxb = v4(0.0)
+  var sza = v4(0.0)
+  var szb = v4(0.0)
+  var hxa = v4(0.0)
+  var hxb = v4(0.0)
+  var hza = v4(0.0)
+  var hzb = v4(0.0)
+  var la = v4(0.0)
+  var lb = v4(0.0)
+  var wa = v4(0.0)
+  var wb = v4(0.0)
+  var out: u = 0
+  var landed = 0.0
+  for i in 0..8 {
+    if i < t.leg_count {
+      let l = legs[t.first_leg + i]
+      xa = put(xa, 0, i, l.anchor_x)
+      xb = put(xb, 4, i, l.anchor_x)
+      za = put(za, 0, i, l.anchor_z)
+      zb = put(zb, 4, i, l.anchor_z)
+      aa = put(aa, 0, i, l.age)
+      ab = put(ab, 4, i, l.age)
+      ca = put(ca, 0, i, l.clock)
+      cb = put(cb, 4, i, l.clock)
+      sa = put(sa, 0, i, l.span)
+      sb = put(sb, 4, i, l.span)
+      sxa = put(sxa, 0, i, l.socket_x)
+      sxb = put(sxb, 4, i, l.socket_x)
+      sza = put(sza, 0, i, l.socket_z)
+      szb = put(szb, 4, i, l.socket_z)
+      hxa = put(hxa, 0, i, l.home_x)
+      hxb = put(hxb, 4, i, l.home_x)
+      hza = put(hza, 0, i, l.home_z)
+      hzb = put(hzb, 4, i, l.home_z)
+      la = put(la, 0, i, f32(l.leader))
+      lb = put(lb, 4, i, f32(l.leader))
+      wa = put(wa, 0, i, l.wave)
+      wb = put(wb, 4, i, l.wave)
+      out = out + select(0, nibble(i), l.span > 0.0)
+      # A landing resets the age of the leg to 0; one tick later the trunk counts it.
+      landed = landed + select(0.0, 1.0, l.span == 0.0 && l.age == 0.0)
+    }
+  }
+  # The hull changes only when a foot lifts or lands; otherwise the cached links stand.
+  let links = if f32(out) == t.aloft { join([t.boundary_a, t.boundary_b]) } else { hull(xa, xb, za, zb, t.leg_count, out) }
+  let c = [t.x, t.z]
+  let v = [t.vx, t.vz]
+  let tc2 = t.rest_h / 9.81
+  let tc = sqrt(tc2)
+  let want = (commanded(time, t.stick_scale) - v) / (0.5 * tc)
+  let limited = want * min(1.0, 5.4 / max(length(want), 1e-6))
+  let speed = length(v)
+  let beta = duty(t, speed)
+  let lag = 1.0 - beta
+  let stride = stride_at(t, speed)
+  let lead = stride_lead(t, v, tc)
+  let facing = [cos(t.yaw), sin(t.yaw)]
+  let capture = c + v * tc
+  var next: u = 8
+  var eager = 0.3
+  for i in 0..8 {
+    if t.leg_count <= 3 && i < t.leg_count && lane(sa, sb, i) == 0.0 {
+      let progress = length(goal(lane(hxa, hxb, i), lane(hza, hzb, i), c, facing, lead) - [lane(xa, xb, i), lane(za, zb, i)]) / stride
+      if progress > eager {
+        eager = progress
+        next = i
+      }
+    }
+  }
+  let remain = hold(xa, xb, za, zb, hull(xa, xb, za, zb, t.leg_count, out + select(0, nibble(next % 8), next < 8)), capture, t.sole)
+  let stick = commanded(time, t.stick_scale)
+  let axis = if length(stick) > 1e-3 { stick / length(stick) } else { [facing.x, -facing.y] }
+  let sway = if next < 8 && remain.w > 0.0 { uncaught(capture - remain.xy, axis) } else { [0.0, 0.0] }
+  let wanted = c - limited * tc2 + sway * 3.0
+  let current = hold(xa, xb, za, zb, links, wanted, t.sole)
+  let cop = current.xy
+  let acceleration = if current.w == 0.0 { [0.0, 0.0] } else { (c - cop) / tc2 }
+  let beyond = hold(xa, xb, za, zb, links, capture, t.sole)
+  let spill = if beyond.w == 0.0 { [0.0, 0.0] } else { capture - beyond.xy }
+  let bearing = floor(bearing_at(time, t.look_scale) * row_scale + 0.5) / row_scale
+  let head = floor(gaze(t, bearing, dt, current.w >= 2.0) * row_scale + v3(0.5)) / row_scale
+  let wanted_turn = [cos(head.y), sin(head.y)]
+  let spring = step_spring_exact(t.lean, t.lean_rate, 19.0 * acceleration.x, 2.0, 1.0, dt)
+  let wanted_lean = floor(spring * row_scale + v2(0.5)) / row_scale
+  var pa = v4(0.0)
+  var pb = v4(0.0)
+  for i in 0..8 {
+    let span = lane(sa, sb, i)
+    let progress = length(goal(lane(hxa, hxb, i), lane(hza, hzb, i), c, facing, lead) - [lane(xa, xb, i), lane(za, zb, i)]) / stride
+    let theta = if span > 0.0 { beta + lag * lane(ca, cb, i) / span } else { beta * progress }
+    pa = put(pa, 0, i, theta)
+    pb = put(pb, 4, i, theta)
+  }
+  let grow = exp(t.swing_time / tc) - 1.0
+  let ahead = c + v * t.swing_time
+  var lifter: u = 8
+  var best = -1.0
+  for i in 0..8 {
+    if i < t.leg_count && lane(sa, sb, i) == 0.0 && lane(aa, ab, i) >= 0.12 {
+      let target = goal(lane(hxa, hxb, i), lane(hza, hzb, i), c, facing, lead)
+      let progress = length(target - [lane(xa, xb, i), lane(za, zb, i)]) / stride
+      let leader = u32(lane(la, lb, i))
+      let offset = fract(lift_phase(lane(wa, wb, i), lag) - lift_phase(lane(wa, wb, leader), lag))
+      let error = select(wrap(lane(pa, pb, i) - lane(pa, pb, leader) + offset), 0.0, leader == i)
+      let past = progress - (1.0 + clamp(error, -0.30, 0.15))
+      if past >= 0.0 && past > best {
+        if supports(t, sxa, sxb, sza, szb, xa, xb, za, zb, out + nibble(i), cop, ahead, capture, i, target + v * t.swing_time,
+                    facing, t.lean, grow, past >= 0.15, axis) {
+          best = past
+          lifter = i
+        }
+      }
+    }
+  }
+  let lifted = out + select(0, nibble(lifter % 8), lifter < 8)
+  let urgency = clamp((length(capture - cop) - 0.14) * 2.0, 0.0, 1.0)
+  let free = c + dt * (v + 0.5 * dt * acceleration)
+  let leashed = leash(t, sxa, sxb, sza, szb, free, wanted_turn, wanted_lean.x, xa, xb, za, zb, lifted)
+  let proposed = floor(leashed * row_scale + v2(0.5)) / row_scale
+  let fits = fits_stance(t, sxa, sxb, sza, szb, proposed, wanted_turn, wanted_lean.x, xa, xb, za, zb, lifted)
+  let centre = if fits { proposed } else { c }
+  let accepted_velocity = if !fits { [0.0, 0.0] } else if length(leashed - free) > 1e-6 {
+    (centre - c) / dt
+  } else { v + dt * acceleration }
+  let next_velocity = floor(accepted_velocity * row_scale + v2(0.5)) / row_scale
+  t.x = centre.x
+  t.z = centre.y
+  t.vx = next_velocity.x
+  t.vz = next_velocity.y
+  let tilt = select(t.lean, wanted_lean.x, fits)
+  t.lean = tilt
+  t.lean_rate = select(0.0, wanted_lean.y, fits)
+  t.last_bearing = bearing
+  t.unwrapped = head.x
+  let yaw = select(t.yaw, head.y, fits)
+  t.yaw = yaw
+  t.neck = clamp(head.x - yaw, -0.72rad, 0.72rad)
+  t.turn = head.z
+  t.lifter = f32(lifter)
+  t.drift_x = v.x
+  t.drift_z = v.y
+  t.spill_x = spill.x
+  t.spill_z = spill.y
+  t.urgency = urgency
+  t.boundary_a = split(links).x
+  t.boundary_b = split(links).y
+  t.aloft = f32(out)
+  t.support_kind = current.w
+  t.cop_margin = floor(current.z * row_scale + 0.5) / row_scale
+  t.steps = t.steps + landed
+  t.stalls = t.stalls + select(1.0, 0.0, fits)
+}
+
+# The leg half: the fat-row `step` loop body for one site, then the pose of `present`, then the hip and knee in World.
+pub law swing(l: Leg, dt: s, trunks: [Trunk]) writes l.{anchor_x, anchor_z, age, clock, span, aim_x, aim_z, hip_x, hip_y, hip_z, knee_x, knee_y, knee_z, toe_x, toe_y, toe_z, slide} {
+  let t = trunks[l.actor]
+  let v = [t.drift_x, t.drift_z]
+  let tc = sqrt(t.rest_h / 9.81)
+  let lead = stride_lead(t, v, tc)
+  let centre = [t.x, t.z]
+  let heading = [cos(t.yaw), sin(t.yaw)]
+  let spill = [t.spill_x, t.spill_z]
+  let lifting = t.lifter == f32(l.site)
+  let root = root_at(t, l.socket_x, l.socket_z, centre, heading, t.lean)
+  var anchor = [l.anchor_x, l.anchor_z]
+  var age = min(0.12, l.age + dt / 1s)
+  var clock = l.clock
+  var span = l.span
+  var aim = [l.aim_x, l.aim_z]
+  if lifting || l.span > 0.0 {
+    let home = goal(l.home_x, l.home_z, centre, heading, lead)
+    let reach = length(home + v * t.swing_time - anchor)
+    let duration = if lifting {
+      floor(t.swing_time * clamp(1.0 + 0.16 * reach - 0.44 * t.urgency, 0.56, 1.12) * row_scale + 0.5) / row_scale
+    } else { l.span }
+    # Compare the clock directly so a completed span always lands on the same tick (the divide on Metal is approximate).
+    let elapsed = if lifting { 0.0 } else { min(l.clock + dt, duration) }
+    let u = min(1.0, elapsed / duration)
+    let remaining = (1.0 - u) * duration
+    let next = home + v * remaining + spill * (exp(remaining / tc) - 1.0)
+    let retarget = if lifting { next } else { aim + (next - aim) * (1.0 - smoothstep(0.5, 0.85, u)) }
+    let target = floor(touchdown(t, root, retarget) * row_scale + v2(0.5)) / row_scale
+    let landing = !lifting && elapsed >= duration
+    if landing {
+      anchor = target
+      age = 0.0
+      clock = 0.0
+      span = 0.0
+      aim = [0.0, 0.0]
+    } else {
+      clock = elapsed
+      span = duration
+      aim = target
+    }
+  }
+  let goal_now = if span > 0.0 { aim } else { anchor }
+  let u = if span > 0.0 { clock / span } else { 0.0 }
+  let lift = swing_height * (t.rest_h / 0.45) * clamp(1.0 + 0.30 * length(goal_now - anchor), 0.5, 1.5)
+  let toe = pose(t, root, anchor, goal_now, u, lift)
+  let knee = leg_knee(root, toe, t.upper, t.lower, t.knee, heading.x, heading.y, select(-1.0, 1.0, l.socket_z > 0.0))
+  let hip_w = t.deck_pose * root
+  let knee_w = t.deck_pose * knee
+  let toe_w = t.deck_pose * toe
+  # Foot slide: travel of a toe planted on this tick and the last.
+  var slide = l.slide
+  if span == 0.0 && age > 0.0 {
+    slide = slide + dist(toe_w, [l.toe_x, l.toe_y, l.toe_z]@World)
+  }
+  l.anchor_x = anchor.x
+  l.anchor_z = anchor.y
+  l.age = age
+  l.clock = clock
+  l.span = span
+  l.aim_x = aim.x
+  l.aim_z = aim.y
+  l.hip_x = hip_w.x
+  l.hip_y = hip_w.y
+  l.hip_z = hip_w.z
+  l.knee_x = knee_w.x
+  l.knee_y = knee_w.y
+  l.knee_z = knee_w.z
+  l.toe_x = toe_w.x
+  l.toe_y = toe_w.y
+  l.toe_z = toe_w.z
+  l.slide = slide
+}
+
+# A planted toe never moves: drift of a planted toe from its pin, per leg.
+pub check planted(l: Leg, trunks: [Trunk]) -> m {
+  let t = trunks[l.actor]
+  let pin = t.deck_pose * [l.anchor_x, 0.0, l.anchor_z]@Deck
+  let drift = if l.span == 0.0 { dist([l.toe_x, l.toe_y, l.toe_z]@World, pin) } else { 0m }
+  return if drift > 0.05mm { missed(drift) } else { held(0.05mm - drift) }
+}
+
+# Build any site layout, as `walker_plan` does: per-site data arrive as lane pairs (sites 0..3 / 4..7), listed
+# counterclockwise. The trunk is emitted first and its legs after it; `first_leg` is the number of Leg rows the
+# scene emitted before this trunk (0 for one walker). Build has no way to ask the next row id, hence the argument.
+pub build fn trunk_plan(origin: p3@World, stick_scale: f, look_scale: f, paint: rgb, rest_h: m, upper: m, lower: m,
+                        knee: v3, sole: m, sites: u, first_leg: u,
+                        rx: v4, rx2: v4, rz: v4, rz2: v4, hx: v4, hx2: v4, hz: v4, hz2: v4) -> Trunk {
+  var rank_a = v4(0.0)
+  var rank_b = v4(0.0)
+  var ring: u = 0
+  var near = 0.0
+  var sweep = 10.0
+  var wide = 0.0
+  var deep = 0.0
+  build for i in 0..sites {
+    let after = (i + 1) % sites
+    ring = ring + select(0, (after + 1) * nibble(i), sites >= 3 || i == 0)
+    let side = select(0.0, 1.0, lane(rz, rz2, i) > 0.0)
+    near = near + 1.0 - side
+    var rank = 0.0
+    for j in 0..8 {
+      let same = j < sites && select(0.0, 1.0, lane(rz, rz2, j) > 0.0) == side
+      let behind = lane(rx, rx2, j) < lane(rx, rx2, i) || (lane(rx, rx2, j) == lane(rx, rx2, i) && j < i)
+      rank = rank + select(0.0, 1.0, same && behind)
+    }
+    rank_a = put(rank_a, 0, i, rank + side * 0.5)
+    rank_b = put(rank_b, 4, i, rank + side * 0.5)
+    let span = dist([lane(rx, rx2, i), rest_h, lane(rz, rz2, i)]@Deck, [lane(hx, hx2, i), 0.0, lane(hz, hz2, i)]@Deck)
+    sweep = min(sweep, 2.0 * min(min(0.5 * span, 0.98 * (upper + lower) - span), span - abs(upper - lower)))
+    wide = max(wide, abs(lane(rx, rx2, i)))
+    deep = max(deep, abs(lane(rz, rz2, i)))
+  }
+  let actor = emit Trunk(deck_pose: place(origin), stick_scale: stick_scale, look_scale: look_scale, paint: paint,
+    rest_h: rest_h, upper: upper, lower: lower, reach_lo: abs(upper - lower), reach_hi: upper + lower, sweep: sweep,
+    swing_time: 0.25 * sqrt(rest_h / 0.45), knee: knee, sole: sole, torso: [wide + 0.06, 0.19, deep + 0.07],
+    first_leg: first_leg, leg_count: sites, boundary_a: f32(ring % 65536), boundary_b: f32(ring / 65536))
+  # Leader tree and wave (stride THEORY §3), as in `walker_plan`; then each leg in its rest pose.
+  build for i in 0..sites {
+    let packed = lane(rank_a, rank_b, i)
+    let rank = floor(packed)
+    let side = select(0.0, 1.0, packed > rank)
+    var lead = i
+    for j in 0..8 {
+      let other = lane(rank_a, rank_b, j)
+      let other_side = select(0.0, 1.0, other > floor(other))
+      let follows = (other_side == side && floor(other) == rank - 1.0) || (side == 1.0 && rank == 0.0 && other_side == 0.0 && floor(other) == 0.0)
+      lead = select(lead, j, j < sites && follows)
+    }
+    let sx = lane(rx, rx2, i)
+    let sz = lane(rz, rz2, i)
+    let hip = [origin.x + sx, origin.y + rest_h, origin.z + sz]@World
+    let toe = [origin.x + lane(hx, hx2, i), origin.y, origin.z + lane(hz, hz2, i)]@World
+    let bent = leg_knee(hip, toe, upper, lower, knee, 1.0, 0.0, select(-1.0, 1.0, sz > 0.0))
+    emit Leg(actor: actor, site: i, socket_x: sx, socket_z: sz, home_x: lane(hx, hx2, i), home_z: lane(hz, hz2, i),
+      leader: lead, wave: rank + side * near / f32(sites),
+      anchor_x: lane(hx, hx2, i), anchor_z: lane(hz, hz2, i),
+      hip_x: hip.x, hip_y: hip.y, hip_z: hip.z, knee_x: bent.x, knee_y: bent.y, knee_z: bent.z,
+      toe_x: toe.x, toe_y: toe.y, toe_z: toe.z)
+  }
+  actor
+}

@@ -488,6 +488,37 @@ fn apply_inputs(
 }
 
 fn step(ev: &mut Eval<'_, '_, f32>, src: &Sources) -> Result<()> {
+    // Laws run law by law over every row, in schedule order, in place: a read of another kind sees it after the
+    // last earlier law that wrote it this tick, or as the last tick left it (DESIGN §5.3). A law that reads its own
+    // kind reads a snapshot taken before any law of the tick.
+    let kinds = ev.tables.len();
+    let p = ev.p;
+    let laws = || p.schedule.expect("compiled schedule").passes.iter().filter(|pass| pass.verb.name == "run_laws")
+        .flat_map(|pass| &pass.args).filter_map(|arg| match &arg.value.kind {
+            ExprKind::Name(name) => p.laws.get(name.as_str()).map(|law| &law.f),
+            _ => None,
+        });
+    let mut own = vec![];
+    for law in laws() {
+        let Some(TyExpr::Name(kind)) = law.params.first().and_then(|prm| prm.ty.as_ref()) else { continue };
+        if law.params.iter().skip(2).any(|prm| matches!(&prm.ty, Some(TyExpr::Table(read)) if read.name == kind.name))
+            && !own.contains(&p.kind_index(&kind.name)) {
+            own.push(p.kind_index(&kind.name));
+        }
+    }
+    for &kind in &own {
+        let copy = ev.tables[kind].clone();
+        ev.tables.push(copy);
+        ev.snapshots.push(kind);
+    }
+    let result = step_laws(ev, src, kinds, &own);
+    ev.tables.truncate(kinds);
+    ev.snapshots.clear();
+    ev.views.clear();
+    result
+}
+
+fn step_laws(ev: &mut Eval<'_, '_, f32>, src: &Sources, kinds: usize, own: &[usize]) -> Result<()> {
     for pass in &ev.p.schedule.expect("compiled schedule").passes {
         if pass.verb.name != "run_laws" {
             continue;
@@ -497,13 +528,25 @@ fn step(ev: &mut Eval<'_, '_, f32>, src: &Sources) -> Result<()> {
                 return Err(device("unsupported law entry"));
             };
             let law = &ev.p.laws[name.as_str()].f;
-            let [row, dt] = law.params.as_slice() else {
+            let [row, dt, reads @ ..] = law.params.as_slice() else {
                 return Err(device("unsupported law signature"));
             };
             let Some(TyExpr::Name(kind)) = &row.ty else {
                 return Err(device("law row type is missing"));
             };
             let table = ev.p.kind_index(&kind.name);
+            ev.views.clear();
+            for prm in reads {
+                let Some(TyExpr::Table(read)) = &prm.ty else {
+                    return Err(device("unsupported law signature"));
+                };
+                let read = ev.p.kind_index(&read.name);
+                let view = match own.iter().position(|&k| k == read && read == table) {
+                    Some(j) => kinds + j,
+                    None => read,
+                };
+                ev.views.insert(prm.name.name.clone(), view);
+            }
             for index in 0..ev.tables[table].len() {
                 ev.bind(&row.name.name, Val::Row(table, index));
                 ev.bind(&dt.name.name, Val::S(DT));

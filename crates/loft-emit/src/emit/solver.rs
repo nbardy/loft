@@ -290,6 +290,8 @@ pub fn lower(
             layout_hash: *layout.finalize().as_bytes(),
             bindings,
             checks: vec![],
+            reads: vec![],
+            lockstep: false,
         },
     ))
 }

@@ -38,6 +38,8 @@ pub enum Pass {
 pub enum Order {
     Run(PassId),
     Repeat(u32, Vec<Order>),
+    /// Tick passes advanced together: for each due tick, each pass in order advances to that tick (DESIGN §5.3).
+    Lockstep(Vec<PassId>),
 }
 impl Order {
     pub fn visit(&self, f: &mut impl FnMut(PassId)) {
@@ -50,6 +52,7 @@ impl Order {
                     }
                 }
             }
+            Self::Lockstep(ids) => ids.iter().copied().for_each(f),
         }
     }
 }
@@ -135,6 +138,17 @@ impl Linker<'_> {
             } => {
                 if cond_buf.is_some() {
                     return Err(RunnerError::Unsupported("conditional loop requires shader lowering"));
+                }
+                // A loop of tick passes repeats per due tick, not a fixed count: rows that read each other's rows
+                // advance in lockstep. `max_iters` plays no part; each pass still splits a long catch-up itself.
+                let ticks = |run: &PassRun| matches!(run, PassRun::ComputeFusedTicks { .. } | PassRun::ComputeNonDetTicks { .. });
+                if !body.is_empty() && body.iter().all(|child| ticks(&child.run)) {
+                    let mut ids = vec![];
+                    for child in body.iter() {
+                        let Order::Run(id) = self.pass(child)? else { unreachable!("a tick pass links to one run") };
+                        ids.push(id);
+                    }
+                    return Ok(Order::Lockstep(ids));
                 }
                 return Ok(Order::Repeat(
                     *max_iters,

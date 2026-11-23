@@ -30,6 +30,8 @@ pub struct Ck<'p, 'a> {
     local_units: HashMap<Span, Dimension>,
     expr_units: HashMap<u32, Dimension>,
     ownership: Option<(String,Vec<String>)>,
+    /// A kind query is being checked: `K[i]` reads kind K's rows (laws declare `[K]` parameters instead).
+    query: bool,
     p: &'p Prog<'a>,
     types: &'p mut Vec<Ty>,
     scopes: Vec<HashMap<String, Local>>,
@@ -194,7 +196,7 @@ fn e003(span: Span, msg: impl Into<String>, fix: impl Into<String>) -> Diag {
 
 impl<'p,'a> Ck<'p,'a> {
     pub fn new(p:&'p Prog<'a>, types:&'p mut Vec<Ty>)->Self {
-        Self{p,types,scopes:vec![],comptime:false,ret:Ty::Void,fresh:0,sig_vars:vec![],hints:None,ownership:None,kernel:None,atomic_writes:BTreeMap::new(),pending_lowering:None,local_units:HashMap::new(),expr_units:HashMap::new()}
+        Self{p,types,scopes:vec![],comptime:false,ret:Ty::Void,fresh:0,sig_vars:vec![],hints:None,ownership:None,query:false,kernel:None,atomic_writes:BTreeMap::new(),pending_lowering:None,local_units:HashMap::new(),expr_units:HashMap::new()}
     }
 
     fn lookup(&self, n: &str) -> Option<&Local> {
@@ -561,7 +563,10 @@ impl<'p,'a> Ck<'p,'a> {
         let surface = k.query(QueryKind::Surface).is_some();
         let mut world: Option<(Space, Span)> = None;
         for (q, f) in &k.queries {
-            self.func(f, Some(&k.name.name))?;
+            self.query = true;
+            let checked = self.func(f, Some(&k.name.name));
+            self.query = false;
+            checked?;
             let sig: Vec<Ty> =
                 f.params.iter().skip(1).filter_map(|p| p.ty.as_ref().map(|t| self.resolve(t, true))).collect::<Res<_>>()?;
             let ret = f.ret.as_ref().map(|t| (t, self.resolve(t, true))).map(|(t, r)| (matches!(t, TyExpr::Field(_)), r));
@@ -983,14 +988,25 @@ impl<'p,'a> Ck<'p,'a> {
             }
             ExprKind::Member(base, m) => self.member(base, m),
             ExprKind::Index(base, i) => {
-                let b = self.expr(base)?;
+                let b = match &base.kind {
+                    // `K[i]` in a kind query reads another row (of K) through a row reference or an index.
+                    ExprKind::Name(n) if self.lookup(n).is_none() && self.p.kinds.contains_key(n.as_str()) => {
+                        if !self.query {
+                            return Err(Diag::new(Code::E108, base.span, format!("`{n}` rows are read through a table parameter here"),
+                                format!("declare `{}: [{n}]` after `dt` and index it", n.to_lowercase())));
+                        }
+                        self.set(base, Ty::Table(n.clone()))
+                    }
+                    _ => self.expr(base)?,
+                };
                 let it = self.expr(i)?;
                 if let Ty::Table(k)=b{
-                    if self.kernel.is_some() && matches!(it, Ty::U32 | Ty::AbstractInt) {
+                    // A row index (a contiguous child range is `first + i`) or a row reference of this kind.
+                    if matches!(it, Ty::U32 | Ty::AbstractInt) {
                         self.set(i, Ty::U32);
                         return Ok(if self.p.structs.contains_key(k.as_str()) { Ty::Struct(k) } else { Ty::Row(k) });
                     }
-                    if it!=Ty::Id(k.clone()){return Err(Diag::new(Code::E108,i.span,format!("expected an id of {k}, found {it}"),"index the table with an id emitted for this kind"))}return Ok(Ty::Row(k))
+                    if it!=Ty::Id(k.clone()){return Err(Diag::new(Code::E108,i.span,format!("expected an id of {k}, found {it}"),"index the table with an id emitted for this kind or a u32 row"))}return Ok(Ty::Row(k))
                 }
                 self.assignable(&it, &Ty::U32, i.span).or_else(|_| self.assignable(&it, &Ty::I32, i.span))?;
                 match b {
