@@ -109,7 +109,7 @@ fn catalog(out: &mut String, library: &Path, section: &Section) -> Result<(), Fa
         let tokens = cst.tokens();
         writeln!(out, "stdlib::{name}").unwrap();
         for item in items {
-            signature(out, item, source, &cst.roots, &tokens);
+            signature(out, &ast, item, source, &cst.roots, &tokens);
             out.push('\n');
         }
         out.push('\n');
@@ -135,7 +135,7 @@ fn public(ast: &Module, item: &Item) -> bool {
     item.declarations().first().is_some_and(|name| ast.public.contains(&name.span))
 }
 
-fn signature(out: &mut String, item: &Item, source: &str, roots: &[Node], tokens: &[&Token]) {
+fn signature(out: &mut String, ast: &Module, item: &Item, source: &str, roots: &[Node], tokens: &[&Token]) {
     // The AST selects exports. CST spans preserve authored spelling, including
     // unit expressions and generic spaces that the AST represents canonically.
     let names = item.declarations();
@@ -156,7 +156,9 @@ fn signature(out: &mut String, item: &Item, source: &str, roots: &[Node], tokens
     if let Item::Schedule(schedule) = item {
         // Print each pass as called, with its arguments. Bare verbs hid required arguments: models wrote
         // `find_shadow_map` without `size:` (E520) because the catalog showed only `find_shadow_map`.
-        let Node::Group { children, .. } = &roots[body_index(roots, name, source)] else {
+        let body = ast.bodies[&names[0].span];
+        let index = roots.partition_point(|n| first(n).span.lo < body.lo);
+        let Node::Group { children, .. } = &roots[index] else {
             unreachable!("schedule body is a group");
         };
         write!(out, "pub schedule {} {{", schedule.name.name).unwrap();
@@ -197,16 +199,10 @@ fn signature(out: &mut String, item: &Item, source: &str, roots: &[Node], tokens
         Item::Const(c) => c.range.as_ref()
             .map_or(&c.value, |range| range.hi.as_ref().unwrap_or(&range.lo)).span.hi,
         Item::TypeAlias(..) => type_end(roots, name + 2, source),
-        Item::Struct(..) | Item::State(_) | Item::World(..) => {
-            let body = body_index(roots, name, source);
-            last(&roots[body]).span.hi
-        }
+        Item::Struct(..) | Item::State(_) | Item::World(..) => ast.bodies[&names[0].span].hi,
         Item::Fn(_) | Item::Kind(_) | Item::Scan(_) | Item::Law(_) | Item::Body(..)
         | Item::Solver(_) | Item::Plan(_) | Item::Kernel(_) | Item::Check(_)
-        | Item::Camera(_) | Item::Bake(_) | Item::Retarget { .. } => {
-            let body = body_index(roots, name, source);
-            last(&roots[body - 1]).span.hi
-        }
+        | Item::Camera(_) | Item::Bake(_) | Item::Retarget { .. } => ast.bodies[&names[0].span].lo,
         Item::Unit(_) => names[0].span.hi,
         Item::Schedule(_) | Item::Use(_) | Item::Build(_) => unreachable!("handled or unnamed"),
     };
@@ -242,16 +238,6 @@ fn compact(out: &mut String, source: &str, tokens: &[&Token], start: u32, end: u
         out.push_str(token.text(source));
         previous = Some(token);
     }
-}
-
-fn body_index(roots: &[Node], name: usize, source: &str) -> usize {
-    (name + 1..roots.len()).find(|&i| {
-        match first(&roots[i]).text(source) {
-            "=" => true,
-            "{" => first(&roots[i - 1]).text(source) != ".", // law writes h.{...}
-            _ => false,
-        }
-    }).expect("declaration has a body")
 }
 
 fn first(node: &Node) -> &Token {

@@ -25,6 +25,7 @@ pub fn fn_symbol(n: &str) -> String {
 #[derive(Default)]
 pub struct References<'a> {
     proof_only: bool,
+    row_reads: Option<BTreeSet<&'a str>>,
     pub names: Vec<(&'a str, Span)>,
     pub calls: Vec<&'a Ident>,
     pub scans: BTreeSet<&'a str>,
@@ -83,6 +84,14 @@ impl<'a> References<'a> {
                 self.args(args, locals);
             }
             ExprKind::Ctor { args, .. } => self.args(args, locals),
+            ExprKind::Member(base, member) if self.row_reads.is_some()
+                && matches!(&base.kind, ExprKind::Name(n) if n == "self") => {
+                self.row_reads.as_mut().unwrap().insert(&member.name);
+            }
+            ExprKind::Name(n) if n == "self" && self.row_reads.is_some() => {
+                // Passing the row to a helper lets it read any column.
+                self.row_reads.as_mut().unwrap().insert("self");
+            }
             ExprKind::Name(n) if !locals.contains(&n.as_str()) => self.names.push((n, e.span)),
             ExprKind::Name(_) | ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::String(_) => {}
             ExprKind::Member(b, _) | ExprKind::Unary(_, b) => self.expr(b, locals),
@@ -112,7 +121,7 @@ impl<'a> References<'a> {
                     locals.push(&name.name);
                 }
                 Stmt::Assign { target, value, .. } => {
-                    self.expr(target, locals);
+                    if self.row_reads.is_none() { self.expr(target, locals); }
                     self.expr(value, locals);
                 }
                 Stmt::Map { name, head, stages, .. } => {
@@ -139,6 +148,7 @@ impl<'a> References<'a> {
                     self.block(body, locals);
                     locals.pop();
                 }
+                Stmt::Emit { .. } if self.row_reads.is_some() => {}
                 Stmt::Emit { fields, bind, .. } => {
                     for (_, e) in fields { self.expr(e, locals); }
                     if let Some(n) = bind { locals.push(&n.name); }
@@ -148,6 +158,18 @@ impl<'a> References<'a> {
             }
         }
     }
+}
+
+/// Fields read by the trace, visible and surface queries, in row layout order.
+pub fn geometry_fields(kind: &KindDecl) -> Vec<usize> {
+    let mut refs = References { row_reads: Some(BTreeSet::new()), ..References::default() };
+    for (_, query) in kind.queries.iter().filter(|(q, _)| *q != QueryKind::Material) {
+        refs.block(&query.body, &mut vec![]);
+    }
+    let reads = refs.row_reads.unwrap();
+    kind.row.iter().enumerate().filter_map(|(i, field)|
+        (reads.contains("self") || reads.contains(field.name.name.as_str())).then_some(i)
+    ).collect()
 }
 
 /// The fns, user and library, reachable from a kind's queries and the shade glue's light fn.
