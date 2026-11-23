@@ -13,5 +13,6 @@ pub mod references;
 pub mod source;
 pub mod world;
 
-pub use prog::{FINITE_DIFF_STEP, Prog, TWIN_LIGHT, finite_diff_parameter, geometry_fields, kind_space, pose_field, unit};
+pub use prog::{FINITE_DIFF_STEP, Prog, TWIN_LIGHT, finite_diff_parameter, kind_space, pose_field, unit};
 pub use reason::reason;
+pub use references::geometry_fields;
