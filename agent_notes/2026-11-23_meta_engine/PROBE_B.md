@@ -146,3 +146,32 @@ crab_rows / crab_live ≈ 0.35–0.4 on the same binary, since contention scales
 **Rust lines.** Checker +15, motion lowering +150, bundle +90, runner +50, twin +40, eval +20:
 ≈ +370 net. The design predicted "the kernel should not grow much"; 370 lines is the price of
 capability R without removing any pass (P5's reduction comes with Probe A).
+
+## 5. Measured (Apple M4, Metal; evidence in `~/git/loft/out/probe-rows/`)
+
+Load averages during GPU runs 8–29 (other lanes compiling and rendering); see each `uptime.txt`.
+
+- **Module text.** 16 scenes (gate engines, all std1e motion scenes, motion bodies, boss, crab, heron,
+  particle_flip, spectral_caustic_study, mood_springs): `loft show --plan` byte-identical against the base
+  binary on the base tree (`scripts/modules.sh`). gait.loft is unchanged above its last line: an edit earlier in
+  the file moved source spans, which feed the check hash in the module text, so the exports for legs.loft are
+  appended at its end.
+- **Pictures.** capsules-20, blobs-20, hermit-1, crab_live t0/t1.5, crossing t2, tidal t2, boss t1: PNG
+  byte-identical to base. coral_shrine t0 differs in 51–84 pixels, but so do two base runs (84 pixels):
+  run-to-run noise of that scene, not this change.
+- **Twin.** record at 3 s then replay, state hashes equal: crab_rows d274b425, crab_live c332b47d, crossing
+  d3290014, tidal e07ce3a7, tidal_fork b2432cd8 (the last four equal the motion-stride values).
+- **Rule.** A law reading its own kind (5 beads, `y = mean of neighbours`, `out/selfread.loft`): ticks 1–3 give
+  [1,0,0,0,1], [1,.5,0,.5,1], [1,.5,.5,.5,1], the Jacobi values; in-place order would give [1,0,0,.5,1] at tick 1.
+- **P2 held.** 1280×800, 300 frames, paired and interleaved, same binary. With static rows the crab_rows shadow
+  map is reused (its trunk does not read `time`), so the fair comparison redraws it every frame
+  (`out/crab_rows_timed.loft`, a zero time term as crab_live has): crab_rows p50 2.81–3.16, p95 3.10–4.72 ms;
+  crab_live p50 13.3–14.9, p95 16.5–23.5 ms (load ~20). Passes p50 (vis, shadow, shade): 0.46–0.51,
+  0.61–0.70, 1.43–1.64 ms against 4.0–4.4, 6.8–7.5, 2.3–2.6. With the cached shadow (scenes/crab_rows.loft
+  as written): p50 2.5–2.7 ms, p95 11–12 ms from periodic external spikes (pairs every ~24 frames).
+  Prediction 4.2 p50 / 4.6 p95: the frame is faster than predicted (shade 1.5 not 1.95, legs cheaper).
+- **P3 missed.** Motion GPU ms for a catch-up of 360 ticks (clip at t = 3 s, min of 4 frames, 3 rounds):
+  crab_rows 85.5–87 ms = 0.475 ms per 60 fps frame; crab_live 30.8–31.3 = 0.17 ms. Predicted 0.05. The
+  fat-row gait itself costs ~85 µs per tick on one GPU thread (not the 0.07 ms per frame of the legacy
+  gait), and the lockstep pair adds ~150 µs per tick: two compute passes and two argument uploads per tick.
+  Dispatch count per tick: 2 (stride, swing), as predicted.

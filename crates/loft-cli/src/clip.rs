@@ -144,6 +144,7 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
     };
     let mut loaded = None;
     let mut times = vec![];
+    let mut motion = vec![];
     let mut frame_timings = vec![];
     let mut slow = 0u32;
     let mut verdicts = vec![];
@@ -177,6 +178,7 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
         if let Some(mut timing) = frame.gpu_timing(&g).map_err(Failure::Device)? {
             timing.serial = i as usize;
             timing.commands = commands as u32;
+            motion.push(motion_ms);
             let ms = motion_ms + timing.gpu_ms;
             frame_timings.push(timing);
             times.push(ms);
@@ -211,6 +213,8 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
     .map_err(|e| Failure::Compile(e.to_string()))?;
     let meta = json!({
         "frame_timings": frame_timings,
+        // GPU ms of each frame's motion: the fixed-step dispatches from tick 0 to the frame's tick.
+        "motion_gpu_ms": motion,
         "build_cpu_ms": build_ms, "load_gpu_ms": load_ms,
         "frame_gpu_p50_ms": quantile(50), "frame_gpu_p95_ms": quantile(95),
         "modules": p.modules.len(), "pipelines": pipelines, "commands": commands,

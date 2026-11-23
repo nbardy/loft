@@ -2,15 +2,15 @@ use stdlib::motion::body::{Walker, Deck, lane, put, nibble}
 use stdlib::motion::solve::{ik_reachable_end, quintic_plan, step_spring_exact}
 use stdlib::engines::roam::{default_turn}
 
-pub const swing_height = 0.115m
+const swing_height = 0.115m
 
 # The row boundary uses a binary grid. Metal's native dot, divide and fused
 # arithmetic can differ by an ulp from the expression twin (first at CoP).
 # Persisting at this resolution avoids feeding those ulps into the next tick.
-pub const row_scale = 8192.0
+const row_scale = 8192.0
 
 # A standing body does not re-step for less than this (stride THEORY §2; the old 0.14 m strain threshold).
-pub const least_stride = 0.12m
+const least_stride = 0.12m
 
 # Cached support hull: `links` holds one four-bit link per site, the destination ID plus one
 # (zero means the site starts no edge). Area edges leave every eligible pin on their left.
@@ -24,9 +24,9 @@ pub fn link(links: u, i: u) -> u = (links / nibble(i)) % 16
 # Sites 0..3 of a hull live in one f32 column and 4..7 in another, so each half stays exact.
 pub fn join(halves: v2) -> u = u32(halves.x) + u32(halves.y) * 65536
 
-pub fn split(links: u) -> v2 = [f32(links % 65536), f32(links / 65536)]
+fn split(links: u) -> v2 = [f32(links % 65536), f32(links / 65536)]
 
-pub fn hull(xa: v4, xb: v4, za: v4, zb: v4, count: u, out: u) -> u {
+fn hull(xa: v4, xb: v4, za: v4, zb: v4, count: u, out: u) -> u {
   var links: u = 0
   var point: u = 0
   var segment: u = 0
@@ -118,7 +118,7 @@ fn gaze(w: Walker, bearing: rad, dt: s, supported: bool) -> v3 {
   [continuous, yaw, turn.y]
 }
 
-pub fn bearing_at(t: s, scale: f) -> rad {
+fn bearing_at(t: s, scale: f) -> rad {
   let elapsed = t - 0.65s
   if elapsed < 0.0 { return 0.0rad }
   if elapsed < 0.35s { return scale * 2.3 * (elapsed / 0.35s) }
@@ -240,17 +240,17 @@ pub fn goal(w: Walker, i: u, centre: v2, turn: v2, lead: v2) -> v2 {
   centre + [turn.x * x + turn.y * z, -turn.y * x + turn.x * z] + lead
 }
 
-pub fn wrap(x: f) -> f = x - floor(x + 0.5)
+fn wrap(x: f) -> f = x - floor(x + 0.5)
 
 # The part of a spill a step cannot catch: across the travel `axis` (unit), and backward along it.
 # A forward spill is the fall that walking is; the next landing catches it.
-pub fn uncaught(spill: v2, axis: v2) -> v2 {
+fn uncaught(spill: v2, axis: v2) -> v2 {
   let along = dot(spill, axis)
   spill - axis * max(along, 0.0)
 }
 
 # Target lift phase of a site from its packed wave (rank + side offset) and the per-rank lag 1 - beta.
-pub fn lift_phase(wave: f, lag: f) -> f {
+fn lift_phase(wave: f, lag: f) -> f {
   let rank = floor(wave)
   fract(wave - rank + rank * lag)
 }
@@ -644,3 +644,12 @@ pub check support_cases(w: Walker) -> m {
   error = max(error, length(inside - [1.25, 0.5, 0.25, 3.0]))
   return if error > 1e-6m { missed(error) } else { held(1e-6m - error) }
 }
+
+# Supports for `stdlib::motion::legs`, kept below every other item: a span earlier in this file feeds the
+# check hash of the scenes that use it, so these private helpers stay where they are and are exported here.
+pub fn support_hull(xa: v4, xb: v4, za: v4, zb: v4, count: u, out: u) -> u = hull(xa, xb, za, zb, count, out)
+pub fn split_links(links: u) -> v2 = split(links)
+pub fn wrap_phase(x: f) -> f = wrap(x)
+pub fn lift_phase_of(wave: f, lag: f) -> f = lift_phase(wave, lag)
+pub fn uncaught_spill(spill: v2, axis: v2) -> v2 = uncaught(spill, axis)
+pub fn scripted_bearing(t: s, scale: f) -> rad = bearing_at(t, scale)

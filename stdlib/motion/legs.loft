@@ -1,12 +1,17 @@
 use stdlib::geometry::analytic::{ray_capsule, ray_sphere, hit_min}
 use stdlib::materials::bsdf::{ggx, coat}
 use stdlib::motion::body::{Deck, lane, put, nibble}
-use stdlib::motion::gait::{hull, hold, join, split, commanded, bearing_at, wrap, uncaught, lift_phase, row_scale, least_stride, swing_height}
+use stdlib::motion::gait::{support_hull, hold, join, split_links, commanded, scripted_bearing, wrap_phase, uncaught_spill, lift_phase_of}
 use stdlib::motion::solve::{ik_reachable_end, quintic_plan, solve_2bone_ik, step_spring_exact}
 use stdlib::engines::roam::{default_turn}
 use stdlib::sdf::solid::{capsule, round_box, sphere}
 
 space Torso
+
+# As in the fat-row gait: the binary grid rows persist on, the least stride, and the swing height at a 0.45 m trunk.
+const row_scale = 8192.0
+const least_stride = 0.12m
+const swing_height = 0.115m
 
 # Legs as rows (DESIGN §5.2). A `Trunk` owns the contiguous Leg rows first_leg..first_leg + leg_count; each `Leg`
 # names its trunk in `actor`. Per tick, `stride` (one thread per trunk) reads its legs as the last tick left them,
@@ -75,8 +80,8 @@ pub kind Leg @World (
     let toe = [toe_x, toe_y, toe_z]@World
     min(min(capsule(p, hip, knee, 0.054), capsule(p, knee, toe, 0.036)), sphere(p - toe, 0.047))
   }
+  # The paint of a leg is that of its trunk: a query reads a row of another kind through the row reference.
   material(p, n) {
-    # The paint of a leg is that of its trunk: a query reads a row of another kind through the row reference.
     let t = Trunk[actor]
     let height = (inv(t.deck_pose) * p).y
     let pigment = mix(t.paint * 0.36, t.paint, smoothstep(0.07, 0.63, height))
@@ -182,19 +187,19 @@ fn pose(t: Trunk, root: p3@Deck, anchor: v2, aim: v2, u: f, lift: m) -> p3@Deck 
 # The veto of the fat-row gait (stride THEORY §4), over gathered lanes.
 fn supports(t: Trunk, sxa: v4, sxb: v4, sza: v4, szb: v4, xa: v4, xb: v4, za: v4, zb: v4, out: u, cop: v2, ahead: v2,
             wanted: v2, i: u, target: v2, turn: v2, lean: rad, grow: f, overdue: bool, axis: v2) -> bool {
-  let rest = hull(xa, xb, za, zb, t.leg_count, out)
+  let rest = support_hull(xa, xb, za, zb, t.leg_count, out)
   let now = hold(xa, xb, za, zb, rest, cop, t.sole)
   if now.w == 0.0 || (now.w < 3.0 && t.leg_count > 3) { return false }
   if now.w == 3.0 {
     let strict = hold(xa, xb, za, zb, rest, ahead, t.sole)
-    let landed = hull(put(xa, 0, i, target.x), put(xb, 4, i, target.x), put(za, 0, i, target.y), put(zb, 4, i, target.y),
+    let landed = support_hull(put(xa, 0, i, target.x), put(xb, 4, i, target.x), put(za, 0, i, target.y), put(zb, 4, i, target.y),
                       t.leg_count, out - nibble(i))
     let later = hold(put(xa, 0, i, target.x), put(xb, 4, i, target.x), put(za, 0, i, target.y), put(zb, 4, i, target.y),
                      landed, ahead, t.sole)
     return now.z >= 2mm && (strict.z >= 2mm || (overdue && later.z >= 2mm))
   }
   let held = hold(xa, xb, za, zb, rest, wanted, t.sole)
-  if length(uncaught(wanted - held.xy, axis)) > 30mm { return false }
+  if length(uncaught_spill(wanted - held.xy, axis)) > 30mm { return false }
   let caught = target + (wanted - held.xy) * grow
   let root = root_at(t, lane(sxa, sxb, i), lane(sza, szb, i), ahead, turn, lean)
   let hi = 0.98 * t.reach_hi
@@ -258,7 +263,7 @@ pub law stride(t: Trunk, dt: s, legs: [Leg]) writes t.{x, z, vx, vz, lean, lean_
     }
   }
   # The hull changes only when a foot lifts or lands; otherwise the cached links stand.
-  let links = if f32(out) == t.aloft { join([t.boundary_a, t.boundary_b]) } else { hull(xa, xb, za, zb, t.leg_count, out) }
+  let links = if f32(out) == t.aloft { join([t.boundary_a, t.boundary_b]) } else { support_hull(xa, xb, za, zb, t.leg_count, out) }
   let c = [t.x, t.z]
   let v = [t.vx, t.vz]
   let tc2 = t.rest_h / 9.81
@@ -283,17 +288,17 @@ pub law stride(t: Trunk, dt: s, legs: [Leg]) writes t.{x, z, vx, vz, lean, lean_
       }
     }
   }
-  let remain = hold(xa, xb, za, zb, hull(xa, xb, za, zb, t.leg_count, out + select(0, nibble(next % 8), next < 8)), capture, t.sole)
+  let remain = hold(xa, xb, za, zb, support_hull(xa, xb, za, zb, t.leg_count, out + select(0, nibble(next % 8), next < 8)), capture, t.sole)
   let stick = commanded(time, t.stick_scale)
   let axis = if length(stick) > 1e-3 { stick / length(stick) } else { [facing.x, -facing.y] }
-  let sway = if next < 8 && remain.w > 0.0 { uncaught(capture - remain.xy, axis) } else { [0.0, 0.0] }
+  let sway = if next < 8 && remain.w > 0.0 { uncaught_spill(capture - remain.xy, axis) } else { [0.0, 0.0] }
   let wanted = c - limited * tc2 + sway * 3.0
   let current = hold(xa, xb, za, zb, links, wanted, t.sole)
   let cop = current.xy
   let acceleration = if current.w == 0.0 { [0.0, 0.0] } else { (c - cop) / tc2 }
   let beyond = hold(xa, xb, za, zb, links, capture, t.sole)
   let spill = if beyond.w == 0.0 { [0.0, 0.0] } else { capture - beyond.xy }
-  let bearing = floor(bearing_at(time, t.look_scale) * row_scale + 0.5) / row_scale
+  let bearing = floor(scripted_bearing(time, t.look_scale) * row_scale + 0.5) / row_scale
   let head = floor(gaze(t, bearing, dt, current.w >= 2.0) * row_scale + v3(0.5)) / row_scale
   let wanted_turn = [cos(head.y), sin(head.y)]
   let spring = step_spring_exact(t.lean, t.lean_rate, 19.0 * acceleration.x, 2.0, 1.0, dt)
@@ -316,8 +321,8 @@ pub law stride(t: Trunk, dt: s, legs: [Leg]) writes t.{x, z, vx, vz, lean, lean_
       let target = goal(lane(hxa, hxb, i), lane(hza, hzb, i), c, facing, lead)
       let progress = length(target - [lane(xa, xb, i), lane(za, zb, i)]) / stride
       let leader = u32(lane(la, lb, i))
-      let offset = fract(lift_phase(lane(wa, wb, i), lag) - lift_phase(lane(wa, wb, leader), lag))
-      let error = select(wrap(lane(pa, pb, i) - lane(pa, pb, leader) + offset), 0.0, leader == i)
+      let offset = fract(lift_phase_of(lane(wa, wb, i), lag) - lift_phase_of(lane(wa, wb, leader), lag))
+      let error = select(wrap_phase(lane(pa, pb, i) - lane(pa, pb, leader) + offset), 0.0, leader == i)
       let past = progress - (1.0 + clamp(error, -0.30, 0.15))
       if past >= 0.0 && past > best {
         if supports(t, sxa, sxb, sza, szb, xa, xb, za, zb, out + nibble(i), cop, ahead, capture, i, target + v * t.swing_time,
@@ -358,8 +363,8 @@ pub law stride(t: Trunk, dt: s, legs: [Leg]) writes t.{x, z, vx, vz, lean, lean_
   t.spill_x = spill.x
   t.spill_z = spill.y
   t.urgency = urgency
-  t.boundary_a = split(links).x
-  t.boundary_b = split(links).y
+  t.boundary_a = split_links(links).x
+  t.boundary_b = split_links(links).y
   t.aloft = f32(out)
   t.support_kind = current.w
   t.cop_margin = floor(current.z * row_scale + 0.5) / row_scale

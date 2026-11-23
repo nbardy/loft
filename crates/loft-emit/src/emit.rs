@@ -433,9 +433,10 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 }
                 self.member(base, m)
             }
-            ExprKind::Index(a, i) if self.is_table(a) => {
+            // Rows of a bound kind table; a kernel's `[T]` tables keep their array form.
+            ExprKind::Index(a, i) if matches!(self.ty_of(a), Ty::Table(k) if self.tables.contains_key(k)) => {
                 let Ty::Table(k) = self.ty_of(a) else { unreachable!("matched a table") };
-                let loader = self.tables.get(k).unwrap_or_else(|| panic!("checked: this module binds the rows of {k}")).clone();
+                let loader = self.tables[k].clone();
                 format!("{loader}(u32({}))", self.expr(i))
             }
             ExprKind::Index(a, i) => format!("{}[{}]", self.expr(a), self.expr(i)),

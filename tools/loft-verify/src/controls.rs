@@ -217,6 +217,7 @@ fn clone_kind(kind: &loft_passes::program::KindTable) -> loft_passes::program::K
         n_rows: kind.n_rows,
         lipschitz: kind.lipschitz.clone(),
         draw: kind.draw,
+        reads: kind.reads.clone(),
     }
 }
 
