@@ -597,8 +597,14 @@ pub fn lower_program(
                 ]),
             )?,
             // Archived Classify calls its (1,1) buffer data. The address is the ABI.
-            Pass::Classify => b.compute(program.classify, "classify", DispatchExtent::Fixed(groups),
-                &Resources::from([((1, 0), vis), ((1, 1), shade_args), ((1, 2), tiles)]))?,
+            Pass::Classify => {
+                let mut resources = Resources::from([((1, 0), vis), ((1, 1), shade_args), ((1, 2), tiles)]);
+                // The subpixel-edge classifier also zeroes the HDR alpha, which present reads as "unshaded".
+                let clears_hdr = program.modules[program.classify].naga.global_variables.iter()
+                    .any(|(_, g)| g.binding.as_ref().is_some_and(|r| (r.group, r.binding) == (1, 3)));
+                if clears_hdr { resources.insert((1, 3), hdr); }
+                b.compute(program.classify, "classify", DispatchExtent::Fixed(groups), &resources)?
+            }
             Pass::Vis(ids) | Pass::Shadow(ids) | Pass::Shade(ids) => {
                 for &id in ids {
                     let k = id as usize;

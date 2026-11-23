@@ -957,20 +957,22 @@ pub fn cull_module(single_draw: bool) -> String {
 }
 
 pub fn classify_module() -> String {
-    classify_with_halo("")
+    classify_with_halo("", "")
 }
 
-fn classify_with_halo(halo: &str) -> String {
+fn classify_with_halo(halo: &str, bindings: &str) -> String {
     render_template(PRELUDE, &[("NONCE", abi::NONCE_PLACEHOLDER)])
-        + &render_template(include_str!("../../../stdlib/core/classify.wgsl"), &[("HALO", halo)])
+        + &render_template(include_str!("../../../stdlib/core/classify.wgsl"), &[("HALO", halo), ("BINDINGS", bindings)])
 }
 
 /// `sky` is the library fn named by the schedule's present pass.
 pub fn present_module(p: &Prog, types: &[Ty], sky: &str, aov: Aov, paper: Option<&str>) -> String {
-    emit_present(p, types, sky, aov, paper, None)
+    emit_present(p, types, sky, aov, paper, None, false)
 }
 
-fn emit_present(p: &Prog, types: &[Ty], sky: &str, aov: Aov, paper: Option<&str>, film: Option<&str>) -> String {
+/// `shaded_alpha`: shade stores alpha 1.0 at every pixel it owns and classify zeroed the rest, so alpha alone tells sky
+/// from surface (the subpixel-edge path, whose coverage is wider than the center visibility).
+fn emit_present(p: &Prog, types: &[Ty], sky: &str, aov: Aov, paper: Option<&str>, film: Option<&str>, shaded_alpha: bool) -> String {
     let mut em = Emitter::new(p, types);
     em.header(abi::NONCE_PLACEHOLDER);
     let mut roots = vec![sky];
@@ -982,15 +984,24 @@ fn emit_present(p: &Prog, types: &[Ty], sky: &str, aov: Aov, paper: Option<&str>
     em.library(&lib, &consts);
     let sky=fn_symbol(sky);
     let film = film.map_or_else(|| "loft_aces".to_owned(), fn_symbol);
-    let resolve = match (aov, paper.map(fn_symbol)) {
+    let hdr = "var c = textureLoad(hdr_tex, px, 0).rgb;";
+    // The beauty resolve reads the HDR texel only where something was shaded: a sky pixel then costs one 8-byte
+    // visibility read instead of that plus a 8-byte color read it discards.
+    let (load, resolve) = match (aov, paper.map(fn_symbol), shaded_alpha) {
+        (Aov::Beauty, None, true) => ("let hdr_px = textureLoad(hdr_tex, px, 0);\n  var c = hdr_px.rgb;",
+            format!("if hdr_px.a == 0.0 {{ c = {sky}(loft_ray(pos.xy), normalize(frame.sun.xyz)); }} return vec4<f32>({film}(c), 1.0);")),
+        (Aov::Beauty, None, false) => ("let covered = textureLoad(vis_tex, px, 0).x != LOFT_EMPTY;\n  var c = vec3<f32>(0.0);\n  if covered { c = textureLoad(hdr_tex, px, 0).rgb; }",
+            format!("if !covered {{ c = {sky}(loft_ray(pos.xy), normalize(frame.sun.xyz)); }} return vec4<f32>({film}(c), 1.0);")),
+        (_, paper, _) => (hdr, match (aov, paper) {
         (Aov::Beauty, Some(paper)) => render_template(include_str!("../../../stdlib/core/present_paper.wgsl"), &[("SKY", &sky), ("PAPER", &paper)]),
-        (Aov::Beauty, None) => format!("if textureLoad(vis_tex, px, 0).x == LOFT_EMPTY {{ c = {sky}(loft_ray(pos.xy), normalize(frame.sun.xyz)); }} return vec4<f32>({film}(c), 1.0);"),
+        (Aov::Beauty, None) => unreachable!("handled above"),
         (Aov::Overdraw, _) => "return vec4<f32>(c, 1.0);".into(),
         (Aov::Depth, _) => "return vec4<f32>(select(c, vec3<f32>(1.0), textureLoad(vis_tex, px, 0).x == LOFT_EMPTY), 1.0);".into(),
         (Aov::Albedo | Aov::Normal | Aov::Id | Aov::SdfSteps | Aov::LipschitzRatio, _) =>
             "return vec4<f32>(select(c, vec3<f32>(0.0), textureLoad(vis_tex, px, 0).x == LOFT_EMPTY), 1.0);".into(),
+        }),
     };
-    em.out += &render_template(include_str!("../../../stdlib/core/present.wgsl"), &[("RESOLVE", &resolve)]);
+    em.out += &render_template(include_str!("../../../stdlib/core/present.wgsl"), &[("LOAD", load), ("RESOLVE", &resolve)]);
     em.out
 }
 
