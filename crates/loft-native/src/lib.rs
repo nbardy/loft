@@ -91,6 +91,7 @@ struct Clock {
     n: u32,
     period_ns: f64,
     skipped_pass: AtomicU32,
+    required: Mutex<Vec<bool>>,
 }
 
 /// One submitted frame's GPU timestamps in pass order.
@@ -100,8 +101,9 @@ pub struct FrameTiming {
     pub commands: u32,
     pub gpu_ms: f64,
     pub pass_ms: Vec<f64>,
-    /// Source-pass order. A reused Shadow pass has the pair `[0, 0]`.
+    /// Encoded-pass order. Known empty work and reused Shadow pairs are explicitly optional.
     pub ticks: Vec<u64>,
+    pub timestamp_required: Vec<bool>,
 }
 
 struct ClockRead {
@@ -109,6 +111,7 @@ struct ClockRead {
     mapped: std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>,
     skipped_pass: u32,
     bytes: u64,
+    required: Vec<bool>,
 }
 
 fn bytes_of(words: &[u32]) -> Vec<u8> {
@@ -154,6 +157,7 @@ impl Clock {
             read: buffer(&g.device, "ts read", u64::from(n) * 8, U::COPY_DST | U::MAP_READ),
             n, period_ns: f64::from(g.queue.get_timestamp_period()),
             skipped_pass: AtomicU32::new(u32::MAX),
+            required: Mutex::new(vec![true; n as usize / 2]),
         }
     }
 
@@ -161,7 +165,10 @@ impl Clock {
     // submission completes. Each slot keeps its own query set until after unmap.
     fn resolve_completed(&self, g: &Gpu) -> ClockRead {
         let skipped_pass = self.skipped_pass.load(Ordering::Relaxed);
-        let n = self.n - 2 * u32::from(skipped_pass != u32::MAX);
+        // Source passes can lower to no commands. Resolve only encoded pairs,
+        // retaining explicit coverage for zero-work passes rather than accepting zeros.
+        let required = self.required.lock().unwrap().clone();
+        let n = required.len() as u32 * 2;
         let bytes = u64::from(n) * 8;
         let mut enc = g.device.create_command_encoder(&Default::default());
         enc.resolve_query_set(&self.set, 0..n, &self.resolve, 0);
@@ -169,10 +176,10 @@ impl Clock {
         let submission = g.queue.submit([enc.finish()]);
         let (tx, mapped) = std::sync::mpsc::channel();
         self.read.map_async(wgpu::MapMode::Read, ..bytes, move |result| { let _ = tx.send(result); });
-        ClockRead { submission, mapped, skipped_pass, bytes }
+        ClockRead { submission, mapped, skipped_pass, bytes, required }
     }
 
-    fn collect(&self, g: &Gpu, read: ClockRead) -> Result<Vec<u64>, String> {
+    fn collect(&self, g: &Gpu, read: ClockRead) -> Result<(Vec<u64>, Vec<bool>), String> {
         wait_for(g, Some(read.submission))?;
         read.mapped.try_recv().map_err(|e| format!("timestamp callback: {e}"))?
             .map_err(|e| format!("timestamp map: {e}"))?;
@@ -181,29 +188,61 @@ impl Clock {
             view.as_chunks::<8>().0.iter().map(|b| u64::from_le_bytes(*b)).collect()
         };
         self.read.unmap();
-        if ticks.contains(&0) {
-            return Err(format!("unusable timestamps {ticks:?}"));
-        }
+        let mut required = read.required;
+        validate_ticks(&ticks, &required)?;
         if read.skipped_pass != u32::MAX {
             // Restore reporting in source pass order after resolving only the executed passes.
             let at = 2 * read.skipped_pass as usize;
             ticks.splice(at..at, [0, 0]);
+            required.insert(read.skipped_pass as usize, false);
         }
-        Ok(ticks)
+        Ok((ticks, required))
     }
 
-    fn timing(&self, serial: usize, commands: u32, ticks: Vec<u64>) -> Result<FrameTiming, String> {
-        let (first, last) = (ticks[0], ticks[self.n as usize - 1]);
-        if first == 0 || last <= first {
-            return Err(format!("frame {serial}: unusable timestamps {ticks:?}"));
-        }
-        let ms = |a: u64, b: u64| b.saturating_sub(a) as f64 * self.period_ns / 1e6;
-        // Pass starts can overlap on Metal. Use consecutive ends to attribute
-        // costs, and preserve the original pairs so every span can be inspected.
-        let pass_ms = ticks.chunks_exact(2).scan(first, |end, pair| {
-            Some(if pair[1] == 0 { 0.0 } else { ms(std::mem::replace(end, pair[1]), pair[1]) })
+    fn timing(&self, serial: usize, commands: u32, (ticks, required): (Vec<u64>, Vec<bool>)) -> Result<FrameTiming, String> {
+        let (first, last) = validate_ticks(&ticks, &required)?;
+        let ms = |a: u64, b: u64| (b - a) as f64 * self.period_ns / 1e6;
+        // Pass starts can overlap on Metal; attribute cost by consecutive ends.
+        let pass_ms = ticks.chunks_exact(2).zip(&required).scan(first, |end, (pair, &needed)| {
+            Some(if !needed { 0.0 } else { ms(std::mem::replace(end, pair[1]), pair[1]) })
         }).collect();
-        Ok(FrameTiming { serial, commands, gpu_ms: ms(first, last), pass_ms, ticks })
+        Ok(FrameTiming { serial, commands, gpu_ms: ms(first, last), pass_ms, ticks, timestamp_required: required })
+    }
+
+}
+
+fn validate_ticks(ticks: &[u64], required: &[bool]) -> Result<(u64, u64), String> {
+    if ticks.len() != required.len() * 2 {
+        return Err("timestamp coverage length mismatch".into());
+    }
+    let mut span = None;
+    for (pair, &needed) in ticks.chunks_exact(2).zip(required) {
+        if !needed { continue; }
+        let (start, end) = (pair[0], pair[1]);
+        if start == 0 || end == 0 || end < start || span.is_some_and(|(_, last)| end < last) {
+            return Err(format!("unusable required timestamps {ticks:?}; required {required:?}"));
+        }
+        span = Some((span.map_or(start, |(first, _)| first), end));
+    }
+    span.filter(|(first, last)| last > first).ok_or_else(|| "no positive required GPU timestamp span".into())
+}
+
+#[cfg(test)]
+mod timestamp_tests {
+    use super::validate_ticks;
+    #[test]
+    fn replay_coverage_rejects_missing_required_samples() {
+        let ticks = [0, 0, 87664305607208, 87664305668541, 87664306238625, 87664306309833];
+        assert_eq!(validate_ticks(&ticks, &[false, true, true]).unwrap(), (ticks[2], ticks[5]));
+        assert!(validate_ticks(&ticks, &[true, true, true]).is_err());
+        for i in 2..6 {
+            let mut missing = ticks;
+            missing[i] = 0;
+            assert!(validate_ticks(&missing, &[false, true, true]).is_err());
+        }
+        assert!(validate_ticks(&[0; 6], &[false, true, true]).is_err());
+        assert!(validate_ticks(&ticks, &[false; 3]).is_err());
+        assert!(validate_ticks(&ticks, &[true; 5]).is_err());
     }
 }
 
@@ -212,7 +251,7 @@ fn wait_for(g: &Gpu, submission_index: Option<wgpu::SubmissionIndex>) -> Result<
         .map(|_| ()).map_err(|e| e.to_string())
 }
 
-fn read_clock(g: &Gpu, c: &Clock) -> Result<Vec<u64>, String> {
+fn read_clock(g: &Gpu, c: &Clock) -> Result<(Vec<u64>, Vec<bool>), String> {
     wait_for(g, None)?;
     c.collect(g, c.resolve_completed(g))
 }
@@ -255,7 +294,7 @@ impl Gpu {
                 timestamps: Some(&c.set), ..Default::default()
             }).map_err(runner_error)?;
             self.queue.submit([encoder.finish()]);
-            let ticks = read_clock(self, &c)?;
+            let (ticks, _) = read_clock(self, &c)?;
             let duration = ticks[1].checked_sub(ticks[0]).filter(|&x| x > 0 && ticks[0] != 0)
                 .ok_or("speed control has unusable timestamps")?;
             *ms = duration as f64 * c.period_ns / 1e6;
@@ -436,9 +475,11 @@ impl Loaded {
         let options = FrameOptions {
             timestamps: clock.map(|c| &c.set), omit_wave: skip.map(|x| x.0), ..Default::default()
         };
-        let commands = self.record(&mut runner, &mut enc, &self.color_view, t, samples, options)
+        let report = self.record_report(&mut runner, &mut enc, &self.color_view, t, samples, options)
             .expect("prepared frame");
+        let commands = report.commands;
         if let Some(clock) = clock {
+            *clock.required.lock().unwrap() = report.timestamp_required;
             clock.skipped_pass.store(skip.map_or(u32::MAX, |x| x.1), Ordering::Relaxed);
         }
         params.1 = false;
@@ -461,9 +502,14 @@ impl Loaded {
 
     fn record(&self, runner: &mut Runner, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView,
         t: f32, samples: u32, options: FrameOptions<'_>) -> Result<u32, String> {
+        self.record_report(runner, encoder, target, t, samples, options).map(|r| r.commands)
+    }
+
+    fn record_report(&self, runner: &mut Runner, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView,
+        t: f32, samples: u32, options: FrameOptions<'_>) -> Result<loft_runner::frame::FrameRecord, String> {
         let uniform = |table| self.uniform(t, samples, table != self.frame_table);
         runner.encode_frame(self.id, encoder, target, t.into(), FrameOptions { uniform: Some(&uniform), ..options })
-            .map(|r| r.commands).map_err(runner_error)
+            .map_err(runner_error)
     }
 
     /// Profile a finite stream on this device's queue. Immediate reads use one
@@ -534,9 +580,12 @@ impl Loaded {
     /// The resolve goes in its own submit after the frame completes (19 Nov: resolving before Metal had written the
     /// last passes' end samples read the previous frame's values).
     pub fn gpu_ms(&self, g: &Gpu) -> Result<Option<(f64, Vec<f64>)>, String> {
+        Ok(self.gpu_timing(g)?.map(|timing| (timing.gpu_ms, timing.pass_ms)))
+    }
+
+    pub fn gpu_timing(&self, g: &Gpu) -> Result<Option<FrameTiming>, String> {
         let Some(c) = &self.clock else { return Ok(None) };
-        let timing = c.timing(0, 0, read_clock(g, c)?)?;
-        Ok(Some((timing.gpu_ms, timing.pass_ms)))
+        c.timing(0, 0, read_clock(g, c)?).map(Some)
     }
 
     /// The presented picture, tightly packed RGBA8 (sRGB), top row first.

@@ -144,6 +144,7 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
     };
     let mut loaded = None;
     let mut times = vec![];
+    let mut frame_timings = vec![];
     let mut slow = 0u32;
     let mut verdicts = vec![];
     let mut commands = 0;
@@ -173,8 +174,11 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
         let frame = loaded.as_ref().expect("loaded frame");
         pipelines = frame.stats.render_pipelines + frame.stats.compute_pipelines + p.dispatches.len();
         commands = frame.frame(&g, t) as usize + p.dispatches.len();
-        if let Some((render_ms, _)) = frame.gpu_ms(&g).map_err(Failure::Device)? {
-            let ms = motion_ms + render_ms;
+        if let Some(mut timing) = frame.gpu_timing(&g).map_err(Failure::Device)? {
+            timing.serial = i as usize;
+            timing.commands = commands as u32;
+            let ms = motion_ms + timing.gpu_ms;
+            frame_timings.push(timing);
             times.push(ms);
             if let Some(cap) = c.max_frame {
                 observe_frame(ms, cap, c.frames, &mut slow)?;
@@ -206,6 +210,7 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
     )
     .map_err(|e| Failure::Compile(e.to_string()))?;
     let meta = json!({
+        "frame_timings": frame_timings,
         "build_cpu_ms": build_ms, "load_gpu_ms": load_ms,
         "frame_gpu_p50_ms": quantile(50), "frame_gpu_p95_ms": quantile(95),
         "modules": p.modules.len(), "pipelines": pipelines, "commands": commands,

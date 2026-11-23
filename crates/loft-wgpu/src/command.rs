@@ -90,6 +90,18 @@ impl Pass {
         Ok(())
     }
 
+    /// Empty direct dispatches may produce no timestamp samples on Metal.
+    /// Indirect work remains required: its GPU-resolved size is not known here.
+    pub fn timestamp_required(&self) -> bool {
+        match self {
+            Self::Compute(kernels) => kernels.iter().any(|k| match &k.work {
+                Work::Direct(size) => !size.contains(&0),
+                Work::Indirect(..) => true,
+            }),
+            Self::Render { .. } => true,
+        }
+    }
+
     pub fn record(&self, encoder: &mut CommandEncoder, stamps: Option<Stamps<'_>>) -> u32 {
         match self {
             Self::Compute(kernels) => record_compute(encoder, kernels, stamps),

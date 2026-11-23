@@ -76,7 +76,7 @@ fn sample(g: &Gpu, p: &Program, seconds: f32, clock: Option<&Clock>) -> Result<(
         }.map_err(err)?;
         g.queue.submit([encoder.finish()]);
         if let Some(c) = timed {
-            let stamps = read_clock(g, c)?;
+            let (stamps, _) = read_clock(g, c)?;
             let dt = stamps[1].checked_sub(stamps[0]).filter(|_| stamps[0] != 0)
                 .ok_or("motion GPU timestamps are unavailable")?;
             ms += dt as f64 * c.period_ns / 1e6;

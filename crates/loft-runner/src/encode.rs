@@ -312,6 +312,8 @@ pub struct FrameOptions<'a> {
 pub struct FrameRecord {
     pub commands: u32,
     pub stages: Vec<String>,
+    /// One entry per encoded timestamp pair; false only for known empty work.
+    pub timestamp_required: Vec<bool>,
 }
 
 struct Batch<'a> {
@@ -337,6 +339,7 @@ impl<'a> Batch<'a> {
     fn flush(&mut self) {
         if let Some((wave, pass)) = self.pending.take() {
             let stamps = self.stamps();
+            self.report.timestamp_required.push(pass.timestamp_required());
             self.report.commands += pass.record(self.encoder, stamps);
             self.report.stages.push(wave.to_string());
         }
@@ -471,6 +474,7 @@ impl Instance {
                     batch.flush();
                     let stamps = batch.stamps().map(|s| (s.set, s.start.expect("first mip stamp")));
                     batch.report.commands += chain.as_ref().expect("prepared mip chain").1.encode(batch.encoder, stamps);
+                    batch.report.timestamp_required.push(true);
                     batch.report.stages.push(c.waves[&id].to_string());
                 }
                 Operation::Ticks(k, f) => {
@@ -516,6 +520,7 @@ impl Instance {
                     Operation::Mips(_, chain) => chain.as_ref().expect("prepared mip chain").1.encode(enc, timer.map(|set| (set, start))),
                     Operation::Draw(_) | Operation::Ticks(..) => return Err(RunnerError::AbiMismatch),
                 };
+                report.timestamp_required.push(true);
                 report.stages.push(format!("{} {}", init.name, if i == 0 { "base" } else { "mips" }));
             }
             init.clock.complete(&params);
