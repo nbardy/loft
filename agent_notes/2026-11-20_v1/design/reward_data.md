@@ -20,11 +20,12 @@
 ## Scale (v1)
 40 subjects × 3 cameras × (1 good + 8 degradations + about 4 improvement rounds) ≈ 1,560 renders. Pairs within each subject–camera group: 13C2 = 78 per group × 120 groups ≈ 9,400 pairs. Add 300–500 owner votes. Rendering is local (the clip budget is ≤50 ms GPU per frame), so compute is cheap. The cost is authoring good programs, which is why reusable library materials and Haiku parameterisation matter.
 
-## Subjects (v1; chosen for range of material, form and light, and for being buildable from SDFs)
-- **Creatures:** the 16 div1 crabs, the blue swimmer and the rust crab, river otter, frog (wet skin), koi (scales), octopus (soft and translucent), beetle (iridescent chitin), snail (shell plus wet body), sea turtle, jellyfish (translucent and emissive), heron, sea urchin, starfish.
-- **Objects:** glazed ceramic teapot, copper kettle with patina, glass bottle, carved wooden bowl, weathered stone head, candle (wax subsurface plus flame), rope knot, pearl in shell.
-- **Plants:** mushroom cluster, succulent rosette, coral branch, kelp, bonsai.
-- **Scenes:** tide pool, sea arch at dusk, lighthouse in fog, dune field, cave with water.
+## Subjects (v1, owner 23 Nov: cinematic characters, not simple objects or plain animals)
+The subjects are the character lists in `../prompts/`:
+- `seeds_v1.jsonl`: 40 seed briefs for programs we author and vary;
+- `generate_v1.jsonl`: 50 Generate prompts.
+
+They are boss versions of animals, as in game character design (a hermit crab warlord, an otter bandit chief, a heron executioner, a pangolin knight); animal hybrids (a coral-antlered elk, an anglerfish witch, an eel-dragon); dark-folklore figures (three swamp sisters under one root cloak, a bog hag with a birdcage ribcage, a candle-wax monk, a driftwood ferryman); and a few mechs. Every prompt is original, with no franchise names or recreated designs. The 16 div1 crabs stay as the pilot, because their bodies are already varied.
 
 ## Pipeline
 1. A reusable library material per family, extracted from a lead-reviewed match: chitin (from match1), then fur, scales, glaze, metal and so on, each matched once to a reference photo by an Opus lane.
