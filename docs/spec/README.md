@@ -2,7 +2,7 @@
 
 Written by the research scientist on 19 Nov 2026 (bundle: `docs/handoff/2026-11-20_syntax/research_scientist_spec_bundle.md`). This folder is the source of truth for v1.0; `LOFT_V1_SYNTAX.md` (the implementer's consolidation) must agree with it.
 
-Where the documents overlap, precedence is **07 > PATCH_V1_2 > 06_ADDENDUM > 00–05**.
+Where the documents overlap, precedence is **[CUTS_2026-11-23](CUTS_2026-11-23.md) > 07 > PATCH_V1_2 > 06_ADDENDUM > 00–05**. The cuts list constructs removed on 23 Nov 2026 and what replaces each.
 
 - `00_OVERVIEW_AND_DECISIONS.md`
 - `01_LANGUAGE_V1.md`
