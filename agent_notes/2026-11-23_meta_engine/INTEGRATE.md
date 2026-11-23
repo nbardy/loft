@@ -173,3 +173,73 @@ is this text.
    `sand-scatter`: "the portable artifact needs a standalone authored compute schedule", which is `build` refusing
    an authored compute pass inside a render frame, not a difference between the trees. Not covered: their pictures,
    and `check` and `clip`, which the trainer actually calls and which need the GPU.
+
+## 6. Second gate, 23 Nov 23:37–23:50: the stack that would land
+
+Main moved during the evening: `cea5fe7e` (Bsdf values compose; unlisted names of an imported module resolve), a
+compiler fix landed directly on main by another session. It conflicted here in `loft-emit/src/emit.rs`; merged as
+`5b65b240`. The first gate (§5) therefore no longer covers what would land, so this one ran on the whole stack.
+
+**Revision.** `dc07dc64` on `lane/fix-auncel` = this branch at `5b65b240` (the integration, `cea5fe7e`, the
+`loft context` fix `f719bfd2`, the `timing.py` fix) + the Auncel compiler fixes. One run of `tools/check.sh full`,
+same baseline and margin as §5. The machine was quiet this time: the load control's p50 was 0.72–0.91 ms on five of
+six scenes. Evidence: `loft-fix-auncel/out/check.JTdICV/`; the small reports and `timing.json` are copied to
+`out/integrate/gate_dc07dc64/`.
+
+| Step | Result |
+|---|---|
+| static, wasm32, doc tests, lint, bead | pass (bead 9/9) |
+| native tests | 2 of the test executables failed, both new tests of the Auncel lane with a wrong fixture. Corrected in `01e896ca`; the 30 tests of those two files then pass. The other executables passed |
+| Pictures | **19/19**, 0 changed pixels against lean2's capture on all 19 |
+| Twin / Truth | **36/36** / **34/34** |
+| Speed | 10/12. capsules-1 Unknown (5 of 10 blocks quiet). **hermit-20 missed its absolute budget: p95 6.034 ms against 5.6**, 10 of 10 blocks quiet |
+| Load | 27/33. Misses: cold on capsules-20 (by 4 ms), blobs-20, hermit-1, hermit-20; warm on hermit-1 (0.062 s) and hermit-20 (0.063 s) against 0.06. All six are among lean2's ten |
+| lines | Rust core **29,338** / 33,895 (28,906 + `cea5fe7e` + the Auncel fixes); loft-runner 1,943 |
+| paired timing | ran with the fixed harness: 6 AB/BA pairs per scene against lean2 |
+
+**Paired timing, medians of the six pairs** (`timing.json`). The harness's own verdict is "unknown" on five scenes,
+because its triangle control flagged them contended, so these are measurements, not verdicts. "Lower" counts the
+pairs in which this stack beat lean2.
+
+| Scene | Frame p95, ms | Cold load, s | Warm load, ms |
+|---|---|---|---|
+| capsules-1 | 0.871 → 0.798 (−8%), lower 5/6 | 0.310 → 0.355 (**+15%**), lower 0/6 | 10.2 → 10.9 (+7%), lower 0/6 |
+| capsules-20 | 1.037 → 0.982 (−5%), 4/6 | 0.477 → 0.454 (−5%), 4/6 | 13.4 → 14.4 (+8%), 0/6 |
+| blobs-1 | 0.953 → 0.781 (−18%), 5/6 | 0.382 → 0.389 (+2%), 2/6 | 12.5 → 13.7 (+10%), 0/6 |
+| blobs-20 (quiet; the only scene with verdicts) | 1.683 → 1.692 (+0.5%), 2/6 | 0.662 → 0.718 (**+8%, verdict missed**), 1/6 | 15.3 → 17.2 (+13%, held), 0/6 |
+| hermit-1 | 4.216 → 4.038 (−4%), 6/6 | 1.399 → 1.302 (−7%), 5/6 | 48.8 → 49.0 (flat) |
+| hermit-20 | 6.510 → 5.872 (**−10%**), 6/6 | 1.340 → 1.237 (−8%), 5/6 | 47.5 → 48.4 (+2%) |
+
+What this says:
+- **hermit-20's Speed miss is not this stack's.** In the same window lean2 measured 6.33–6.65 ms and this stack
+  5.56–6.10, lower in six of six pairs. Both are over the 5.6 ms budget tonight; lean2's own gate this morning held
+  it at 5.240. The budget sits inside the scene's run-to-run spread, as `agent_notes/2026-11-23_perf/merge.md` found.
+- **§5's hermit warm-load figure (0.098 s) was contention.** Quiet, it is 0.062–0.063 s, lean2's value.
+- **Load got slower on the small scenes, and that is this stack's.** Warm load is up 0.7–1.9 ms on all four
+  one-kind scenes, in 24 of 24 pairs. Cold load is up 45–55 ms on capsules-1 and blobs-20. Not attributed: the
+  candidates are stage 0 now parsing and inlining the schedule functions in `stdlib/core.loft` (probe-door), the
+  per-compile `--set` resolver (Auncel F9a), and `cea5fe7e`. Budgets still hold except blobs-20 cold, which lean2
+  also missed.
+
+**Against §4, replacing §5's verdicts where this run is the better instrument.**
+
+| # | Verdict |
+|---|---|
+| I1 | held at the integration tip (28,906). The stack is 29,338 with two later additions the prediction did not include |
+| I2, I3 | held again: 0 changed pixels on 19/19, Twin 36/36, Truth 34/34 |
+| I4 | **missed in part.** No warm-load or Speed budget is newly missed, but the paired cold load on blobs-20 is a measured regression, and warm load is 7–13% slower on the small scenes |
+| I5 | held, after the two fixture corrections |
+
+**Also on this stack.**
+- `loft context` is 23,046 characters (main today: 18,549). Schedule functions print as signatures.
+- S0 was merged onto it as branch `loft/metaengine` (`15607b79`): the workspace compiles, `loft-std`'s three link
+  tests pass (one new: a tick initializer stages a whole loop), and the count is 29,790. S0 costs 452 lines.
+- The Auncel lane's predictions are scored in `agent_notes/2026-11-23_auncel/FIXES.md`: 15 held, one missed.
+
+**Before main moves** (replaces the list in §5).
+1. The owner's yes on `docs/spec/CUTS_2026-11-23.md` and on `motion-stride`.
+2. The Creative trainer's run `crab-tools-v1f` is live and reads main's binary and stdlib. Its session asked for no
+   rebuild of main's release binary and says a per-run snapshot of binary and stdlib is coming. Main moves after
+   that lands or the run ends.
+3. Decide whether the small-scene load cost is accepted or attributed first.
+4. Land `lane/fix-auncel` (it contains this branch). Further compiler commits on main need merging here first.
