@@ -1,0 +1,9 @@
+# Two painted cels and a hard rim of ink inside the visible silhouette.
+pub fn cel(b: Bsdf, n: rgb, v: rgb, sun: rgb, shadow: f, ao: f) -> rgb {
+  let paint = eval_bsdf(b, n, v, n) * 3.14159
+  let cosine = dot(n, sun) * shadow
+  let mid = select(0.26, 0.74, cosine > 0.18)
+  let light = select(mid, 1.32, cosine > 0.67)
+  let color = paint * light + [0.036, 0.022, 0.075] * (1.0-mid)
+  mix([0.010, 0.008, 0.019], color, smoothstep(0.20, 0.25, dot(n, v)))
+}

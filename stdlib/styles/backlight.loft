@@ -1,0 +1,6 @@
+# Grazing incident and outgoing directions isolate a sliver of rim light.
+pub fn backlight(b: Bsdf, n: rgb, v: rgb, sun: rgb, shadow: f, ao: f) -> rgb {
+  let pigment = eval_bsdf(b, n, v, n) * 3.14159
+  let rim = pow(1.0-max(dot(n,v),0.0), 2.7) * smoothstep(-0.14,0.57,dot(n,sun))
+  pigment * (0.44 + 0.46*max(dot(n,sun),0.0)) + [1.0,0.48,0.15]*rim
+}
