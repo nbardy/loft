@@ -9,3 +9,17 @@ pub kind Sun @World (dir: d3@World, color: rgb) {}
 # has them; before this, such scenes failed with "missing environment default" and no source span.
 use stdlib::lighting::emitters
 use stdlib::sky::environment
+# outline_and_paper reads paper_grain; a scene schedule that names the pass gets it from here.
+use stdlib::post::display::{paper_grain}
+
+# The stock helper modules, so a scene can call a catalog name without importing it (scope.rs resolves a
+# public stock name by its unique bare key). Modules with kinds, builds or schedules stay opt-in.
+use stdlib::sdf::solid
+use stdlib::noise::value
+use stdlib::materials::bsdf
+use stdlib::geometry::analytic
+use stdlib::geometry::layout
+use stdlib::frames::transport
+use stdlib::motion::solve
+use stdlib::integrators::direct
+use stdlib::styles::woodblock

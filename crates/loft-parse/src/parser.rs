@@ -1249,6 +1249,22 @@ impl<'src> Parser<'src, '_> {
         if value && self.eat("if") {
             return Ok(Block { stmts: vec![self.if_stmt(true)?] });
         }
+        // `trace(p) =` then `let` lines and a final expression: a block without braces. No expression starts
+        // with `let`, so it reads unambiguously; fresh crab programs wrote it (`let local = p - at`, `let op`).
+        if value && (self.is("let") || self.is("var")) {
+            let (locals, maps) = (self.locals.clone(), self.maps.clone());
+            let mut stmts = vec![];
+            while self.is("let") || self.is("var") {
+                stmts.push(self.stmt()?);
+                self.expect(";")?;
+                self.seps();
+            }
+            let e = self.expr(0)?;
+            stmts.push(Stmt::Return(Some(e.clone()), e.span));
+            self.locals = locals;
+            self.maps = maps;
+            return Ok(Block { stmts });
+        }
         let e = self.expr(0)?;
         let sp = e.span;
         Ok(Block {
@@ -1735,6 +1751,12 @@ impl<'src> Parser<'src, '_> {
                 "use a decimal number and a declared unit symbol",
             )
         };
+        // WGSL's integer suffixes: `0u`, `3i`. The literal stays an integer typed by its context, as `0` is.
+        if let Some(int) = s.strip_suffix('u').or_else(|| s.strip_suffix('i'))
+            && !int.is_empty() && int.bytes().all(|b| b.is_ascii_digit())
+        {
+            return Ok(self.num(int.parse::<u32>().map_err(|_| bad())?.into(), false, sp));
+        }
         if let Some(hex) = s.strip_prefix("0x") {
             return Ok(self.num(
                 u32::from_str_radix(hex, 16).map_err(|_| bad())?.into(),
