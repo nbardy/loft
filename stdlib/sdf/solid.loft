@@ -42,10 +42,13 @@ pub fn round_cone[S](p: p3@S, a: p3@S, b: p3@S, ra: m, rb: m) -> m {
     }
     return length(p - b) - rb
   }
-  let axis = ba / len
+  # Here len > |delta| >= 0. The clamp changes nothing on this path; it lets the range proof see a
+  # nonzero divisor when the endpoints are kind columns (E211 in a crab Generate session).
+  let span = max(len, 0.000001)
+  let axis = ba / span
   let y = dot(pa, axis)
   let rho = length(pa - axis * y)
-  let s = delta / len
+  let s = delta / span
   let c = sqrt((1 - s) * (1 + s))
   # Clamping the minimizing ball center selects either cap or the side.
   # After the containment test, c for a nonzero f32 slope gap exceeds

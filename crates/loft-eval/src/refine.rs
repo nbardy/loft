@@ -151,7 +151,10 @@ impl Proof<'_, '_> {
                         .zip(args)
                         .filter_map(|(p, t)| t.map(|x| (p.name.name.clone(), x)))
                         .collect();
-                    let result = self.block(&f.body, &mut locals)?;
+                    // A proof failure inside a callee names the author's call too: a stdlib line alone
+                    // does not say which of a scene's calls to change.
+                    let result = self.block(&f.body, &mut locals)
+                        .map_err(|d| d.note(callee.span, format!("in this call to `{}`", callee.name)))?;
                     self.stack.pop();
                     result
                 } else {
