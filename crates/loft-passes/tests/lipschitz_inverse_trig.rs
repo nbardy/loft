@@ -50,7 +50,9 @@ camera Main {{ at: [0, 0, 0]@World, radius: 3, fov: 38deg }}
 fn inverse_trig_squares_and_time_branches_bound_the_twin() {
     for (name, trace) in [
         ("acos asin atan", "let c = clamp(p.y, -0.5, 0.5)\n    length(coords(p)) - 0.7 + 0.1 * (acos(c) + asin(c) + atan(3.0 * p.x))"),
-        ("tan log", "length(coords(p)) - 0.7 + 0.1 * (tan(clamp(p.y, -1.2, 1.2)) + log(1.5 + p.x))"),
+        // The log's argument is clamped above 0. `log(1.5 + p.x)` is NaN for x <= -1.5, so the bound search could
+        // not exclude that half of the search region and refused the kind (E212), which is the rule working.
+        ("tan log", "length(coords(p)) - 0.7 + 0.1 * (tan(clamp(p.y, -1.2, 1.2)) + log(2.0 + clamp(p.x, -1.0, 1.0)))"),
         ("atan2 off the axis", "let q = coords(p) - [2.0, 0.0, 0.0]\n    length(q) - 0.7 + 0.1 * sin(6.0 * atan2(q.z, q.x + 2.0))"),
         ("squares", "let q = coords(p)\n    length(q) - 0.7 + 0.1 / (1.0 + 8.0 * min(q.x * q.x, 0.35)) + 0.05 / (1.0 + dot(q, q))"),
         ("select on time", "select(length(coords(p)) - 0.7, length(coords(p)) - 0.5, time > 3.0)"),

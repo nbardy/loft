@@ -303,7 +303,9 @@ fn inverse_trig_in_a_trace_derives_a_bound_or_e211() {
 fn a_branch_on_time_is_bounded_by_its_arms_and_a_branch_on_the_point_is_not() {
     for trace in [
         "let o = [0,0,0]@Body; return select(sphere(q - o, 0.5), sphere(q - o, 0.4), time > 3.0);",
-        "let o = [0,0,0]@Body; if time > 3.0 { return sphere(q - o, 0.4); } return sphere(q - o, 0.5);",
+        // A statement after an `if` block needs its own line: on one line the parser asks for `;` (E001).
+        "let o = [0,0,0]@Body; if time > 3.0 { return sphere(q - o, 0.4); }
+         return sphere(q - o, 0.5);",
         "let o = [0,0,0]@Body; var r = 0.5; if time > 2.0 { r = 0.45; }
          let d = if time > 3.0 { let s = 0.4; sphere(q - o, s) } else { sphere(q - o, r) }; return d;",
     ] {
