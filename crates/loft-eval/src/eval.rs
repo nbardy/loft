@@ -211,6 +211,10 @@ pub struct Eval<'p, 'a, S> {
     pub luts: &'p [Lut],
     pub source: Option<&'p loft_check::source::Graph>,
     imports: std::collections::HashMap<Span, crate::import_table::Rows>,
+    /// A law's `[K]` parameters, by name: the table index of the version it reads (DESIGN §5.3).
+    pub views: std::collections::BTreeMap<String, usize>,
+    /// Tables past the program's kinds are snapshots: entry j is the kind of table `kinds + j`.
+    pub snapshots: Vec<usize>,
 }
 
 fn err(span: Span, msg: impl Into<String>, fix: impl Into<String>) -> Diag {
@@ -224,7 +228,7 @@ fn norm<S: Scalar>(v: &[S]) -> f64 {
 
 impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
     pub fn new(p: &'p Prog<'a>, types: &'p [Ty], tables: Tables, overrides: &'p [(String, f64)]) -> Self {
-        Eval { p, types, tables, overrides, env: vec![], cause: None, steps: 0, vector_bound_changed: false, time:S::frame_time(), luts: &[], source: None, imports: Default::default() }
+        Eval { p, types, tables, overrides, env: vec![], cause: None, steps: 0, vector_bound_changed: false, time:S::frame_time(), luts: &[], source: None, imports: Default::default(), views: Default::default(), snapshots: vec![] }
     }
 
     /// Binds a name for the expressions evaluated next (a scan's parameter); `unbind` drops the latest.
@@ -633,7 +637,9 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 let b = self.expr(base)?;
                 match b {
                     Val::Row(k, r) => {
-                        let decl = self.p.kinds[self.p.kind_order[k]];
+                        let kinds = self.p.kind_order.len();
+                        let kind = if k < kinds { k } else { self.snapshots[k - kinds] };
+                        let decl = self.p.kinds[self.p.kind_order[kind]];
                         let i = decl.row.iter().position(|f| f.name.name == m.name).expect("checked field");
                         Ok(Self::lift(&self.tables[k][r][i]))
                     }
@@ -659,6 +665,21 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                         }
                     }
                     other @ Val::Void | other @ Val::S(_) | other @ Val::B(_) | other @ Val::U(_) | other @ Val::I(_) | other @ Val::X(_) | other @ Val::MapRef(..) | other @ Val::Bsdf(_) => unreachable!("checked member of {other:?}"),
+                }
+            }
+            // A row of another table: a law's `[K]` parameter, or `K[i]` in a query.
+            ExprKind::Index(base, i) if matches!(&base.kind, ExprKind::Name(n)
+                if self.views.contains_key(n) || matches!(self.types.get(base.id as usize), Some(Ty::Table(_)))) => {
+                let ExprKind::Name(n) = &base.kind else { unreachable!("matched a name") };
+                let table = match self.views.get(n) {
+                    Some(&table) => table,
+                    None => self.p.kind_index(n),
+                };
+                match self.expr(i)? {
+                    Val::U(row) => Ok(Val::Row(table, row as usize)),
+                    Val::I(row) => Ok(Val::Row(table, row as usize)),
+                    Val::Void | Val::S(_) | Val::V(..) | Val::B(_) | Val::X(_) | Val::Row(..) | Val::MapRef(..) | Val::Bsdf(_) =>
+                        Err(err(i.span, "row index not a known integer", "index with a row id or a u32")),
                 }
             }
             ExprKind::Index(base, i) => {

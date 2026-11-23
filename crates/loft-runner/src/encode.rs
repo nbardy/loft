@@ -438,7 +438,14 @@ impl Instance {
         let mut written = BTreeSet::new();
         let initializers: BTreeSet<_> = self.initializers.clocks.iter().flat_map(|i| &i.passes).copied().collect();
         let mut template = None;
-        let mut record = |id| {
+        // The first due tick of each lockstep group: every pass in it advances to each tick in turn.
+        let froms: Vec<u32> = c.order.iter().map(|item| match item {
+            Order::Lockstep(ids) => ids.iter().filter_map(|&id| c.fused(id).map(|f|
+                self.history.seek(id, tables[&f.rows].active).iter().copied().min().unwrap_or(clock.to))).min().unwrap_or(clock.to),
+            Order::Run(_) | Order::Repeat(..) => clock.to,
+        }).collect();
+        // `lockstep`: the tick this call advances to, and whether it is the group's first and last dispatch.
+        let mut record = |id, lockstep: Option<(u32, bool, bool)>| {
             if initializers.contains(&id) || options.omit_wave == Some(c.waves[&id]) { return; }
             if let Some(bytes) = c.templates.change(id, &mut template, clock.time as f32) {
                 batch.flush();
@@ -467,9 +474,18 @@ impl Instance {
                     let table = &tables[&f.rows];
                     let live = table.bytes().expect("validated state table");
                     let args = tables[&f.args.resource].bytes().expect("validated arguments");
-                    clock.advance(&mut self.history, id, f, table.active, self.decl.state.as_ref(), self.checkpoints.len(), |step| match step {
+                    let step_clock = match lockstep { Some((tick, ..)) => Clock { to: tick, ..clock }, None => clock };
+                    let mut started = false;
+                    step_clock.advance(&mut self.history, id, f, table.active, self.decl.state.as_ref(), self.checkpoints.len(), |step| match step {
                         loft_wgpu::frame::Step::Save(i) => batch.encoder.copy_buffer_to_buffer(live,0,&self.checkpoints[i],0,Some(live.size())),
                         loft_wgpu::frame::Step::Run { args: data, work, stamps } => {
+                            // A timed lockstep advance stamps the group's first dispatch start and last dispatch end.
+                            let stamps = match lockstep {
+                                Some((_, first, last)) => clock.timer.filter(|_| (first && !started) || last).map(|set|
+                                    Stamps { set, start: (first && !started).then_some(0), end: last.then_some(1) }),
+                                None => stamps,
+                            };
+                            started = true;
                             upload(&mut self.uploads, batch.encoder, &data, args, 0);
                             batch.report.commands += cmd.dispatch(&c.fixed, k, Work::Direct(work)).record(batch.encoder,stamps);
                         }
@@ -477,7 +493,22 @@ impl Instance {
                 }
             }
         };
-        for item in &c.order { item.visit(&mut record); }
+        for (item, &from) in c.order.iter().zip(&froms) {
+            match item {
+                Order::Lockstep(ids) => {
+                    // Nothing due still records one zero-tick dispatch per pass, as a single pass does: it writes
+                    // the state and evaluates the checks at the current tick.
+                    let ticks = if from < clock.to { from + 1..=clock.to } else { clock.to..=clock.to };
+                    let (first, last) = (*ticks.start(), *ticks.end());
+                    for tick in ticks {
+                        for (n, &id) in ids.iter().enumerate() {
+                            record(id, Some((tick, tick == first && n == 0, tick == last && n + 1 == ids.len())));
+                        }
+                    }
+                }
+                Order::Run(_) | Order::Repeat(..) => item.visit(&mut |id| record(id, None)),
+            }
+        }
         batch.flush();
         if batch.stamp_error { return Err(RunnerError::Capacity); }
         if let (Some(buf), Some(events)) = (event_buffer.as_ref(), &mut self.outbox) { events.end(batch.encoder,buf); }

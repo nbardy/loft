@@ -396,7 +396,7 @@ fn pack_kind<'a>(
         draw,
     };
     let stride = (words.len() / rows.len()) as u32;
-    let kind = KindTable { name: name.to_string(), module: id, stride, rows: words, n_rows: rows.len() as u32, lipschitz: lips, draw };
+    let kind = KindTable { name: name.to_string(), module: id, stride, rows: words, n_rows: rows.len() as u32, lipschitz: lips, draw, reads: vec![] };
     Ok((kind, report))
 }
 

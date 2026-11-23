@@ -11,6 +11,8 @@ type Result<T> = std::result::Result<T, String>;
 type Resources = BTreeMap<Address, TableId>;
 type Address = (u32, u32);
 type Bindings = BTreeMap<(String, ShaderStage), Vec<(Address, PassBinding)>>;
+/// Ids of the tick passes inside a lockstep loop: top-level pass ids are their bundle indices, so these sit far above.
+const LOCKSTEP_PASSES: u32 = 1 << 30;
 
 struct Builder {
     bundle: Bundle,
@@ -252,6 +254,20 @@ impl Builder {
         entries: &[(ModuleId, &str, ShaderStage)],
         resources: &Resources,
     ) -> Result<()> {
+        let index = self.bundle.passes.len();
+        let decl = self.decl(index.try_into().map_err(|_| "too many passes")?, run, entries, resources)?;
+        self.bundle.passes.push(decl);
+        Ok(())
+    }
+
+    /// A pass declaration with its entries' bindings resolved, not yet placed in the bundle.
+    fn decl(
+        &mut self,
+        id: u32,
+        run: PassRun,
+        entries: &[(ModuleId, &str, ShaderStage)],
+        resources: &Resources,
+    ) -> Result<PassDecl> {
         let mut bindings = BTreeMap::new();
         for (module, name, stage) in entries {
             let decl = self.bindings[module.0 as usize]
@@ -269,15 +285,13 @@ impl Builder {
                 }
             }
         }
-        let index = self.bundle.passes.len();
-        self.bundle.passes.push(PassDecl {
-            id: PassId(index.try_into().map_err(|_| "too many passes")?),
+        Ok(PassDecl {
+            id: PassId(id),
             wave: self.wave,
             queue: QueueClass::Graphics,
             bindings: bindings.into_values().collect(),
             run,
-        });
-        Ok(())
+        })
     }
 
     fn compute(
@@ -459,7 +473,13 @@ pub fn lower_program(
     }
 
     let luts = b.words(1, program.luts.iter().map(|x| x.to_bits()));
-    for step in program.dispatches.iter().filter(|_| !opts.picture_only) {
+    // A table some read binds: the live rows of a drawn kind, or a static copy of a data kind's rows.
+    let read_table = |b: &mut Builder, input: &DispatchRows| match input {
+        DispatchRows::Drawable(i) => kinds[*i].0,
+        DispatchRows::Table { n_rows, stride, words, .. } =>
+            b.table(stride * 4, *n_rows, words.iter().flat_map(|f| f.to_le_bytes()).collect(), TableLifetime::Static),
+    };
+    for step in program.dispatches.iter().filter(|step| !opts.picture_only && !step.lockstep) {
         let mut motion = crate::fusion::motion_bundle(program, step, 0);
         let mut resources = Resources::new();
         let mut row_table = None;
@@ -481,6 +501,8 @@ pub fn lower_program(
                 1 => b.words(6, [0; 6]),
                 2 | 3 => b.transient(table.stride_bytes, table.capacity),
                 4 => luts,
+                // Reads of constant kinds; a row-local dispatch has no `previous`.
+                n if (n as usize) < 5 + step.reads.len() => read_table(&mut b, &step.reads[n as usize - 5].input),
                 _ => return Err("unknown fixed-step resource".into()),
             };
             let original = motion.passes[0].bindings.iter().find(|entry| entry.resource == table.id)
@@ -494,6 +516,47 @@ pub fn lower_program(
             &[(module, &step.entry, ShaderStage::Compute)],
             &resources,
         )?;
+        b.wave += 1;
+    }
+    // Kinds that read each other's rows: one loop of tick passes, advanced one tick at a time (fusion::motion_group).
+    let group: Vec<&crate::program::Dispatch> = program.dispatches.iter().filter(|step| step.lockstep).collect();
+    if !group.is_empty() && !opts.picture_only {
+        let names: Vec<&str> = group.iter().map(|step| step.input.view(&program.kinds).expect("validated dispatch").0).collect();
+        let rows: Vec<TableId> = group.iter().map(|step| read_table(&mut b, &step.input)).collect();
+        let mut body = vec![];
+        for (k, step) in group.iter().enumerate() {
+            let (_, n, stride, _) = step.input.view(&program.kinds).expect("validated dispatch");
+            let mut resources = Resources::new();
+            for binding in &step.bindings {
+                use crate::program::DispatchResource as R;
+                let id = match binding.resource {
+                    R::Rows => rows[k],
+                    R::Arguments => b.words(6, [0; 6]),
+                    R::Results => b.transient(step.checks.len() as u32 * 32, n),
+                    R::Outbox => b.transient(4, 4096),
+                    R::Luts => luts,
+                    R::Read(j) => {
+                        let read = &step.reads[j as usize];
+                        match names.iter().position(|name| *name == read.kind) {
+                            Some(i) => rows[i],
+                            None => read_table(&mut b, &read.input),
+                        }
+                    }
+                    R::Previous => b.transient(stride * 4, n),
+                };
+                resources.insert((binding.group, binding.slot), id);
+            }
+            let module = ModuleId(step.module as u32);
+            if step.reads.iter().any(|read| read.previous) {
+                let run = crate::fusion::ticks_run(step.tier, module, "snapshot", rows[k]);
+                body.push(b.decl(LOCKSTEP_PASSES + body.len() as u32, run, &[(module, "snapshot", ShaderStage::Compute)], &resources)?);
+            }
+            let run = crate::fusion::tick_run(step, module, rows[k]);
+            body.push(b.decl(LOCKSTEP_PASSES + body.len() as u32, run, &[(module, &step.entry, ShaderStage::Compute)], &resources)?);
+        }
+        let run = PassRun::PassLoop { max_iters: loft_abi::AdvanceArgs::MAX_TICKS, cond_buf: None, body: body.into() };
+        let id = b.bundle.passes.len() as u32;
+        b.bundle.passes.push(PassDecl { id: PassId(id), wave: b.wave, queue: QueueClass::Graphics, bindings: Box::new([]), run });
         b.wave += 1;
     }
 
@@ -631,6 +694,10 @@ pub fn lower_program(
                     let (rows, kp) = kinds[k];
                     let mut resources =
                         Resources::from([((1, 0), rows), ((1, 2), kp), ((1, 3), luts)]);
+                    // Rows this kind's queries read (`K[i]`), in the slots its module declares.
+                    for (j, &read) in program.kinds[k].reads.iter().enumerate() {
+                        resources.insert((1, 4 + j as u32), kinds[read as usize].0);
+                    }
                     if (matches!(pass, Pass::Vis(_) | Pass::Shadow(_)) || opts.overdraw)
                         && matches!(program.kinds[k].draw, Draw::Analytic | Draw::Traced)
                     {

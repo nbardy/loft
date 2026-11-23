@@ -4,7 +4,7 @@ use loft_emit::emit::{Emitter, References, fn_symbol, reachable, wgsl_name};
 use loft_ir::{Code, Diag, Res, Span};
 use loft_parse::ast::*;
 use std::fmt::Write;
-use crate::program::{Dispatch, DispatchBinding, DispatchResource, DispatchRows};
+use crate::program::{Dispatch, DispatchBinding, DispatchRead, DispatchResource, DispatchRows};
 use loft_abi::AdvanceArgs;
 
 fn unsupported(sp: Span, what: &str) -> Diag {
@@ -17,8 +17,20 @@ pub fn motion_module(
     kind: &KindDecl,
     fixed: &std::collections::BTreeMap<(String, String), String>,
     output: impl FnOnce() -> Res<(usize, DispatchRows)>,
+    rows_of: impl Fn(&str, Span) -> Res<DispatchRows>,
 ) -> Res<Option<(String, Dispatch)>> {
     let mut laws = vec![];
+    // `[S]` parameters of this kind's laws and checks, in first-use order: the tables the module binds.
+    let mut reads: Vec<(String, Span)> = vec![];
+    let mut tables = |f: &FnDecl, from: usize| -> Res<()> {
+        for prm in &f.params[from..] {
+            let Some(TyExpr::Table(k)) = &prm.ty else {
+                return Err(unsupported(prm.name.span, "a law takes its row, dt and `[Kind]` tables; a check its row and tables"));
+            };
+            if !reads.iter().any(|(r, _)| *r == k.name) { reads.push((k.name.clone(), k.span)); }
+        }
+        Ok(())
+    };
     let mut checks = vec![];
     let mut fields = vec![];
     let mut tier = Determinism::Det;
@@ -39,16 +51,20 @@ pub fn motion_module(
                     "schedule the row laws first and the checks last",
                 ));
             }
-            if f.params.len() != 2 || f.params[1].name.name != "dt" {
+            // Merge (lean2 one schedule reader + probe-rows table reads): lean2's loop over motion_schedule, with
+            // probe-rows' rule that `[Kind]` parameters may follow `dt` (a law) or the row (a check).
+            if f.params.len() < 2 || f.params[1].name.name != "dt" {
                 return Err(unsupported(f.name.span, "row-local laws take the target row and dt"));
             }
+            tables(f, 2)?;
             tier = law.tier;
             fields.extend(law.writes.iter().map(|w| w.name.clone()));
             laws.push(f);
         } else {
-            if f.params.len() != 1 {
+            if f.params.is_empty() {
                 return Err(unsupported(f.name.span, "row-local checks take one target row"));
             }
+            tables(f, 1)?;
             checks.push(f);
         }
     }
@@ -65,6 +81,18 @@ pub fn motion_module(
         "@group(1) @binding(0) var<storage, read> rows:",
         "@group(2) @binding(0) var<storage, read_write> rows:",
     );
+    // A read of another kind binds its live rows; a read of this kind binds `loft_prev`, the copy `snapshot` takes
+    // before each tick, so every row reads the same version (DESIGN §5.3). Without reads the text is unchanged.
+    let previous = reads.iter().any(|(r, _)| *r == kind.name.name);
+    for (j, (read, _)) in reads.iter().enumerate() {
+        if *read == kind.name.name {
+            em.out.push_str("@group(2) @binding(3) var<storage, read_write> loft_prev: array<f32>;\n");
+            em.row_loader(kind, "Row", "loft_prev", &format!("loft_read_{read}"));
+            em.tables.insert(read.clone(), format!("loft_read_{read}"));
+        } else {
+            em.foreign_table(p.kinds[read.as_str()], 1, 4 + j as u32);
+        }
+    }
     em.motion = true;
     em.motion_tier = tier;
     if tier.is_det() {
@@ -202,6 +230,15 @@ var<private> loft_tick: u32;
         .unwrap();
     }
     em.out.push_str("}\n");
+    if previous {
+        em.out.push_str(r#"
+@compute @workgroup_size(64) fn snapshot(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x + loft_advance_args.first_row;
+    if i >= loft_advance_args.end_row { return; }
+    for (var w = 0u; w < STRIDE; w += 1u) { loft_prev[i * STRIDE + w] = rows[i * STRIDE + w]; }
+}
+"#);
+    }
     let mut bindings = vec![
         (1, 0, DispatchResource::Arguments),
         (2, 0, DispatchResource::Rows),
@@ -211,6 +248,12 @@ var<private> loft_tick: u32;
     }
     if has_events {
         bindings.push((2, 2, DispatchResource::Outbox));
+    }
+    let mut dispatch_reads = vec![];
+    for (j, (read, span)) in reads.iter().enumerate() {
+        let own = *read == kind.name.name;
+        bindings.push(if own { (2, 3, DispatchResource::Previous) } else { (1, 4 + j as u32, DispatchResource::Read(j as u32)) });
+        dispatch_reads.push(DispatchRead { kind: read.clone(), input: if own { input.clone() } else { rows_of(read, *span)? }, previous: own });
     }
     Ok(Some((
         em.out,
@@ -231,6 +274,8 @@ var<private> loft_tick: u32;
             fields: dispatch_fields,
             layout_hash: *layout.finalize().as_bytes(),
             checks: checks.iter().map(|c| c.name.name.clone()).collect(),
+            reads: dispatch_reads,
+            lockstep: false,
         },
     )))
 }

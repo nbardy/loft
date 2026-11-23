@@ -2,7 +2,7 @@
 //! construction: a kind's module text never depends on its row count, its kind id or its row base (those are data in
 //! the kind's uniform), so 1 and 20 instances lower to byte-identical modules.
 
-pub use loft_check::program::{Dispatch, DispatchBinding, DispatchResource, DispatchRows, Draw, Instance, KindTable, abi};
+pub use loft_check::program::{Dispatch, DispatchBinding, DispatchRead, DispatchResource, DispatchRows, Draw, Instance, KindTable, abi};
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct ExpressionOrigin { pub function:usize,pub expression:usize,pub span:(String,usize,usize) }
