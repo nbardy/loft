@@ -1,4 +1,4 @@
-//! Full rendered diagnostics for every implemented v1 code in E101–E503.
+//! Full rendered diagnostics for every implemented v1 code in E101–E502.
 use loft_ir::Code;
 use loft_passes::{compile, source::Graph};
 use std::path::Path;
@@ -308,21 +308,6 @@ schedule Main { run_laws(first,second) }
   7 | law first(h: K, dt) writes h.{r} { h.r = dt }
    |                               - first writer declared here
    = fix: give one scheduled law ownership of this field
-"###,
-    ),
-    (
-        Code::E503,
-        r###"state Points { pos: array[p3@World, 64] }
-solver Broken over Points writes Points.{pos} config { strategy: colored_gs(2) } {
-  constrain edge(i, i) in 0..15 { pos[i] = pos[0] }
-}
-"###,
-        r###"error[E503]: constraint endpoints have the same binder
-  --> case.loft:3:21
-   |
-  3 |   constrain edge(i, i) in 0..15 { pos[i] = pos[0] }
-   |                     ^
-   = fix: use a separate name for each endpoint
 "###,
     ),
 ];

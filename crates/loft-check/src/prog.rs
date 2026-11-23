@@ -22,7 +22,6 @@ pub struct Prog<'a> {
     pub bakes: BTreeMap<&'a str, &'a BakeDecl>,
     pub bodies: BTreeMap<&'a str, (&'a Ident, &'a [BodyItem])>,
     pub states: BTreeMap<&'a str, &'a StateDecl>,
-    pub solvers: BTreeMap<&'a str, &'a SolverDecl>,
     pub laws:BTreeMap<&'a str,&'a LawDecl>,
     pub checks:BTreeMap<&'a str,&'a FnDecl>,
 }
@@ -46,7 +45,7 @@ impl<'a> Prog<'a> {
             scans: BTreeMap::new(),
             kernels: BTreeMap::new(),
             bakes: BTreeMap::new(),
-            bodies: BTreeMap::new(), states: BTreeMap::new(), solvers: BTreeMap::new(),
+            bodies: BTreeMap::new(), states: BTreeMap::new(),
             schedule: None,laws:BTreeMap::new(),checks:BTreeMap::new(),
         };
         let mut seen: BTreeMap<&str, Span> = BTreeMap::new();
@@ -77,10 +76,6 @@ impl<'a> Prog<'a> {
                     name(&state.name)?;
                     p.states.insert(&state.name.name, state);
                     p.structs.insert(&state.name.name, (&state.name, &state.fields));
-                }
-                Item::Solver(solver) => {
-                    name(&solver.name)?;
-                    p.solvers.insert(&solver.name.name, solver);
                 }
                 Item::World(n, kinds) => {
                     name(n)?;

@@ -426,67 +426,6 @@ impl<'src> Parser<'src, '_> {
         Ok(items)
     }
 
-    fn solver(&mut self) -> Res<SolverDecl> {
-        let name = self.upper_ident()?;
-        self.expect("over")?;
-        let mut table = vec![self.ident()?];
-        while self.is(".") && self.tokens.get(self.at + 1).is_some_and(|t| t.kind == Kind::Word) {
-            self.pop();
-            table.push(self.ident()?);
-        }
-        self.seps();
-        let writes = if self.eat("writes") {
-            let owner = self.ident()?;
-            let mut fields = vec![];
-            if self.eat(".") {
-                self.expect("{")?;
-                while !self.eat("}") {
-                    fields.push(self.ident()?);
-                    if !self.eat(",") {
-                        self.expect("}")?;
-                        break;
-                    }
-                }
-            }
-            Some((owner, fields))
-        } else {
-            None
-        };
-        self.seps();
-        self.expect("config")?;
-        self.expect("{")?;
-        let config = self.fields("}")?;
-        self.seps();
-        self.expect("{")?;
-        self.seps();
-        let locals = self.locals.clone();
-        let maps = self.maps.clone();
-        let mut steps = vec![];
-        while !self.eat("}") {
-            let step = if self.eat("constrain") {
-                let name = self.ident()?;
-                self.expect("(")?;
-                let a = self.ident()?;
-                self.expect(",")?;
-                let b = self.ident()?;
-                self.expect(")")?;
-                self.expect("in")?;
-                let lo = self.expr(0)?;
-                self.expect("..")?;
-                let hi = self.expr(0)?;
-                let block = self.block(false)?;
-                SolverStep::Constraint { name, a, b, lo, hi, block }
-            } else {
-                SolverStep::Statement(self.stmt()?)
-            };
-            steps.push(step);
-            self.end()?;
-        }
-        self.locals = locals;
-        self.maps = maps;
-        Ok(SolverDecl { name, table, writes, config, steps })
-    }
-
     fn item(&mut self, public: bool) -> Res<Item> {
         let build = self.eat("build");
         let start = self.cur().span;
@@ -564,9 +503,6 @@ impl<'src> Parser<'src, '_> {
             self.expect("{")?;
             let fields = self.columns("}")?;
             return Ok(Item::State(StateDecl { name, checkpoint, home, fields }));
-        }
-        if self.eat("solver") {
-            return self.solver().map(Item::Solver);
         }
         if self.eat("bake_tex") {
             return self.bake_tex().map(Item::Bake);

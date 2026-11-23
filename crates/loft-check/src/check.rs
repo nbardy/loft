@@ -1181,7 +1181,7 @@ impl<'p,'a> Ck<'p,'a> {
         }
         if callee.name == EMIT_EVENT {
             if self.ownership.is_none() && self.kernel.is_none() {
-                return Err(e003(span, "emit_event requires an effectful entry", "call it in a law, solver or kernel"));
+                return Err(e003(span, "emit_event requires an effectful entry", "call it in a law or kernel"));
             }
             let [tag, instance, site, payload] = args else {
                 return Err(e003(span, "emit_event needs four arguments", "provide tag, instance_id, site_id and payload"));

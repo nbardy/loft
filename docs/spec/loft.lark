@@ -5,7 +5,7 @@ top_item: use_decl
         | "pub"? ( space_decl | struct_decl | type_alias | const_decl | input_decl | param_decl
                  | kernel_decl | bake_tex_decl | camera_decl | target_decl | fn_decl | lobe_decl
                  | scan_decl | kind_decl | body_decl | state_decl
-                 | law_decl | solver_decl | check_decl
+                 | law_decl | check_decl
                  | retarget_decl | world_decl | build_fn | build_blk | sched_decl )
 
 use_decl: "use" mod_path ("::" ("*" | "{" import_names "}") | "as" LIDENT)?
@@ -63,10 +63,6 @@ state_decl:  "state" UIDENT ("checkpoint" INT)? ("home" LIDENT)? "{" (_NL? col (
 law_decl:    "law" LIDENT "(" params ")" "nondet"? "writes" write_set block
 write_set:   LIDENT ("." "{" ident_list "}")?
 
-solver_decl: "solver" UIDENT "over" path_ref (_NL? "writes" (LIDENT | UIDENT) ("." "{" ident_list "}")?)? _NL? "config" "{" field_inits "}" _NL? solver_block
-solver_block: "{" (_NL? solver_step (_sep solver_step)* _sep?)? "}"
-solver_step: stmt | "constrain" LIDENT "(" LIDENT "," LIDENT ")" "in" expr ".." expr block
-path_ref:    IDENT ("." LIDENT)*
 
 check_decl:  "check" LIDENT "(" params ")" "->" type_expr block
 retarget_decl: "retarget" UIDENT "from" UIDENT "to" UIDENT "{" field_inits "}"

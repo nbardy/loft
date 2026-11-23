@@ -5,7 +5,6 @@
 use loft_check::{Prog, FINITE_DIFF_STEP, TWIN_LIGHT, finite_diff_parameter, pose_field, unit};
 pub use loft_check::references::{References, fn_symbol, proof_dependencies, reachable};
 use loft_builtins::{MotionClass, WgslLowering, lookup};
-pub mod solver;
 #[path="aov.rs"]
 mod aov;
 pub use aov::Aov;
@@ -19,7 +18,7 @@ mod column;
 use material_shape::Layout;
 use loft_parse::ast::*;
 use loft_check::program::{abi, Draw};
-use loft_ir::{Code, Diag, Res, Span};
+use loft_ir::{Code, Diag, Res};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 

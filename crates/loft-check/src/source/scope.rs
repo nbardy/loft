@@ -732,32 +732,6 @@ impl Scope<'_> {
                     &[s.prev.name.clone(), s.at.name.clone(), s.var.name.clone()],
                 )?;
             }
-            Item::Solver(s) => {
-                if let Some(head) = s.table.first_mut() {
-                    self.ident(head)?;
-                }
-                self.fields(&mut s.config, &[])?;
-                let mut locals = s.writes.iter().map(|(n, _)| n.name.clone()).collect();
-                for step in &mut s.steps {
-                    match step {
-                        SolverStep::Statement(s) => self.stmt(s, &mut locals)?,
-                        SolverStep::Constraint {
-                            a,
-                            b,
-                            lo,
-                            hi,
-                            block,
-                            ..
-                        } => {
-                            self.expr(lo, &locals)?;
-                            self.expr(hi, &locals)?;
-                            let mut inside = locals.clone();
-                            inside.extend([a.name.clone(), b.name.clone()]);
-                            self.block(block, &mut inside)?;
-                        }
-                    }
-                }
-            }
             Item::Retarget {
                 source,
                 target,
@@ -816,7 +790,6 @@ impl Scope<'_> {
             Item::Schedule(x) => &mut x.name,
             Item::Law(x) => &mut x.f.name,
             Item::State(x) => &mut x.name,
-            Item::Solver(x) => &mut x.name,
             Item::Kernel(x) => &mut x.f.name,
             Item::Camera(x) => &mut x.name,
             Item::Bake(x) => &mut x.texel.name,

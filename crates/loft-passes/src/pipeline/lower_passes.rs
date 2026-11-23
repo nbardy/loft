@@ -5,7 +5,7 @@ use loft_eval::pack;
 use loft_eval::eval::{RowVal, Tables};
 use loft_ir::{Code, Diag, Res, Sources};
 use loft_parse::ast::*;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use emit::shade_tiles::{Lighting, Visibility};
 
 pub(super) struct LoweredPasses {
@@ -153,8 +153,8 @@ fn lower_dispatches(
     p: &Prog<'_>, types: &mut Vec<Ty>, opts: &CompileOptions<'_>, schedule: &Schedule<'_>,
     scene: &Stage0Scene, fixed: &BTreeMap<(String, String), String>, texts: &mut Vec<(String, String)>,
 ) -> Res<Vec<Dispatch>> {
-    let CompileOptions { samples, overrides, .. } = *opts;
-    let Schedule { drawn, decl: sched, .. } = schedule;
+    let CompileOptions { samples, .. } = *opts;
+    let Schedule { drawn, .. } = schedule;
     let Stage0Scene { tables, .. } = scene;
     let mut dispatches = vec![];
     if samples.is_empty() {
@@ -183,20 +183,6 @@ fn lower_dispatches(
                 texts.push((format!("{name}.advance"), entry));
                 dispatches.push(dispatch);
             }
-        }
-        let mut solver_tables = HashSet::new();
-        for pass in sched.passes.iter().filter(|p| p.verb.name == "run_solver") {
-            let ExprKind::Name(name) = &pass.args[0].value.kind else { unreachable!("checked solver name"); };
-            let solver = p.solvers[name.as_str()];
-            let table = &solver.table[0];
-            if p.kinds.contains_key(table.name.as_str()) || !solver_tables.insert(table.name.as_str()) {
-                return Err(Diag::new(Code::E502, table.span, "the scheduled solver state table has multiple owners",
-                    "use one scheduled solver per dedicated state table"));
-            }
-            let (entry, dispatch) = emit::solver::lower(p, types, texts.len(), solver,
-                |p, types, e| loft_eval::solver::initial_words(p, types, e, overrides))?;
-            texts.push((format!("{name}.advance"), entry));
-            dispatches.push(dispatch);
         }
     }
     Ok(dispatches)

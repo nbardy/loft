@@ -270,8 +270,6 @@ fn authored_motion_declarations_preserve_spans_and_write_ownership() {
     for (code, fixture, excerpt) in [
         (Code::E011, include_str!("motion_source/body-duplicate.loft"), "mass: 1kg, mass: 2kg"),
         (Code::E003, include_str!("motion_source/state-zero-checkpoint.loft"), "checkpoint 0"),
-        (Code::E501, include_str!("motion_source/solver-undeclared-write.loft"), "prev[0] = pos[0]"),
-        (Code::E503, include_str!("motion_source/solver-race.loft"), "edge(i, i)"),
     ] {
         let (actual, diagnostic) = compile(&format!("{scene}\n{fixture}")).expect_err("invalid motion declaration");
         assert_eq!(actual, code, "{diagnostic}");
