@@ -100,6 +100,8 @@ struct Linker<'a> {
     names: Vec<Names>,
     bare: HashSet<String>,
     bare_spaces: HashSet<String>,
+    /// Public values of the stock library, which keep their bare names as keys and so are unique.
+    stock_public: HashMap<String, Decl>,
 }
 
 impl<'a> Linker<'a> {
@@ -155,11 +157,16 @@ impl<'a> Linker<'a> {
             }
             names.push(scope);
         }
+        let stock_public = graph.nodes.iter().enumerate()
+            .filter(|(id, _)| graph.stock(*id as u16).is_some_and(stock))
+            .flat_map(|(id, _)| names[id].values.iter().filter(|(_, d)| d.public).map(|(n, d)| (n.clone(), d.clone())))
+            .collect();
         Ok(Self {
             graph,
             names,
             bare,
             bare_spaces,
+            stock_public,
         })
     }
 
@@ -169,6 +176,7 @@ impl<'a> Linker<'a> {
             own,
             bare: &self.bare,
             bare_spaces: &self.bare_spaces,
+            stock_public: &self.stock_public,
             imported: Names::default(),
             modules: HashMap::new(),
             intrinsic_modules: HashMap::new(),
@@ -232,6 +240,11 @@ impl<'a> Linker<'a> {
                             }
                         }
                         if found || intrinsic_alias(import, &n.name) {
+                            continue;
+                        }
+                        // Imported from the wrong stock module: the name is unique, so bind the one that exists.
+                        if let Some(decl) = self.stock_public.get(&n.name) {
+                            scope.imported.insert(false, &n.name, decl.clone(), n.span)?;
                             continue;
                         }
                         // Models import builtins from the catalog module they resemble (`mix_bsdf` from bsdf).
@@ -317,6 +330,7 @@ struct Scope<'a> {
     own: &'a Names,
     bare: &'a HashSet<String>,
     bare_spaces: &'a HashSet<String>,
+    stock_public: &'a HashMap<String, Decl>,
     imported: Names,
     modules: HashMap<&'a str, (Vec<&'a Names>, Span)>,
     intrinsic_modules: HashMap<&'a str, &'a Import>,
@@ -364,6 +378,11 @@ impl Scope<'_> {
             && let Some(decl) = self.own.values.get(kind)
         {
             return Ok(Some(format!("{}#{helper}", decl.key)));
+        }
+        // A stock catalog name resolves without an import: its bare name is its key and is unique. A missing
+        // or misplaced `use` (vnoise, smin, ggx, capsule_chain) was the commonest fresh-crab error left.
+        if !space && let Some(decl) = self.stock_public.get(name) {
+            return Ok(Some(decl.key.clone()));
         }
         if bare.contains(name) {
             return Err(error(span, name));
