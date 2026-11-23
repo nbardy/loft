@@ -2,7 +2,7 @@
 # After div2 and imp1 finish: prune old Cambium caches, then remove Loft worktrees that are merged and clean.
 # Real (APFS) space is measured with df, not du. Cambium's guards refuse dirty or unmerged workspaces.
 D=$(cd "$(dirname "$0")" && pwd); L="$D/cleanup_after.log"
-until [ -s "$D/div2.done" ] && [ -s "$D/imp1.done" ]; do sleep 300; done
+until [ -s "$D/match1.done" ] && [ -s "$D/lean2.done" ] && [ -e "$D/resume_after_cap.log" ]; do sleep 300; done
 exec >>"$L" 2>&1; echo "== $(date)"
 avail() { df -k / | awk 'NR==2{print $4}'; }
 a=$(avail)
