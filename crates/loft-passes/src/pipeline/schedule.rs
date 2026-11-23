@@ -105,7 +105,8 @@ pub(super) fn resolve<'a>(
     };
     if (matches!(light, Lighting::World { .. }) || film.is_some()) && path.is_some()
         || film.is_some() && paper.is_some()
-        || matches!(light, Lighting::World { visibility: Visibility::SubpixelEdges, .. }) && paper.is_some()
+        || matches!(light, Lighting::World { visibility: Visibility::SubpixelEdges | Visibility::Coverage, .. }
+            | Lighting::Bsdf(_, Visibility::Coverage)) && paper.is_some()
     {
         return Err(Diag::new(Code::E520, sched.name.span, "conflicting raster and presentation recipes",
             "use one shade and film recipe for the raster schedule"));

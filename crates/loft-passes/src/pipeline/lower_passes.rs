@@ -1,6 +1,6 @@
 use super::{Timings, schedule::Schedule, stage0::Stage0Scene};
 use crate::{CompileOptions, Prog, bake_tex, emit, shader::naga_module};
-use crate::program::{Dispatch, Pass, ShaderModule, abi};
+use crate::program::{Dispatch, Draw, Pass, ShaderModule, abi};
 use loft_eval::pack;
 use loft_ir::{Code, Diag, Res, Sources};
 use loft_parse::ast::*;
@@ -23,7 +23,7 @@ pub(super) fn lower(
     let Schedule { drawn, lighting, .. } = schedule;
     let Stage0Scene { kinds, lut_refs, .. } = &*scene;
     let light = match *lighting {
-        Lighting::Bsdf(name) => Some(name),
+        Lighting::Bsdf(name, _) => Some(name),
         Lighting::World { .. } => None,
     };
     let mut texts = Vec::new();
@@ -94,6 +94,15 @@ fn lower_world(
                 *source = emit::shade_tiles::module(p, types, lut_refs, source, &wgsl, callback, sky, visibility, primary_world);
             }
             visibility
+        }
+        // Surface grids and meshes have no field to measure a closest approach, so their modules keep the centre path.
+        (Lighting::Bsdf(_, Visibility::Coverage), _) if opts.aov == emit::Aov::Beauty => {
+            for ((_, source), kind) in texts.iter_mut().zip(kinds.iter()) {
+                if matches!(kind.draw, Draw::Analytic | Draw::Traced) {
+                    *source = emit::shade_tiles::bsdf_coverage(source);
+                }
+            }
+            Visibility::Coverage
         }
         _ => Visibility::Center,
     };

@@ -107,6 +107,6 @@ pub schedule RealtimeMatched {
   cull_indirect(Drawables)
   render_bundle(Vis64) { draw_indirect(Drawables) }
   tile_classify(Vis64, tile: 8)
-  shade_tiles(Vis64, shade: matched_shade, samples: 4, sun: [0.45, 0.8, 0.35])
+  shade_tiles(Vis64, shade: matched_shade, edges: taps, sun: [0.45, 0.8, 0.35])
   tonemap(ColorHdr, sky: matched_sky, film: matched_film)
 }
