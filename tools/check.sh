@@ -126,7 +126,7 @@ case "${1:-}" in
     wasm
     plan
     for crate in ${scope[@]+"${scope[@]}"}; do
-      tools/gpu_lock.sh tools/dev.sh test "$crate" --test-threads 1
+      tools/gpu_lock.sh --heavy tools/dev.sh test "$crate" --test-threads 1
     done ;;
   full) static_checks; mkdir -p "$root/out"; full_gate ;;
   *) echo 'usage: tools/check.sh lines|static|lint|plan|quick|full|parity [controls options]' >&2; exit 2 ;;
