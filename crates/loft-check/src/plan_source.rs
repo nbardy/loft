@@ -146,19 +146,24 @@ pub fn check_source(plan: &PlanDecl) -> Res<()> {
             return Err(invalid(field.name.span, "duplicate plan parameter"));
         }
     }
-    let mut objectives = vec![];
-    objective_terms(&plan.objective, &mut objectives);
-    for e in objectives {
-        weight(e)?;
-    }
-    let mut flight = false;
+    operands(plan).map(drop)
+}
+
+/// The one binding of a plan's objective terms and holds. Checking validates it
+/// and lowering evaluates what it returns, so no operand is derived twice.
+fn operands(plan: &PlanDecl) -> Res<(Vec<Weight<'_>>, Vec<Constraint<'_>>)> {
+    let mut terms = vec![];
+    objective_terms(&plan.objective, &mut terms);
+    let weights = terms.into_iter().map(weight).collect::<Res<_>>()?;
+    let (mut holds, mut flight) = (vec![], false);
     for e in &plan.holds {
-        if matches!(constraint(e)?, Constraint::Flight(..)) && std::mem::replace(&mut flight, true)
-        {
+        let hold = constraint(e)?;
+        if matches!(hold, Constraint::Flight(..)) && std::mem::replace(&mut flight, true) {
             return Err(invalid(e.span, "only one ballistic interval is supported"));
         }
+        holds.push(hold);
     }
-    Ok(())
+    Ok((weights, holds))
 }
 
 enum Asset {
@@ -312,11 +317,10 @@ pub fn lower_source<T, E>(
             .transpose()
             .map(|v| v.unwrap_or(0.001))
     };
-    let mut terms = vec![];
-    objective_terms(&decl.objective, &mut terms);
+    let (weights, constraints) = operands(decl)?;
     let mut objectives = vec![];
-    for e in terms {
-        objectives.push(match weight(e)? {
+    for w in weights {
+        objectives.push(match w {
             Weight::Effort(w) => Objective::Effort(num(w)?),
             Weight::Jerk(w) => Objective::Jerk(num(w)?),
             Weight::Near(spline, weights) => {
@@ -336,8 +340,8 @@ pub fn lower_source<T, E>(
         });
     }
     let (mut holds, mut flight) = (vec![], None);
-    for e in &decl.holds {
-        holds.push(match constraint(e)? {
+    for c in constraints {
+        holds.push(match c {
             Constraint::Position(t, p, l) => Hold::PosAt {
                 time: num(t)?,
                 position: vec(p)?,

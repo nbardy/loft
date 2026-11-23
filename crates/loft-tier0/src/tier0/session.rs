@@ -8,10 +8,7 @@ use loft_passes::{
     program::{Draw, Instance, Program},
 };
 use loft_ir::{Code, Diag, Res, Sources, Span};
-use loft_parse::{
-    ast::*,
-    cst::{Cst, Node, Token, Trivia},
-};
+use loft_parse::ast::*;
 use std::{
     ops::Range,
     time::{Duration, Instant},
@@ -98,14 +95,11 @@ impl TraceSource {
             ));
         }
         let file = trace.name.span.file;
-        let text = &source.files[usize::from(file)].1;
-        let cst = Cst::parse(file, text)?;
-        let range = |f: &FnDecl| {
-            body_range(&cst.roots, text, f.name.span).ok_or_else(|| reload(f.name.span))
-        };
+        let module = compiled.modules.iter().find(|m| m.file == Some(file))
+            .ok_or_else(|| reload(trace.name.span))?;
         let mut sites = vec![Site {
             helper: None,
-            range: range(trace)?,
+            range: body_range(module, trace)?,
         }];
         let others: Vec<_> = p
             .kinds
@@ -120,7 +114,8 @@ impl TraceSource {
         let (uneditable, _) = emit::reachable(&p, &others, &[light(&p)?]);
         let (helpers, _) = emit::reachable(&p, &[trace], &[]);
         for helper in helpers {
-            if helper.name.span.file == file
+            // Generated derivatives inherit source spans, but have no authored edit site.
+            if module.items.iter().any(|item| matches!(item, Item::Fn(f) if std::ptr::eq(f, helper)))
                 && !helper.comptime
                 && helper.raw.is_none()
                 && !uneditable
@@ -130,7 +125,7 @@ impl TraceSource {
             {
                 sites.push(Site {
                     helper: Some(helper.name.name.clone()),
-                    range: range(helper)?,
+                    range: body_range(module, helper)?,
                 });
             }
         }
@@ -183,7 +178,6 @@ impl TraceSource {
                 "an edited trace cannot introduce derivative lowering",
             ));
         }
-        let cst = Cst::parse(self.file, text)?;
         let fresh = Prog::index(std::slice::from_ref(&module))?;
         let fresh_kind = fresh
             .kinds
@@ -203,8 +197,7 @@ impl TraceSource {
                     .ok_or_else(|| reload(trace.name.span))?,
                 None => trace,
             };
-            let range =
-                body_range(&cst.roots, text, f.name.span).ok_or_else(|| reload(f.name.span))?;
+            let range = body_range(&module, f)?;
             if text.get(new_end..range.start) != old_text.get(old_end..site.range.start) {
                 return Err(reload(f.name.span));
             }
@@ -469,48 +462,7 @@ fn device_shader(wgsl: String) -> String {
     loft_passes::strip_shader_provenance(text)
 }
 
-fn body_range(nodes: &[Node], text: &str, name: Span) -> Option<Range<usize>> {
-    fn token(n: &Node) -> &Token {
-        match n {
-            Node::Leaf(t) => t,
-            Node::Group { open, .. } => open,
-        }
-    }
-    for (i, node) in nodes.iter().enumerate() {
-        if let Node::Group { children, .. } = node {
-            if let Some(range) = body_range(children, text, name) {
-                return Some(range);
-            }
-            continue;
-        }
-        if token(node).span != name {
-            continue;
-        }
-        let mut body = nodes[i + 1..]
-            .iter()
-            .skip_while(|n| !matches!(token(n).text(text), "=" | "{"));
-        let head = body.next()?;
-        let start = token(head).span.lo as usize;
-        if let Node::Group { close, .. } = head {
-            return Some(start..close.span.hi as usize);
-        }
-        let mut end = token(head).span.hi as usize;
-        for n in body {
-            let t = token(n);
-            if t.text(text) == ";"
-                || t.kind == loft_parse::cst::Kind::End
-                || t.leading
-                    .iter()
-                    .any(|(trivia, _)| *trivia == Trivia::Newline)
-            {
-                break;
-            }
-            end = match n {
-                Node::Leaf(t) => t.span.hi,
-                Node::Group { close, .. } => close.span.hi,
-            } as usize;
-        }
-        return Some(start..end);
-    }
-    None
+fn body_range(module: &Module, f: &FnDecl) -> Res<Range<usize>> {
+    let span = module.bodies.get(&f.name.span).ok_or_else(|| reload(f.name.span))?;
+    Ok(span.lo as usize..span.hi as usize)
 }

@@ -240,35 +240,7 @@ fn solver(p: &Prog<'_>, solver: &SolverDecl) -> Res<()> {
             unique(&mut writes, field)?;
         }
     }
-    let mut config = HashSet::new();
-    for (key, value) in &solver.config {
-        unique(&mut config, key)?;
-        let positive_int = |e: &Expr| {
-            matches!(e.kind, ExprKind::Num { value, float: false, .. }
-            if value > 0. && value <= f64::from(u32::MAX))
-        };
-        let valid = match key.name.as_str() {
-            "strategy" => match &value.kind {
-                ExprKind::Name(name) => name == "sym_gs",
-                ExprKind::Call { callee, args } => {
-                    callee.name == "colored_gs"
-                        && matches!(args.as_slice(), [arg] if arg.name.is_none() && positive_int(&arg.value))
-                }
-                _ => false,
-            },
-            "substeps" | "iters" => positive_int(value),
-            "shared_mem" => matches!(value.kind, ExprKind::Bool(_)),
-            _ => false,
-        };
-        if !valid {
-            return Err(Diag::new(
-                Code::E003,
-                value.span,
-                format!("invalid solver config field {}", key.name),
-                "use sym_gs or colored_gs(n), positive substeps and iters, and a boolean shared_mem",
-            ));
-        }
-    }
+    solver_config(solver)?;
     let mut locals = HashSet::new();
     for step in &solver.steps {
         match step {
@@ -381,6 +353,64 @@ pub enum Step<'a> {
     Distance(Distance<'a>),
 }
 
+/// The one reading of a solver's config block. The checker validates with it;
+/// `scheduled` applies the GPU step limit to the counts it returns, in source order.
+fn solver_config(solver: &SolverDecl) -> Res<(SolverConfig, Vec<(u32, Span)>)> {
+    let mut config = SolverConfig {
+        strategy: Strategy::Symmetric,
+        memory: StateMemory::Private,
+        substeps: 1,
+        iterations: 1,
+    };
+    let (mut seen, mut counts) = (HashSet::new(), vec![]);
+    for (key, value) in &solver.config {
+        unique(&mut seen, key)?;
+        let mut count = |e: &Expr| {
+            let ExprKind::Num { value, float: false, .. } = e.kind else { return None };
+            (value > 0. && value <= f64::from(u32::MAX)).then(|| {
+                counts.push((value as u32, e.span));
+                value as u32
+            })
+        };
+        let valid = match key.name.as_str() {
+            "strategy" => {
+                if let ExprKind::Name(name) = &value.kind {
+                    name == "sym_gs"
+                } else if let ExprKind::Call { callee, args } = &value.kind
+                    && callee.name == "colored_gs"
+                    && let [arg] = args.as_slice()
+                    && arg.name.is_none()
+                {
+                    count(&arg.value).map(|n| config.strategy = Strategy::Colored(n)).is_some()
+                } else {
+                    false
+                }
+            }
+            "substeps" => count(value).map(|n| config.substeps = n).is_some(),
+            "iters" => count(value).map(|n| config.iterations = n).is_some(),
+            "shared_mem" => {
+                let ExprKind::Bool(shared) = value.kind else { return Err(invalid_config(key, value)) };
+                config.memory = if shared { StateMemory::Workgroup } else { StateMemory::Private };
+                true
+            }
+            _ => false,
+        };
+        if !valid {
+            return Err(invalid_config(key, value));
+        }
+    }
+    Ok((config, counts))
+}
+
+fn invalid_config(key: &Ident, value: &Expr) -> Diag {
+    Diag::new(
+        Code::E003,
+        value.span,
+        format!("invalid solver config field {}", key.name),
+        "use sym_gs or colored_gs(n), positive substeps and iters, and a boolean shared_mem",
+    )
+}
+
 pub fn scheduled<'a>(
     p: &Prog<'a>,
     types: &mut Vec<Ty>,
@@ -421,32 +451,9 @@ pub fn scheduled<'a>(
             span: decl.name.span,
         },
     );
-    let mut config = SolverConfig {
-        strategy: Strategy::Symmetric,
-        memory: StateMemory::Private,
-        substeps: 1,
-        iterations: 1,
-    };
-    for (key, value) in &decl.config {
-        match key.name.as_str() {
-            "strategy" => {
-                config.strategy = match &value.kind {
-                    ExprKind::Name(_) => Strategy::Symmetric,
-                    ExprKind::Call { args, .. } => Strategy::Colored(small_count(&args[0].value)?),
-                    _ => unreachable!("checked solver strategy"),
-                }
-            }
-            "substeps" => config.substeps = small_count(value)?,
-            "iters" => config.iterations = small_count(value)?,
-            "shared_mem" => {
-                config.memory = match value.kind {
-                    ExprKind::Bool(true) => StateMemory::Workgroup,
-                    ExprKind::Bool(false) => StateMemory::Private,
-                    _ => unreachable!("checked solver storage"),
-                }
-            }
-            _ => unreachable!("checked solver config"),
-        }
+    let (config, counts) = solver_config(decl)?;
+    if let Some(&(_, span)) = counts.iter().find(|(n, _)| *n > 64) {
+        return Err(solver_error(span, "solver configuration exceeds 64 steps"));
     }
     let mut steps = Vec::new();
     for step in &decl.steps {
@@ -475,16 +482,6 @@ fn solver_error(span: Span, message: &str) -> Diag {
         message,
         "use GPU state and a bounded distance constraint",
     )
-}
-
-fn small_count(e: &Expr) -> Res<u32> {
-    match e.kind {
-        ExprKind::Num { value, .. } if (1.0..=64.0).contains(&value) => Ok(value as u32),
-        _ => Err(solver_error(
-            e.span,
-            "solver configuration exceeds 64 steps",
-        )),
-    }
 }
 
 fn distance<'a>(

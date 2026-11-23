@@ -88,24 +88,17 @@ pub fn check(p: &Prog, types: &mut Vec<Ty>) -> Res<CheckedEffects> {
     for k in p.kinds.values() {
         ck.kind(k)?;
     }
-    if let Some(s)=p.schedule {
-        let mut owners=HashMap::new();
-        let mut tiers=HashMap::new();
-        for pd in s.passes.iter().filter(|pd| pd.verb.name=="run_laws"){
-            for a in &pd.args{
-                let ExprKind::Name(n)=&a.value.kind else{return Err(e003(a.value.span,"expected a law name","name a declared law"))};
-                let law=p.laws.get(n.as_str()).ok_or_else(||Diag::new(Code::E011,a.value.span,"unknown scheduled law","declare the law before scheduling it"))?;
-                if let Some(TyExpr::Name(k))=law.f.params.first().and_then(|prm|prm.ty.as_ref()){
-                    if let Some((tier, first)) = tiers.insert(&k.name, (law.tier, law.f.name.span))
-                        && tier != law.tier
-                    {
-                        return Err(Diag::new(Code::E504, law.f.name.span, "Det and NonDet laws share a row table",
-                            "schedule the NonDet laws on their own kind").note(first, "other tier scheduled here"));
-                    }
-                    for f in &law.writes{if let Some(prev)=owners.insert((&k.name,&f.name),f.span){return Err(Diag::new(Code::E502,f.span,format!("conflicting writes on {}.{}",k.name,f.name),"give one scheduled law ownership of this field").note(prev,"first writer declared here"));}}
-                }
-            }
+    let mut owners=HashMap::new();
+    let mut tiers=HashMap::new();
+    for s in motion_schedule(p)? {
+        let (Some(law), Some(k)) = (s.law, s.target) else { continue };
+        if let Some((tier, first)) = tiers.insert(&k.name, (law.tier, law.f.name.span))
+            && tier != law.tier
+        {
+            return Err(Diag::new(Code::E504, law.f.name.span, "Det and NonDet laws share a row table",
+                "schedule the NonDet laws on their own kind").note(first, "other tier scheduled here"));
         }
+        for f in &law.writes{if let Some(prev)=owners.insert((&k.name,&f.name),f.span){return Err(Diag::new(Code::E502,f.span,format!("conflicting writes on {}.{}",k.name,f.name),"give one scheduled law ownership of this field").note(prev,"first writer declared here"));}}
     }
     for law in p.laws.values().filter(|law| law.tier.is_det()) {
         let (reachable, constants) = crate::references::reachable(p, &[&law.f], &[]);
@@ -186,6 +179,48 @@ pub fn vec_like(g: Geo) -> bool {
 fn e104(span: Span, msg: impl Into<String>, fix: impl Into<String>) -> Diag {
     Diag::new(Code::E104, span, msg, fix)
 }
+/// A scheduled row law or check, in schedule order.
+pub struct Scheduled<'a> {
+    pub f: &'a FnDecl,
+    /// Absent for a check.
+    pub law: Option<&'a LawDecl>,
+    /// The kind named by the first parameter's type.
+    pub target: Option<&'a Ident>,
+    /// The schedule argument.
+    pub span: Span,
+}
+
+/// The one reading of `run_laws` and `check` passes: the checker enforces tiers
+/// and write ownership on it, and motion lowering selects each kind's entries.
+pub fn motion_schedule<'a>(p: &Prog<'a>) -> Res<Vec<Scheduled<'a>>> {
+    let mut out = vec![];
+    for pass in p.schedule.into_iter().flat_map(|s| &s.passes) {
+        let is_law = match pass.verb.name.as_str() {
+            "run_laws" => true,
+            "check" => false,
+            _ => continue,
+        };
+        for a in &pass.args {
+            let span = a.value.span;
+            let ExprKind::Name(n) = &a.value.kind else {
+                // Each verb keeps the code it had when laws were read here and checks in lowering.
+                return Err(if is_law { e003(span, "expected a law name", "name a declared law") }
+                    else { Diag::new(Code::E405, span, "expected a scheduled law or check name", "use a row-local operation on a kind") });
+            };
+            let law = if is_law {
+                Some(*p.laws.get(n.as_str()).ok_or_else(|| Diag::new(Code::E011, span, "unknown scheduled law", "declare the law before scheduling it"))?)
+            } else { None };
+            let f = match law {
+                Some(law) => &law.f,
+                None => *p.checks.get(n.as_str()).ok_or_else(|| Diag::new(Code::E011, span, "unknown scheduled law or check", "declare the named function"))?,
+            };
+            let target = if let Some(TyExpr::Name(k)) = f.params.first().and_then(|prm| prm.ty.as_ref()) { Some(k) } else { None };
+            out.push(Scheduled { f, law, target, span });
+        }
+    }
+    Ok(out)
+}
+
 fn e003(span: Span, msg: impl Into<String>, fix: impl Into<String>) -> Diag {
     Diag::new(Code::E003, span, msg, fix)
 }
