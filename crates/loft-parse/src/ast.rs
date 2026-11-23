@@ -44,17 +44,12 @@ pub enum Item {
     /// `build { ... }`: an anonymous build fn; the default engine runs every one in source order.
     Build(FnDecl),
     Law(LawDecl),
-    Body(Ident, Vec<BodyItem>),
-    State(StateDecl),
-    Solver(SolverDecl),
-    Plan(PlanDecl),
     Kernel(KernelDecl),
     /// `check name(h: K, ...) -> unit { ... }`: `ret` is the verdict's unit.
     Check(FnDecl),
     Camera(CameraDecl),
     World(Ident, Vec<Ident>),
     Bake(BakeDecl),
-    Retarget { name: Ident, source: Ident, target: Ident, fields: Vec<(Ident, Expr)> },
 }
 
 #[derive(serde::Serialize, Clone, Debug)]
@@ -76,17 +71,13 @@ impl Item {
         let name = match self {
             Self::Use(_) | Self::Build(_) => return &[],
             Self::Space(names) => return names,
-            Self::Struct(n, _) | Self::TypeAlias(n, _) | Self::Unit(n)
-            | Self::Body(n, _) | Self::World(n, _) | Self::Retarget { name: n, .. } => n,
+            Self::Struct(n, _) | Self::TypeAlias(n, _) | Self::Unit(n) | Self::World(n, _) => n,
             Self::Const(x) => &x.name,
             Self::Fn(x) | Self::Check(x) => &x.name,
             Self::Kind(x) => &x.name,
             Self::Scan(x) => &x.name,
             Self::Schedule(x) => &x.name,
             Self::Law(x) => &x.f.name,
-            Self::State(x) => &x.name,
-            Self::Solver(x) => &x.name,
-            Self::Plan(x) => &x.name,
             Self::Kernel(x) => &x.f.name,
             Self::Camera(x) => &x.name,
             Self::Bake(x) => &x.texel.name,
@@ -115,59 +106,6 @@ pub struct BakeDecl {
     pub format: Ident,
     pub clock: BakeClock,
     pub mips: bool,
-}
-
-#[derive(serde::Serialize, Clone, Debug)]
-pub enum BodyItem {
-    Trunk(Ident, BodyFields),
-    Segment(Ident, BodyFields),
-    Chain(Ident, Option<Expr>, Ident, BodyFields),
-    For(Ident, Expr, Expr, Vec<BodyItem>),
-    Let(Ident, Expr),
-    Waive(Ident, Ident),
-}
-
-pub type BodyFields = Vec<(Ident, BodyValue)>;
-
-#[derive(serde::Serialize, Clone, Debug)]
-pub enum BodyValue {
-    Value(Expr),
-    Lengths(Vec<Expr>),
-    Range(Expr, Expr),
-    Record(BodyFields),
-}
-
-#[derive(serde::Serialize, Clone, Debug)]
-pub struct StateDecl {
-    pub name: Ident,
-    pub checkpoint: Option<u32>,
-    pub home: Option<Ident>,
-    pub fields: Vec<RowField>,
-}
-
-#[derive(serde::Serialize, Clone, Debug)]
-pub struct SolverDecl {
-    pub name: Ident,
-    pub table: Vec<Ident>,
-    pub writes: Option<(Ident, Vec<Ident>)>,
-    pub config: Vec<(Ident, Expr)>,
-    pub steps: Vec<SolverStep>,
-}
-
-#[derive(serde::Serialize, Clone, Debug)]
-pub enum SolverStep {
-    Statement(Stmt),
-    Constraint { name: Ident, a: Ident, b: Ident, lo: Expr, hi: Expr, block: Block },
-}
-
-#[derive(serde::Serialize, Clone, Debug)]
-pub struct PlanDecl {
-    pub name: Ident,
-    pub params: Vec<RowField>,
-    pub ret: TyExpr,
-    pub horizon: Option<(u32, Expr)>,
-    pub objective: Expr,
-    pub holds: Vec<Expr>,
 }
 
 /// Permissions checked at a kernel's typed boundary.
@@ -333,7 +271,6 @@ pub struct ScheduleDecl {
     /// A schedule with parameters is a schedule function: a call to it in another schedule inlines its steps.
     pub params: Vec<ScheduleParam>,
     pub passes: Vec<PassDecl>,
-    pub waivers: Vec<(Ident, Ident)>,
 }
 
 /// `pass label: verb(args) { body calls };`
@@ -497,12 +434,12 @@ pub fn frame_field(name:&str)->&str {
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct RawWgsl {
     pub body: String,
-    pub deterministic: bool,
     pub references: Vec<Ident>,
 }
 
 impl FnDecl {
-    pub fn refuses_unverified_raw(&self)->bool{self.raw.as_ref().is_some_and(|r|!r.deterministic)}
+    // `wgsl det` was removed (2026-11-23): raw WGSL is never certified deterministic.
+    pub fn refuses_unverified_raw(&self)->bool{self.raw.is_some()}
 }
 
 /// Type syntax as written.

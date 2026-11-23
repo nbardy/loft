@@ -1128,7 +1128,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
             Vec3 | Vec3f => self.build(v, 3),
             Vec4 | Vec4f => self.build(v, 4),
             Acos | Atan2 | Fma | Log | Asin | Atan | Tan | Exp2 | Log2 | Round | Place | Sample
-            | SampleLod | SampleC2 | DSample | SamplePrior | Held | Missed | Unknown
+            | SampleLod | SampleC2 | DSample | Held | Missed | Unknown
                 => unreachable!("checked builtin {}", spec(builtin).name),
         })
     }

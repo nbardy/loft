@@ -5,8 +5,6 @@
 
 #[path = "kernel_units.rs"]
 mod kernel_units;
-#[path = "motion_source.rs"]
-pub mod motion_source;
 use crate::Prog;
 use loft_builtins::{ArgShape, Builtin, BuiltinSpec, PolyRule, RetShape, SigRule, lookup};
 use loft_parse::ast::*;
@@ -83,7 +81,6 @@ pub fn check(p: &Prog, types: &mut Vec<Ty>) -> Res<CheckedEffects> {
             ck.assignable(&t, &want, c.value.span)?; if t==Ty::AbstractInt {ck.set(&c.value,want);}
         }
     }
-    motion_source::check(&mut ck)?;
     for sc in p.scans.values() { ck.scan(sc)?; }
     for k in p.kinds.values() { ck.kind_params(k)?; }
     for f in p.fns.values() { ck.func(f, None)?; }
@@ -110,7 +107,7 @@ pub fn check(p: &Prog, types: &mut Vec<Ty>) -> Res<CheckedEffects> {
         }
         for f in std::iter::once(&law.f).chain(reachable) {
             if f.refuses_unverified_raw() {
-                return Err(Diag::new(Code::E504, f.name.span, "motion reaches unverified raw WGSL", "use wgsl det (...) after verifying the block is deterministic"));
+                return Err(Diag::new(Code::E504, f.name.span, "motion reaches unverified raw WGSL", "mark the law nondet, or write the operation in Loft"));
             }
             calls.calls.extend(crate::references::References::function(f).calls);
         }
@@ -287,7 +284,7 @@ impl<'p,'a> Ck<'p,'a> {
                     )),
                 };
             }
-            if matches!(s.name.as_str(), "World" | "Local") || self.comptime && !self.p.bodies.is_empty() && s.name == "Body" || self.p.spaces.contains(s.name.as_str()) {
+            if matches!(s.name.as_str(), "World" | "Local") || self.p.spaces.contains(s.name.as_str()) {
                 Ok(Space::Named(s.name.clone()))
             } else {
                 Err(Diag::new(
@@ -1142,14 +1139,6 @@ impl<'p,'a> Ck<'p,'a> {
                     )),
                 }
             }
-            Ty::Struct(k) if k == "PriorSample" => match m.name.as_str() {
-                "pos" => Ok(Ty::Geo(Geo::Pt, Space::Named("World".into()))),
-                "vel" => Ok(Ty::Geo(Geo::Vec, Space::Named("World".into()))),
-                "rot" => Ok(Ty::VecN(4)),
-                "compliance" => Ok(Ty::F32),
-                "active" => Ok(Ty::Bool),
-                _ => Err(e003(m.span, "unknown prior sample field", "use pos, vel, rot, compliance or active")),
-            },
             Ty::Struct(k) => {
                 let (_, fields) = self.p.structs[k.as_str()];
                 let f = fields.iter().find(|f| f.name.name == m.name).ok_or_else(||
@@ -1172,23 +1161,6 @@ impl<'p,'a> Ck<'p,'a> {
             return Err(Diag::new(Code::E405, a.span, "named arguments are schedule-only in Phase 0", "pass arguments by position"));
         }
         let spec = lookup(&callee.name);
-        if let Some(spec) = spec.filter(|spec| spec.id == Builtin::SamplePrior) {
-            builtin_arity(spec, args.len(), span)?;
-            let (prior, time) = (&args[0], &args[1]);
-            let decl = match &prior.value.kind {
-                ExprKind::Name(name) => self.p.plans.get(name.as_str()),
-                _ => None,
-            }.ok_or_else(|| e003(prior.value.span, "expected a named plan", "name a declared plan"))?;
-            if self.ownership.is_none() || !crate::plan_source::closed(self.p, decl) {
-                return Err(Diag::new(Code::E405, span, "sample_prior needs a closed plan and a motion law",
-                    "bind every plan parameter at Stage 0 and sample from a law"));
-            }
-            let actual = self.expr(&time.value)?;
-            self.assignable(&actual, &Ty::F32, time.value.span)?;
-            self.set(&time.value, Ty::F32);
-            self.set(&prior.value, Ty::U32);
-            return Ok(Ty::Struct("PriorSample".into()));
-        }
         if let Some(spec) = spec.filter(|spec| spec.sig == SigRule::Poly(PolyRule::TextureSample))
             && !self.p.fns.contains_key(callee.name.as_str())
         {
@@ -1245,7 +1217,7 @@ impl<'p,'a> Ck<'p,'a> {
         }
         if callee.name == EMIT_EVENT {
             if self.ownership.is_none() && self.kernel.is_none() {
-                return Err(e003(span, "emit_event requires an effectful entry", "call it in a law, solver or kernel"));
+                return Err(e003(span, "emit_event requires an effectful entry", "call it in a law or kernel"));
             }
             let [tag, instance, site, payload] = args else {
                 return Err(e003(span, "emit_event needs four arguments", "provide tag, instance_id, site_id and payload"));
@@ -1445,7 +1417,7 @@ impl<'p,'a> Ck<'p,'a> {
                         ArgShape::Vec2 => Ty::VecN(2),
                         ArgShape::Vec3 => Ty::VecN(3),
                         ArgShape::Bsdf => Ty::Bsdf,
-                        ArgShape::Plan | ArgShape::Reason => unreachable!("named builtin operands are checked before value operands"),
+                        ArgShape::Reason => unreachable!("named builtin operands are checked before value operands"),
                     };
                     self.assignable(actual, &expected, arg.value.span)?;
                     // Packed words and BSDF weights retain their contextual types in IR.
@@ -1465,7 +1437,6 @@ impl<'p,'a> Ck<'p,'a> {
                     RetShape::Vec4 => Ty::VecN(4),
                     RetShape::Verdict => Ty::Verdict,
                     RetShape::Bsdf => Ty::Bsdf,
-                    RetShape::PriorSample => Ty::Struct("PriorSample".into()),
                 })
             }
             SigRule::Poly(rule) => builtin_poly(spec.name, rule, &ts, &sp, span),

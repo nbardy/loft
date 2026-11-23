@@ -5,7 +5,6 @@
 use loft_check::{Prog, FINITE_DIFF_STEP, TWIN_LIGHT, finite_diff_parameter, pose_field, unit};
 pub use loft_check::references::{References, fn_symbol, proof_dependencies, reachable};
 use loft_builtins::{MotionClass, WgslLowering, lookup};
-pub mod solver;
 #[path="aov.rs"]
 mod aov;
 pub use aov::Aov;
@@ -19,7 +18,7 @@ mod column;
 use material_shape::Layout;
 use loft_parse::ast::*;
 use loft_check::program::{abi, Draw};
-use loft_ir::{Code, Diag, Res, Span};
+use loft_ir::{Code, Diag, Res};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
@@ -62,7 +61,6 @@ fn wty(t: &Ty) -> String {
         Ty::Bsdf => "Bsdf".into(),
         Ty::Id(_) => "u32".into(),
         Ty::Array(t, n) => format!("array<{}, {n}>", wty(t)),
-        Ty::Struct(k) if k == "PriorSample" => "PriorSample".into(),
         Ty::Struct(k) if k == "World" => "u32".into(),
         Ty::Struct(k) => format!("loft_type_{k}"),
         Ty::Verdict => "CheckValue".into(),
@@ -110,7 +108,6 @@ pub struct Emitter<'p, 'a> {
     luts: &'p [LutRef],
     pub motion:bool,
     pub motion_tier: Determinism,
-    pub priors: Option<&'p std::collections::BTreeMap<String, u32>>,
     pub locals: Vec<String>,
     temp: u32,
     prepare_light: bool,
@@ -127,7 +124,7 @@ static NO_FIXED: BTreeMap<(String, String), String> = BTreeMap::new();
 
 impl<'p, 'a> Emitter<'p, 'a> {
     pub fn new(p: &'p Prog<'a>, types: &'p [Ty]) -> Self {
-        Emitter { p, types, out: String::new(), maps: vec![], luts: &[],motion:false,motion_tier:Determinism::Det,priors:None,locals:vec![],temp:0,
+        Emitter { p, types, out: String::new(), maps: vec![], luts: &[],motion:false,motion_tier:Determinism::Det,locals:vec![],temp:0,
             prepare_light: false, in_prepared_light: false, baked_column: None, sampled_bakes: BTreeSet::new(), kernel_atomics: BTreeMap::new(), kernel_sampling: false, fixed: &NO_FIXED }
     }
 
@@ -400,17 +397,6 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 {
                     return format!("{}_cell",map_symbol(n));
                 }
-                if matches!(self.ty_of(base), Ty::Struct(k) if k == "PriorSample") {
-                    let base = self.expr(base);
-                    return match m.name.as_str() {
-                        "pos" => format!("{base}.pos_compliance.xyz"),
-                        "vel" => format!("{base}.vel_active.xyz"),
-                        "rot" => format!("{base}.rot"),
-                        "compliance" => format!("{base}.pos_compliance.w"),
-                        "active" => format!("({base}.vel_active.w != 0.0)"),
-                        _ => unreachable!("checked prior sample field"),
-                    };
-                }
                 self.member(base, m)
             }
             ExprKind::Index(a, i) => format!("{}[{}]", self.expr(a), self.expr(i)),
@@ -484,11 +470,6 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 if callee.name == "unknown" && !self.p.fns.contains_key("unknown") {
                     let ExprKind::Name(reason) = &args[0].value.kind else { unreachable!("checked reason") };
                     return format!("CheckValue(3u, {}u, 0.0)", loft_check::reason(reason).expect("checked reason") as u32);
-                }
-                if callee.name == "sample_prior" {
-                    let ExprKind::Name(name) = &args[0].value.kind else { unreachable!("checked plan name"); };
-                    let header = self.priors.expect("motion prior bindings")[name];
-                    return format!("sample_prior({header}u, {})", self.expr(&args[1].value));
                 }
                 if callee.name == "emit_event" {
                     let tag = match &args[0].value.kind {

@@ -18,7 +18,7 @@ printf '\nuse stdlib::geometry::mesh::{Mesh}\n' >> "$out/import/triangles.loft"
 assets=crates/loft-passes/tests/d1_assets
 "$loft" build crates/loft-passes/tests/phase5/anchor.loft -o "$out/anchor.loftb" > "$out/anchor.log"
 "$loft" build "$assets/primitives.loft" -o "$out/primitives.loftb" > "$out/primitives.log"
-for control in clearcoat:E602 unmapped:E601; do
+for control in clearcoat:E602; do
   fixture=${control%:*}
   code=${control#*:}
   if "$loft" build "$assets/$fixture.loft" > "$out/$fixture.log" 2>&1; then

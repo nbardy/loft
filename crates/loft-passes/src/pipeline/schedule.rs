@@ -156,7 +156,7 @@ impl<'a> Draft<'a> {
     ) -> Res<()> {
         let verb = pd.verb.name.as_str();
         match verb {
-            "run_laws" | "run_solver" | "check" => {}, // Lowered to fixed-tick dispatches below.
+            "run_laws" | "check" => {}, // Lowered to fixed-tick dispatches below.
             "orbit" => self.camera = Some(orbit(p, types, overrides, pd)?),
             "use_camera" => self.camera = Some(named_camera(p, modules, types, overrides, pd)?),
             "render_bundle" => {

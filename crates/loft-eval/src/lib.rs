@@ -7,7 +7,6 @@ mod kernel;
 pub mod lip;
 pub mod quant;
 pub mod refine;
-pub mod solver;
 
 use eval::{Eval, RowVal};
 use loft_check::{FINITE_DIFF_STEP, Prog, check, finite_diff_parameter};

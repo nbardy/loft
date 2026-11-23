@@ -202,10 +202,8 @@ pub struct Program {
     pub param_ranges: Vec<(String, Option<[f32; 2]>)>,
     /// Shadow-map side in texels (0 without a shadow pass).
     pub shadow_size: u32,
-    /// Baked scans and prior tables share the same word-addressed storage.
+    /// Baked scans share the word-addressed storage.
     pub luts: Vec<f32>,
-    #[serde(default)]
-    pub priors: std::collections::BTreeMap<String, u32>,
     pub passes: Vec<Pass>,
     #[serde(default)]
     pub shadow_clock: StepClock,

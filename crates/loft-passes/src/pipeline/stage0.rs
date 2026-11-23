@@ -1,5 +1,5 @@
 use super::{Timings, schedule::Schedule};
-use crate::{CompileOptions, KindReport, Prog, as_v3, cache, emit, eval, gltf, lip, plan, pose_field, rot};
+use crate::{CompileOptions, KindReport, Prog, as_v3, cache, emit, eval, gltf, lip, pose_field, rot};
 use crate::program::{Draw, Instance, KindTable, abi};
 use crate::source::Graph;
 use emit::paths::PathTrace;
@@ -9,14 +9,12 @@ use lip::Iv;
 use loft_eval::{as_f32, pack, stage0};
 use loft_ir::{Code, Diag, Res, Span};
 use loft_parse::ast::*;
-use std::collections::BTreeMap;
 
 pub(super) struct Stage0Scene {
     pub(super) tables: Tables,
     pub(super) luts: Vec<Lut>,
     pub(super) lut_words: Vec<f32>,
     pub(super) lut_refs: Vec<emit::LutRef>,
-    pub(super) priors: BTreeMap<String, u32>,
     pub(super) params: Vec<f32>,
     pub(super) kinds: Vec<KindTable>,
     pub(super) instances: Vec<Instance>,
@@ -50,8 +48,8 @@ pub(super) fn evaluate<'a>(
         reports.push(report);
     }
     timings.lap("derive");
-    let (lut_words, lut_refs, priors) = pack_luts(p, meshes, &luts, schedule.tiled_world.is_some())?;
-    Ok(Stage0Scene { tables, luts, lut_words, lut_refs, priors, params, kinds, instances, reports })
+    let (lut_words, lut_refs) = pack_luts(meshes, &luts, schedule.tiled_world.is_some())?;
+    Ok(Stage0Scene { tables, luts, lut_words, lut_refs, params, kinds, instances, reports })
 }
 
 fn scans<'a>(p: &Prog<'a>, modules: &'a [Module], types: &[Ty], overrides: &[(String, f64)]) -> Res<Vec<Lut>> {
@@ -105,7 +103,6 @@ fn evaluate_rows(
         ev.call_fn(f, vec![], f.name.span)?;
     }
     for sample in samples{
-        if p.states.contains_key(sample.kind.as_str()) { continue; }
         let k=p.kinds.get(sample.kind.as_str()).ok_or_else(||Diag::new(Code::E602,Span::NONE,"snapshot names an unknown kind","sample the same scene revision"))?;
         let t=p.kind_index(&sample.kind);
         for (field,values) in &sample.fields{
@@ -404,8 +401,8 @@ fn pack_kind<'a>(
 }
 
 fn pack_luts(
-    p: &Prog<'_>, meshes: &[gltf::Mesh], luts: &[Lut], tiled_world: bool,
-) -> Res<(Vec<f32>, Vec<emit::LutRef>, BTreeMap<String, u32>)> {
+    meshes: &[gltf::Mesh], luts: &[Lut], tiled_world: bool,
+) -> Res<(Vec<f32>, Vec<emit::LutRef>)> {
     let mut lut_refs = vec![];
     let asset_words = gltf::words(meshes);
     let mut lut_words = match tiled_world {
@@ -423,11 +420,5 @@ fn pack_luts(
     }
     lut_words.resize(lut_words.len().next_multiple_of(12), 0.);
     lut_words.extend(luts.iter().flat_map(|l| l.frames.iter().flatten().copied()));
-    let mut priors = BTreeMap::new();
-    for (name, decl) in &p.plans {
-        if let Some(prior) = plan::lower_source(p, decl, &mut lut_words)? {
-            priors.insert((*name).to_string(), prior.header_word);
-        }
-    }
-    Ok((lut_words, lut_refs, priors))
+    Ok((lut_words, lut_refs))
 }

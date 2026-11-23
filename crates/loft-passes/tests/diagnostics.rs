@@ -175,7 +175,7 @@ fn raw_shader_islands_cannot_certify_geometry_or_unmarked_motion(){
     let motion=kind("",OK_TRACE,OK_MATERIAL).replace("pose: xf@Body>World)", "pose: xf@Body>World, yaw: rad = 0)")
         +"\nfn drift(x: f) -> f = wgsl (x: f) -> f { return x; }\nlaw turn(h: K, dt) writes h.{yaw} { h.yaw = drift(dt) }";
     expect(Code::E504,&motion);
-    assert!(compile(&motion.replace("wgsl (","wgsl det (")).is_ok());
+    assert!(compile(&motion.replace("law turn(h: K, dt) writes", "law turn(h: K, dt) nondet writes")).is_ok());
 }
 
 #[test]
@@ -259,24 +259,6 @@ fn frozen_diagnostic_fixtures() {
     for code in [Code::E104, Code::E105, Code::E108, Code::E210, Code::E211, Code::E307, Code::E401,
         Code::E402, Code::E404, Code::E501, Code::E502, Code::E504, Code::E505] {
         expect(code,&std::fs::read_to_string(dir.join(format!("{code}.loft"))).unwrap());
-    }
-}
-
-#[test]
-fn authored_motion_declarations_preserve_spans_and_write_ownership() {
-    let scene = kind("", OK_TRACE, OK_MATERIAL);
-    let valid = include_str!("motion_source/accepted.loft").replace("space Body Head", "space Head");
-    compile(&format!("{scene}\n{valid}")).unwrap_or_else(|(_, diagnostic)| panic!("{diagnostic}"));
-    for (code, fixture, excerpt) in [
-        (Code::E011, include_str!("motion_source/body-duplicate.loft"), "mass: 1kg, mass: 2kg"),
-        (Code::E003, include_str!("motion_source/state-zero-checkpoint.loft"), "checkpoint 0"),
-        (Code::E501, include_str!("motion_source/solver-undeclared-write.loft"), "prev[0] = pos[0]"),
-        (Code::E503, include_str!("motion_source/solver-race.loft"), "edge(i, i)"),
-        (Code::E003, include_str!("motion_source/plan-objective.loft"), "impossible(1)"),
-    ] {
-        let (actual, diagnostic) = compile(&format!("{scene}\n{fixture}")).expect_err("invalid motion declaration");
-        assert_eq!(actual, code, "{diagnostic}");
-        assert!(diagnostic.contains(excerpt), "{diagnostic}");
     }
 }
 

@@ -384,9 +384,6 @@ pub fn lower(src: &Graph, modules: &mut [Module]) -> Res<Vec<Mesh>> {
     for item in modules.iter_mut().flat_map(|m| &mut m.items) {
         match item {
             Item::Build(f) | Item::Fn(f) if f.comptime => block(src, &mut f.body, BTreeMap::new(), &mut scenes, &mut meshes)?,
-            Item::Retarget { name, source, target, .. } => return Err(Diag::new(
-                Code::E601, name.span, format!("retarget chain {} to {} is unavailable", source.name, target.name),
-                "supply a source clip and a target joint mapping")),
             _ => {}
         }
     }

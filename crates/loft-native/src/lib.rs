@@ -32,10 +32,6 @@ pub fn gpu() -> Result<Gpu, String> {
     ray_query::request_auto()
 }
 
-pub fn request_gpu(ray_query: bool) -> Result<Gpu, String> {
-    ray_query::request_gpu(ray_query)
-}
-
 static F32_ONLY: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(matches!(loft_ir::precision::DEFAULT, loft_ir::precision::Precision::F32));
 

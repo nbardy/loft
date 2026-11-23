@@ -19,7 +19,7 @@ pub(super) fn assemble(
 ) -> Res<Assembled> {
     let Schedule { drawn, compute, path, camera, sun, shadow_size, shadow_clock, .. } = schedule;
     let LoweredPasses { bakes, dispatches, shader_modules, passes, store_energy } = lowered;
-    let Stage0Scene { tables, luts, params, mut lut_words, kinds, instances, priors, reports, .. } = scene;
+    let Stage0Scene { tables, luts, params, mut lut_words, kinds, instances, reports, .. } = scene;
     let param_ranges = reflect_params(p, types, &params)?.into_iter().map(|m|
         (m.name, m.range.map(|(lo, hi)| [lo[0], hi[0]]))).collect();
     if store_energy { lut_words.extend(bsdf::energy_words()); }
@@ -36,7 +36,6 @@ pub(super) fn assemble(
         params,
         shadow_size,
         luts: lut_words,
-        priors,
         passes,
         shadow_clock,
     };

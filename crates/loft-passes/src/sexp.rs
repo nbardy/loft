@@ -112,7 +112,6 @@ mod tests {
             param_ranges: vec![],
             shadow_size: 0,
             luts: vec![],
-            priors: Default::default(),
             passes: vec![Pass::Path(0)],
             shadow_clock: Default::default(),
         };

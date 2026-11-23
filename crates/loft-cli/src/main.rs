@@ -99,11 +99,6 @@ fn command(mut args: Vec<String>, set: &[(String, f64)]) -> Result<(), Failure> 
             let (program, report, _) = loft_passes::compile(&src, set).map_err(|d| Failure::Compile(render(&d, &src)))?;
             loft_cli::native::motion_layout(&program).map_err(Failure::Compile)?;
             let mut failed = false;
-            for (name, &header) in &program.priors {
-                let held = program.luts[header as usize + 3].to_bits() == 1;
-                println!("plan {name}: {}", if held { "Held" } else { "Unknown(SolveFailed)" });
-                failed |= !held;
-            }
             if program.dispatches.iter().any(|m| !m.checks.is_empty()) {
                 let g = loft_cli::native::gpu().map_err(Failure::Device)?;
                 for (name, verdict) in authored_checks(&g, &program, time).map_err(Failure::Device)? {

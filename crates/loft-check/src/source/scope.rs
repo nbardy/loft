@@ -642,54 +642,6 @@ impl Scope<'_> {
         Ok(())
     }
 
-    fn body_fields(&self, fields: &mut BodyFields, locals: &[String]) -> Res<()> {
-        for (_, value) in fields {
-            match value {
-                BodyValue::Value(e) => self.expr(e, locals)?,
-                BodyValue::Lengths(es) => {
-                    for e in es {
-                        self.expr(e, locals)?;
-                    }
-                }
-                BodyValue::Range(a, b) => {
-                    self.expr(a, locals)?;
-                    self.expr(b, locals)?;
-                }
-                BodyValue::Record(fields) => self.body_fields(fields, locals)?,
-            }
-        }
-        Ok(())
-    }
-
-    fn body(&self, items: &mut [BodyItem], locals: &mut Vec<String>) -> Res<()> {
-        for item in items {
-            match item {
-                BodyItem::Trunk(_, fields) | BodyItem::Segment(_, fields) => {
-                    self.body_fields(fields, locals)?
-                }
-                BodyItem::Chain(_, index, _, fields) => {
-                    if let Some(e) = index {
-                        self.expr(e, locals)?;
-                    }
-                    self.body_fields(fields, locals)?;
-                }
-                BodyItem::For(var, lo, hi, body) => {
-                    self.expr(lo, locals)?;
-                    self.expr(hi, locals)?;
-                    let mut inside = locals.clone();
-                    inside.push(var.name.clone());
-                    self.body(body, &mut inside)?;
-                }
-                BodyItem::Let(name, expr) => {
-                    self.expr(expr, locals)?;
-                    locals.push(name.name.clone());
-                }
-                BodyItem::Waive(..) => {}
-            }
-        }
-        Ok(())
-    }
-
     fn item(&self, item: &mut Item) -> Res<()> {
         match item {
             Item::Use(_) | Item::Space(_) | Item::Unit(_) => {}
@@ -706,13 +658,6 @@ impl Scope<'_> {
             }
             Item::TypeAlias(_, ty) => self.ty(ty, &[])?,
             Item::Struct(_, fields) => self.columns(fields)?,
-            Item::State(state) => {
-                if let Some(home) = &mut state.home {
-                    self.ident(home)?;
-                }
-                self.columns(&mut state.fields)?;
-            }
-            Item::Body(_, body) => self.body(body, &mut vec![])?,
             Item::World(_, kinds) => {
                 for kind in kinds {
                     self.ident(kind)?;
@@ -760,58 +705,6 @@ impl Scope<'_> {
                     &mut s.step,
                     &[s.prev.name.clone(), s.at.name.clone(), s.var.name.clone()],
                 )?;
-            }
-            Item::Plan(p) => {
-                self.columns(&mut p.params)?;
-                self.ty(&mut p.ret, &[])?;
-                let locals = p
-                    .params
-                    .iter()
-                    .map(|p| p.name.name.clone())
-                    .collect::<Vec<_>>();
-                if let Some((_, dt)) = &mut p.horizon {
-                    self.expr(dt, &locals)?;
-                }
-                self.expr(&mut p.objective, &locals)?;
-                for e in &mut p.holds {
-                    self.expr(e, &locals)?;
-                }
-            }
-            Item::Solver(s) => {
-                if let Some(head) = s.table.first_mut() {
-                    self.ident(head)?;
-                }
-                self.fields(&mut s.config, &[])?;
-                let mut locals = s.writes.iter().map(|(n, _)| n.name.clone()).collect();
-                for step in &mut s.steps {
-                    match step {
-                        SolverStep::Statement(s) => self.stmt(s, &mut locals)?,
-                        SolverStep::Constraint {
-                            a,
-                            b,
-                            lo,
-                            hi,
-                            block,
-                            ..
-                        } => {
-                            self.expr(lo, &locals)?;
-                            self.expr(hi, &locals)?;
-                            let mut inside = locals.clone();
-                            inside.extend([a.name.clone(), b.name.clone()]);
-                            self.block(block, &mut inside)?;
-                        }
-                    }
-                }
-            }
-            Item::Retarget {
-                source,
-                target,
-                fields,
-                ..
-            } => {
-                self.ident(source)?;
-                self.ident(target)?;
-                self.fields(fields, &[])?;
             }
             Item::Schedule(s) => {
                 if let Some((_, ty)) = &mut s.radiance {
@@ -863,18 +756,13 @@ impl Scope<'_> {
             Item::Struct(n, _)
             | Item::TypeAlias(n, _)
             | Item::Unit(n)
-            | Item::Body(n, _)
-            | Item::World(n, _)
-            | Item::Retarget { name: n, .. } => n,
+            | Item::World(n, _) => n,
             Item::Const(x) => &mut x.name,
             Item::Fn(x) | Item::Check(x) => &mut x.name,
             Item::Kind(x) => &mut x.name,
             Item::Scan(x) => &mut x.name,
             Item::Schedule(x) => &mut x.name,
             Item::Law(x) => &mut x.f.name,
-            Item::State(x) => &mut x.name,
-            Item::Solver(x) => &mut x.name,
-            Item::Plan(x) => &mut x.name,
             Item::Kernel(x) => &mut x.f.name,
             Item::Camera(x) => &mut x.name,
             Item::Bake(x) => &mut x.texel.name,

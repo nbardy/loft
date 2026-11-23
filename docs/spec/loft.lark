@@ -2,11 +2,11 @@
 start: _sep? (top_item (_sep top_item)* _sep?)?
 
 top_item: use_decl
-        | "pub"? ( space_decl | struct_decl | type_alias | const_decl | input_decl | param_decl
+        | "pub"? ( space_decl | struct_decl | type_alias | const_decl | param_decl
                  | kernel_decl | bake_tex_decl | camera_decl | target_decl | fn_decl | lobe_decl
-                 | scan_decl | kind_decl | body_decl | state_decl
-                 | law_decl | solver_decl | plan_decl | check_decl
-                 | retarget_decl | world_decl | build_fn | build_blk | sched_decl )
+                 | scan_decl | kind_decl
+                 | law_decl | check_decl
+                 | world_decl | build_fn | build_blk | sched_decl )
 
 use_decl: "use" mod_path ("::" ("*" | "{" import_names "}") | "as" LIDENT)?
 import_names: IDENT ("," IDENT)* ","?
@@ -19,7 +19,6 @@ space_decl:  "space" UIDENT+
 struct_decl: "struct" UIDENT "{" (_NL? col (("," | _sep) col)* ("," | _sep)?)? "}"
 type_alias:  "type" UIDENT "=" type_expr
 const_decl:  "const" IDENT (":" type_expr)? "=" expr
-input_decl:  "input" LIDENT ":" type_expr ("=" expr)?
 param_decl:  "param" LIDENT ":" type_expr "=" expr ("in" expr ".." expr)?
 kernel_decl: "kernel" LIDENT "(" params? ")" "nondet"? ("allow" "(" capability ("," capability)* ","? ")")? block
 capability: "atomics" | "workgroup" | "subgroups" | "dynamic_loops"
@@ -47,30 +46,11 @@ map_decl:    "map" LIDENT "(" LIDENT ")" "=" expr
 query_decl:  QUERY_NAME "(" params? ")" fn_body
            | "surface" "(" params? ")" "grid" GRID_DIM fn_body
 
-body_decl:   "body" UIDENT "{" (_NL? body_item (_sep body_item)* _sep?)? "}"
-body_item:   waive_stmt
-           | "trunk" body_fields
-           | "chain" LIDENT ("[" expr "]")? ":" LIDENT body_fields
-           | "segment" LIDENT body_fields
-           | "build" "for" body_bind ("," body_bind)* "{" _NL? body_loop_item (_sep body_loop_item)* _sep? "}"
-body_loop_item: body_item | "let" LIDENT "=" expr
-body_bind: LIDENT "in" expr ".." expr
-body_fields: "{" (_NL? body_field (("," _NL? | _sep) body_field)* ("," _NL? | _sep)?)? "}"
-body_field: LIDENT ":" (expr (".." expr)? | body_fields)
-
-state_decl:  "state" UIDENT ("checkpoint" INT)? ("home" LIDENT)? "{" (_NL? col (("," | _sep) col)* ("," | _sep)?)? "}"
-
 law_decl:    "law" LIDENT "(" params ")" "nondet"? "writes" write_set block
 write_set:   LIDENT ("." "{" ident_list "}")?
 
-solver_decl: "solver" UIDENT "over" path_ref (_NL? "writes" (LIDENT | UIDENT) ("." "{" ident_list "}")?)? _NL? "config" "{" field_inits "}" _NL? solver_block
-solver_block: "{" (_NL? solver_step (_sep solver_step)* _sep?)? "}"
-solver_step: stmt | "constrain" LIDENT "(" LIDENT "," LIDENT ")" "in" expr ".." expr block
-path_ref:    IDENT ("." LIDENT)*
 
-plan_decl:   "plan" UIDENT "(" params? ")" "->" type_expr "{" _NL? ("knots" ":" INT "," "duration" ":" expr _sep)? "minimize" expr _sep "subject_to" "{" (_NL? expr (_sep expr)* _sep?)? "}" _sep? "}"
 check_decl:  "check" LIDENT "(" params ")" "->" type_expr block
-retarget_decl: "retarget" UIDENT "from" UIDENT "to" UIDENT "{" field_inits "}"
 
 world_decl:  "world" UIDENT "{" field_inits "}"
 build_fn:    "build" "fn" LIDENT "(" params? ")" ("->" type_expr)? fn_body
@@ -80,10 +60,8 @@ sched_params: sched_param ("," sched_param)* ","?
 sched_param: ".." LIDENT | param
 sched_stmt:  "pass" LIDENT ("reads" "[" resource_list "]")? ("writes" "[" resource_list "]")? block step_clock?
            | "type" "Radiance" "=" type_expr
-           | waive_stmt
            | expr block? step_clock?
 step_clock:  "on" ("load" | "dirty" "(" resource_list ")")
-waive_stmt: "waive" UIDENT STRING
 resource_list: IDENT ("," IDENT)* ","?
 
 // --- Types (only after ':' or '->') ---
@@ -110,7 +88,6 @@ stmt:        "let" LIDENT (":" type_expr)? "=" expr
            | "import_table" "(" STRING "," kind_ref "," expr ")"
            | build_for_stmt
            | "for" LIDENT "in" expr ".." expr block
-           | "yield" expr
            | "return" expr
            | lhs "=" expr
            | expr
@@ -138,7 +115,7 @@ primary:     unit_number | NUMBER | STRING | "true" | "false" | name_ref
            | "if" expr block ("else" "if" expr block)* ("else" block)?
            | "emit" kind_ref ("[" expr_list "]")? "(" named_args? ")"
            | "unproved" "(" ("step_scale" ":")? expr ")" block
-           | "wgsl" "det"? "(" params? ")" "->" type_expr RAW_WGSL_BLOCK
+           | "wgsl" "(" params? ")" "->" type_expr RAW_WGSL_BLOCK
 
 // mix_bsdf(a, b, t) uses ordinary call syntax; its arguments are checked as Bsdf, Bsdf, f.
 call_args:   arg ("," arg)* ","?
@@ -148,7 +125,7 @@ expr_list:   expr ("," expr)* ","?
 
 // --- Terminals ---
 // An authored lipschitz query parses so the checker can diagnose it as E210.
-QUERY_NAME:  "lipschitz" | "trace" | "visible" | "material" | "light" | "sky" | "medium" | "hit" | "bound" | "sigma" | "tau"
+QUERY_NAME:  "lipschitz" | "trace" | "visible" | "material" | "light" | "sky" | "hit" | "bound"
 PRIM_TY:     "p3" | "v3" | "d3" | "n3" | "v2" | "v4" | "rgb" | "quat" | "f" | "u" | "i" | "bool" | "f32" | "u32" | "i32" | "vec2f" | "vec3f" | "vec4f"
 GRID_DIM:    /[0-9]+x[0-9]+/
 unit_expr: unit_atom (("*" | "/") unit_atom)*
