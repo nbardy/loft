@@ -30,7 +30,7 @@ pub(super) fn lower(
     let fixed = fixed_parameters(p, &scene.tables)?;
     let mut texts = Vec::new();
     for (name, kt) in drawn.iter().zip(kinds) {
-        let shader = emit::emit_kind_module(p, types, p.kinds[*name], light, lut_refs, kt.draw, aov, None, &fixed)?;
+        let shader = emit::emit_kind_module(p, types, p.kinds[*name], light, lut_refs, kt.draw, aov, &fixed)?;
         texts.push((name.to_string(), shader));
     }
     let visibility = lower_world(p, types, opts, schedule, scene, &mut texts)?;

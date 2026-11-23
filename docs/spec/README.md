@@ -12,6 +12,7 @@ Where the documents overlap, precedence is **07 > PATCH_V1_2 > 06_ADDENDUM > 00â
 - `05_NUMBERS_AND_BUILD_ORDER.md`
 - `06_ADDENDUM.md`: the scientist's answers to our final request (19 Nov): contradictions settled (layered `+`, owner-approved references, `waive` keyword, normative `loft.lark` with patch), schedule IR, query types and `shade_fn`, full typed `std`, motion table layouts and `body`, `plan`, determinism rules, units, `std::rand` (Philox), the 56 Tier 0 opcodes, the `.loftb` bundle, lossless CST and `loft fmt`, CLI exit codes and the training contract, glTF import.
 - [07_PLATFORM_POWER_EXTENSIONS.md](07_PLATFORM_POWER_EXTENSIONS.md) specifies packed storage and `std::quant`, the shared ABI, host interop, live parameters, GPU events and picking, texture baking, diagnostics and replay. Batched multi-world execution is reserved for Phase 5.5 after v1.0.
+- [CUTS_2026-11-23.md](CUTS_2026-11-23.md): features removed by the 23 Nov meta-engine review, and what replaces each.
 - `PATCH_V1_2.md` (20 Nov): the meta-engine ABI patch. Bind groups are derived per pass (only `@group(0)` is fixed), with expanded HostCaps features, table lifetimes and runtime row arenas, `step_pass_cpu`, `unproved {}`, typed `kernel allow(...)`, `mix_bsdf` and a rebindable `Radiance`.
 
 ## Lead rulings

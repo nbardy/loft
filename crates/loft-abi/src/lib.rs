@@ -1,8 +1,6 @@
 //! Shared std430 wire records (06 §8 and 02 §3). Integers occupy integer lanes.
 mod advance;
-mod tier0;
 pub use advance::{AdvanceArgs, advance};
-pub use tier0::Tier0Opcode;
 
 pub mod det;
 pub mod rand;

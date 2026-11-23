@@ -44,7 +44,6 @@ struct Instance {
     pick_source: Option<pick::Source>,
     compute: encode::ComputeCache,
     initializers: initialize::Initializers,
-    edits: tier0::Edits,
 }
 impl std::ops::Deref for Table {
     type Target = Resource;
@@ -74,7 +73,7 @@ impl Instance {
         initializers.check_params(compute.params.bytes().len() / 4)?;
         Ok(Self { tables, decl, execution: exec, compute, initializers, checkpoints, resource_epoch:0,
             uploads: wgpu::util::StagingBelt::new(device.clone(), 4096),
-            edits:Default::default(), history:Default::default(), outbox:None, pick_source:None })
+            history:Default::default(), outbox:None, pick_source:None })
     }
     fn arena(&mut self, k: KindId) -> Result<&mut Table> {
         let id = self.decl.rows.get(&k).ok_or(RunnerError::UnknownResource)?;
@@ -165,9 +164,6 @@ impl Runner {
     pub fn hot_swap_module(&mut self, id: InstanceId, module: ModuleId, wgsl: &str) -> Result<()> {
         let (device, adapter, cache, clock) = (self.device.clone(), self.adapter.clone(), self.pipeline_cache.clone(), self.pipeline_clock);
         let inst = self.instance(id)?;
-        if inst.edits.request(module, wgsl)? {
-            return Ok(());
-        }
         let mut decl = inst.decl.clone();
         let m = decl.modules.iter_mut().find(|m| m.id == module).ok_or(RunnerError::UnknownResource)?;
         m.bytes = wgsl.as_bytes().into();
@@ -177,7 +173,6 @@ impl Runner {
         replacement.params.copy_from(&inst.compute.params);
         inst.decl = decl;
         inst.compute = replacement;
-        inst.edits = tier0::Edits::default();
         Ok(())
     }
     pub fn hot_swap_bundle(&mut self, id: InstanceId, b: &Bundle) -> Result<()> {
@@ -219,9 +214,6 @@ pub mod events;
 pub mod params;
 pub mod pick;
 pub use loft_format::replay;
-pub mod tier0;
-#[doc(hidden)]
-pub use loft_wgpu::promotion;
 
 #[cfg(test)]
 mod tests;

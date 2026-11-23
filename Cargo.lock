@@ -524,7 +524,6 @@ dependencies = [
  "loft-parse",
  "loft-passes",
  "loft-runner",
- "loft-tier0",
  "naga",
  "png",
  "pollster",
@@ -598,7 +597,6 @@ dependencies = [
  "loft-ir",
  "loft-passes",
  "loft-runner",
- "loft-tier0",
  "naga",
  "pollster",
  "serde",
@@ -665,21 +663,6 @@ dependencies = [
  "loft-format",
  "loft-ir",
  "naga",
-]
-
-[[package]]
-name = "loft-tier0"
-version = "0.1.0"
-dependencies = [
- "loft-abi",
- "loft-check",
- "loft-emit",
- "loft-eval",
- "loft-ir",
- "loft-parse",
- "loft-passes",
- "naga",
- "tempfile",
 ]
 
 [[package]]

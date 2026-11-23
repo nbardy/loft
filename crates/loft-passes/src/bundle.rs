@@ -132,16 +132,11 @@ pub fn replacement(source: &str, hdr: ImageFormat) -> Result<String> {
 }
 
 impl Builder {
-    fn new(program: &Program, nonce: Option<u32>, draw_words: u32, hdr: ImageFormat, edit: Option<(usize, &str)>) -> Result<Self> {
+    fn new(program: &Program, nonce: Option<u32>, draw_words: u32, hdr: ImageFormat) -> Result<Self> {
         let mut bundle = Bundle::default();
         let mut bindings = Vec::new();
         for (i, module) in program.modules.iter().enumerate() {
-            let ir = if let Some((_, source)) = edit.filter(|(id, _)| *id == i) {
-                naga::front::wgsl::parse_str(source).map_err(|e| e.emit_to_string(source))?
-            } else {
-                module.naga.clone()
-            };
-            let (code, reflected) = shader(ir, &module.name, nonce, draw_words, hdr)?;
+            let (code, reflected) = shader(module.naga.clone(), &module.name, nonce, draw_words, hdr)?;
             bindings.push(reflected);
             bundle.modules.push(ModuleBlob {
                 id: ModuleId(i as u32),
@@ -408,10 +403,9 @@ pub fn lower(
 }
 
 #[derive(Default)]
-pub struct Options<'a> {
+pub struct Options {
     pub nonce: Option<u32>,
     pub overdraw: bool,
-    pub edit: Option<(usize, &'a str, &'a [u8])>,
     /// Native motion sampling has its own absolute tick and readback API.
     pub picture_only: bool,
     pub hardware_ray_query: bool,
@@ -434,7 +428,7 @@ pub struct Prepared {
 }
 
 pub fn lower_program(
-    program: &Program, params: Vec<ParamMeta>, size: (u32, u32), opts: Options<'_>,
+    program: &Program, params: Vec<ParamMeta>, size: (u32, u32), opts: Options,
     frame: impl Fn(bool, Option<([f32; 3], [f32; 3], u32)>) -> Vec<u8>,
 ) -> Result<Prepared> {
     let indexed = |kind: &crate::program::KindTable| {
@@ -444,8 +438,7 @@ pub fn lower_program(
     let precision = opts.precision.resolve(opts.features);
     // Overdraw counts layers into the HDR attachment, a debug picture, not radiance: it stays on the half format.
     let hdr_format = Role::Radiance.format(if opts.overdraw { Resolved::HalfStorage } else { precision });
-    let mut b = Builder::new(program, opts.nonce, arg_words, hdr_format,
-        opts.edit.map(|(i, source, _)| (program.kinds[i].module, source)))?;
+    let mut b = Builder::new(program, opts.nonce, arg_words, hdr_format)?;
     b.bundle.params = params;
     if opts.hardware_ray_query && !opts.overdraw { b.native_world(program)?; }
     let mut execution = Execution::default();
@@ -453,15 +446,11 @@ pub fn lower_program(
     let mut bases = Vec::new();
     let mut base = 0;
     for (i, kind) in program.kinds.iter().enumerate() {
-        let tape = opts.edit.filter(|(id, _, _)| *id == i).map_or(&[][..], |(_, _, tape)| tape);
-        let rows = b.words(1, kind.rows.iter().map(|x| x.to_bits()).chain(
-            tape.as_chunks::<4>().0.iter().copied().map(u32::from_le_bytes)));
-        // Rows retain their stride for fused stepping. Editable rows have a trailing word-addressed tape.
-        if tape.is_empty() {
-            let table = &mut b.bundle.tables[rows.0 as usize];
-            table.stride_bytes = kind.stride * 4;
-            table.capacity = kind.n_rows;
-        }
+        let rows = b.words(1, kind.rows.iter().map(|x| x.to_bits()));
+        // Rows retain their stride for fused stepping.
+        let table = &mut b.bundle.tables[rows.0 as usize];
+        table.stride_bytes = kind.stride * 4;
+        table.capacity = kind.n_rows;
         let params = b.words(4, [i as u32, base, kind.n_rows, 0]);
         bases.push(base);
         base += kind.n_rows;

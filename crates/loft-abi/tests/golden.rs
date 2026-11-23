@@ -66,29 +66,6 @@ fn verdict_codes() {
 }
 
 #[test]
-fn tier0_words() {
-    use Tier0Opcode::*;
-    #[rustfmt::skip] // Keep the opcode families in the same groups as 06 §13.
-    let ops: [Tier0Opcode; 56] = [
-        Nop, LoadConst, LoadRow, LoadInput, LoadFrame, Mov, Swizzle, Splat,
-        Add, Sub, Mul, Div, Fma, Neg, Abs, Min, Max, Clamp, Mix, Select,
-        Lt, Le, Eq, Step, Smoothstep, Smootherstep, Floor, Fract,
-        Sqrt, Sin, Cos, Atan2, Exp, Log, Pow, Dot3, Cross, LenNorm,
-        XformPt, XformDir, MirrorX, RepeatCell, SdSphere, SdBox, SdRoundBox, SdCapsule, SminPoly, SsubPoly,
-        GradNoise3, SmoothVor3, Fbm2, SampleLutC2, SampleTex2d, LoopBegin, LoopEnd, Ret,
-    ];
-    for (id, op) in (0..56u32).zip(ops) {
-        let word = (id << 26) | 0x0311_35ab; // dst=24, a=17, b=6, imm11=0x5ab
-        assert_eq!(op as u32, id);
-        assert_eq!(op.pack(24, 17, 6, 0x5ab), Some(word));
-        assert_eq!(Tier0Opcode::unpack(word), Some((op, 24, 17, 6, 0x5ab)));
-    }
-    for id in 56..64 {
-        assert_eq!(Tier0Opcode::unpack(id << 26), None);
-    }
-}
-
-#[test]
 fn visibility_lanes() {
     let v = VisRec::pack(0x123, true, 0x20fedc, 0x89abcdef).unwrap();
     assert_eq!(v.0, [0xfedc, 0x91e0, 0xcdef, 0x89ab]);

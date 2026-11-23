@@ -357,12 +357,6 @@ fn as_v3(v: RowVal, span: Span) -> Res<[f32; 3]> {
     }
 }
 
-pub use cache::certificate;
-
-pub fn strip_shader_provenance(text: String) -> String {
-    provenance::Map::new(text).shader
-}
-
 /// Inputs shared by the scene and shader compilation stages.
 #[derive(Clone, Copy)]
 pub struct CompileOptions<'a> {

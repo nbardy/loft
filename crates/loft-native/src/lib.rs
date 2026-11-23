@@ -4,7 +4,7 @@ mod motion;
 mod edit;
 mod shadow;
 #[cfg(not(target_arch = "wasm32"))]
-pub use edit::TraceSession;
+pub use edit::{EditReceipt, EditSession};
 use loft_passes::emit::Aov;
 use std::sync::{Mutex, atomic::{AtomicU32, Ordering}};
 pub mod ray_query;
@@ -390,23 +390,20 @@ impl Loaded {
     }
 
     fn load(g: &Gpu, p: &Program, size: (u32, u32), nonce: Option<u32>,
-        edit: Option<(usize, &loft_tier0::TraceEdit)>, aov: Aov) -> Result<Self, String> {
+        editable: Option<usize>, aov: Aov) -> Result<Self, String> {
         let started = Instant::now();
         let d = &g.device;
         if size.0 == 0 || size.1 == 0 || size.0.max(size.1) > d.limits().max_texture_dimension_2d {
             return Err("frame dimensions exceed device limits".into());
         }
-        let editable = edit.map(|(kind, _)| kind);
-        let edit = edit.map(|(i, tape)| Ok::<_, String>((i, tape.shader(&p.modules[p.kinds[i].module].wgsl)?, tape.bytes())))
-            .transpose()?;
         let params = param_words(&p.params);
         let frame = |sun, alternate: Option<([f32; 3], [f32; 3], u32)>| frame_bytes(
             p.camera, p.sun, size, 0., sun, alternate.map(|(lo, hi, side)| sun_camera(p.sun, lo, hi, side)));
         let plan = loft_passes::bundle::lower_program(p, params, size, loft_passes::bundle::Options {
             nonce, overdraw: aov == Aov::Overdraw, picture_only: true,
-            hardware_ray_query: edit.is_none() && loft_runner::ray_query::has_aabb_capacity(d, p.instances.len()),
+            // An edit swaps the editable kind's module, so its load keeps the software world.
+            hardware_ray_query: editable.is_none() && loft_runner::ray_query::has_aabb_capacity(d, p.instances.len()),
             precision: precision(), features: device_features(d),
-            edit: edit.as_ref().map(|(i, source, bytes)| (*i, source.as_str(), bytes.as_slice())),
         }, frame)?;
         let color_format = if aov == Aov::Beauty { COLOR } else { wgpu::TextureFormat::Rgba8Unorm };
         let color = tex(d, "color", size, color_format, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC);

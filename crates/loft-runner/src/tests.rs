@@ -1,5 +1,4 @@
 use super::*;
-use loft_wgpu::edits::Pipelines;
 
 const TABLE: TableId = TableId(7);
 const KIND: KindId = KindId(9);
