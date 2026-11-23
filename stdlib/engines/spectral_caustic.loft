@@ -1,7 +1,7 @@
 use stdlib::post::display::{agx_display}
 
 use stdlib::integrators::restir::{reservoir_add, reservoir_scale, reservoir_reuse}
-use stdlib::lighting::world
+use stdlib::lighting::world::{Hit}
 
 use stdlib::integrators::direct::{sun_sky}
 
@@ -145,4 +145,32 @@ fn shoal_band(p: rgb, depth: f, phase: f, nm: f, absorption: f) -> f {
 pub fn shallow_caustic(p: rgb, water_y: f, phase: f) -> rgb {
   let d = max(water_y-p.y, 0.0)
   [shoal_band(p,d,phase,650.0,0.92), shoal_band(p,d,phase,545.0,0.26), shoal_band(p,d,phase,450.0,0.12)]
+}
+
+# The submerged camera sees opaque receivers. All wavelength bands share this
+# primary intersection; dispersion occurs on the incident path through water.
+fn submerged_hit(origin: v3, direction: v3) -> Hit =
+  wgsl(origin: v3, direction: v3) -> Hit {
+    let h = world_trace(origin,direction,1e5);
+    return loft_type_Hit(h.t,h.p,h.n,vec2f(0.0),h.p,h.kind,h.row,vec4f(0.0));
+  }
+
+fn submerged_light(hit: Hit, wo: v3, incident: rgb) -> rgb =
+  wgsl(hit: Hit, wo: v3, incident: rgb) -> rgb {
+    let at = world_at(LoftLeafRef(hit.kind_id,hit.row_id));
+    let h = PathHit(hit.t,hit.p,hit.n,hit.kind_id,at,true,hit.row_id);
+    let sun = normalize(frame.sun.xyz);
+    let o = h.p + 0.004*h.n;
+    let visible = world_visibility(0u,LoftRay(o,sun,0.002,100.0));
+    let sky = vec3f(0.16,0.45,0.55)*world_eval(h,wo,h.n)*3.14159;
+    return sky + world_eval(h,wo,sun)*3.14159*incident*(0.12+0.88*visible);
+  }
+
+pub fn shallow_sample(origin: v3, direction: v3, seed: u, bounces: u) -> rgb {
+  let h = submerged_hit(origin,direction)
+  if h.t < 0.0 { return [0.023,0.20,0.25] }
+  let flux = shallow_caustic(h.p.xyz,1.55,time*0.48)
+  let water = [0.035,0.27,0.30]
+  let fog = 1.0 - exp(-0.044*h.t)
+  mix(submerged_light(h,-direction,flux),water,fog)
 }
