@@ -1,0 +1,7 @@
+# F9c: tan as a builtin.
+use stdlib::materials::bsdf::{lambert}
+kind K @World () {
+  trace(p) = length(coords(p)) - 1.0 + 0.01 * tan(clamp(p.y, -1.0, 1.0))
+  material(p, n) = lambert(rgb(0.5))
+}
+build { emit K() }

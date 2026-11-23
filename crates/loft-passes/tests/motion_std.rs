@@ -4,7 +4,7 @@ use loft_ir::Span;
 use loft_parse::ast::{Arg, Expr, ExprKind, FnDecl, Item, NumSuffix, Stmt, Ty, TyExpr};
 use loft_passes::{
     Compiled, Prog, compile,
-    eval::{Eval, RowVal, Val, concrete},
+    eval::{Eval, RowVal, Truth, Val, concrete},
 };
 use std::path::Path;
 
@@ -202,7 +202,7 @@ impl<'p, 'a> Scene<'p, 'a> {
                         let ExprKind::Name(tag) = &args[0].value.kind else {
                             panic!("expected event tag")
                         };
-                        let Val::B(Some(emit)) = self.ev.expr(cond).unwrap() else {
+                        let Val::B(Truth::Known(emit)) = self.ev.expr(cond).unwrap() else {
                             panic!("expected event condition")
                         };
                         if emit {

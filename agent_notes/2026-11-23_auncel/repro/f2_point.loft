@@ -1,0 +1,7 @@
+# F2 control: a branch on the point must stay rejected (it is a break in space).
+use stdlib::materials::bsdf::{lambert}
+kind K @World () {
+  trace(p) = select(length(coords(p)) - 1.0, 5.0, p.x > 0.0)
+  material(p, n) = lambert(rgb(0.5))
+}
+build { emit K() }

@@ -65,6 +65,9 @@ impl Scalar for Iv {
     fn un(&self, f: Un) -> Iv {
         let Iv { lo, hi, l } = *self;
         let jump = |lo_i: f64, hi_i: f64| if lo_i == hi_i || l == 0.0 { 0.0 } else { f64::INFINITY };
+        // Outside the domain or across a pole: no range and no L, whether or not the argument moves with the point
+        // (a per-frame NaN or infinity is no safer to march).
+        let unbounded = || Iv { lo: f64::NEG_INFINITY, hi: f64::INFINITY, l: f64::INFINITY };
         match f {
             Un::Sin => sin_iv(lo, hi, l),
             Un::Cos => sin_iv(lo + std::f64::consts::FRAC_PI_2, hi + std::f64::consts::FRAC_PI_2, l),
@@ -105,7 +108,58 @@ impl Scalar for Iv {
                     Iv::new(if lo < 0.0 { -1.0 } else { 0.0 }, if hi > 0.0 { 1.0 } else { 0.0 }, jump(lo, hi))
                 }
             }
+            // F1. Each rule: the monotone image of [lo, hi], and sup |f'| over it times the argument's L.
+            Un::Atan => Iv::new(lo.atan(), hi.atan(), ml(1.0 / (1.0 + self.mig() * self.mig()), l)),
+            Un::Asin | Un::Acos => {
+                if lo < -1.0 || hi > 1.0 {
+                    // WGSL leaves asin/acos outside [-1, 1] indeterminate (NaN on every GPU we run).
+                    return unbounded();
+                }
+                let m = self.mag();
+                let slope = if m < 1.0 { ml(1.0 / (1.0 - m * m).sqrt(), l) } else if l == 0.0 { 0.0 } else { f64::INFINITY };
+                match f {
+                    Un::Asin => Iv::new(lo.asin(), hi.asin(), slope),
+                    _ => Iv::new(hi.acos(), lo.acos(), slope),
+                }
+            }
+            Un::Tan => {
+                use std::f64::consts::{FRAC_PI_2, PI};
+                // The branch (kπ - π/2, kπ + π/2) that holds `lo`; tan is increasing inside it.
+                let k = ((lo + FRAC_PI_2) / PI).floor();
+                let (start, end) = (k * PI - FRAC_PI_2, k * PI + FRAC_PI_2);
+                if !(lo > start && hi < end) {
+                    return unbounded();
+                }
+                let (a, b) = (lo.tan(), hi.tan());
+                Iv::new(a, b, ml(1.0 + (a * a).max(b * b), l))
+            }
+            Un::Log => {
+                if lo <= 0.0 {
+                    return unbounded();
+                }
+                Iv::new(lo.ln(), hi.ln(), ml(1.0 / lo, l))
+            }
         }
+    }
+    fn sqr(&self) -> Iv {
+        let (a, b) = (self.mig() * self.mig(), self.mag() * self.mag());
+        Iv::new(a, b, ml(2.0 * self.mag(), self.l))
+    }
+    /// The gradient of atan2(y, x) is (x, -y)/r², of norm 1/r, and |x dy - y dx| <= r |(dx, dy)| (Cauchy-Schwarz),
+    /// so L <= hypot(L(x), L(y)) / r_min, r_min the distance from the (x, y) box to the origin. A box that avoids the
+    /// origin and the cut {y = 0, x < 0} lies in one continuous branch and subtends less than pi, so its angle
+    /// extremes are at its corners. One that meets either has no finite L: the value jumps by 2 pi across the cut.
+    fn atan2(&self, x: &Iv) -> Iv {
+        let y = self;
+        let l = x.l.hypot(y.l);
+        if (x.contains_zero() && y.contains_zero()) || (x.lo < 0.0 && y.contains_zero()) {
+            use std::f64::consts::PI;
+            return Iv::new(-PI, PI, if l == 0.0 { 0.0 } else { f64::INFINITY });
+        }
+        let corners = [(y.lo, x.lo), (y.lo, x.hi), (y.hi, x.lo), (y.hi, x.hi)].map(|(b, a)| b.atan2(a));
+        let lo = corners.iter().copied().fold(f64::INFINITY, f64::min);
+        let hi = corners.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        Iv::new(lo, hi, ml(1.0 / x.mig().hypot(y.mig()), l))
     }
     fn min(&self, o: &Iv) -> Iv {
         Iv::new(self.lo.min(o.lo), self.hi.min(o.hi), self.l.max(o.l))
@@ -116,11 +170,14 @@ impl Scalar for Iv {
     fn pow(&self, o: &Iv) -> Iv {
         match o.exact() {
             Some(k) if k >= 0.0 && k.fract() == 0.0 && k <= 16.0 => {
-                let mut r = Iv::c(1.0);
-                for _ in 0..k as u32 {
-                    r = r.mul(self);
+                // One value to an integer power, not k independent factors (F11): an even power never goes
+                // negative. The L is the repeated product rule's own, k |x|^(k-1) L(x).
+                let n = k as i32;
+                if n == 0 {
+                    return Iv::c(1.0);
                 }
-                r
+                let (a, b) = if n % 2 == 0 { (self.mig().powi(n), self.mag().powi(n)) } else { (self.lo.powi(n), self.hi.powi(n)) };
+                Iv::new(a, b, ml(k * self.mag().powi(n - 1), self.l))
             }
             Some(k) if self.lo > 0.0 => {
                 let (a, b) = (self.lo.powf(k), self.hi.powf(k));
@@ -309,12 +366,15 @@ impl Scalar for TraceIv {
             Un::Abs if self.iv.lo >= 0.0 => self.clone(),
             Un::Abs if self.iv.hi <= 0.0 => self.neg(),
             Un::Abs => Self { iv, form: self.form.clone().and_then(Form::abs) },
-            Un::Sin | Un::Cos | Un::Sqrt | Un::Exp | Un::Floor | Un::Fract | Un::Sign => iv.into(),
+            Un::Sin | Un::Cos | Un::Sqrt | Un::Exp | Un::Floor | Un::Fract | Un::Sign | Un::Acos | Un::Asin | Un::Atan
+            | Un::Tan | Un::Log => iv.into(),
         }
     }
     fn min(&self, o: &Self) -> Self { self.iv.min(&o.iv).into() }
     fn max(&self, o: &Self) -> Self { self.iv.max(&o.iv).into() }
     fn pow(&self, o: &Self) -> Self { self.iv.pow(&o.iv).into() }
+    fn sqr(&self) -> Self { self.iv.sqr().into() }
+    fn atan2(&self, x: &Self) -> Self { self.iv.atan2(&x.iv).into() }
     fn cmp(&self, op: BinOp, o: &Self) -> Option<bool> { self.iv.cmp(op, &o.iv) }
     fn mag(&self) -> f64 { self.iv.mag() }
     fn mig(&self) -> f64 { self.iv.mig() }

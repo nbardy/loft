@@ -1,0 +1,13 @@
+# F9b: an untyped const as a loop bound in a function reachable from a trace.
+use stdlib::materials::bsdf::{lambert}
+const N = 6
+fn bumps(q: rgb) -> f {
+  var s = 0.0
+  for i in 0..N { s = s + 0.01 * sin(f32(i) * q.y) }
+  s
+}
+kind K @World () {
+  trace(p) = length(coords(p)) - 1.0 + bumps(coords(p))
+  material(p, n) = lambert(rgb(0.5))
+}
+build { emit K() }

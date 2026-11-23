@@ -176,10 +176,14 @@ catalog! {
     Abs "abs" 1..=1;
         Poly(Componentwise); Direct("abs"); Native; false, true;
     Acos "acos" 1..=1;
-        Poly(Componentwise); Direct("acos"); Fixed; false, false;
+        Poly(Componentwise); Direct("acos"); Fixed; false, true;
+    Asin "asin" 1..=1;
+        Poly(Componentwise); Direct("asin"); Unavailable; false, true;
+    Atan "atan" 1..=1;
+        Poly(Componentwise); Direct("atan"); Unavailable; false, true;
     Atan2 "atan2" 2..=2;
         Signature(&[ArgShape::F32, ArgShape::F32], RetShape::F32);
-        Direct("atan2"); Fixed; false, false;
+        Direct("atan2"); Fixed; false, true;
     Clamp "clamp" 3..=3;
         Poly(Componentwise); Direct("clamp"); Native; false, true;
     Cos "cos" 1..=1;
@@ -189,11 +193,11 @@ catalog! {
     Floor "floor" 1..=1;
         Poly(Componentwise); Direct("floor"); Native; false, true;
     Fma "fma" 3..=3;
-        Signature(&[ArgShape::F32; 3], RetShape::F32); Direct("fma"); Native; false, false;
+        Signature(&[ArgShape::F32; 3], RetShape::F32); Direct("fma"); Native; false, true;
     Fract "fract" 1..=1;
         Poly(Componentwise); Direct("fract"); Native; false, true;
     Log "log" 1..=1;
-        Poly(Componentwise); Direct("log"); Fixed; false, false;
+        Poly(Componentwise); Direct("log"); Fixed; false, true;
     Max "max" 2..=2;
         Poly(Componentwise); Direct("max"); Native; false, true;
     Min "min" 2..=2;
@@ -221,14 +225,10 @@ catalog! {
         Poly(Componentwise); Direct("sqrt"); Native; true, true;
     Step "step" 2..=2;
         Poly(Componentwise); Direct("step"); Native; false, true;
+    Tan "tan" 1..=1;
+        Poly(Componentwise); Direct("tan"); Unavailable; false, true;
 
     // Names encountered by motion/AD without a checker signature at this revision.
-    Asin "asin" 1..=1;
-        Poly(Unchecked); Direct("asin"); Unavailable; false, false;
-    Atan "atan" 1..=1;
-        Poly(Unchecked); Direct("atan"); Unavailable; false, false;
-    Tan "tan" 1..=1;
-        Poly(Unchecked); Direct("tan"); Unavailable; false, false;
     Exp2 "exp2" 1..=1;
         Poly(Unchecked); Direct("exp2"); Unavailable; false, false;
     Log2 "log2" 1..=1;

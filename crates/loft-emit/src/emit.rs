@@ -372,7 +372,12 @@ impl<'p, 'a> Emitter<'p, 'a> {
                     format!("loft_params[{i}u].x")
                 } else {
                     let suffix = if self.p.runtime_constant(n) { "()" } else { "" };
-                    format!("{}_{}{suffix}", if self.motion { "motion_const" } else { "loft_const" }, n)
+                    let name = format!("{}_{}{suffix}", if self.motion { "motion_const" } else { "loft_const" }, n);
+                    // F9b: `const N = 36` is declared `i32`, but the checker types `N` as u32 in `for i in 0..N`
+                    // (two abstract integers count in u32). WGSL converts neither way implicitly, so convert here.
+                    let (declared, used) = (wty(self.ty_of(&self.p.consts[n.as_str()].value)), wty(self.ty_of(e)));
+                    let scalar = |t: &str| matches!(t, "u32" | "i32" | "f32");
+                    if declared != used && scalar(&declared) && scalar(&used) { format!("{used}({name})") } else { name }
                 }
             }
             ExprKind::Name(n) if n == "SceneWorld" && !self.locals.contains(n) => "0u".into(),

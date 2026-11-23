@@ -1,0 +1,14 @@
+# F2: an if expression on time with statements in its arms, and an assignment in an if statement.
+use stdlib::materials::bsdf::{lambert}
+kind K @World () {
+  trace(p) {
+    let q = coords(p)
+    var r = 1.0
+    if time > 2.0 { r = 0.75 }
+    let d = if time > 3.0 { let s = 0.5
+      length(q) - s } else { length(q) - r }
+    d
+  }
+  material(p, n) = lambert(rgb(0.5))
+}
+build { emit K() }
