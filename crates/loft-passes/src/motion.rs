@@ -22,66 +22,34 @@ pub fn motion_module(
     let mut checks = vec![];
     let mut fields = vec![];
     let mut tier = Determinism::Det;
-    for pass in &p.schedule.expect("checked schedule").passes {
-        let is_law = match pass.verb.name.as_str() {
-            "run_laws" => true,
-            "check" => false,
-            _ => continue,
+    for s in crate::check::motion_schedule(p)? {
+        let f = s.f;
+        let Some(target) = s.target else {
+            return Err(unsupported(f.name.span, "motion target requires a kind"));
         };
-        for a in &pass.args {
-            let ExprKind::Name(n) = &a.value.kind else {
-                return Err(unsupported(
-                    a.value.span,
-                    "expected a scheduled law or check name",
+        if target.name != kind.name.name {
+            continue;
+        }
+        if let Some(law) = s.law {
+            if !checks.is_empty() {
+                return Err(Diag::new(
+                    Code::E505,
+                    s.span,
+                    "law scheduled after its checks",
+                    "schedule the row laws first and the checks last",
                 ));
-            };
-            let f = if is_law {
-                p.laws.get(n.as_str()).map(|l| &l.f)
-            } else {
-                p.checks.get(n.as_str()).copied()
             }
-            .ok_or_else(|| {
-                Diag::new(
-                    Code::E011,
-                    a.value.span,
-                    "unknown scheduled law or check",
-                    "declare the named function",
-                )
-            })?;
-            let Some(TyExpr::Name(target)) = &f.params[0].ty else {
-                return Err(unsupported(f.name.span, "motion target requires a kind"));
-            };
-            if target.name != kind.name.name {
-                continue;
+            if f.params.len() != 2 || f.params[1].name.name != "dt" {
+                return Err(unsupported(f.name.span, "row-local laws take the target row and dt"));
             }
-            if is_law {
-                if !checks.is_empty() {
-                    return Err(Diag::new(
-                        Code::E505,
-                        a.value.span,
-                        "law scheduled after its checks",
-                        "schedule the row laws first and the checks last",
-                    ));
-                }
-                if f.params.len() != 2 || f.params[1].name.name != "dt" {
-                    return Err(unsupported(
-                        f.name.span,
-                        "row-local laws take the target row and dt",
-                    ));
-                }
-                let law = p.laws[n.as_str()];
-                tier = law.tier;
-                fields.extend(law.writes.iter().map(|w| w.name.clone()));
-                laws.push(f);
-            } else {
-                if f.params.len() != 1 {
-                    return Err(unsupported(
-                        f.name.span,
-                        "row-local checks take one target row",
-                    ));
-                }
-                checks.push(f);
+            tier = law.tier;
+            fields.extend(law.writes.iter().map(|w| w.name.clone()));
+            laws.push(f);
+        } else {
+            if f.params.len() != 1 {
+                return Err(unsupported(f.name.span, "row-local checks take one target row"));
             }
+            checks.push(f);
         }
     }
     if laws.is_empty() && checks.is_empty() {
