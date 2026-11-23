@@ -5,8 +5,6 @@
 
 #[path = "kernel_units.rs"]
 mod kernel_units;
-#[path = "motion_source.rs"]
-pub mod motion_source;
 use crate::Prog;
 use loft_builtins::{ArgShape, Builtin, BuiltinSpec, PolyRule, RetShape, SigRule, lookup};
 use loft_parse::ast::*;
@@ -83,7 +81,6 @@ pub fn check(p: &Prog, types: &mut Vec<Ty>) -> Res<CheckedEffects> {
             ck.assignable(&t, &want, c.value.span)?; if t==Ty::AbstractInt {ck.set(&c.value,want);}
         }
     }
-    motion_source::check(&mut ck)?;
     for sc in p.scans.values() { ck.scan(sc)?; }
     for k in p.kinds.values() { ck.kind_params(k)?; }
     for f in p.fns.values() { ck.func(f, None)?; }
@@ -252,7 +249,7 @@ impl<'p,'a> Ck<'p,'a> {
                     )),
                 };
             }
-            if matches!(s.name.as_str(), "World" | "Local") || self.comptime && !self.p.bodies.is_empty() && s.name == "Body" || self.p.spaces.contains(s.name.as_str()) {
+            if matches!(s.name.as_str(), "World" | "Local") || self.p.spaces.contains(s.name.as_str()) {
                 Ok(Space::Named(s.name.clone()))
             } else {
                 Err(Diag::new(

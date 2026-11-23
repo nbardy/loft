@@ -197,13 +197,13 @@ fn signature(out: &mut String, item: &Item, source: &str, roots: &[Node], tokens
         Item::Const(c) => c.range.as_ref()
             .map_or(&c.value, |range| range.hi.as_ref().unwrap_or(&range.lo)).span.hi,
         Item::TypeAlias(..) => type_end(roots, name + 2, source),
-        Item::Struct(..) | Item::State(_) | Item::World(..) => {
+        Item::Struct(..) | Item::World(..) => {
             let body = body_index(roots, name, source);
             last(&roots[body]).span.hi
         }
-        Item::Fn(_) | Item::Kind(_) | Item::Scan(_) | Item::Law(_) | Item::Body(..)
+        Item::Fn(_) | Item::Kind(_) | Item::Scan(_) | Item::Law(_)
         | Item::Kernel(_) | Item::Check(_)
-        | Item::Camera(_) | Item::Bake(_) | Item::Retarget { .. } => {
+        | Item::Camera(_) | Item::Bake(_) => {
             let body = body_index(roots, name, source);
             last(&roots[body - 1]).span.hi
         }

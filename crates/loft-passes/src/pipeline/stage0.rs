@@ -103,7 +103,6 @@ fn evaluate_rows(
         ev.call_fn(f, vec![], f.name.span)?;
     }
     for sample in samples{
-        if p.states.contains_key(sample.kind.as_str()) { continue; }
         let k=p.kinds.get(sample.kind.as_str()).ok_or_else(||Diag::new(Code::E602,Span::NONE,"snapshot names an unknown kind","sample the same scene revision"))?;
         let t=p.kind_index(&sample.kind);
         for (field,values) in &sample.fields{

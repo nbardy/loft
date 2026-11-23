@@ -4,9 +4,9 @@ start: _sep? (top_item (_sep top_item)* _sep?)?
 top_item: use_decl
         | "pub"? ( space_decl | struct_decl | type_alias | const_decl | input_decl | param_decl
                  | kernel_decl | bake_tex_decl | camera_decl | target_decl | fn_decl | lobe_decl
-                 | scan_decl | kind_decl | body_decl | state_decl
+                 | scan_decl | kind_decl
                  | law_decl | check_decl
-                 | retarget_decl | world_decl | build_fn | build_blk | sched_decl )
+                 | world_decl | build_fn | build_blk | sched_decl )
 
 use_decl: "use" mod_path ("::" ("*" | "{" import_names "}") | "as" LIDENT)?
 import_names: IDENT ("," IDENT)* ","?
@@ -47,25 +47,11 @@ map_decl:    "map" LIDENT "(" LIDENT ")" "=" expr
 query_decl:  QUERY_NAME "(" params? ")" fn_body
            | "surface" "(" params? ")" "grid" GRID_DIM fn_body
 
-body_decl:   "body" UIDENT "{" (_NL? body_item (_sep body_item)* _sep?)? "}"
-body_item:   waive_stmt
-           | "trunk" body_fields
-           | "chain" LIDENT ("[" expr "]")? ":" LIDENT body_fields
-           | "segment" LIDENT body_fields
-           | "build" "for" body_bind ("," body_bind)* "{" _NL? body_loop_item (_sep body_loop_item)* _sep? "}"
-body_loop_item: body_item | "let" LIDENT "=" expr
-body_bind: LIDENT "in" expr ".." expr
-body_fields: "{" (_NL? body_field (("," _NL? | _sep) body_field)* ("," _NL? | _sep)?)? "}"
-body_field: LIDENT ":" (expr (".." expr)? | body_fields)
-
-state_decl:  "state" UIDENT ("checkpoint" INT)? ("home" LIDENT)? "{" (_NL? col (("," | _sep) col)* ("," | _sep)?)? "}"
-
 law_decl:    "law" LIDENT "(" params ")" "nondet"? "writes" write_set block
 write_set:   LIDENT ("." "{" ident_list "}")?
 
 
 check_decl:  "check" LIDENT "(" params ")" "->" type_expr block
-retarget_decl: "retarget" UIDENT "from" UIDENT "to" UIDENT "{" field_inits "}"
 
 world_decl:  "world" UIDENT "{" field_inits "}"
 build_fn:    "build" "fn" LIDENT "(" params? ")" ("->" type_expr)? fn_body

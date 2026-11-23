@@ -613,54 +613,6 @@ impl Scope<'_> {
         Ok(())
     }
 
-    fn body_fields(&self, fields: &mut BodyFields, locals: &[String]) -> Res<()> {
-        for (_, value) in fields {
-            match value {
-                BodyValue::Value(e) => self.expr(e, locals)?,
-                BodyValue::Lengths(es) => {
-                    for e in es {
-                        self.expr(e, locals)?;
-                    }
-                }
-                BodyValue::Range(a, b) => {
-                    self.expr(a, locals)?;
-                    self.expr(b, locals)?;
-                }
-                BodyValue::Record(fields) => self.body_fields(fields, locals)?,
-            }
-        }
-        Ok(())
-    }
-
-    fn body(&self, items: &mut [BodyItem], locals: &mut Vec<String>) -> Res<()> {
-        for item in items {
-            match item {
-                BodyItem::Trunk(_, fields) | BodyItem::Segment(_, fields) => {
-                    self.body_fields(fields, locals)?
-                }
-                BodyItem::Chain(_, index, _, fields) => {
-                    if let Some(e) = index {
-                        self.expr(e, locals)?;
-                    }
-                    self.body_fields(fields, locals)?;
-                }
-                BodyItem::For(var, lo, hi, body) => {
-                    self.expr(lo, locals)?;
-                    self.expr(hi, locals)?;
-                    let mut inside = locals.clone();
-                    inside.push(var.name.clone());
-                    self.body(body, &mut inside)?;
-                }
-                BodyItem::Let(name, expr) => {
-                    self.expr(expr, locals)?;
-                    locals.push(name.name.clone());
-                }
-                BodyItem::Waive(..) => {}
-            }
-        }
-        Ok(())
-    }
-
     fn item(&self, item: &mut Item) -> Res<()> {
         match item {
             Item::Use(_) | Item::Space(_) | Item::Unit(_) => {}
@@ -677,13 +629,6 @@ impl Scope<'_> {
             }
             Item::TypeAlias(_, ty) => self.ty(ty, &[])?,
             Item::Struct(_, fields) => self.columns(fields)?,
-            Item::State(state) => {
-                if let Some(home) = &mut state.home {
-                    self.ident(home)?;
-                }
-                self.columns(&mut state.fields)?;
-            }
-            Item::Body(_, body) => self.body(body, &mut vec![])?,
             Item::World(_, kinds) => {
                 for kind in kinds {
                     self.ident(kind)?;
@@ -732,16 +677,6 @@ impl Scope<'_> {
                     &[s.prev.name.clone(), s.at.name.clone(), s.var.name.clone()],
                 )?;
             }
-            Item::Retarget {
-                source,
-                target,
-                fields,
-                ..
-            } => {
-                self.ident(source)?;
-                self.ident(target)?;
-                self.fields(fields, &[])?;
-            }
             Item::Schedule(s) => {
                 if let Some((_, ty)) = &mut s.radiance {
                     self.ty(ty, &[])?;
@@ -780,16 +715,13 @@ impl Scope<'_> {
             Item::Struct(n, _)
             | Item::TypeAlias(n, _)
             | Item::Unit(n)
-            | Item::Body(n, _)
-            | Item::World(n, _)
-            | Item::Retarget { name: n, .. } => n,
+            | Item::World(n, _) => n,
             Item::Const(x) => &mut x.name,
             Item::Fn(x) | Item::Check(x) => &mut x.name,
             Item::Kind(x) => &mut x.name,
             Item::Scan(x) => &mut x.name,
             Item::Schedule(x) => &mut x.name,
             Item::Law(x) => &mut x.f.name,
-            Item::State(x) => &mut x.name,
             Item::Kernel(x) => &mut x.f.name,
             Item::Camera(x) => &mut x.name,
             Item::Bake(x) => &mut x.texel.name,

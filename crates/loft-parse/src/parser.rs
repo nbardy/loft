@@ -325,106 +325,6 @@ impl<'src> Parser<'src, '_> {
         self.pop();
         Ok(n)
     }
-    fn columns(&mut self, close: &str) -> Res<Vec<RowField>> {
-        self.seps();
-        let mut fields = vec![];
-        while !self.eat(close) {
-            fields.push(self.column()?);
-            if !self.eat(",") && !self.is(close) {
-                self.end()?;
-            }
-            self.seps();
-        }
-        Ok(fields)
-    }
-
-    fn body_fields(&mut self) -> Res<BodyFields> {
-        self.expect("{")?;
-        self.seps();
-        let mut fields = vec![];
-        while !self.eat("}") {
-            let key = self.ident()?;
-            self.expect(":")?;
-            let value = if key.name == "lens" && self.eat("[") {
-                // Length lists have one entry per segment, including single-segment chains.
-                BodyValue::Lengths(self.list("]")?.into_iter().map(|arg| arg.value).collect())
-            } else if self.is("{") {
-                BodyValue::Record(self.body_fields()?)
-            } else {
-                let lo = self.expr(0)?;
-                if self.eat("..") {
-                    BodyValue::Range(lo, self.expr(0)?)
-                } else {
-                    BodyValue::Value(lo)
-                }
-            };
-            fields.push((key, value));
-            if !self.eat(",") {
-                self.end()?;
-            }
-            self.seps();
-        }
-        Ok(fields)
-    }
-
-    fn body_items(&mut self, in_loop: bool) -> Res<Vec<BodyItem>> {
-        self.expect("{")?;
-        self.seps();
-        let mut items = vec![];
-        while !self.eat("}") {
-            let keyword = self.cur().span;
-            let item = if self.eat("trunk") {
-                BodyItem::Trunk(named("trunk", keyword), self.body_fields()?)
-            } else if self.eat("segment") {
-                BodyItem::Segment(self.ident()?, self.body_fields()?)
-            } else if self.eat("chain") {
-                let name = self.ident()?;
-                let index = if self.eat("[") {
-                    let e = self.expr(0)?;
-                    self.expect("]")?;
-                    Some(e)
-                } else {
-                    None
-                };
-                self.expect(":")?;
-                BodyItem::Chain(name, index, self.ident()?, self.body_fields()?)
-            } else if self.eat("build") {
-                self.expect("for")?;
-                let mut binders = vec![];
-                loop {
-                    let var = self.ident()?;
-                    self.expect("in")?;
-                    let lo = self.expr(0)?;
-                    self.expect("..")?;
-                    binders.push((var, lo, self.expr(0)?));
-                    if !self.eat(",") { break; }
-                }
-                let mut nested = self.body_items(true)?;
-                for (var, lo, hi) in binders.into_iter().rev() {
-                    nested = vec![BodyItem::For(var, lo, hi, nested)];
-                }
-                items.extend(nested);
-                self.end()?;
-                continue;
-            } else if in_loop && self.eat("let") {
-                let name = self.ident()?;
-                self.expect("=")?;
-                BodyItem::Let(name, self.expr(0)?)
-            } else if self.eat("waive") {
-                let name = self.upper_ident()?;
-                if self.cur().kind != Kind::String {
-                    return self.err("a quoted waiver reason");
-                }
-                let reason = self.pop();
-                BodyItem::Waive(name, named(reason.text, reason.span))
-            } else {
-                return self.err("a trunk, segment, chain, waiver or build loop");
-            };
-            items.push(item);
-            self.end()?;
-        }
-        Ok(items)
-    }
 
     fn item(&mut self, public: bool) -> Res<Item> {
         let build = self.eat("build");
@@ -492,17 +392,6 @@ impl<'src> Parser<'src, '_> {
                 ty: t,
                 value,
             }));
-        }
-        if self.eat("body") {
-            return Ok(Item::Body(self.upper_ident()?, self.body_items(false)?));
-        }
-        if self.eat("state") {
-            let name = self.upper_ident()?;
-            let checkpoint = self.eat("checkpoint").then(|| self.integer()).transpose()?;
-            let home = self.eat("home").then(|| self.ident()).transpose()?;
-            self.expect("{")?;
-            let fields = self.columns("}")?;
-            return Ok(Item::State(StateDecl { name, checkpoint, home, fields }));
         }
         if self.eat("bake_tex") {
             return self.bake_tex().map(Item::Bake);
@@ -706,16 +595,6 @@ impl<'src> Parser<'src, '_> {
                 body,
                 raw: None,
             }));
-        }
-        if self.eat("retarget") {
-            let name = self.upper_ident()?;
-            self.expect("from")?;
-            let source = self.upper_ident()?;
-            self.expect("to")?;
-            let target = self.upper_ident()?;
-            self.expect("{")?;
-            let fields = self.fields("}")?;
-            return Ok(Item::Retarget { name, source, target, fields });
         }
         if self.eat("use") {
             let mut path = vec![self.ident()?];

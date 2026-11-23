@@ -263,21 +263,6 @@ fn frozen_diagnostic_fixtures() {
 }
 
 #[test]
-fn authored_motion_declarations_preserve_spans_and_write_ownership() {
-    let scene = kind("", OK_TRACE, OK_MATERIAL);
-    let valid = include_str!("motion_source/accepted.loft").replace("space Body Head", "space Head");
-    compile(&format!("{scene}\n{valid}")).unwrap_or_else(|(_, diagnostic)| panic!("{diagnostic}"));
-    for (code, fixture, excerpt) in [
-        (Code::E011, include_str!("motion_source/body-duplicate.loft"), "mass: 1kg, mass: 2kg"),
-        (Code::E003, include_str!("motion_source/state-zero-checkpoint.loft"), "checkpoint 0"),
-    ] {
-        let (actual, diagnostic) = compile(&format!("{scene}\n{fixture}")).expect_err("invalid motion declaration");
-        assert_eq!(actual, code, "{diagnostic}");
-        assert!(diagnostic.contains(excerpt), "{diagnostic}");
-    }
-}
-
-#[test]
 fn diff_preserves_inactive_helper_parameters() {
     compile(r#"
 space World
