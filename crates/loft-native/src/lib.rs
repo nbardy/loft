@@ -36,6 +36,26 @@ pub fn request_gpu(ray_query: bool) -> Result<Gpu, String> {
     ray_query::request_gpu(ray_query)
 }
 
+static F32_ONLY: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(matches!(loft_ir::precision::DEFAULT, loft_ir::precision::Precision::F32));
+
+/// The process-wide precision choice, set once by `loft --precision f32`. Loading reads it.
+pub fn set_precision(p: loft_ir::precision::Precision) {
+    F32_ONLY.store(p == loft_ir::precision::Precision::F32, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn precision() -> loft_ir::precision::Precision {
+    if F32_ONLY.load(std::sync::atomic::Ordering::Relaxed) { loft_ir::precision::Precision::F32 } else { loft_ir::precision::Precision::Decided }
+}
+
+fn device_features(device: &wgpu::Device) -> GpuFeatures {
+    let has = device.features();
+    let mut features = GpuFeatures::empty();
+    features.set(GpuFeatures::RAY_QUERY, has.contains(wgpu::Features::EXPERIMENTAL_RAY_QUERY));
+    features.set(GpuFeatures::F16, has.contains(wgpu::Features::SHADER_F16));
+    features
+}
+
 pub const COLOR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 
 /// What loading built and how long each step took (milliseconds).
@@ -81,6 +101,8 @@ pub struct Loaded {
     color_view: wgpu::TextureView,
     clock: Option<Clock>,
     pub stats: LoadStats,
+    /// The precision this load ran with, including the recorded half-storage fallback.
+    pub precision: loft_ir::precision::Resolved,
 }
 
 /// Timestamps at the start and end of every pass, resolved after the frame.
@@ -104,6 +126,26 @@ pub struct FrameTiming {
     /// Encoded-pass order. Known empty work and reused Shadow pairs are explicitly optional.
     pub ticks: Vec<u64>,
     pub timestamp_required: Vec<bool>,
+}
+
+/// A `load_control` p50 above this means another client shares the GPU. Alone it reads 0.82-1.05 ms at 1280x800 on
+/// the M4; under a busy desktop 2-5 ms, while hermit-1 goes from 3.2-3.9 to 11-13 ms (perf-instrument.md).
+pub const QUIET_CONTROL_P50_MS: f64 = 1.10;
+
+/// One run of consecutive scene frames with a load control `[p50, p95]` measured right before and right after it.
+#[derive(serde::Serialize)]
+pub struct Block {
+    pub index: usize,
+    pub control_before: [f64; 2],
+    pub control_after: [f64; 2],
+    pub frames: Vec<FrameTiming>,
+}
+
+impl Block {
+    /// The GPU was ours for the whole run, as far as one-sided brackets can tell.
+    pub fn quiet(&self) -> bool {
+        self.control_before[0] <= QUIET_CONTROL_P50_MS && self.control_after[0] <= QUIET_CONTROL_P50_MS
+    }
 }
 
 struct ClockRead {
@@ -269,6 +311,19 @@ impl Gpu {
     }
 
     pub fn triangle_control(&self, size: (u32, u32)) -> Result<[f64; 2], String> {
+        self.control(size, "return vec4(0.25, 0.5, 0.75, 1.);")
+    }
+
+    /// A full-screen ALU loop of about a scene's length. The one-triangle control is shorter than a GPU time
+    /// slice and read 0.075 ms throughout a load-27 run in which hermit-1 frames swung 4.3 to 11.7 ms; only a
+    /// probe as long as the work it vouches for is inflated by whatever inflates the work.
+    pub fn load_control(&self, size: (u32, u32)) -> Result<[f64; 2], String> {
+        self.control(size, "var x = p.x * 0.001 + p.y * 0.0007;
+            for (var i = 0u; i < 48u; i++) { x = fract(sin(x * 12.9898 + f32(i)) * 43758.5453); }
+            return vec4(x, 0.5, 0.75, 1.);")
+    }
+
+    fn control(&self, size: (u32, u32), fragment: &str) -> Result<[f64; 2], String> {
         if !self.timestamps { return Err("the speed control needs GPU timestamps".into()); }
         let d = &self.device;
         let format = wgpu::TextureFormat::Rgba8Unorm;
@@ -276,12 +331,13 @@ impl Gpu {
         let view = image.create_view(&Default::default());
         use loft_ir::{Bundle, IndirectDraw, ModuleBlob, PassDecl, PassId, PassRun, QueueClass, ShaderTarget, TableDecl,
             TableLifetime, TargetDesc, ElemFormat};
-        let source = b"@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
-            let p = array(vec2(-1., -1.), vec2(3., -1.), vec2(-1., 3.)); return vec4(p[i], 0., 1.); }
-            @fragment fn fs() -> @location(0) vec4f { return vec4(0.25, 0.5, 0.75, 1.); }";
+        let source = format!("@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {{
+            let p = array(vec2(-1., -1.), vec2(3., -1.), vec2(-1., 3.)); return vec4(p[i], 0., 1.); }}
+            @fragment fn fs(@builtin(position) p: vec4f) -> @location(0) vec4f {{ {fragment} }}");
+        let source = source.as_bytes();
         let bundle = Bundle {
             modules: vec![ModuleBlob { id: ModuleId(0), target: ShaderTarget::Wgsl,
-                hash: *blake3::hash(source).as_bytes(), bytes: source.as_slice().into() }],
+                hash: *blake3::hash(source).as_bytes(), bytes: source.into() }],
             tables: vec![TableDecl { id: TableId(0), format: ElemFormat::U32, lifetime: TableLifetime::Static,
                 stride_bytes: 4, capacity: 4, initial: bytes_of(&[3, 1, 0, 0]).into() }],
             passes: vec![PassDecl { id: PassId(0), wave: 0, queue: QueueClass::Graphics, bindings: Box::new([]),
@@ -315,11 +371,7 @@ impl Gpu {
 fn attach_runner(g: &Gpu) -> Runner {
     Runner::attach(Arc::new(g.device.clone()), Arc::new(g.queue.clone()), HostCaps {
         depth_convention: DepthConvention::StandardZeroToOne, msaa_samples: 1,
-        features: if g.device.features().contains(wgpu::Features::EXPERIMENTAL_RAY_QUERY) {
-            GpuFeatures::RAY_QUERY
-        } else {
-            GpuFeatures::empty()
-        },
+        features: device_features(&g.device),
     }).with_pipeline_clock(|| {
         static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
         START.get_or_init(Instant::now).elapsed()
@@ -353,6 +405,7 @@ impl Loaded {
         let plan = loft_passes::bundle::lower_program(p, params, size, loft_passes::bundle::Options {
             nonce, overdraw: aov == Aov::Overdraw, picture_only: true,
             hardware_ray_query: edit.is_none() && loft_runner::ray_query::has_aabb_capacity(d, p.instances.len()),
+            precision: precision(), features: device_features(d),
             edit: edit.as_ref().map(|(i, source, bytes)| (*i, source.as_str(), bytes.as_slice())),
         }, frame)?;
         let color_format = if aov == Aov::Beauty { COLOR } else { wgpu::TextureFormat::Rgba8Unorm };
@@ -422,7 +475,7 @@ impl Loaded {
             (i > 0 && i + 1 < p.passes.len() && !p.passes[..i].iter().any(|pass| matches!(pass, Pass::Shade(_))))
                 .then(|| {
                     let indexed = |kind: &loft_passes::program::KindTable| aov != Aov::Overdraw
-                        && p.modules[kind.module].naga.entry_points.iter().any(|e| e.name == "vs_indexed");
+                        && p.modules[kind.module].naga.entry_points.iter().any(|e| e.name == "vs_grid");
                     (wave, i as u32 + u32::from(photons), Mutex::new(shadow::Reuse::prepare(p, casters, indexed, editable)))
                 })
         });
@@ -446,7 +499,7 @@ impl Loaded {
             luts: p.luts.clone(), kind_words, params: Mutex::new((p.params.clone(), false)),
             #[cfg(not(target_arch = "wasm32"))] instance_bounds,
             shadow,
-            color, planes: [plan.visibility, plan.depth], color_view, clock, stats })
+            color, planes: [plan.visibility, plan.depth], color_view, clock, stats, precision: plan.precision })
     }
 
     pub fn set_param_word(&self, word: usize, value: f32) -> Result<(), String> {
@@ -580,6 +633,35 @@ impl Loaded {
             collect_oldest(&mut resolving, &mut timings)?;
         }
         Ok(timings)
+    }
+
+    /// Profile `times` as consecutive blocks of `block` frames, each bracketed by a triangle control. A block whose
+    /// brackets are not both quiet is re-run up to `retries` times at the same frame times, so the orbit phase
+    /// stays the same. Every attempt is returned in order; the caller keeps the first quiet one per `index`.
+    /// A sample taken once before a multi-second batch cannot see contention that arrives during it (OPEN.md
+    /// reads 0.58 vs 3.65 ms for identical sources with zero contended verdicts); the brackets can.
+    pub fn profile_blocks(&self, g: &Gpu, size: (u32, u32), times: &[f32], block: usize, retries: usize)
+        -> Result<Vec<Block>, String> {
+        // The first frames after the control's own pipeline and clock activity are slow on a quiet machine too.
+        const SETTLE: usize = 3;
+        let mut attempts = Vec::new();
+        let mut before = g.load_control(size)?;
+        for (index, chunk) in times.chunks(block).enumerate() {
+            let start = index * block;
+            let settle = if start == 0 { chunk[..SETTLE.min(chunk.len())].to_vec() }
+                else { times[start.saturating_sub(SETTLE)..start].to_vec() };
+            for _ in 0..=retries {
+                let run = self.profile_frames(g, settle.iter().chain(chunk).copied(), true)?;
+                let after = g.load_control(size)?;
+                let frames = run.into_iter().skip(settle.len()).collect();
+                let b = Block { index, control_before: before, control_after: after, frames };
+                before = after;
+                let quiet = b.quiet();
+                attempts.push(b);
+                if quiet { break; }
+            }
+        }
+        Ok(attempts)
     }
 
     /// After `frame`: waits, then the GPU time from the first pass's start to the last pass's end, in ms, and each

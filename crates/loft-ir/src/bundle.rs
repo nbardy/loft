@@ -32,7 +32,7 @@ macro_rules! sum {
 crate::bundle_schema!(ids, record, sum);
 
 bitflags::bitflags! {
-    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
     pub struct GpuFeatures: u32 {
         const TIMESTAMPS = 1 << 0;
         const PIPELINE_CACHE = 1 << 1;

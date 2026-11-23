@@ -2,7 +2,7 @@
 @group(1) @binding(0) var vis_tex: texture_2d<u32>;
 @group(1) @binding(1) var<storage, read_write> shade_args: array<atomic<u32>>;
 @group(1) @binding(2) var<storage, read_write> tiles: array<u32>;
-var<workgroup> mask: atomic<u32>;
+{{BINDINGS}}var<workgroup> mask: atomic<u32>;
 
 // One workgroup per 8x8 tile: which kinds cover it; append the tile to each kind's list.
 @compute @workgroup_size(8, 8) fn classify(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) li: u32,

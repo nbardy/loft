@@ -37,54 +37,66 @@ fn loft_bvh_trace(ray: LoftRay, node_count: u32, any_hit: bool) -> LoftBvhHit {
 fn loft_bvh_trace_at(ray: LoftRay, root_id: u32, any_hit: bool) -> LoftBvhHit {
   var best = LoftBvhHit(LoftLeafRef(0xffffffffu, 0xffffffffu), -1.0);
   if root_id == 0xffffffffu { return best; }
-  let root = loft_bvh_nodes[root_id];
-  let span = loft_bvh_span(ray, root.lo, root.hi);
+  var node = loft_bvh_nodes[root_id];
+  let span = loft_bvh_span(ray, node.lo, node.hi);
   if span.x > span.y { return best; }
 
+  // `node` is the node being visited. An interior step keeps the nearer child in hand and pushes only the farther
+  // one, so the visit order is the one a push-both, pop-nearest stack gives, without reloading the nearer child
+  // and without storing entry distances: a popped node is retested against the ray's current t1, which equals the
+  // old "entry > t1" skip because its box overlapped the ray when it was pushed and only t1 has shrunk since.
   var stack: array<u32, 32>;
-  var enters: array<f32, 32>;
-  stack[0u] = root_id;
-  enters[0u] = span.x;
-  var depth = 1u;
+  var depth = 0u;
   var active_ray = ray;
-  while depth > 0u {
-    depth -= 1u;
-    if enters[depth] > active_ray.t1 { continue; }
-    let node = loft_bvh_nodes[stack[depth]];
+  loop {
     let first = node.left_or_first;
+    var descend = false;
     if node.count == 0u {
       let a = loft_bvh_nodes[first];
       let b = loft_bvh_nodes[first + 1u];
       let sa = loft_bvh_span(active_ray, a.lo, a.hi);
       let sb = loft_bvh_span(active_ray, b.lo, b.hi);
-      if sa.x <= sa.y && sb.x <= sb.y {
+      let hit_a = sa.x <= sa.y;
+      let hit_b = sb.x <= sb.y;
+      if hit_a && hit_b {
         let a_first = sa.x <= sb.x;
         stack[depth] = select(first, first + 1u, a_first);
-        enters[depth] = select(sa.x, sb.x, a_first);
-        stack[depth + 1u] = select(first + 1u, first, a_first);
-        enters[depth + 1u] = select(sb.x, sa.x, a_first);
-        depth += 2u;
-      } else if sa.x <= sa.y || sb.x <= sb.y {
-        stack[depth] = select(first + 1u, first, sa.x <= sa.y);
-        enters[depth] = select(sb.x, sa.x, sa.x <= sa.y);
         depth += 1u;
+        if a_first { node = a; } else { node = b; }
+        descend = true;
+      } else if hit_a {
+        node = a;
+        descend = true;
+      } else if hit_b {
+        node = b;
+        descend = true;
       }
-      continue;
-    }
-    for (var j = 0u; j < node.count; j++) {
-      let leaf = loft_bvh_leaves[first + j];
-      let t = loft_bvh_intersect(leaf, active_ray);
-      if t < -1.0 { return LoftBvhHit(leaf, t); }
-      if t >= active_ray.t0 && t <= active_ray.t1 {
-        let earlier_id = leaf.kind_id < best.leaf.kind_id ||
-          (leaf.kind_id == best.leaf.kind_id && leaf.row_id < best.leaf.row_id);
-        if any_hit || best.t < 0.0 || t < best.t || (t == best.t && earlier_id) {
-          best = LoftBvhHit(leaf, t);
-          if any_hit { return best; }
-          active_ray.t1 = t;
+    } else {
+      for (var j = 0u; j < node.count; j++) {
+        let leaf = loft_bvh_leaves[first + j];
+        let t = loft_bvh_intersect(leaf, active_ray);
+        if t < -1.0 { return LoftBvhHit(leaf, t); }
+        if t >= active_ray.t0 && t <= active_ray.t1 {
+          let earlier_id = leaf.kind_id < best.leaf.kind_id ||
+            (leaf.kind_id == best.leaf.kind_id && leaf.row_id < best.leaf.row_id);
+          if any_hit || best.t < 0.0 || t < best.t || (t == best.t && earlier_id) {
+            best = LoftBvhHit(leaf, t);
+            if any_hit { return best; }
+            active_ray.t1 = t;
+          }
         }
       }
     }
+    while !descend && depth > 0u {
+      depth -= 1u;
+      let popped = loft_bvh_nodes[stack[depth]];
+      let popped_span = loft_bvh_span(active_ray, popped.lo, popped.hi);
+      if popped_span.x <= popped_span.y {
+        node = popped;
+        descend = true;
+      }
+    }
+    if !descend { break; }
   }
   return best;
 }
