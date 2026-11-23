@@ -395,7 +395,7 @@ It then materialises the plan once:
 - the ordered steps (`Run`/`Repeat`);
 - each pass's slots, with their buffer views;
 - its work (`Dispatch`, `Ticks`, `Draws`, `Mips`);
-- its clock (`Frame`, `Load`, `Dirty`, `Tick`);
+- its stage (`Frame`, `Load`, `Dirty`, `Tick`);
 - whether it is culled from the front.
 
 Errors are typed variants that name the pass and the slot. Today these come out as one catch-all, `AbiMismatch`.
@@ -415,24 +415,36 @@ fold into `link`.
 ### 5.0 Order and preconditions
 
 ```text
-S0 interface (this branch, merged now: additive files only)
+S0 interface (branch loft/metaengine-core: additive files only, gated, not on main; see "ratchet" below)
    │
    ├─ wait: lane/integrate-meta lands on main (probe-door, cut-tape, cut-unused, probe-rows, merge-2026-11-23)
    │
-S0b prep (one mechanical commit on that main, by the lead, before any slice starts; §5.4)
+integration branch loft/metaengine = that main + merge of loft/metaengine-core
+   │
+S0b prep (one mechanical commit on loft/metaengine, by the lead, before any slice starts; §5.4)
    │
    ├── S1 typed program ─┐
-   ├── S2 plan producer ─┼── in parallel, disjoint files
+   ├── S2 plan producer ─┼── in parallel from S0b, disjoint files
    └── S3 host reader ───┘
    │
-integrate: S3 → S1 → S2   (host first: it consumes only frozen types; S2 last: it is largest and uses S1's Typed)
+integrate into loft/metaengine: S3 → S1 → S2, full gates after each
+   │
+loft/metaengine → main once, when the ratchet and every gate pass
 ```
 
-**Why S0 lands before the integration and S0b after.** S0 only adds files (`loft-check/src/typed.rs` and
+**Why S0 is ready before the integration and S0b runs after.** S0 only adds files (`loft-check/src/typed.rs` and
 `loft-std/src/linked.rs`), one `pub mod` line each, and one variant in `loft-ir/src/execution.rs`, a file that no
 pending lane touches. It therefore merges cleanly either way. S0b moves code between existing files that the pending
 lanes edit heavily (`emit.rs`, `eval.rs`, `check.rs`), so it must run on the integrated tree. Lean1's failure was
 exactly that kind of overlap.
+
+**The ratchet decides where the slices integrate.** `tools/lines.py` holds main at the counted total (33,895 after
+lean2) and never lets it grow. S0 is an interface slice: about 440 counted lines whose deletions arrive in S1–S3.
+Each slice alone is predicted to land between −120 and −360 (§5.3), so the prefixes S0, S0+S3 and S0+S3+S1 are
+predicted to be over the ratchet. Only the complete set is predicted under it (≈ −350 ± 250 net including S0).
+Editing the ceiling to admit an intermediate step is the forbidden move. The slices therefore integrate on the branch
+`loft/metaengine`, and main receives them once. If the complete set misses the ratchet, the redesign does not merge
+(kill K6).
 
 ### 5.1 Frozen interfaces (written in S0, Rust)
 
@@ -444,7 +456,7 @@ impl Typed {
     pub fn ty(&self, e: &Expr) -> &Ty;
     pub fn set_ty(&mut self, e: &Expr, ty: Ty);
     pub fn resolve(&mut self, e: &Expr, r: Resolved);
-    pub fn resolved(&self, e: &Expr) -> &Resolved;
+    pub fn resolved(&self, e: &Expr) -> Resolved;   // Copy
     pub fn op<'a>(&self, e: &'a Expr) -> Op<'a>;
 }
 pub enum Resolved { Syntax, Name(NameRef), Member(MemberRef), Call(Callee) }
@@ -460,7 +472,7 @@ pub struct Linked<'b> { pub bundle: &'b Bundle, pub execution: Execution, pub st
                         pub passes: BTreeMap<PassId, LinkedPass<'b>> }
 pub enum Step { Run(PassId), Repeat(u32, Vec<Step>) }
 pub struct LinkedPass<'b> { pub decl: &'b PassDecl, pub slots: Vec<Slot>, pub work: Work<'b>,
-                            pub clock: Clock, pub cull_front: bool }
+                            pub stage: Stage, pub cull_front: bool, pub additive: bool }
 pub struct Slot { pub group: u8, pub binding: u32, pub table: TableId, pub access: BindAccess,
                   pub view: Option<(u64, u64)> }
 pub enum Work<'b> { Dispatch { module: ModuleId, entry: &'b str, extent: &'b DispatchExtent },
@@ -468,7 +480,8 @@ pub enum Work<'b> { Dispatch { module: ModuleId, entry: &'b str, extent: &'b Dis
                     Draws { draws: &'b [IndirectDraw], index: Vec<Option<IndexWidth>>, colors: &'b [TargetDesc],
                             depth: Option<&'b DepthDesc>, samples: u8 },
                     Mips(TableId) }
-pub enum Clock { Frame, Load, Dirty(Vec<usize>), Tick }
+pub enum Stage { Frame, Load, Dirty(Vec<usize>), Tick }
+pub enum IndexWidth { U16, U32 }
 pub enum LinkError { /* one variant per refusal, each naming its pass, table or slot */ }
 
 // crates/loft-ir/src/execution.rs: one added variant, wire tag 2, no version change
@@ -480,7 +493,7 @@ pub enum Clock { Load, Dirty(Vec<usize>), Tick }
 - S1 may not rename or remove `Typed::{ty, op}`, `NameRef::Fn`, `NameRef::Kind`, `Callee::Fn` or `Op::{Call, FnValue,
   KindRef}`. Those are what S2 reads.
 - S3 owns `linked.rs`. It may add `LinkError` variants and fields that nothing else reads. It may not change `link`,
-  `Step`, `Work` or `Clock`, which S2's tests use.
+  `Step`, `Work` or `Stage`, which S2's tests use.
 - Nobody changes `loft-ir/src/schema.rs`.
 
 ### 5.2 Ownership
@@ -500,7 +513,7 @@ Counted with `tools/lines.py` (scc, the ratchet rule), as a delta from the S0b b
 
 | Slice | Tests it adds or changes | Gates before its merge | Predicted Rust added / removed / net |
 |---|---|---|---|
-| S0 | `loft-std/tests/linked.rs`: link accepts every in-tree `.loftb` produced by the corpus build, and rejects one mutant per `LinkError` variant | crate checks; workspace check + tests; Picture 19/19 and Twin 36/36 unchanged (no behaviour change) | +380 / −0 / **+380** (the test lives in `tests/` and is not counted) |
+| S0 | `loft-std/tests/linked.rs`: a synthetic bundle with every kind of work links with the right steps, stages, views and index widths, and `Tick` round-trips the descriptor. Six mutants each produce their named refusal. The corpus-wide P10 check belongs to S3. | crate checks; workspace check + tests; Picture 19/19 and Twin 36/36 unchanged (no behaviour change) | +380 / −0 / **+380**; measured +445 (the test lives in `tests/` and is not counted) |
 | S0b | none (moves only) | `tools/lines.py` total unchanged ±10; workspace tests identical names and results | ±10 |
 | S1 | update the diagnostic snapshots only if a span moves (prediction: none move) | grammars 330/330; diagnostic snapshots identical; Picture 19/19 with **byte-identical module text** for all modules (emission must not change); Twin 36/36; Truth 34/34 | +170 / −420 / **−250 ± 100** |
 | S2 | one fork test per program in §1: the user's copy changes the shader or state; the stock engine's module text is unchanged | grammars; Picture 19/19 (deterministic tolerance; module text identical for template-backed stock passes); Twin 36/36; Truth 34/34; Speed/Load paired, neutral or better; pipeline and module counts per gate scene ≤ the base | +520 / −880 / **−360 ± 150**; stdlib .loft **+600 ± 150** |
@@ -552,6 +565,8 @@ Written before any code.
   file. This is the rule lean1 broke.
 - **K5:** two fixes in the same subsystem without a passing gate. Stop, and write the failure class before a third
   attempt.
+- **K6:** `loft/metaengine` with all three slices is over the `tools/lines.py` ratchet. Do not merge it. Report the
+  per-crate miss against §5.3. Do not raise the ceiling.
 
 **Risks.**
 - R1: kind adapters exposed as callable queries (`K.hit`) may cost a register-pressure change in the shade entry.
