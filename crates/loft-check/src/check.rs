@@ -114,7 +114,7 @@ pub fn check(p: &Prog, types: &mut Vec<Ty>) -> Res<CheckedEffects> {
         }
         for f in std::iter::once(&law.f).chain(reachable) {
             if f.refuses_unverified_raw() {
-                return Err(Diag::new(Code::E504, f.name.span, "motion reaches unverified raw WGSL", "use wgsl det (...) after verifying the block is deterministic"));
+                return Err(Diag::new(Code::E504, f.name.span, "motion reaches unverified raw WGSL", "mark the law nondet, or write the operation in Loft"));
             }
             calls.calls.extend(crate::references::References::function(f).calls);
         }

@@ -175,7 +175,7 @@ fn raw_shader_islands_cannot_certify_geometry_or_unmarked_motion(){
     let motion=kind("",OK_TRACE,OK_MATERIAL).replace("pose: xf@Body>World)", "pose: xf@Body>World, yaw: rad = 0)")
         +"\nfn drift(x: f) -> f = wgsl (x: f) -> f { return x; }\nlaw turn(h: K, dt) writes h.{yaw} { h.yaw = drift(dt) }";
     expect(Code::E504,&motion);
-    assert!(compile(&motion.replace("wgsl (","wgsl det (")).is_ok());
+    assert!(compile(&motion.replace("law turn(h: K, dt) writes", "law turn(h: K, dt) nondet writes")).is_ok());
 }
 
 #[test]

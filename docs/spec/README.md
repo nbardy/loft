@@ -18,7 +18,7 @@ Where the documents overlap, precedence is **07 > PATCH_V1_2 > 06_ADDENDUM > 00â
 
 - Use `emit_event(...)` for the outbox. `emit` remains the build-stage row constructor.
 - `E501` is used twice (undeclared field write, and the schedule DAG's read-before-write). The DAG error becomes `E505`.
-- Det motion `wgsl` blocks use the keyword spelling `wgsl det (...) -> T { ... }`.
+- ~~Det motion `wgsl` blocks use the keyword spelling `wgsl det (...) -> T { ... }`.~~ Removed 23 Nov 2026 ([CUTS_2026-11-23.md](CUTS_2026-11-23.md)): a Det law cannot reach raw WGSL; mark it `nondet`.
 - `--max-frame-ms` on a device without timestamp queries (some browsers) exits `6` with the reason, never a guessed time.
 
 

@@ -266,7 +266,6 @@ pub struct ScheduleDecl {
     pub implicit: bool,
     pub name: Ident,
     pub passes: Vec<PassDecl>,
-    pub waivers: Vec<(Ident, Ident)>,
 }
 
 /// `pass label: verb(args) { body calls };`
@@ -421,12 +420,12 @@ pub fn frame_field(name:&str)->&str {
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct RawWgsl {
     pub body: String,
-    pub deterministic: bool,
     pub references: Vec<Ident>,
 }
 
 impl FnDecl {
-    pub fn refuses_unverified_raw(&self)->bool{self.raw.as_ref().is_some_and(|r|!r.deterministic)}
+    // `wgsl det` was removed (2026-11-23): raw WGSL is never certified deterministic.
+    pub fn refuses_unverified_raw(&self)->bool{self.raw.is_some()}
 }
 
 /// Type syntax as written.

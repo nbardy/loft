@@ -404,7 +404,7 @@ impl<'src> Parser<'src, '_> {
             self.expect("{")?;
             self.seps();
             let mut radiance = None;
-            let (mut passes, mut waivers) = (vec![], vec![]);
+            let mut passes = vec![];
             while !self.eat("}") {
                 if self.eat("type") {
                     let n = self.cur().span;
@@ -413,16 +413,6 @@ impl<'src> Parser<'src, '_> {
                     if radiance.replace((named("Radiance", n), self.ty()?)).is_some() {
                         return Err(Diag::new(Code::E011, n, "duplicate Radiance binding", "bind Radiance once"));
                     }
-                    self.end()?;
-                    continue;
-                }
-                if self.eat("waive") {
-                    let name = self.upper_ident()?;
-                    if self.cur().kind != Kind::String {
-                        return self.err("a quoted waiver reason");
-                    }
-                    let reason = self.pop();
-                    waivers.push((name, named(reason.text, reason.span)));
                     self.end()?;
                     continue;
                 }
@@ -447,7 +437,7 @@ impl<'src> Parser<'src, '_> {
                 passes.push(PassDecl { label: verb.clone(), verb, args, body, resources });
                 self.end()?
             }
-            return Ok(Item::Schedule(ScheduleDecl { implicit: false, name, passes, waivers, radiance }));
+            return Ok(Item::Schedule(ScheduleDecl { implicit: false, name, passes, radiance }));
         }
         if self.eat("world") {
             let name = self.upper_ident()?;
@@ -621,7 +611,7 @@ impl<'src> Parser<'src, '_> {
         Err(Diag::new(
             if matches!(
                 self.cur().text,
-                "target" | "input"
+                "target"
             ) {
                 Code::E405
             } else {
@@ -1354,13 +1344,12 @@ impl<'src> Parser<'src, '_> {
             return Ok(self.node(span.to(body.value.span), ExprKind::Unproved { step_scale, body }));
         }
         if self.eat("wgsl"){
-            let deterministic=self.eat("det");
             let params=self.params()?;
             if let Some(p)=params.iter().find(|p|p.ty.is_none()){return Err(Diag::new(Code::E003,p.name.span,"WGSL capture requires a type","annotate the boundary parameter"))}
             self.expect("->")?;let ret=self.ty()?;
             if self.cur().kind!=Kind::Raw{return self.err("a balanced WGSL block")}
             let island=self.pop();let end=island.span;
-            let raw=RawWgsl { body: island.text.into(), deterministic, references: vec![] };
+            let raw=RawWgsl { body: island.text.into(), references: vec![] };
             let name=named(&format!("#raw_{}_{}",span.file,span.lo),span);
             let args=params.iter().map(|prm|Arg{name:None,value:self.node(prm.name.span,ExprKind::Name(prm.name.name.clone()))}).collect();
             self.module.items.push(Item::Fn(FnDecl{name:name.clone(),params,ret:Some(ret),body:Block{stmts:vec![]},raw:Some(raw),attrs:vec![],comptime:false}));

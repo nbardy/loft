@@ -59,7 +59,6 @@ pub fn schedule(modules: &mut Vec<Module>, next: &mut u32, recipe: Option<Schedu
     }
     if let Some(s) = authored {
         schedule.name = s.name.clone();
-        schedule.waivers = s.waivers.clone();
         if s.radiance.is_some() { schedule.radiance = s.radiance.clone(); }
         before.extend(s.passes.iter().filter(|p| (p.verb.name != "realtime" || !p.args.is_empty()) && p.verb.name != "woodblock").cloned());
     }
