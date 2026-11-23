@@ -30,6 +30,9 @@ fn context_is_compact_and_every_loft_fence_checks() {
     assert!(context.contains("pub schedule SpectralCaustic {type Radiance=v4; orbit("));
     // Pass calls keep their arguments; a bare `find_shadow_map` hid its required `size:`.
     assert!(context.contains("find_shadow_map(Casters,size:1024)"));
+    // A schedule function is a signature. Its body once printed here without its parameters, WGSL fragments and all.
+    assert!(context.contains("pub schedule tile_classify(vis,tile=8)\n"));
+    assert!(!context.contains("core/classify.wgsl"));
     assert!(context.contains("# Hit.t is -1 on a miss and -2 on unresolved marches.\npub struct Hit"));
     let builtins = context.lines().find_map(|line| line.strip_prefix("Builtins (always in scope, never imported): ")).unwrap();
     for name in ["held", "missed"] {
