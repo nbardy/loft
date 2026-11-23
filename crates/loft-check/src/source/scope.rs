@@ -243,6 +243,16 @@ impl<'a> Linker<'a> {
                                 "builtins are always in scope; remove it from the import list",
                             ));
                         }
+                        // Name the module that does export it: models file helpers under the catalog
+                        // heading they resemble (`capsule_chain` under sdf::solid, 3 of 45 fresh crabs).
+                        if let Some(module) = exporter(&self.graph.root, &n.name) {
+                            return Err(Diag::new(
+                                Code::E011,
+                                n.span,
+                                format!("`{}` is not exported here; `{module}` exports it", n.name),
+                                format!("import it with `use {module}::{{{}}}`", n.name),
+                            ));
+                        }
                         return Err(error(n.span, &n.name));
                     }
                 }
@@ -915,4 +925,35 @@ pub(super) fn link(graph: &Graph) -> Res<(Vec<Module>, u32)> {
     let mut next = graph.next;
     crate::defaults::schedule(&mut modules, &mut next, recipe)?;
     Ok((modules, next))
+}
+
+/// The stdlib module that publicly declares `name`, read from disk on the error path only.
+fn exporter(root: &std::path::Path, name: &str) -> Option<String> {
+    fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, out);
+            } else if path.extension().is_some_and(|ext| ext == "loft") {
+                out.push(path);
+            }
+        }
+    }
+    let stdlib = root.join("stdlib");
+    let mut files = vec![];
+    walk(&stdlib, &mut files);
+    files.sort();
+    files.into_iter().find_map(|path| {
+        let text = std::fs::read_to_string(&path).ok()?;
+        let declares = text.lines().any(|line| {
+            let mut words = line.split_whitespace().skip_while(|w| *w != "pub").skip(1)
+                .skip_while(|w| *w == "build");
+            words.next().is_some_and(|kind| matches!(kind, "fn" | "lobe" | "kind" | "const" | "type" | "schedule"))
+                && words.next().is_some_and(|w| w.split(|c: char| !(c.is_alphanumeric() || c == '_')).next() == Some(name))
+        });
+        let module = path.strip_prefix(&stdlib).ok()?.with_extension("");
+        declares.then(|| format!("stdlib::{}", module.components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned()).collect::<Vec<_>>().join("::")))
+    })
 }

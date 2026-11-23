@@ -1545,7 +1545,7 @@ fn meet(a: &Ty, b: &Ty) -> Option<Ty> {
     }
 }
 
-fn binary(op: BinOp, a: &Ty, b: &Ty, sa: Span, sb: Span, span: Span) -> Res<Ty> {
+fn binary(op: BinOp, a: &Ty, b: &Ty, _sa: Span, sb: Span, span: Span) -> Res<Ty> {
     use BinOp::*;
     use Geo::*;
     let mismatch = |x: &Space, y: &Space| {
@@ -1590,11 +1590,11 @@ fn binary(op: BinOp, a: &Ty, b: &Ty, sa: Span, sb: Span, span: Span) -> Res<Ty> 
         (Mul | Div, Ty::Geo(g, _), s) if vec_like(*g) && num(s) => Ok(Ty::Geo(Vec, geo_space(a))),
         (Mul, s, Ty::Geo(g, _)) if vec_like(*g) && num(s) => Ok(Ty::Geo(Vec, geo_space(b))),
         (Mul | Div, Ty::Geo(g, _), Ty::VecN(3)) if vec_like(*g) => Ok(Ty::Geo(Vec, geo_space(a))),
-        (Mul | Div, Ty::Geo(Pt, _), s) if num(s) || *s == Ty::VecN(3) => Err(e104(
-            sa,
-            "a point has no scale",
-            "subtract an origin first: `(p - o) * s` is a Vec; add it back with `o + ...`",
-        )),
+        // A scaled point is no longer a position, but it is good coordinates: `vnoise(p * 3.5)` is how
+        // procedural texture is written, and it failed 3 of 16 fresh crab programs. The result has no
+        // space, so using it where a point is required is still refused.
+        (Mul | Div, Ty::Geo(Pt, _), s) if num(s) || *s == Ty::VecN(3) => Ok(Ty::VecN(3)),
+        (Mul, s, Ty::Geo(Pt, _)) if num(s) => Ok(Ty::VecN(3)),
         (Mul, Ty::Xform(x, y), Ty::Geo(g, s)) | (Mul, Ty::Map(x, y), Ty::Geo(g, s)) => {
             if x == s || *x == Space::Open {
                 Ok(Ty::Geo(*g, y.clone()))
@@ -1729,6 +1729,10 @@ fn builtin_poly(name: &str, rule: PolyRule, ts: &[Ty], sp: &[Span], span: Span) 
                 (Ty::VecN(n), Ty::VecN(m)) if n == m => Ok(if rule == PolyRule::Dot { Ty::F32 } else { Ty::VecN(3) }),
                 (Ty::Geo(g, x), Ty::Geo(h, y)) if vec_like(*g) && vec_like(*h) => {
                     same_space(x, y).map(|_| if rule == PolyRule::Dot { Ty::F32 } else { Ty::Geo(Vec, x.clone()) })
+                }
+                // A space-less vector beside a vector takes its space, as in `+`: `dot(q, [0, 1, 0])`.
+                (Ty::Geo(g, x), Ty::VecN(3)) | (Ty::VecN(3), Ty::Geo(g, x)) if vec_like(*g) => {
+                    Ok(if rule == PolyRule::Dot { Ty::F32 } else { Ty::Geo(Vec, x.clone()) })
                 }
                 (Ty::Geo(Pt, s), _) | (_, Ty::Geo(Pt, s)) => {
                     Err(e104(span, format!("`{name}` of a point in `{s}`"), "subtract an origin to get a Vec"))
