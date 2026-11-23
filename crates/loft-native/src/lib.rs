@@ -104,6 +104,26 @@ pub struct FrameTiming {
     pub ticks: Vec<u64>,
 }
 
+/// A `load_control` p50 above this means another client shares the GPU. Alone it reads 0.82-1.05 ms at 1280x800 on
+/// the M4; under a busy desktop 2-5 ms, while hermit-1 goes from 3.2-3.9 to 11-13 ms (perf-instrument.md).
+pub const QUIET_CONTROL_P50_MS: f64 = 1.10;
+
+/// One run of consecutive scene frames with a load control `[p50, p95]` measured right before and right after it.
+#[derive(serde::Serialize)]
+pub struct Block {
+    pub index: usize,
+    pub control_before: [f64; 2],
+    pub control_after: [f64; 2],
+    pub frames: Vec<FrameTiming>,
+}
+
+impl Block {
+    /// The GPU was ours for the whole run, as far as one-sided brackets can tell.
+    pub fn quiet(&self) -> bool {
+        self.control_before[0] <= QUIET_CONTROL_P50_MS && self.control_after[0] <= QUIET_CONTROL_P50_MS
+    }
+}
+
 struct ClockRead {
     submission: wgpu::SubmissionIndex,
     mapped: std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>,
@@ -223,6 +243,19 @@ impl Gpu {
     }
 
     pub fn triangle_control(&self, size: (u32, u32)) -> Result<[f64; 2], String> {
+        self.control(size, "return vec4(0.25, 0.5, 0.75, 1.);")
+    }
+
+    /// A full-screen ALU loop of about a scene's length. The one-triangle control is shorter than a GPU time
+    /// slice and read 0.075 ms throughout a load-27 run in which hermit-1 frames swung 4.3 to 11.7 ms; only a
+    /// probe as long as the work it vouches for is inflated by whatever inflates the work.
+    pub fn load_control(&self, size: (u32, u32)) -> Result<[f64; 2], String> {
+        self.control(size, "var x = p.x * 0.001 + p.y * 0.0007;
+            for (var i = 0u; i < 48u; i++) { x = fract(sin(x * 12.9898 + f32(i)) * 43758.5453); }
+            return vec4(x, 0.5, 0.75, 1.);")
+    }
+
+    fn control(&self, size: (u32, u32), fragment: &str) -> Result<[f64; 2], String> {
         if !self.timestamps { return Err("the speed control needs GPU timestamps".into()); }
         let d = &self.device;
         let format = wgpu::TextureFormat::Rgba8Unorm;
@@ -230,12 +263,13 @@ impl Gpu {
         let view = image.create_view(&Default::default());
         use loft_ir::{Bundle, IndirectDraw, ModuleBlob, PassDecl, PassId, PassRun, QueueClass, ShaderTarget, TableDecl,
             TableLifetime, TargetDesc, ElemFormat};
-        let source = b"@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
-            let p = array(vec2(-1., -1.), vec2(3., -1.), vec2(-1., 3.)); return vec4(p[i], 0., 1.); }
-            @fragment fn fs() -> @location(0) vec4f { return vec4(0.25, 0.5, 0.75, 1.); }";
+        let source = format!("@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {{
+            let p = array(vec2(-1., -1.), vec2(3., -1.), vec2(-1., 3.)); return vec4(p[i], 0., 1.); }}
+            @fragment fn fs(@builtin(position) p: vec4f) -> @location(0) vec4f {{ {fragment} }}");
+        let source = source.as_bytes();
         let bundle = Bundle {
             modules: vec![ModuleBlob { id: ModuleId(0), target: ShaderTarget::Wgsl,
-                hash: *blake3::hash(source).as_bytes(), bytes: source.as_slice().into() }],
+                hash: *blake3::hash(source).as_bytes(), bytes: source.into() }],
             tables: vec![TableDecl { id: TableId(0), format: ElemFormat::U32, lifetime: TableLifetime::Static,
                 stride_bytes: 4, capacity: 4, initial: bytes_of(&[3, 1, 0, 0]).into() }],
             passes: vec![PassDecl { id: PassId(0), wave: 0, queue: QueueClass::Graphics, bindings: Box::new([]),
@@ -527,6 +561,35 @@ impl Loaded {
             collect_oldest(&mut resolving, &mut timings)?;
         }
         Ok(timings)
+    }
+
+    /// Profile `times` as consecutive blocks of `block` frames, each bracketed by a triangle control. A block whose
+    /// brackets are not both quiet is re-run up to `retries` times at the same frame times, so the orbit phase
+    /// stays the same. Every attempt is returned in order; the caller keeps the first quiet one per `index`.
+    /// A sample taken once before a multi-second batch cannot see contention that arrives during it (OPEN.md
+    /// reads 0.58 vs 3.65 ms for identical sources with zero contended verdicts); the brackets can.
+    pub fn profile_blocks(&self, g: &Gpu, size: (u32, u32), times: &[f32], block: usize, retries: usize)
+        -> Result<Vec<Block>, String> {
+        // The first frames after the control's own pipeline and clock activity are slow on a quiet machine too.
+        const SETTLE: usize = 3;
+        let mut attempts = Vec::new();
+        let mut before = g.load_control(size)?;
+        for (index, chunk) in times.chunks(block).enumerate() {
+            let start = index * block;
+            let settle = if start == 0 { chunk[..SETTLE.min(chunk.len())].to_vec() }
+                else { times[start.saturating_sub(SETTLE)..start].to_vec() };
+            for _ in 0..=retries {
+                let run = self.profile_frames(g, settle.iter().chain(chunk).copied(), true)?;
+                let after = g.load_control(size)?;
+                let frames = run.into_iter().skip(settle.len()).collect();
+                let b = Block { index, control_before: before, control_after: after, frames };
+                before = after;
+                let quiet = b.quiet();
+                attempts.push(b);
+                if quiet { break; }
+            }
+        }
+        Ok(attempts)
     }
 
     /// After `frame`: waits, then the GPU time from the first pass's start to the last pass's end, in ms, and each

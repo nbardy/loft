@@ -80,9 +80,14 @@ class Scoring(unittest.TestCase):
         self.assertEqual([row["verdict"] for row in metrics.values()], ["held", "missed", "held"])
         self.assertAlmostEqual(metrics["p95_ms"]["paired_delta_ci95"][0], -0.01)
         self.assertAlmostEqual(metrics["p95_ms"]["paired_delta_ci95"][1], -0.01)
-        candidate[-1]["preflight_control_p95_ms"] = 0.150
+        candidate[-1]["scene"]["speed"]["control_p95_ms"] = 0.150
         noisy = timing.score(pairs, ["scene"], budgets, 0.05)["scenes"]["scene"]
         self.assertTrue(all(row["verdict"] == "unknown" for row in noisy["metrics"].values()))
+        # Bracketed reports decide by their own flag, whatever the legacy control field says.
+        candidate[-1]["scene"]["speed"].update(blocks=[], contended=False)
+        self.assertEqual(timing.score(pairs, ["scene"], budgets, 0.05)["scenes"]["scene"]["contended"], False)
+        candidate[-1]["scene"]["speed"]["contended"] = True
+        self.assertEqual(timing.score(pairs, ["scene"], budgets, 0.05)["scenes"]["scene"]["contended"], True)
         with self.assertRaises(ValueError):
             timing.score(pairs[:-1], ["scene"], budgets, 0.05)
         print("Timing controls", json.dumps(metrics, sort_keys=True))

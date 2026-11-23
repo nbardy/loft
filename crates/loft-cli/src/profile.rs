@@ -12,6 +12,11 @@ struct Profile {
     modules: Vec<ModuleTelemetry>,
     control_p50_ms: f64,
     control_p95_ms: f64,
+    /// A scene-length control (`load_control`) before and after the frames. Either p50 above the quiet bound
+    /// marks the run contended; the triangle above is too short to see contention.
+    load_control_before_p50_ms: f64,
+    load_control_after_p50_ms: f64,
+    contended: bool,
     hardware_ray_query: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     device_loads_ms: Option<Vec<f64>>,
@@ -83,13 +88,18 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
         .collect::<Vec<_>>();
     let run = |deferred| -> Result<Profile, Failure> {
         let [control_p50_ms, control_p95_ms] = gpu.triangle_control(size).map_err(Failure::Device)?;
+        let [load_control_before_p50_ms, _] = gpu.load_control(size).map_err(Failure::Device)?;
         let frame_stamps = loaded.profile_frames(&gpu, times.iter().copied(), deferred)
             .map_err(Failure::Device)?.into_iter().skip(warmup as usize).collect::<Vec<_>>();
+        let [load_control_after_p50_ms, _] = gpu.load_control(size).map_err(Failure::Device)?;
         Ok(Profile {
             adapter: gpu.adapter.clone(),
             modules: telemetry::collect(&program),
             control_p50_ms,
             control_p95_ms,
+            load_control_before_p50_ms,
+            load_control_after_p50_ms,
+            contended: load_control_before_p50_ms.max(load_control_after_p50_ms) > native::QUIET_CONTROL_P50_MS,
             hardware_ray_query: loaded.stats.hardware_ray_query,
             device_loads_ms: loads.map(|_| device_loads_ms.clone()),
             pipelines: loads.map(|_| loaded.stats.compute_pipelines + loaded.stats.render_pipelines),
@@ -113,14 +123,17 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
         if let Some(ms) = &report.device_loads_ms {
             println!("device loads (ms): {ms:.3?}");
         }
+        let contended = report.contended;
+        let (c0, c1) = (report.load_control_before_p50_ms, report.load_control_after_p50_ms);
         let mut times = report.gpu_frame_ms;
         times.sort_by(f64::total_cmp);
         println!(
-            "{} frames, GPU p50 {:.3} ms, p95 {:.3} ms ({})",
+            "{} frames, GPU p50 {:.3} ms, p95 {:.3} ms ({}), load control p50 {c0:.3} before / {c1:.3} after{}",
             frames,
             times[(times.len() * 50).div_ceil(100) - 1],
             times[(times.len() * 95).div_ceil(100) - 1],
-            report.adapter
+            report.adapter,
+            if contended { ": CONTENDED, do not trust these times" } else { "" }
         );
         Ok(())
     }

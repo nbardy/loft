@@ -49,6 +49,13 @@ def interval_verdict(bounds, limit):
     return "unknown"
 
 
+def speed_contended(speed):
+    if "blocks" in speed:
+        return bool(speed["contended"])
+    # Older binaries took one control before the batch.
+    return number(speed.get("control_p95_ms", 0)) >= CONTROL_CAP_MS
+
+
 def score(pairs, scenes, budgets, margin):
     if len(pairs) < PAIR_COUNT or any(len(pair) != 2 for pair in pairs):
         raise ValueError(f"need at least {PAIR_COUNT} complete same-run pairs")
@@ -60,7 +67,8 @@ def score(pairs, scenes, budgets, margin):
     for name in scenes:
         controls = [[number(report[name]["speed"].get("control_p95_ms", report["preflight_control_p95_ms"])) for report in pair]
                     for pair in pairs]
-        contended = any(value >= CONTROL_CAP_MS for pair in controls + preflight for value in pair)
+        # The preflight is one cold sample and says nothing about the batch; the gate's bracketed blocks decide.
+        contended = any(speed_contended(report[name]["speed"]) for pair in pairs for report in pair)
         metrics = {}
         for gate, metric in METRICS:
             observations = [[number(report[name][gate][metric]) for report in pair] for pair in pairs]
@@ -171,9 +179,7 @@ def collect(args, work):
                                 "--frames", "1", "--warmup", "0", "--json", control_file,
                                 *overrides], cwd=arm, stdout=log, stderr=subprocess.STDOUT, check=True)
                 preflight = number(read_json(control_file)["control_p95_ms"])
-                if preflight >= CONTROL_CAP_MS:
-                    raise ValueError(f"{arm.name} pair {index}: triangle p95 {preflight:.3f} ms "
-                                     f"must be under {CONTROL_CAP_MS:.3f} ms; see {control_file}")
+                # A loaded preflight is recorded, not fatal: the gate's bracketed blocks classify contention.
                 raw = subprocess.run([cli, "gate", *selection],
                                      cwd=arm, stdout=log, stderr=subprocess.STDOUT)
             if raw.returncode not in (0, 2, 3, 4, 7):
@@ -186,7 +192,9 @@ def collect(args, work):
                 raise ValueError("triangle and gate used different adapters")
             for name in selected:
                 speed = report[name]["speed"]
-                if speed["frames"] != candidate["timing_frames"] or len(speed["ms"]) != speed["frames"]:
+                complete = (speed["frames"] >= 0.7 * candidate["timing_frames"] if "blocks" in speed
+                            else speed["frames"] == candidate["timing_frames"])
+                if len(speed["ms"]) != speed["frames"] or not (complete or speed.get("contended")):
                     raise ValueError(f"{name}: incomplete frame batch")
             report.update(preflight_control_p95_ms=control["control_p95_ms"], raw_gate_exit=raw.returncode)
             (arm / f"pair-{index}.json").write_text(json.dumps(report, allow_nan=False) + "\n")
