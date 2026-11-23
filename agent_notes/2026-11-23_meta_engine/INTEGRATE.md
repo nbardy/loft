@@ -243,3 +243,31 @@ What this says:
    that lands or the run ends.
 3. Decide whether the small-scene load cost is accepted or attributed first.
 4. Land `lane/fix-auncel` (it contains this branch). Further compiler commits on main need merging here first.
+
+## 7. Third gate, 24 Nov 01:57–02:09: with `fix/round-cone-divisor`
+
+The trainer session sent one more compiler fix, `6a20ce98` (round_cone's divisor is `max(len, 1e-6)`; an E211 inside
+a called function names the author's call). It merges here without conflict and is now on main as `afd97544`. It
+changes `stdlib/sdf/solid.loft`, which `stdlib/geometry/analytic.loft` calls, so §6's pictures no longer covered
+the tip. This section is written on `lane/fix-auncel`, the lane that lands; it contains `lane/integrate-meta`.
+
+**Revision.** `4d50fda1` = §6's stack with the two fixture corrections, the notes, and `6a20ce98`. One run of
+`tools/check.sh full`, same baseline and margin. Evidence: `loft-fix-auncel/out/check.0kob3i/`, small reports copied
+to `loft-integrate-meta/out/integrate/gate_4d50fda1/`.
+
+| Step | Result |
+|---|---|
+| static, wasm32, doc tests, lint, bead | pass (bead 9/9) |
+| native tests | "Passed all 51 native test executables" |
+| Pictures | **19/19**, 0 changed pixels against lean2's capture on all 19 |
+| Twin / Truth | **36/36** / **34/34** |
+| Speed | **12/12**, 10 of 10 blocks quiet on every scene. hermit-20 p95 4.517 ms against 5.6; capsules-1 0.729 against 0.8 |
+| Load | **33/33**. Every cold and warm budget held, including the six cold loads lean2 missed in its own run: the machine was idle (load control p50 0.66 ms) |
+| lines | Rust core 29,339 / 33,895 |
+| paired timing | ran, but another job started during it: all six scenes flagged contended, frame times 4–16 ms, every verdict "unknown". This is the gate's exit 1. §6's quiet pairs stay the paired evidence |
+
+So every absolute gate holds on the tip that would land, on a quiet machine, in one run. What stays open from §6 is
+relative, not absolute: warm load on the four small scenes is 7–13% above lean2 in quiet pairs (about 1–2 ms inside
+budgets of 200–400 ms), unattributed. The contended pairs here point the same way (+6% to +16%) and prove nothing.
+
+`lane/fix-auncel` now also contains main's merge commit `afd97544`, so main fast-forwards to it.
