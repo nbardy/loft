@@ -9,3 +9,5 @@ pub kind Sun @World (dir: d3@World, color: rgb) {}
 # has them; before this, such scenes failed with "missing environment default" and no source span.
 use stdlib::lighting::emitters
 use stdlib::sky::environment
+# outline_and_paper reads paper_grain; a scene schedule that names the pass gets it from here.
+use stdlib::post::display::{paper_grain}

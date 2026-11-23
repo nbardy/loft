@@ -161,9 +161,19 @@ impl<'a> Prog<'a> {
     }
 
     pub fn linked(&self, owner: Span, name: &str) -> Res<&'a str> {
-        self.links.get(&(owner.file, name)).copied().ok_or_else(|| {
-            Diag::new(Code::E011, owner, format!("missing renderer binding `{name}`"), "declare or import it in the engine module")
-        })
+        if let Some(&key) = self.links.get(&(owner.file, name)) {
+            return Ok(key);
+        }
+        // A scene that writes its own schedule rarely imports the pass's helpers (`paper_grain` for
+        // `outline_and_paper`, 3 of 19 first attempts). The prelude binds them; one program-wide binding is
+        // unambiguous, so it is used. Two different ones still need the import that chooses.
+        let keys: std::collections::BTreeSet<&'a str> =
+            self.links.iter().filter(|((_, n), _)| *n == name).map(|(_, &key)| key).collect();
+        match keys.into_iter().collect::<Vec<&'a str>>()[..] {
+            [key] => Ok(key),
+            _ => Err(Diag::new(Code::E011, owner, format!("missing renderer binding `{name}`"),
+                format!("import it in this file, e.g. `use stdlib::post::display::{{{name}}}`"))),
+        }
     }
 
     pub fn continuous_params(&self) -> impl Iterator<Item = (&str, &ConstDecl)> {

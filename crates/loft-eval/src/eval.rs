@@ -866,19 +866,32 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                     Val::vector(c, if lp == 0.0 && lq == 0.0 { 0.0 } else { l })
                 }
                 (Val::V(p, lp), Val::S(s)) => {
-                    let c: Vec<S> = p.iter().map(|u| if op == Mul { u.mul(&s) } else { u.div(&s) }).collect();
-                    let l = if op == Mul {
-                        norm(&p) * s.lip() + s.mag() * lp
-                    } else if s.mig() > 0.0 {
-                        (lp * s.mag() + norm(&p) * s.lip()) / (s.mig() * s.mig())
-                    } else {
-                        f64::INFINITY
+                    // Add and Sub broadcast the scalar (the checker admits `rgb + f` since crab-repair-v1);
+                    // each channel moves by the scalar's change, so the bound adds.
+                    let c: Vec<S> = p.iter().map(|u| match op {
+                        Add => u.add(&s),
+                        Sub => u.sub(&s),
+                        Mul => u.mul(&s),
+                        _ => u.div(&s),
+                    }).collect();
+                    let l = match op {
+                        Add | Sub => lp + s.lip() * (p.len() as f64).sqrt(),
+                        Mul => norm(&p) * s.lip() + s.mag() * lp,
+                        _ if s.mig() > 0.0 => (lp * s.mag() + norm(&p) * s.lip()) / (s.mig() * s.mig()),
+                        _ => f64::INFINITY,
                     };
                     Val::vector(c, if lp == 0.0 && s.lip() == 0.0 { 0.0 } else { l })
                 }
                 (Val::S(s), Val::V(p, lp)) => {
-                    let c: Vec<S> = p.iter().map(|u| s.mul(u)).collect();
-                    let l = norm(&p) * s.lip() + s.mag() * lp;
+                    let c: Vec<S> = p.iter().map(|u| match op {
+                        Add => s.add(u),
+                        Sub => s.sub(u),
+                        _ => s.mul(u),
+                    }).collect();
+                    let l = match op {
+                        Add | Sub => lp + s.lip() * (p.len() as f64).sqrt(),
+                        _ => norm(&p) * s.lip() + s.mag() * lp,
+                    };
                     Val::vector(c, if lp == 0.0 && s.lip() == 0.0 { 0.0 } else { l })
                 }
                 (p, q) => unreachable!("checked binary {op:?} on {p:?} and {q:?}"),

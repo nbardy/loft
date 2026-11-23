@@ -1255,19 +1255,32 @@ impl<'p,'a> Ck<'p,'a> {
                 return Err(e003(f.name.span,"parameter type has not been inferred","annotate the parameter or call the helper with a typed argument"));
             }
             let mut vars: HashMap<String, Space> = HashMap::new();
+            // Space variables a space-less offset was accepted for: `sphere(local, r)` where `local` was computed
+            // without spaces (3 of 19 first attempts). The offset is in whatever space the call is in.
+            let mut loose: Vec<(String, Span)> = vec![];
             for (index, ((prm, t), s)) in f.params.iter().zip(&ts).zip(&sp).enumerate() {
                 let want = self.resolve(prm.ty.as_ref().expect("free fns type every parameter"), true)?;
                 let want=if let (Ty::Id(k),Ty::Row(_))=(&want,t){Ty::Row(k.clone())}else{want};
                 let want = self.unify(&want, t, &mut vars, *s, &prm.name)?;
                 let want=subst(&want,&vars);
                 if self.contextual(&args[index].value,t,&want){continue;}
+                if let (Ty::VecN(3), Ty::Geo(g, Space::Var(v))) = (t, &want) && vec_like(*g) {
+                    loose.push((v.clone(), *s));
+                    continue;
+                }
                 self.assignable(t, &want, *s)?; if *t==Ty::AbstractInt {self.set(&args[index].value,want);}
             }
             let ret = match &f.ret {
                 Some(r) => self.resolve(r, true)?,
                 None => Ty::Void,
             };
-            return Ok(subst(&ret, &vars));
+            let ret = subst(&ret, &vars);
+            // An unbound space must not escape into the result: then the offset needs its space spelled out.
+            if let Some((v, s)) = loose.iter().find(|(v, _)| matches!(&ret, Ty::Geo(_, Space::Var(r)) | Ty::Frame(Space::Var(r)) if r == v)) {
+                return Err(e104(*s, format!("a space-less vec3 where `v3@{v}` is expected and the result is in `{v}`"),
+                    "derive the offset from points (`p - at`) so the call knows its space"));
+            }
+            return Ok(ret);
         }
         if let Some(world) = crate::world::WorldCall::resolve(&callee.name, &ts, span)? {
             if matches!(world.query, crate::world::WorldQuery::Sky { .. }) {
@@ -1567,6 +1580,10 @@ fn binary(op: BinOp, a: &Ty, b: &Ty, _sa: Span, sb: Span, span: Span) -> Res<Ty>
         }
         (Add | Sub | Mul | Div, Ty::VecN(n), Ty::VecN(m)) if n == m => Ok(a.clone()),
         (Mul | Div, Ty::VecN(_), s) if num(s) => Ok(a.clone()),
+        // A colour plus a number adds it to every channel, as in WGSL: `floor(lit * 4.0 + 0.5) / 4.0` is the
+        // banding idiom, and refusing it was 6 of 19 first-attempt failures in crab-repair-v1's opening rounds.
+        (Add | Sub, Ty::VecN(_), s) if num(s) => Ok(a.clone()),
+        (Add | Sub, s, Ty::VecN(_)) if num(s) => Ok(b.clone()),
         (Mul, s, Ty::VecN(_)) if num(s) => Ok(b.clone()),
         // Affine rules (draft §2A).
         (Sub, Ty::Geo(Pt, x), Ty::Geo(Pt, y)) => if x == y { Ok(Ty::Geo(Vec, x.clone())) } else { Err(mismatch(x, y)) },
