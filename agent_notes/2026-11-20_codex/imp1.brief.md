@@ -56,3 +56,24 @@ These are guards only. The decision is visual against the references.
 - Watercolour: transparent layered washes, pigment pooling into darker edges, paper showing through, wet-in-wet bleeds, granulation in the shadows, lost edges.
 - Woodblock spider: carved key lines, flat registered colour blocks, paper grain and slight misregistration.
 - Porcelain: separate the crab from the sand with value contrast and rim light.
+
+## Addendum 2 (lead, 23 Nov): texture from the ground up; old programs are kept as negatives
+The lead studied 12 reference photos and wrote the texture model: **agent_notes/2026-11-20_v1/design/crab_texture.md**. It supersedes Addendum 1 wherever they differ. Use the lead's references in out/meta/refs/crab/ (sources.txt has the licences); you may add more. A previous run of this lane left a worktree at ~/git/_wt/creative-imp1. Read its state, reuse what is sound, and continue.
+- Rebuild the chitin material from scratch to that model:
+  - carapace coordinates with `|x|` symmetry;
+  - groove and suture tone;
+  - crisp single-scale species pattern only where the species has one;
+  - granules in normal and roughness, not albedo;
+  - real gloss;
+  - legs as their own banded material;
+  - sparse asymmetric wear.
+
+  Make it a forkable stdlib material if it recurs across seeds (std ≥3× rule); otherwise put it inline.
+- Per chitin seed, pick the reference closest in species and match its look (coconut → 01/02, swimmer → 05/06/09, ghost → 03/04/11/12).
+- **Negatives:** export every superseded program byte-exact into crab-improve-pairs-v1 as rejected examples with the lead's reason:
+  - the 16 template seeds (training/loft/build_crab_v15.py outputs on loft/v15-ready; "recoloured template, one body plan");
+  - div1's 16 on loft/seed-diversity ("plastic look, one render style");
+  - div2's 16 on loft/seed-render (chitin "isotropic mid-frequency albedo noise, zero highlights: digital camo"; watercolour "blotches, not washes"; woodblock spider "unchanged from div1"; the remaining div2 seeds are rejected only if an imp1 child beats them);
+  - every losing imp1 candidate.
+
+  Pairs between a negative and its improved descendant use the same records as imp1's own pairs: `program_parents`, the renders and the reason.
