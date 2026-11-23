@@ -119,12 +119,16 @@ pub struct Emitter<'p, 'a> {
     sampled_bakes: BTreeSet<String>,
     kernel_atomics: BTreeMap<(String, String), AtomicScalar>,
     kernel_sampling: bool,
+    /// Kind parameters as WGSL literals, by (kind, field): the one variant this scene's rows use.
+    pub fixed: &'p BTreeMap<(String, String), String>,
 }
+
+static NO_FIXED: BTreeMap<(String, String), String> = BTreeMap::new();
 
 impl<'p, 'a> Emitter<'p, 'a> {
     pub fn new(p: &'p Prog<'a>, types: &'p [Ty]) -> Self {
         Emitter { p, types, out: String::new(), maps: vec![], luts: &[],motion:false,motion_tier:Determinism::Det,priors:None,locals:vec![],temp:0,
-            prepare_light: false, in_prepared_light: false, baked_column: None, sampled_bakes: BTreeSet::new(), kernel_atomics: BTreeMap::new(), kernel_sampling: false }
+            prepare_light: false, in_prepared_light: false, baked_column: None, sampled_bakes: BTreeSet::new(), kernel_atomics: BTreeMap::new(), kernel_sampling: false, fixed: &NO_FIXED }
     }
 
     fn ty_of(&self, e: &Expr) -> &Ty {
@@ -560,6 +564,10 @@ impl<'p, 'a> Emitter<'p, 'a> {
     }
 
     fn member(&mut self, base: &Expr, name: &Ident) -> String {
+        if let Ty::Row(kind) = self.ty_of(base)
+            && let Some(value) = self.fixed.get(&(kind.clone(), name.name.clone())) {
+            return value.clone();
+        }
         let field = match self.ty_of(base) {
             Ty::Frame(_) => frame_field(&name.name).to_owned(),
             Ty::Row(_) => format!("r_{}", name.name),
@@ -585,7 +593,8 @@ impl<'p, 'a> Emitter<'p, 'a> {
         for rf in &k.row {
             let t = self.resolve(&rf.ty);
             let w = |i: u32| format!("rows[o + {}u]", o + i);
-            let load = match &t {
+            let fixed = self.fixed.get(&(k.name.name.clone(), rf.name.name.clone()));
+            let load = if let Some(value) = fixed { value.clone() } else { match &t {
                 Ty::F32 => w(0),
                 Ty::U32 | Ty::Id(_) => format!("bitcast<u32>({})", w(0)),
                 Ty::I32 => format!("bitcast<i32>({})", w(0)),
@@ -600,7 +609,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                     w(11)
                 ),
                 other @ Ty::Void | other @ Ty::AbstractInt | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Frame(_) | other @ Ty::Table(_) | other @ Ty::Verdict | other @ Ty::Struct(_) | other @ Ty::Array(..) | other @ Ty::Bsdf => unreachable!("checked row field type {other}"),
-            };
+            } };
             fields.push(format!("  r_{}: {},", rf.name.name, wty(&t)));
             loads.push(load);
             o += t.words().expect("checked storable");
@@ -706,14 +715,14 @@ const TWIN_BINDINGS: &str = "@group(3) @binding(0) var<storage, read> twin_in";
 
 /// The text of one kind's module. `light` is the library fn the shade pass calls (named in the schedule).
 pub fn kind_module(p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[LutRef], draw: Draw, aov: Aov) -> Res<String> {
-    emit_kind_module(p, types, k, Some(light), luts, draw, aov, None)
+    emit_kind_module(p, types, k, Some(light), luts, draw, aov, None, &NO_FIXED)
 }
 
 pub fn kind_module_edit(
     p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[LutRef],
     draw: Draw, aov: Aov, edit: &str,
 ) -> Res<String> {
-    emit_kind_module(p, types, k, Some(light), luts, draw, aov, Some(edit))
+    emit_kind_module(p, types, k, Some(light), luts, draw, aov, Some(edit), &NO_FIXED)
 }
 
 fn traced_march(count_steps: bool) -> String {
@@ -724,12 +733,14 @@ fn traced_march(count_steps: bool) -> String {
     ])
 }
 
+/// `fixed` holds kind parameters as literals; a live edit passes none and reads them from the row.
 pub fn emit_kind_module(
     p: &Prog, types: &[Ty], k: &KindDecl, light: Option<&str>, luts: &[LutRef],
-    draw: Draw, aov: Aov, edit: Option<&str>,
+    draw: Draw, aov: Aov, edit: Option<&str>, fixed: &BTreeMap<(String, String), String>,
 ) -> Res<String> {
     let mut em = Emitter::new(p, types);
     em.luts = luts;
+    em.fixed = fixed;
     em.header(abi::NONCE_PLACEHOLDER);
     let q = |which| k.query(which).is_some();
     let mut roots: Vec<&FnDecl> = k.queries.iter().map(|(_, f)| f).collect();

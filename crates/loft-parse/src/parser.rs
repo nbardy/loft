@@ -1044,6 +1044,14 @@ impl<'src> Parser<'src, '_> {
                 break;
             }
         }
+        // A kind parameter is also a column, so CPU evaluation, tables and hosts read it from the
+        // row as before; only the GPU modules fold it to a constant (one compiled variant).
+        row.extend(params.iter().map(|prm: &KindParam| RowField {
+            name: prm.name.clone(),
+            ty: prm.ty.clone(),
+            range: None,
+            default: None,
+        }));
         self.fields = row.iter().map(|f| f.name.name.clone()).collect();
         self.expect("{")?;
         self.seps();

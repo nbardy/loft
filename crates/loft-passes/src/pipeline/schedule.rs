@@ -145,9 +145,6 @@ impl<'a> Draft<'a> {
                     }
                     let fake = PassDecl { label: pd.label.clone(), verb: call.clone(), args: args.iter().map(|a| Arg { name: None, value: clone_name(&a.value) }).collect(), body: vec![], resources: None };
                     for k in kind_args(p, &fake)? {
-                        if let Some(prm) = p.kinds[k].params.first() {
-                            return Err(Diag::new(Code::E405, prm.span, "kind variants are not lowered yet", "move the parameter into the row for now"));
-                        }
                         self.drawn.push(k);
                     }
                 }

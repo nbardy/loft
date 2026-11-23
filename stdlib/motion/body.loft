@@ -11,17 +11,19 @@ kind LegChain @Body (
   rest_reach_clearance: m > 0m
 ) {}
 
+# `sites` is a kind parameter: every GPU module folds it to the plan size the scene emits, so a
+# four-site walker compiles exactly four legs and an eight-site one eight, with no runtime gate.
 # A row holds scalars and vectors, not arrays, and `still`, `clip` and `profile` sample only
 # scalar f32 columns a law writes. So per-site state a law writes is eight scalar columns
 # (`ax0`..`ax7`), and per-site constants a law only reads are pairs of v4: `_a` carries sites 0..3
 # and `_b` sites 4..7. `lane` reads site i of a pair and `put` replaces it.
 # Plans list sites counterclockwise in the (x, z) plane (x right, z up); a site's neighbours
 # are the ring neighbours.
-pub kind Walker @World (
+pub kind Walker[sites: u in 1..9] @World (
   deck_pose: xf@Deck>World, deck_speed: f in 0..1, stick_scale: f in 0..1,
   look_scale: f in 0..1, paint: rgb, rest_h: m in 0.3..0.65,
   upper: m in 0.1..1.2, lower: m in 0.1..1.2,
-  sites: u in 1..8, reach_lo: m, reach_hi: m,
+  reach_lo: m, reach_hi: m,
   socket_xa: v4, socket_xb: v4, socket_za: v4, socket_zb: v4,
   home_xa: v4, home_xb: v4, home_za: v4, home_zb: v4,
   previous_a: v4, previous_b: v4, next_a: v4, next_b: v4,
@@ -56,32 +58,15 @@ pub kind Walker @World (
     let ty2 = [toe_y4, toe_y5, toe_y6, toe_y7]
     let tz = [toe_z0, toe_z1, toe_z2, toe_z3]
     let tz2 = [toe_z4, toe_z5, toe_z6, toe_z7]
-    # Two loops: the first four sites compile to the same code as the original four-leg body.
-    for i in 0..4 {
-      if i < sites {
-        let tip = [lane(tx, tx2, i), lane(ty, ty2, i), lane(tz, tz2, i)]@Deck
-        let rx = lane(socket_xa, socket_xb, i)
-        let rz = lane(socket_za, socket_zb, i)
-        let hip = trunk + [c * rx + s * rz, lean * rx, -s * rx + c * rz]
-        let pole = dir([0.28 * (tip.x - hip.x), 1.0, 0.28 * (tip.z - hip.z)]@Deck)
-        let knee = solve_2bone_ik(hip, tip, upper, lower, pole)
-        field = min(field, min(capsule(here, hip, knee, 0.054), capsule(here, knee, tip, 0.036)))
-        field = min(field, sphere(here - tip, 0.047))
-      }
-    }
-    if sites > 4 {
-      for i in 4..8 {
-        if i < sites {
-          let tip = [lane(tx, tx2, i), lane(ty, ty2, i), lane(tz, tz2, i)]@Deck
-          let rx = lane(socket_xa, socket_xb, i)
-          let rz = lane(socket_za, socket_zb, i)
-          let hip = trunk + [c * rx + s * rz, lean * rx, -s * rx + c * rz]
-          let pole = dir([0.28 * (tip.x - hip.x), 1.0, 0.28 * (tip.z - hip.z)]@Deck)
-          let knee = solve_2bone_ik(hip, tip, upper, lower, pole)
-          field = min(field, min(capsule(here, hip, knee, 0.054), capsule(here, knee, tip, 0.036)))
-          field = min(field, sphere(here - tip, 0.047))
-        }
-      }
+    for i in 0..sites {
+      let tip = [lane(tx, tx2, i), lane(ty, ty2, i), lane(tz, tz2, i)]@Deck
+      let rx = lane(socket_xa, socket_xb, i)
+      let rz = lane(socket_za, socket_zb, i)
+      let hip = trunk + [c * rx + s * rz, lean * rx, -s * rx + c * rz]
+      let pole = dir([0.28 * (tip.x - hip.x), 1.0, 0.28 * (tip.z - hip.z)]@Deck)
+      let knee = solve_2bone_ik(hip, tip, upper, lower, pole)
+      field = min(field, min(capsule(here, hip, knee, 0.054), capsule(here, knee, tip, 0.036)))
+      field = min(field, sphere(here - tip, 0.047))
     }
     for i in 0..2 {
       let side = select(-1.0, 1.0, i == 1)
