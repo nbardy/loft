@@ -2,6 +2,7 @@
 mod schema;
 mod bundle;
 pub mod execution;
+pub mod precision;
 pub use bundle::*;
 
 
@@ -94,15 +95,12 @@ pub enum Code {
     E501,
     /// Two laws write the same field.
     E502,
-    /// A solver constraint would race.
-    E503,
     E504,
     E505,
     E110,
     /// A schedule or default-engine configuration that cannot be lowered.
     E520,
     /// A row that cannot be emitted: missing or unknown column, a value outside its range.
-    E601,
     E602,
     /// Evaluation failed on the CPU (build or the twin).
     E701,

@@ -341,7 +341,7 @@ impl Ad<'_> {
                 return Err(Diag::new(Code::E307, sp, format!("cannot differentiate a `C0` expression: `{f}` has a kink"), "keep `diff` on the smooth part (smoothstep/smootherstep, sin, exp, ...), or move the kink outside the differentiated fn"));
             }
             None | Some(DSmoothstep | DSmootherstep | Acos | Atan2 | Fma | Log | Asin | Atan | Tan | Exp2 | Log2 | Conditional | Dist
-                | Dir | Coords | Place | Inv | FrameAxes | Sample | SampleLod | SamplePrior | HasSky
+                | Dir | Coords | Place | Inv | FrameAxes | Sample | SampleLod | HasSky
                 | SkyZenith | SkyHorizon | SunColor | Held | Missed | Unknown | EvalBsdf | MixBsdf
                 | GgxEnergy | Dot4I8 | Dot4U8 | UnpackBf16x2 | PackBf16x2 | UnpackU4Lo | UnpackU4Hi
                 | UnpackI4Lo | UnpackI4Hi | UnpackU2 | UnpackFp8E4m3 | UnpackFp8E5m2) => {
@@ -538,7 +538,7 @@ pub fn run(modules: &mut Vec<Module>, next: &mut u32) -> Res<()> {
     for (k, f) in in_kinds {
         let kd = modules.iter_mut().flat_map(|m| m.items.iter_mut()).find_map(|item| match item {
             Item::Kind(kd) if kd.name.name == k => Some(kd),
-            Item::Body(..) | Item::State(_) | Item::Solver(_) | Item::Plan(_) | Item::World(..) | Item::Bake(_) | Item::Retarget { .. } | Item::Kernel(_) | Item::Struct(..) | Item::TypeAlias(..) | Item::Build(_) | Item::Use(_) | Item::Law(_) | Item::Check(_) | Item::Camera(_) | Item::Kind(_) | Item::Space(_) | Item::Unit(_) | Item::Const(_) | Item::Fn(_) | Item::Scan(_) | Item::Schedule(_) => None,
+            Item::World(..) | Item::Bake(_) | Item::Kernel(_) | Item::Struct(..) | Item::TypeAlias(..) | Item::Build(_) | Item::Use(_) | Item::Law(_) | Item::Check(_) | Item::Camera(_) | Item::Kind(_) | Item::Space(_) | Item::Unit(_) | Item::Const(_) | Item::Fn(_) | Item::Scan(_) | Item::Schedule(_) => None,
         });
         kd.expect("the kind the jvp came from").fns.push(f);
     }

@@ -199,10 +199,12 @@ fn signature(out: &mut String, ast: &Module, item: &Item, source: &str, roots: &
         Item::Const(c) => c.range.as_ref()
             .map_or(&c.value, |range| range.hi.as_ref().unwrap_or(&range.lo)).span.hi,
         Item::TypeAlias(..) => type_end(roots, name + 2, source),
-        Item::Struct(..) | Item::State(_) | Item::World(..) => ast.bodies[&names[0].span].hi,
-        Item::Fn(_) | Item::Kind(_) | Item::Scan(_) | Item::Law(_) | Item::Body(..)
-        | Item::Solver(_) | Item::Plan(_) | Item::Kernel(_) | Item::Check(_)
-        | Item::Camera(_) | Item::Bake(_) | Item::Retarget { .. } => ast.bodies[&names[0].span].lo,
+        // Merge (lean2 body ranges + cut-unused): lean2's span lookup, without the removed State, Body, Solver,
+        // Plan and Retarget items.
+        Item::Struct(..) | Item::World(..) => ast.bodies[&names[0].span].hi,
+        Item::Fn(_) | Item::Kind(_) | Item::Scan(_) | Item::Law(_)
+        | Item::Kernel(_) | Item::Check(_)
+        | Item::Camera(_) | Item::Bake(_) => ast.bodies[&names[0].span].lo,
         Item::Unit(_) => names[0].span.hi,
         Item::Schedule(_) | Item::Use(_) | Item::Build(_) => unreachable!("handled or unnamed"),
     };

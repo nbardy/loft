@@ -20,10 +20,6 @@ pub struct Prog<'a> {
     pub schedule: Option<&'a ScheduleDecl>,
     pub kernels: BTreeMap<&'a str, &'a KernelDecl>,
     pub bakes: BTreeMap<&'a str, &'a BakeDecl>,
-    pub bodies: BTreeMap<&'a str, (&'a Ident, &'a [BodyItem])>,
-    pub states: BTreeMap<&'a str, &'a StateDecl>,
-    pub solvers: BTreeMap<&'a str, &'a SolverDecl>,
-    pub plans: BTreeMap<&'a str, &'a PlanDecl>,
     pub laws:BTreeMap<&'a str,&'a LawDecl>,
     pub checks:BTreeMap<&'a str,&'a FnDecl>,
 }
@@ -47,7 +43,6 @@ impl<'a> Prog<'a> {
             scans: BTreeMap::new(),
             kernels: BTreeMap::new(),
             bakes: BTreeMap::new(),
-            bodies: BTreeMap::new(), states: BTreeMap::new(), solvers: BTreeMap::new(), plans: BTreeMap::new(),
             schedule: None,laws:BTreeMap::new(),checks:BTreeMap::new(),
         };
         let mut seen: BTreeMap<&str, Span> = BTreeMap::new();
@@ -70,23 +65,6 @@ impl<'a> Prog<'a> {
                 }
                 Item::Use(_) => {}
                 Item::Camera(_) => {}
-                Item::Body(n, items) => {
-                    name(n)?;
-                    p.bodies.insert(&n.name, (n, items));
-                }
-                Item::State(state) => {
-                    name(&state.name)?;
-                    p.states.insert(&state.name.name, state);
-                    p.structs.insert(&state.name.name, (&state.name, &state.fields));
-                }
-                Item::Solver(solver) => {
-                    name(&solver.name)?;
-                    p.solvers.insert(&solver.name.name, solver);
-                }
-                Item::Plan(plan) => {
-                    name(&plan.name)?;
-                    p.plans.insert(&plan.name.name, plan);
-                }
                 Item::World(n, kinds) => {
                     name(n)?;
                     let mut seen = HashSet::new();
@@ -102,7 +80,6 @@ impl<'a> Prog<'a> {
                     p.fns.insert(&b.texel.name.name, &b.texel);
                     p.bakes.insert(&b.texel.name.name, b);
                 }
-                Item::Retarget { name: n, .. } => name(n)?,
                 Item::Kernel(k) => {
                     name(&k.f.name)?;
                     p.kernels.insert(&k.f.name.name, k);
@@ -161,9 +138,19 @@ impl<'a> Prog<'a> {
     }
 
     pub fn linked(&self, owner: Span, name: &str) -> Res<&'a str> {
-        self.links.get(&(owner.file, name)).copied().ok_or_else(|| {
-            Diag::new(Code::E011, owner, format!("missing renderer binding `{name}`"), "declare or import it in the engine module")
-        })
+        if let Some(&key) = self.links.get(&(owner.file, name)) {
+            return Ok(key);
+        }
+        // A scene that writes its own schedule rarely imports the pass's helpers (`paper_grain` for
+        // `outline_and_paper`, 3 of 19 first attempts). The prelude binds them; one program-wide binding is
+        // unambiguous, so it is used. Two different ones still need the import that chooses.
+        let keys: std::collections::BTreeSet<&'a str> =
+            self.links.iter().filter(|((_, n), _)| *n == name).map(|(_, &key)| key).collect();
+        match keys.into_iter().collect::<Vec<&'a str>>()[..] {
+            [key] => Ok(key),
+            _ => Err(Diag::new(Code::E011, owner, format!("missing renderer binding `{name}`"),
+                format!("import it in this file, e.g. `use stdlib::post::display::{{{name}}}`"))),
+        }
     }
 
     pub fn continuous_params(&self) -> impl Iterator<Item = (&str, &ConstDecl)> {

@@ -100,6 +100,8 @@ struct Linker<'a> {
     names: Vec<Names>,
     bare: HashSet<String>,
     bare_spaces: HashSet<String>,
+    /// Public values of the stock library, which keep their bare names as keys and so are unique.
+    stock_public: HashMap<String, Decl>,
 }
 
 impl<'a> Linker<'a> {
@@ -155,11 +157,16 @@ impl<'a> Linker<'a> {
             }
             names.push(scope);
         }
+        let stock_public = graph.nodes.iter().enumerate()
+            .filter(|(id, _)| graph.stock(*id as u16).is_some_and(stock))
+            .flat_map(|(id, _)| names[id].values.iter().filter(|(_, d)| d.public).map(|(n, d)| (n.clone(), d.clone())))
+            .collect();
         Ok(Self {
             graph,
             names,
             bare,
             bare_spaces,
+            stock_public,
         })
     }
 
@@ -169,6 +176,7 @@ impl<'a> Linker<'a> {
             own,
             bare: &self.bare,
             bare_spaces: &self.bare_spaces,
+            stock_public: &self.stock_public,
             imported: Names::default(),
             modules: HashMap::new(),
             intrinsic_modules: HashMap::new(),
@@ -232,6 +240,11 @@ impl<'a> Linker<'a> {
                             }
                         }
                         if found || intrinsic_alias(import, &n.name) {
+                            continue;
+                        }
+                        // Imported from the wrong stock module: the name is unique, so bind the one that exists.
+                        if let Some(decl) = self.stock_public.get(&n.name) {
+                            scope.imported.insert(false, &n.name, decl.clone(), n.span)?;
                             continue;
                         }
                         // Models import builtins from the catalog module they resemble (`mix_bsdf` from bsdf).
@@ -317,6 +330,7 @@ struct Scope<'a> {
     own: &'a Names,
     bare: &'a HashSet<String>,
     bare_spaces: &'a HashSet<String>,
+    stock_public: &'a HashMap<String, Decl>,
     imported: Names,
     modules: HashMap<&'a str, (Vec<&'a Names>, Span)>,
     intrinsic_modules: HashMap<&'a str, &'a Import>,
@@ -364,6 +378,11 @@ impl Scope<'_> {
             && let Some(decl) = self.own.values.get(kind)
         {
             return Ok(Some(format!("{}#{helper}", decl.key)));
+        }
+        // A stock catalog name resolves without an import: its bare name is its key and is unique. A missing
+        // or misplaced `use` (vnoise, smin, ggx, capsule_chain) was the commonest fresh-crab error left.
+        if !space && let Some(decl) = self.stock_public.get(name) {
+            return Ok(Some(decl.key.clone()));
         }
         if bare.contains(name) {
             return Err(error(span, name));
@@ -623,54 +642,6 @@ impl Scope<'_> {
         Ok(())
     }
 
-    fn body_fields(&self, fields: &mut BodyFields, locals: &[String]) -> Res<()> {
-        for (_, value) in fields {
-            match value {
-                BodyValue::Value(e) => self.expr(e, locals)?,
-                BodyValue::Lengths(es) => {
-                    for e in es {
-                        self.expr(e, locals)?;
-                    }
-                }
-                BodyValue::Range(a, b) => {
-                    self.expr(a, locals)?;
-                    self.expr(b, locals)?;
-                }
-                BodyValue::Record(fields) => self.body_fields(fields, locals)?,
-            }
-        }
-        Ok(())
-    }
-
-    fn body(&self, items: &mut [BodyItem], locals: &mut Vec<String>) -> Res<()> {
-        for item in items {
-            match item {
-                BodyItem::Trunk(_, fields) | BodyItem::Segment(_, fields) => {
-                    self.body_fields(fields, locals)?
-                }
-                BodyItem::Chain(_, index, _, fields) => {
-                    if let Some(e) = index {
-                        self.expr(e, locals)?;
-                    }
-                    self.body_fields(fields, locals)?;
-                }
-                BodyItem::For(var, lo, hi, body) => {
-                    self.expr(lo, locals)?;
-                    self.expr(hi, locals)?;
-                    let mut inside = locals.clone();
-                    inside.push(var.name.clone());
-                    self.body(body, &mut inside)?;
-                }
-                BodyItem::Let(name, expr) => {
-                    self.expr(expr, locals)?;
-                    locals.push(name.name.clone());
-                }
-                BodyItem::Waive(..) => {}
-            }
-        }
-        Ok(())
-    }
-
     fn item(&self, item: &mut Item) -> Res<()> {
         match item {
             Item::Use(_) | Item::Space(_) | Item::Unit(_) => {}
@@ -687,13 +658,6 @@ impl Scope<'_> {
             }
             Item::TypeAlias(_, ty) => self.ty(ty, &[])?,
             Item::Struct(_, fields) => self.columns(fields)?,
-            Item::State(state) => {
-                if let Some(home) = &mut state.home {
-                    self.ident(home)?;
-                }
-                self.columns(&mut state.fields)?;
-            }
-            Item::Body(_, body) => self.body(body, &mut vec![])?,
             Item::World(_, kinds) => {
                 for kind in kinds {
                     self.ident(kind)?;
@@ -742,74 +706,34 @@ impl Scope<'_> {
                     &[s.prev.name.clone(), s.at.name.clone(), s.var.name.clone()],
                 )?;
             }
-            Item::Plan(p) => {
-                self.columns(&mut p.params)?;
-                self.ty(&mut p.ret, &[])?;
-                let locals = p
-                    .params
-                    .iter()
-                    .map(|p| p.name.name.clone())
-                    .collect::<Vec<_>>();
-                if let Some((_, dt)) = &mut p.horizon {
-                    self.expr(dt, &locals)?;
-                }
-                self.expr(&mut p.objective, &locals)?;
-                for e in &mut p.holds {
-                    self.expr(e, &locals)?;
-                }
-            }
-            Item::Solver(s) => {
-                if let Some(head) = s.table.first_mut() {
-                    self.ident(head)?;
-                }
-                self.fields(&mut s.config, &[])?;
-                let mut locals = s.writes.iter().map(|(n, _)| n.name.clone()).collect();
-                for step in &mut s.steps {
-                    match step {
-                        SolverStep::Statement(s) => self.stmt(s, &mut locals)?,
-                        SolverStep::Constraint {
-                            a,
-                            b,
-                            lo,
-                            hi,
-                            block,
-                            ..
-                        } => {
-                            self.expr(lo, &locals)?;
-                            self.expr(hi, &locals)?;
-                            let mut inside = locals.clone();
-                            inside.extend([a.name.clone(), b.name.clone()]);
-                            self.block(block, &mut inside)?;
-                        }
-                    }
-                }
-            }
-            Item::Retarget {
-                source,
-                target,
-                fields,
-                ..
-            } => {
-                self.ident(source)?;
-                self.ident(target)?;
-                self.fields(fields, &[])?;
-            }
             Item::Schedule(s) => {
                 if let Some((_, ty)) = &mut s.radiance {
                     self.ty(ty, &[])?;
                 }
+                // A schedule function's parameters are bound at each call site, not in this module.
+                let params: Vec<String> = s.params.iter().map(|p| match p {
+                    ScheduleParam::One { name, .. } | ScheduleParam::Rest(name) => name.name.clone(),
+                }).collect();
+                for param in &mut s.params {
+                    if let ScheduleParam::One { default: Some(value), .. } = param {
+                        self.expr(value, &[])?;
+                    }
+                }
                 for pass in &mut s.passes {
-                    self.ident(&mut pass.verb)?;
-                    self.args(&mut pass.args, &[])?;
+                    // An explicit `pass` step's label names the pass, not a declaration.
+                    if pass.resources.is_none() && !params.contains(&pass.verb.name) {
+                        self.ident(&mut pass.verb)?;
+                    }
+                    self.args(&mut pass.args, &params)?;
                     for (name, args) in &mut pass.body {
                         self.ident(name)?;
-                        self.args(args, &[])?;
+                        self.args(args, &params)?;
                     }
                     if let Some(resources) = &mut pass.resources {
-                        for texture in &mut resources.reads {
+                        for texture in resources.reads.iter_mut().filter(|t| !params.contains(&t.name)) {
                             self.ident(texture)?;
                         }
-                        self.block(&mut resources.body, &mut vec![])?;
+                        self.block(&mut resources.body, &mut params.clone())?;
                     }
                 }
             }
@@ -832,18 +756,13 @@ impl Scope<'_> {
             Item::Struct(n, _)
             | Item::TypeAlias(n, _)
             | Item::Unit(n)
-            | Item::Body(n, _)
-            | Item::World(n, _)
-            | Item::Retarget { name: n, .. } => n,
+            | Item::World(n, _) => n,
             Item::Const(x) => &mut x.name,
             Item::Fn(x) | Item::Check(x) => &mut x.name,
             Item::Kind(x) => &mut x.name,
             Item::Scan(x) => &mut x.name,
             Item::Schedule(x) => &mut x.name,
             Item::Law(x) => &mut x.f.name,
-            Item::State(x) => &mut x.name,
-            Item::Solver(x) => &mut x.name,
-            Item::Plan(x) => &mut x.name,
             Item::Kernel(x) => &mut x.f.name,
             Item::Camera(x) => &mut x.name,
             Item::Bake(x) => &mut x.texel.name,
@@ -872,19 +791,20 @@ impl Scope<'_> {
     }
 }
 
-pub(super) fn edited(graph: &Graph, id: u16, mut module: Module) -> Res<Module> {
-    Linker::new(graph)?.scope(id)?.rewrite(&mut module)?;
-    Ok(module)
-}
-
 pub(super) fn link(graph: &Graph) -> Res<(Vec<Module>, u32)> {
     let linker = Linker::new(graph)?;
     let mut recipe = None;
+    let mut library = vec![];
     let mut modules = Vec::with_capacity(graph.nodes.len());
     for &id in &graph.order {
         let node = &graph.nodes[usize::from(id)];
         let mut module = node.module.clone();
         linker.scope(id)?.rewrite(&mut module)?;
+        // Schedule functions from any module, the scene's own included, are inlined where they are called.
+        module.items.retain(|item| match item {
+            Item::Schedule(s) if !s.params.is_empty() => { library.push(s.clone()); false }
+            _ => true,
+        });
         if id == graph.entry {
             for item in &mut module.items {
                 if let Item::Schedule(s) = item
@@ -923,7 +843,7 @@ pub(super) fn link(graph: &Graph) -> Res<(Vec<Module>, u32)> {
     modules.sort_by_key(|(rank, _)| *rank);
     let mut modules = modules.into_iter().map(|(_, module)| module).collect();
     let mut next = graph.next;
-    crate::defaults::schedule(&mut modules, &mut next, recipe)?;
+    crate::defaults::schedule(&mut modules, &mut next, recipe, &library)?;
     Ok((modules, next))
 }
 

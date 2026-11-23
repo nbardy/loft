@@ -150,14 +150,6 @@ impl Graph {
     fn stock(&self, id: u16) -> Option<&str> {
         Some(&self.sources.files[usize::from(id)].0)
     }
-
-    pub fn edited_module(&self, id: u16, next: &mut u32) -> Res<Module> {
-        if let Some(error) = &self.error {
-            return Err(error.clone());
-        }
-        let module = loft_parse::parse(id, &self.sources.files[usize::from(id)].1, next)?;
-        scope::edited(self, id, module)
-    }
 }
 
 struct Loader<'a> {
@@ -169,7 +161,7 @@ struct Loader<'a> {
 
 fn schedule(module: &Module) -> Option<&ScheduleDecl> {
     module.items.iter().find_map(|item| match item {
-        Item::Schedule(s) => Some(s),
+        Item::Schedule(s) if s.params.is_empty() => Some(s),
         _ => None,
     })
 }
@@ -200,7 +192,7 @@ impl Loader<'_> {
             for id in ids {
                 let node = &self.graph.nodes[usize::from(*id)];
                 let mut exported = node.module.items.iter().filter_map(|item| match item {
-                    Item::Schedule(s) if node.module.public.contains(&s.name.span) => Some(s),
+                    Item::Schedule(s) if node.module.public.contains(&s.name.span) && s.params.is_empty() => Some(s),
                     _ => None,
                 });
                 if let Some(first) = exported.next()

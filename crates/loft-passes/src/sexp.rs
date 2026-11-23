@@ -33,15 +33,6 @@ pub fn read(text: &str) -> Result<Program, String> {
             ));
         }
     }
-    let valid_module = |i: usize| i < p.modules.len();
-    if ![p.cull, p.classify, p.present]
-        .into_iter()
-        .all(valid_module)
-    {
-        return Err(
-            "invalid shared module index; restore the cull, classify and present modules".into(),
-        );
-    }
     for pass in &p.passes {
         use crate::program::Pass;
         match pass {
@@ -50,12 +41,14 @@ pub fn read(text: &str) -> Result<Program, String> {
             {
                 return Err("invalid pass kind index; name a kind in the bundle".into());
             }
+            Pass::Authored(crate::program::AuthoredPass { module, .. }) | Pass::Path(module) if *module >= p.modules.len() => {
+                return Err("invalid frame pass module index; restore its module".into());
+            }
             Pass::Vis(_)
             | Pass::Shadow(_)
             | Pass::Shade(_)
-            | Pass::Cull
-            | Pass::Classify
-            | Pass::Present => {}
+            | Pass::Authored(_)
+            | Pass::Path(_) => {}
         }
     }
     for instance in &p.instances {
@@ -119,11 +112,8 @@ mod tests {
             param_ranges: vec![],
             shadow_size: 0,
             luts: vec![],
-            priors: Default::default(),
-            passes: vec![Pass::Cull],
-            cull: 0,
-            classify: 0,
-            present: 0,
+            passes: vec![Pass::Path(0)],
+            shadow_clock: Default::default(),
         };
         let first = write(&p).unwrap();
         assert!(!first.contains("secret author comment"));

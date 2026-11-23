@@ -281,6 +281,10 @@ pub struct Eval<'p, 'a, S> {
     /// Values already returned by per-frame paths of the current call or expression arm (an `if` on time whose
     /// one arm returns while the other falls through). The call's result is their join with its own.
     forked: Option<Val<S>>,
+    /// A law's `[K]` parameters, by name: the table index of the version it reads (DESIGN §5.3).
+    pub views: std::collections::BTreeMap<String, usize>,
+    /// Tables past the program's kinds are snapshots: entry j is the kind of table `kinds + j`.
+    pub snapshots: Vec<usize>,
 }
 
 fn err(span: Span, msg: impl Into<String>, fix: impl Into<String>) -> Diag {
@@ -294,7 +298,7 @@ fn norm<S: Scalar>(v: &[S]) -> f64 {
 
 impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
     pub fn new(p: &'p Prog<'a>, types: &'p [Ty], tables: Tables, overrides: &'p [(String, f64)]) -> Self {
-        Eval { p, types, tables, overrides, env: vec![], cause: None, steps: 0, vector_bound_changed: false, time:S::frame_time(), luts: &[], source: None, imports: Default::default(), forked: None }
+        Eval { p, types, tables, overrides, env: vec![], cause: None, steps: 0, vector_bound_changed: false, time:S::frame_time(), luts: &[], source: None, imports: Default::default(), forked: None, views: Default::default(), snapshots: vec![] }
     }
 
     /// Binds a name for the expressions evaluated next (a scan's parameter); `unbind` drops the latest.
@@ -771,7 +775,9 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 let b = self.expr(base)?;
                 match b {
                     Val::Row(k, r) => {
-                        let decl = self.p.kinds[self.p.kind_order[k]];
+                        let kinds = self.p.kind_order.len();
+                        let kind = if k < kinds { k } else { self.snapshots[k - kinds] };
+                        let decl = self.p.kinds[self.p.kind_order[kind]];
                         let i = decl.row.iter().position(|f| f.name.name == m.name).expect("checked field");
                         Ok(Self::lift(&self.tables[k][r][i]))
                     }
@@ -797,6 +803,21 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                         }
                     }
                     other @ Val::Void | other @ Val::S(_) | other @ Val::B(_) | other @ Val::U(_) | other @ Val::I(_) | other @ Val::X(_) | other @ Val::MapRef(..) | other @ Val::Bsdf(_) => unreachable!("checked member of {other:?}"),
+                }
+            }
+            // A row of another table: a law's `[K]` parameter, or `K[i]` in a query.
+            ExprKind::Index(base, i) if matches!(&base.kind, ExprKind::Name(n)
+                if self.views.contains_key(n) || matches!(self.types.get(base.id as usize), Some(Ty::Table(_)))) => {
+                let ExprKind::Name(n) = &base.kind else { unreachable!("matched a name") };
+                let table = match self.views.get(n) {
+                    Some(&table) => table,
+                    None => self.p.kind_index(n),
+                };
+                match self.expr(i)? {
+                    Val::U(row) => Ok(Val::Row(table, row as usize)),
+                    Val::I(row) => Ok(Val::Row(table, row as usize)),
+                    Val::Void | Val::S(_) | Val::V(..) | Val::B(_) | Val::X(_) | Val::Row(..) | Val::MapRef(..) | Val::Bsdf(_) =>
+                        Err(err(i.span, "row index not a known integer", "index with a row id or a u32")),
                 }
             }
             ExprKind::Index(base, i) => {
@@ -1002,19 +1023,32 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                     Val::vector(c, if lp == 0.0 && lq == 0.0 { 0.0 } else { l })
                 }
                 (Val::V(p, lp), Val::S(s)) => {
-                    let c: Vec<S> = p.iter().map(|u| if op == Mul { u.mul(&s) } else { u.div(&s) }).collect();
-                    let l = if op == Mul {
-                        norm(&p) * s.lip() + s.mag() * lp
-                    } else if s.mig() > 0.0 {
-                        (lp * s.mag() + norm(&p) * s.lip()) / (s.mig() * s.mig())
-                    } else {
-                        f64::INFINITY
+                    // Add and Sub broadcast the scalar (the checker admits `rgb + f` since crab-repair-v1);
+                    // each channel moves by the scalar's change, so the bound adds.
+                    let c: Vec<S> = p.iter().map(|u| match op {
+                        Add => u.add(&s),
+                        Sub => u.sub(&s),
+                        Mul => u.mul(&s),
+                        _ => u.div(&s),
+                    }).collect();
+                    let l = match op {
+                        Add | Sub => lp + s.lip() * (p.len() as f64).sqrt(),
+                        Mul => norm(&p) * s.lip() + s.mag() * lp,
+                        _ if s.mig() > 0.0 => (lp * s.mag() + norm(&p) * s.lip()) / (s.mig() * s.mig()),
+                        _ => f64::INFINITY,
                     };
                     Val::vector(c, if lp == 0.0 && s.lip() == 0.0 { 0.0 } else { l })
                 }
                 (Val::S(s), Val::V(p, lp)) => {
-                    let c: Vec<S> = p.iter().map(|u| s.mul(u)).collect();
-                    let l = norm(&p) * s.lip() + s.mag() * lp;
+                    let c: Vec<S> = p.iter().map(|u| match op {
+                        Add => s.add(u),
+                        Sub => s.sub(u),
+                        _ => s.mul(u),
+                    }).collect();
+                    let l = match op {
+                        Add | Sub => lp + s.lip() * (p.len() as f64).sqrt(),
+                        _ => norm(&p) * s.lip() + s.mag() * lp,
+                    };
                     Val::vector(c, if lp == 0.0 && s.lip() == 0.0 { 0.0 } else { l })
                 }
                 (p, q) => unreachable!("checked binary {op:?} on {p:?} and {q:?}"),
@@ -1269,9 +1303,9 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 let ab = self.arith(BinOp::Mul, v[0].clone(), v[1].clone());
                 self.arith(BinOp::Add, ab, v[2].clone())
             }
-            SamplePrior | Held | Missed | Unknown => {
+            Held | Missed | Unknown => {
                 return Err(Diag::new(Code::E405, e.span, format!("`{}` has no CPU evaluation here", spec(builtin).name),
-                    "use it in a `check` or a motion plan, which run on the GPU"));
+                    "use it in a `check`, which runs on the GPU"));
             }
             // The checker refuses these names (E011) or dispatches them before argument evaluation (above).
             Exp2 | Log2 | Round | Place | Sample | SampleLod | SampleC2 | DSample

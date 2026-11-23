@@ -3,6 +3,7 @@ use loft_ir::*;
 use crate::schedule::Order;
 use crate::stepping::{Fused, History, Tick, arguments};
 use wgpu::{Buffer, QuerySet};
+#[derive(Clone, Copy)]
 pub struct Clock<'a> {
     pub id: InstanceId,
     pub time: f64,
@@ -63,10 +64,12 @@ pub enum Step<'a> {
 impl Clock<'_> {
     pub fn validate(&self, order: &[Order], active: impl Fn(PassId) -> bool) -> Result<()> {
         if let Some(timer) = self.timer {
-            let [Order::Run(id)] = order else {
-                return Err(RunnerError::Unsupported("timed advance requires one fixed-step pass"));
+            let ids = match order {
+                [Order::Run(id)] => std::slice::from_ref(id),
+                [Order::Lockstep(ids)] => ids.as_slice(),
+                _ => return Err(RunnerError::Unsupported("timed advance requires one fixed-step pass or lockstep group")),
             };
-            if !active(*id) {
+            if !ids.iter().all(|&id| active(id)) {
                 return Err(RunnerError::Unsupported(
                     "timed advance requires active fixed-step rows",
                 ));

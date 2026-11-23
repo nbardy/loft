@@ -1,5 +1,0 @@
-plan Broken() -> PriorTable {
-  knots: 24, duration: 1s
-  minimize impossible(1)
-  subject_to { pitch_in(-1rad, 1rad) }
-}

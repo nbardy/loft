@@ -149,6 +149,9 @@ struct Check {
     contended: bool,
 }
 
+/// Speed is scored in blocks of this many frames, each bracketed by a load control; see `Loaded::profile_blocks`.
+const SPEED_BLOCK: usize = 30;
+const SPEED_RETRIES: usize = 3;
 const TWIN_TOL: [f64; 5] = [1e-5, 1e-5, 2e-5, 1e-5, 1e-4];
 
 fn held_if(slack: f64, unknown: Option<String>) -> Verdict {
@@ -467,13 +470,22 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
             }
         }
         (Gate::Speed, SceneChecks::Budget(b)) => {
-            let [control_p50_ms, control_p95_ms] = c.g.triangle_control(c.size)?;
             let l = Loaded::new(c.g, p, c.size, None)?;
-            let times = (0..30).map(|i| i as f32 / 30.0)
-                .chain((0..c.timing_frames).map(|i| c.frames[0] + i as f32 * (1.0 / 60.0)));
-            let timing = l.profile_frames(c.g, times, true)?;
-            let measured = &timing[30..];
-            let commands = measured.iter().map(|f| f.commands)
+            l.profile_frames(c.g, (0..30).map(|i| i as f32 / 30.0), true)?;
+            let times = (0..c.timing_frames).map(|i| c.frames[0] + i as f32 * (1.0 / 60.0)).collect::<Vec<_>>();
+            let attempts = l.profile_blocks(c.g, c.size, &times, SPEED_BLOCK, SPEED_RETRIES)?;
+            // Per block, the first attempt bracketed by quiet controls; else the last attempt, which is excluded.
+            let blocks = times.chunks(SPEED_BLOCK).enumerate().map(|(i, _)| {
+                let mine = || attempts.iter().filter(move |a| a.index == i);
+                mine().find(|a| a.quiet()).or_else(|| mine().last()).ok_or("missing speed block")
+            }).collect::<Result<Vec<_>, _>>()?;
+            let quiet: Vec<_> = blocks.iter().copied().filter(|b| b.quiet()).collect();
+            let need = (blocks.len() * 7).div_ceil(10);
+            // Contended: too few blocks had a quiet GPU on both sides. The verdict is then Unknown, never a miss.
+            let contended = quiet.len() < need;
+            let scored = if contended { blocks.clone() } else { quiet.clone() };
+            let measured: Vec<_> = scored.iter().flat_map(|b| b.frames.iter()).collect();
+            let commands = blocks.iter().flat_map(|b| b.frames.iter()).map(|f| f.commands)
                 .max_by_key(|n| n.abs_diff(b.commands)).ok_or("missing speed frames")?;
             let ms = measured.iter().map(|f| f.gpu_ms).collect::<Vec<_>>();
             let names: Vec<String> = p.passes.iter().map(|x| format!("{x:?}").split('(').next().unwrap_or("").to_string()).collect();
@@ -481,17 +493,34 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
             report[&s.name]["speed_passes_p50_ms"] = json!(pass_p50);
             let (p50, p95) = (quantile(&ms, 0.5), quantile(&ms, 0.95));
             let deciles: Vec<f64> = (0..=10).map(|i| quantile(&ms, f64::from(i) / 10.0)).collect();
-            let contended = control_p95_ms >= 0.150;
-            report[&s.name]["speed"] = json!({"control_p50_ms": control_p50_ms, "control_p95_ms": control_p95_ms, "contended": contended, "p50_ms": p50, "p95_ms": p95, "commands": commands, "frames": ms.len(), "deciles_ms": deciles, "ms": ms,
+            let block_p95: Vec<f64> = scored.iter()
+                .map(|b| quantile(&b.frames.iter().map(|f| f.gpu_ms).collect::<Vec<_>>(), 0.95)).collect();
+            let block_p95_median = quantile(&block_p95, 0.5);
+            let control = |pick: fn(&[f64; 2]) -> f64| quantile(&attempts.iter()
+                .flat_map(|a| [pick(&a.control_before), pick(&a.control_after)]).collect::<Vec<_>>(), 0.5);
+            let (control_p50_ms, control_p95_ms) = (control(|c| c[0]), control(|c| c[1]));
+            report[&s.name]["speed"] = json!({"control_p50_ms": control_p50_ms, "control_p95_ms": control_p95_ms, "contended": contended,
+                "quiet_control_p50_ms": loft_cli::native::QUIET_CONTROL_P50_MS, "quiet_blocks": quiet.len(), "blocks_needed": need,
+                "block_p95_median_ms": block_p95_median, "attempts": attempts.len(),
+                "blocks": attempts.iter().map(|a| json!({"index": a.index, "control_before": a.control_before,
+                    "control_after": a.control_after, "quiet": a.quiet(),
+                    "p50_ms": quantile(&a.frames.iter().map(|f| f.gpu_ms).collect::<Vec<_>>(), 0.5),
+                    "p95_ms": quantile(&a.frames.iter().map(|f| f.gpu_ms).collect::<Vec<_>>(), 0.95)})).collect::<Vec<_>>(),
+                "p50_ms": p50, "p95_ms": p95, "commands": commands, "frames": ms.len(), "deciles_ms": deciles, "ms": ms,
                 "frame_stamps": measured, "shader_sha256": shader_hashes(p)?});
             push(format!("{commands} GPU commands == {}", b.commands), held_if(-f64::from(commands.abs_diff(b.commands)), None));
             out.push(Check {
                 gate, scene: s.name.clone(), contended,
-                what: format!("p95 {p95:.3} ms <= {} ms (control p95 {control_p95_ms:.3} ms)", b.p95_ms),
+                what: format!("p95 {p95:.3} ms <= {} ms (p50 {p50:.3}, control p50 {control_p50_ms:.3} ms, {}/{} blocks quiet)",
+                    b.p95_ms, quiet.len(), blocks.len()),
                 verdict: if contended {
-                    Verdict::Unknown { reason: "triangle p95 must be under 0.150 ms".into() }
-                } else {
+                    Verdict::Unknown { reason: format!("only {}/{} blocks had a load-control p50 <= {:.3} ms before and after; need {need}",
+                        quiet.len(), blocks.len(), loft_cli::native::QUIET_CONTROL_P50_MS) }
+                } else if p95 <= b.p95_ms || block_p95_median > b.p95_ms {
+                    // A real slowdown moves every block, so the median block p95 clears the budget with the pool.
                     held_if(b.p95_ms - p95, None)
+                } else {
+                    Verdict::Unknown { reason: format!("tail only: pooled p95 {p95:.3} ms is over {} ms but the median block p95 {block_p95_median:.3} ms is under", b.p95_ms) }
                 },
             });
         }

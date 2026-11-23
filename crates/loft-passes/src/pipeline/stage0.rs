@@ -1,5 +1,5 @@
 use super::{Timings, schedule::Schedule};
-use crate::{CompileOptions, KindReport, Prog, as_v3, cache, emit, eval, gltf, lip, plan, pose_field, rot};
+use crate::{CompileOptions, KindReport, Prog, as_v3, cache, emit, eval, gltf, lip, pose_field, rot};
 use crate::program::{Draw, Instance, KindTable, abi};
 use crate::source::Graph;
 use emit::paths::PathTrace;
@@ -9,14 +9,12 @@ use lip::Iv;
 use loft_eval::{as_f32, pack, stage0};
 use loft_ir::{Code, Diag, Res, Span};
 use loft_parse::ast::*;
-use std::collections::BTreeMap;
 
 pub(super) struct Stage0Scene {
     pub(super) tables: Tables,
     pub(super) luts: Vec<Lut>,
     pub(super) lut_words: Vec<f32>,
     pub(super) lut_refs: Vec<emit::LutRef>,
-    pub(super) priors: BTreeMap<String, u32>,
     pub(super) params: Vec<f32>,
     pub(super) kinds: Vec<KindTable>,
     pub(super) instances: Vec<Instance>,
@@ -36,14 +34,22 @@ pub(super) fn evaluate<'a>(
     let mut kinds = vec![];
     let mut instances = vec![];
     let mut reports = vec![];
-    for (id, name) in schedule.drawn.iter().enumerate() {
-        let (kind, report) = derive_kind(p, types, opts, &tables, &luts, meshes, id, name, &mut instances)?;
+    let mut plans = schedule.drawn.iter().enumerate()
+        .map(|(id, name)| plan_kind(p, types, opts, &tables, &luts, meshes, id, name))
+        .collect::<Res<Vec<_>>>()?;
+    // Every (kind, shape) derivation of the scene runs in one pool. A per-kind pool left cores idle on scenes of
+    // several kinds with few shapes each (Hermit: five kinds, eleven shapes).
+    let derived = derive_all(p, types, opts, &tables, &luts, &mut plans)?;
+    for (plan, (derived, derive_s)) in plans.iter().zip(&derived) {
+        let mesh_asset = |row: &[RowVal]| mesh_asset_of(plan.k, meshes, row);
+        let (kind, report) = pack_kind(plan.k, plan.id, &tables[plan.t], plan.mesh_kind, mesh_asset, &plan.shapes,
+            &plan.shape_of, derived, plan.step_scale, *derive_s, &mut instances)?;
         kinds.push(kind);
         reports.push(report);
     }
     timings.lap("derive");
-    let (lut_words, lut_refs, priors) = pack_luts(p, meshes, &luts, schedule.tiled_world.is_some())?;
-    Ok(Stage0Scene { tables, luts, lut_words, lut_refs, priors, params, kinds, instances, reports })
+    let (lut_words, lut_refs) = pack_luts(meshes, &luts, schedule.tiled_world.is_some())?;
+    Ok(Stage0Scene { tables, luts, lut_words, lut_refs, params, kinds, instances, reports })
 }
 
 fn scans<'a>(p: &Prog<'a>, modules: &'a [Module], types: &[Ty], overrides: &[(String, f64)]) -> Res<Vec<Lut>> {
@@ -97,7 +103,6 @@ fn evaluate_rows(
         ev.call_fn(f, vec![], f.name.span)?;
     }
     for sample in samples{
-        if p.states.contains_key(sample.kind.as_str()) { continue; }
         let k=p.kinds.get(sample.kind.as_str()).ok_or_else(||Diag::new(Code::E602,Span::NONE,"snapshot names an unknown kind","sample the same scene revision"))?;
         let t=p.kind_index(&sample.kind);
         for (field,values) in &sample.fields{
@@ -179,11 +184,36 @@ fn add_media(p: &Prog<'_>, tables: &Tables, path: &mut PathTrace) -> Res<()> {
     Ok(())
 }
 
-fn derive_kind(
-    p: &Prog<'_>, types: &mut Vec<Ty>, opts: &CompileOptions<'_>, tables: &Tables,
-    luts: &[Lut], meshes: &[gltf::Mesh], id: usize, name: &str, instances: &mut Vec<Instance>,
-) -> Res<(KindTable, KindReport)> {
-    let CompileOptions { overrides, cache, .. } = *opts;
+/// What one kind's derivation needs, computed once and in kind order.
+struct KindPlan<'a, 't> {
+    id: usize,
+    t: usize,
+    k: &'a KindDecl,
+    mesh_kind: bool,
+    /// The first row of each distinct shape, and each row's shape.
+    shapes: Vec<usize>,
+    shape_of: Vec<usize>,
+    keys: Vec<Vec<&'t RowVal>>,
+    surface: Option<&'a FnDecl>,
+    trace: Option<&'a FnDecl>,
+    step_scale: Option<f32>,
+    domain: blake3::Hasher,
+    /// Mesh kinds read their bounds from the asset and derive nothing.
+    fixed: Option<Vec<lip::Derived>>,
+}
+
+fn mesh_asset_of<'m>(k: &KindDecl, meshes: &'m [gltf::Mesh], row: &[RowVal]) -> Res<&'m gltf::Mesh> {
+    match row {
+        [RowVal::X(_), RowVal::U(id), RowVal::U(0)] if (*id as usize) < meshes.len() => Ok(&meshes[*id as usize]),
+        _ => Err(Diag::new(Code::E602, k.name.span, "invalid Mesh asset or LOD", "emit an imported mesh with LOD zero")),
+    }
+}
+
+fn plan_kind<'a, 't>(
+    p: &Prog<'a>, types: &mut Vec<Ty>, opts: &CompileOptions<'_>, tables: &'t Tables,
+    luts: &[Lut], meshes: &[gltf::Mesh], id: usize, name: &str,
+) -> Res<KindPlan<'a, 't>> {
+    let CompileOptions { overrides, .. } = *opts;
     let k = p.kinds[name];
     let t = p.kind_index(name);
     let rows = &tables[t];
@@ -191,12 +221,6 @@ fn derive_kind(
         return Err(Diag::new(Code::E602, k.name.span, format!("kind `{name}` is drawn with {} rows", rows.len()), "emit 1 to 16,777,215 rows from the rows pass"));
     }
     let mesh_kind = name == "Mesh" && k.queries.is_empty();
-    let mesh_asset = |row: &[RowVal]| {
-        match row {
-            [RowVal::X(_), RowVal::U(id), RowVal::U(0)] if (*id as usize) < meshes.len() => Ok(&meshes[*id as usize]),
-            _ => Err(Diag::new(Code::E602, k.name.span, "invalid Mesh asset or LOD", "emit an imported mesh with LOD zero")),
-        }
-    };
     // Rows with the same geometry fields share a derivation across poses.
     let key_fields = if mesh_kind { vec![1] } else { geometry_fields(k) };
     let mut shapes: Vec<usize> = vec![];
@@ -247,42 +271,72 @@ fn derive_kind(
             }
         }
     }
-    let types: &[Ty] = types;
-    // F4: what the author waits for once per geometry edit (cached afterwards), reported per kind by `check`.
-    let began = std::time::Instant::now();
-    let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(shapes.len());
-    let chunk = shapes.len().div_ceil(threads);
-    let derived: Vec<lip::Derived> = if mesh_kind {
-        for row in rows { mesh_asset(row)?; }
-        shapes.iter().map(|&row| {
-            let mesh = mesh_asset(&rows[row])?;
+    let fixed = if mesh_kind {
+        for row in rows { mesh_asset_of(k, meshes, row)?; }
+        Some(shapes.iter().map(|&row| {
+            let mesh = mesh_asset_of(k, meshes, &rows[row])?;
             // A planar triangle still has a nonempty conservative box for the culler.
             Ok(lip::Derived { lo: mesh.lo.map(|x| x.next_down().into()),
                 hi: mesh.hi.map(|x| x.next_up().into()), l: 0., evals: 0 })
-        }).collect::<Res<_>>()?
-    } else { std::thread::scope(|sc| {
-        let jobs: Vec<_> = shapes.chunks(chunk)
-            .map(|group| {
-                let (keys, shape_of, domain) = (&keys, &shape_of, &domain);
-                sc.spawn(move || {
-                    let mut iv: Eval<Iv> = Eval::new(p, types, (*tables).clone(), overrides);
-                    iv.luts = luts;
-                    group
-                        .iter()
-                        .map(|&r| cache::derive(cache, domain, &keys[shape_of[r]], k.name.span, || match (surface, trace) {
-                            (Some(s), _) => lip::derive_surface(&mut iv, s, t, r, k.name.span),
-                            (None, Some(f)) if step_scale.is_some() => iv.unproved_bounds(f, t, r, k.name.span),
-                            (None, Some(f)) => lip::derive(&mut iv, f, t, r, k.name.span),
-                            (None, None) => unreachable!("checked: trace or surface"),
-                        }))
-                        .collect::<Res<Vec<_>>>()
-                })
+        }).collect::<Res<_>>()?)
+    } else { None };
+    Ok(KindPlan { id, t, k, mesh_kind, shapes, shape_of, keys, surface, trace, step_scale, domain, fixed })
+}
+
+fn derive_all(
+    p: &Prog<'_>, types: &[Ty], opts: &CompileOptions<'_>, tables: &Tables, luts: &[Lut], plans: &mut [KindPlan<'_, '_>],
+) -> Res<Vec<(Vec<lip::Derived>, f64)>> {
+    let shared: &[KindPlan<'_, '_>] = plans;
+    let CompileOptions { overrides, cache, .. } = *opts;
+    let jobs: Vec<(usize, usize)> = shared.iter().enumerate().filter(|(_, plan)| plan.fixed.is_none())
+        .flat_map(|(i, plan)| (0..plan.shapes.len()).map(move |s| (i, s))).collect();
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let workers = std::thread::available_parallelism().map_or(1, |n| n.get()).min(jobs.len());
+    // Workers claim jobs one at a time: derivation cost varies several-fold between shapes.
+    let done: Vec<Vec<(usize, Res<lip::Derived>, f64)>> = std::thread::scope(|sc| {
+        let handles: Vec<_> = (0..workers).map(|_| {
+            let (jobs, next) = (&jobs, &next);
+            sc.spawn(move || {
+                let mut iv: Eval<Iv> = Eval::new(p, types, (*tables).clone(), overrides);
+                iv.luts = luts;
+                let mut out = vec![];
+                loop {
+                    let j = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some(&(i, s)) = jobs.get(j) else { break };
+                    let plan = &shared[i];
+                    let r = plan.shapes[s];
+                    let began = std::time::Instant::now();
+                    let derived = cache::derive(cache, &plan.domain, &plan.keys[s], plan.k.name.span, || match (plan.surface, plan.trace) {
+                        (Some(f), _) => lip::derive_surface(&mut iv, f, plan.t, r, plan.k.name.span),
+                        (None, Some(f)) if plan.step_scale.is_some() => iv.unproved_bounds(f, plan.t, r, plan.k.name.span),
+                        (None, Some(f)) => lip::derive(&mut iv, f, plan.t, r, plan.k.name.span),
+                        (None, None) => unreachable!("checked: trace or surface"),
+                    });
+                    out.push((j, derived, began.elapsed().as_secs_f64()));
+                }
+                out
             })
-            .collect();
-        jobs.into_iter().map(|h| h.join().expect("derive thread")).collect::<Res<Vec<Vec<_>>>>().map(|v| v.into_iter().flatten().collect())
-    })? };
-    let derive_s = began.elapsed().as_secs_f64();
-    pack_kind(k, id, rows, mesh_kind, mesh_asset, &shapes, &shape_of, &derived, step_scale, derive_s, instances)
+        }).collect();
+        handles.into_iter().map(|h| h.join().expect("derive thread")).collect()
+    });
+    let mut results: Vec<Option<(Res<lip::Derived>, f64)>> = (0..jobs.len()).map(|_| None).collect();
+    for (j, r, seconds) in done.into_iter().flatten() { results[j] = Some((r, seconds)); }
+    let mut results = results.into_iter();
+    // The first failing job in kind and shape order reports, whatever order the workers finished in.
+    // F4: one pool derives every kind's shapes, so no kind has a wall time of its own. Each job is timed, and a
+    // kind's figure is its share of the wait: its jobs' seconds over the worker count. Cached shapes cost near 0.
+    plans.iter_mut().map(|plan| match plan.fixed.take() {
+        Some(fixed) => Ok((fixed, 0.)),
+        None => {
+            let mut seconds = 0.;
+            let derived: Res<Vec<lip::Derived>> = (0..plan.shapes.len()).map(|_| {
+                let (r, s) = results.next().expect("one result per job").expect("job ran");
+                seconds += s;
+                r
+            }).collect();
+            derived.map(|d| (d, seconds / workers.max(1) as f64))
+        }
+    }).collect()
 }
 
 fn pack_kind<'a>(
@@ -354,13 +408,13 @@ fn pack_kind<'a>(
         draw,
     };
     let stride = (words.len() / rows.len()) as u32;
-    let kind = KindTable { name: name.to_string(), module: id, stride, rows: words, n_rows: rows.len() as u32, lipschitz: lips, draw };
+    let kind = KindTable { name: name.to_string(), module: id, stride, rows: words, n_rows: rows.len() as u32, lipschitz: lips, draw, reads: vec![] };
     Ok((kind, report))
 }
 
 fn pack_luts(
-    p: &Prog<'_>, meshes: &[gltf::Mesh], luts: &[Lut], tiled_world: bool,
-) -> Res<(Vec<f32>, Vec<emit::LutRef>, BTreeMap<String, u32>)> {
+    meshes: &[gltf::Mesh], luts: &[Lut], tiled_world: bool,
+) -> Res<(Vec<f32>, Vec<emit::LutRef>)> {
     let mut lut_refs = vec![];
     let asset_words = gltf::words(meshes);
     let mut lut_words = match tiled_world {
@@ -378,11 +432,5 @@ fn pack_luts(
     }
     lut_words.resize(lut_words.len().next_multiple_of(12), 0.);
     lut_words.extend(luts.iter().flat_map(|l| l.frames.iter().flatten().copied()));
-    let mut priors = BTreeMap::new();
-    for (name, decl) in &p.plans {
-        if let Some(prior) = plan::lower_source(p, decl, &mut lut_words)? {
-            priors.insert((*name).to_string(), prior.header_word);
-        }
-    }
-    Ok((lut_words, lut_refs, priors))
+    Ok((lut_words, lut_refs))
 }

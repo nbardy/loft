@@ -1,7 +1,7 @@
 use super::*;
 use command::{Dispatch, Pass, Stamps, Work, compute_pipeline as pipeline};
 use loft_std::frame::Templates;
-use loft_wgpu::{timed, bindings::{self, slot}, edits::Pipelines, schedule::{self, Order}};
+use loft_wgpu::{timed, bindings::{self, slot}, schedule::{self, Order}};
 use std::collections::{BTreeSet, HashMap};
 use wgpu::util::DeviceExt;
 use std::time::Duration;
@@ -41,12 +41,6 @@ enum Operation {
 }
 struct Command { groups: Vec<Group>, op: Operation }
 impl Command {
-    fn kernel(&mut self) -> Result<&mut Kernel> {
-        match &mut self.op {
-            Operation::Dispatch(k, _) | Operation::Ticks(k, _) => Ok(k),
-            Operation::Draw(_) | Operation::Mips(..) => Err(RunnerError::UnknownResource),
-        }
-    }
     fn dispatch(&self, fixed: &wgpu::BindGroup, k: &Kernel, work: Work) -> Pass {
         let groups = std::iter::once(fixed).chain(self.groups.iter().map(Group::bound)).cloned().collect();
         Pass::Compute(vec![Dispatch { pipeline: k.pipeline.clone(), groups, work }])
@@ -86,7 +80,7 @@ fn create_all<T: Send + 'static, P: Send + 'static>(recipes: Vec<T>, create: imp
     let create = Arc::new(create);
     let workers = recipes.into_iter().map(|recipe| {
         let create = Arc::clone(&create);
-        loft_wgpu::promotion::worker(move || create(recipe))
+        loft_std::worker(move || create(recipe))
     }).collect::<Vec<_>>();
     workers.into_iter().map(|worker| worker.map_err(|e| RunnerError::InvalidShader(e.to_string()))?
         .recv().map_err(|_| RunnerError::Unsupported("pipeline worker stopped"))).collect()
@@ -277,24 +271,16 @@ impl ComputeCache {
     pub fn fused(&self, id: PassId) -> Option<&stepping::Fused> {
         if let Operation::Ticks(_, f) = &self.passes.get(&id)?.op { Some(f) } else { None }
     }
-    fn kernel(&self, id: PassId) -> Result<&Kernel> {
+    #[cfg(test)]
+    pub fn pipeline(&self, id: PassId) -> Result<&wgpu::ComputePipeline> {
         match &self.passes.get(&id).ok_or(RunnerError::UnknownResource)?.op {
-            Operation::Dispatch(k,_) | Operation::Ticks(k,_) => Ok(k),
+            Operation::Dispatch(k,_) | Operation::Ticks(k,_) => Ok(&k.pipeline),
             Operation::Draw(_) | Operation::Mips(..) => Err(RunnerError::UnknownResource),
         }
     }
     #[cfg(test)]
     pub fn bound_groups(&self, id: PassId) -> Vec<wgpu::BindGroup> {
         self.passes[&id].groups.iter().map(|g| g.bound().clone()).collect()
-    }
-}
-impl Pipelines for ComputeCache {
-    fn pipeline(&self, id: PassId) -> Result<&wgpu::ComputePipeline> { Ok(&self.kernel(id)?.pipeline) }
-    #[cfg(not(target_arch = "wasm32"))]
-    fn pipeline_layout(&self, id: PassId) -> Result<&wgpu::PipelineLayout> { Ok(&self.kernel(id)?.layout) }
-    fn replace_pipeline(&mut self, id: PassId, p: wgpu::ComputePipeline) -> Result<()> {
-        self.passes.get_mut(&id).ok_or(RunnerError::UnknownResource)?.kernel()?.pipeline = p;
-        Ok(())
     }
 }
 pub(super) use loft_wgpu::frame::Clock;
@@ -419,7 +405,6 @@ impl Instance {
         if options.timestamps.is_some_and(|set| !matches!(set.ty(), wgpu::QueryType::Timestamp) || options.timestamp_start >= set.count()) {
             return Err(RunnerError::AbiMismatch);
         }
-        self.edits.update(d, &mut self.compute)?;
         self.prepare(d, target, clock.to)?;
         let c = &mut self.compute;
         let tables = &self.tables;
@@ -453,7 +438,14 @@ impl Instance {
         let mut written = BTreeSet::new();
         let initializers: BTreeSet<_> = self.initializers.clocks.iter().flat_map(|i| &i.passes).copied().collect();
         let mut template = None;
-        let mut record = |id| {
+        // The first due tick of each lockstep group: every pass in it advances to each tick in turn.
+        let froms: Vec<u32> = c.order.iter().map(|item| match item {
+            Order::Lockstep(ids) => ids.iter().filter_map(|&id| c.fused(id).map(|f|
+                self.history.seek(id, tables[&f.rows].active).iter().copied().min().unwrap_or(clock.to))).min().unwrap_or(clock.to),
+            Order::Run(_) | Order::Repeat(..) => clock.to,
+        }).collect();
+        // `lockstep`: the tick this call advances to, and whether it is the group's first and last dispatch.
+        let mut record = |id, lockstep: Option<(u32, bool, bool)>| {
             if initializers.contains(&id) || options.omit_wave == Some(c.waves[&id]) { return; }
             if let Some(bytes) = c.templates.change(id, &mut template, clock.time as f32) {
                 batch.flush();
@@ -482,9 +474,18 @@ impl Instance {
                     let table = &tables[&f.rows];
                     let live = table.bytes().expect("validated state table");
                     let args = tables[&f.args.resource].bytes().expect("validated arguments");
-                    clock.advance(&mut self.history, id, f, table.active, self.decl.state.as_ref(), self.checkpoints.len(), |step| match step {
+                    let step_clock = match lockstep { Some((tick, ..)) => Clock { to: tick, ..clock }, None => clock };
+                    let mut started = false;
+                    step_clock.advance(&mut self.history, id, f, table.active, self.decl.state.as_ref(), self.checkpoints.len(), |step| match step {
                         loft_wgpu::frame::Step::Save(i) => batch.encoder.copy_buffer_to_buffer(live,0,&self.checkpoints[i],0,Some(live.size())),
                         loft_wgpu::frame::Step::Run { args: data, work, stamps } => {
+                            // A timed lockstep advance stamps the group's first dispatch start and last dispatch end.
+                            let stamps = match lockstep {
+                                Some((_, first, last)) => clock.timer.filter(|_| (first && !started) || last).map(|set|
+                                    Stamps { set, start: (first && !started).then_some(0), end: last.then_some(1) }),
+                                None => stamps,
+                            };
+                            started = true;
                             upload(&mut self.uploads, batch.encoder, &data, args, 0);
                             batch.report.commands += cmd.dispatch(&c.fixed, k, Work::Direct(work)).record(batch.encoder,stamps);
                         }
@@ -492,7 +493,22 @@ impl Instance {
                 }
             }
         };
-        for item in &c.order { item.visit(&mut record); }
+        for (item, &from) in c.order.iter().zip(&froms) {
+            match item {
+                Order::Lockstep(ids) => {
+                    // Nothing due still records one zero-tick dispatch per pass, as a single pass does: it writes
+                    // the state and evaluates the checks at the current tick.
+                    let ticks = if from < clock.to { from + 1..=clock.to } else { clock.to..=clock.to };
+                    let (first, last) = (*ticks.start(), *ticks.end());
+                    for tick in ticks {
+                        for (n, &id) in ids.iter().enumerate() {
+                            record(id, Some((tick, tick == first && n == 0, tick == last && n + 1 == ids.len())));
+                        }
+                    }
+                }
+                Order::Run(_) | Order::Repeat(..) => item.visit(&mut |id| record(id, None)),
+            }
+        }
         batch.flush();
         if batch.stamp_error { return Err(RunnerError::Capacity); }
         if let (Some(buf), Some(events)) = (event_buffer.as_ref(), &mut self.outbox) { events.end(batch.encoder,buf); }
@@ -533,8 +549,6 @@ fn resolve(d: &wgpu::Device, tables: &Tables, extent: &DispatchExtent) -> Result
     Work::resolve(extent, d.limits().max_compute_workgroups_per_dimension, |id| tables[&id].active, |id| tables[&id].bytes())
 }
 
-#[cfg(all(test, not(target_arch = "wasm32")))]
-mod edit_gate;
 /// Stage bytes in the encoder so two recorded frames may share the queue without overwriting each other.
 fn upload(belt: &mut wgpu::util::StagingBelt, enc: &mut wgpu::CommandEncoder, bytes: &[u8], dst: &wgpu::Buffer, offset: u64) {
     if let Some(size) = wgpu::BufferSize::new(bytes.len() as u64) {

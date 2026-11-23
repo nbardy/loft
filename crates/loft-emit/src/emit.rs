@@ -1,11 +1,10 @@
-//! WGSL emit (plan §1 layer 2): one module per kind, never per instance, and three shared modules (cull, classify,
-//! present). A kind's text depends only on its declaration and the library fns it reaches; its id, row base and row
+//! WGSL emit (plan §1 layer 2): one module per kind, never per instance, and one per schedule-authored frame pass
+//! (the stock cull, classify and present). A kind's text depends only on its declaration and the library fns it reaches; its id, row base and row
 //! count are data in `KindParams`. The author's structure is kept: their fns stay fns, their loops stay loops.
 
 use loft_check::{Prog, FINITE_DIFF_STEP, TWIN_LIGHT, finite_diff_parameter, pose_field, unit};
 pub use loft_check::references::{References, fn_symbol, proof_dependencies, reachable};
 use loft_builtins::{MotionClass, WgslLowering, lookup};
-pub mod solver;
 #[path="aov.rs"]
 mod aov;
 pub use aov::Aov;
@@ -19,7 +18,7 @@ mod column;
 use material_shape::Layout;
 use loft_parse::ast::*;
 use loft_check::program::{abi, Draw};
-use loft_ir::{Code, Diag, Res, Span};
+use loft_ir::{Code, Diag, Res};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
@@ -62,7 +61,6 @@ fn wty(t: &Ty) -> String {
         Ty::Bsdf => "Bsdf".into(),
         Ty::Id(_) => "u32".into(),
         Ty::Array(t, n) => format!("array<{}, {n}>", wty(t)),
-        Ty::Struct(k) if k == "PriorSample" => "PriorSample".into(),
         Ty::Struct(k) if k == "World" => "u32".into(),
         Ty::Struct(k) => format!("loft_type_{k}"),
         Ty::Verdict => "CheckValue".into(),
@@ -110,7 +108,6 @@ pub struct Emitter<'p, 'a> {
     luts: &'p [LutRef],
     pub motion:bool,
     pub motion_tier: Determinism,
-    pub priors: Option<&'p std::collections::BTreeMap<String, u32>>,
     pub locals: Vec<String>,
     temp: u32,
     prepare_light: bool,
@@ -119,16 +116,38 @@ pub struct Emitter<'p, 'a> {
     sampled_bakes: BTreeSet<String>,
     kernel_atomics: BTreeMap<(String, String), AtomicScalar>,
     kernel_sampling: bool,
+    /// Kind parameters as WGSL literals, by (kind, field): the one variant this scene's rows use.
+    pub fixed: &'p BTreeMap<(String, String), String>,
+    /// Tables this module reads, by kind: the WGSL loader `K[i]` and `legs[i]` lower to.
+    pub tables: BTreeMap<String, String>,
+    /// Kinds whose rows have their own struct `Row_K` here (every kind but the module's own `Row`).
+    pub foreign_rows: BTreeSet<String>,
 }
+
+static NO_FIXED: BTreeMap<(String, String), String> = BTreeMap::new();
 
 impl<'p, 'a> Emitter<'p, 'a> {
     pub fn new(p: &'p Prog<'a>, types: &'p [Ty]) -> Self {
-        Emitter { p, types, out: String::new(), maps: vec![], luts: &[],motion:false,motion_tier:Determinism::Det,priors:None,locals:vec![],temp:0,
-            prepare_light: false, in_prepared_light: false, baked_column: None, sampled_bakes: BTreeSet::new(), kernel_atomics: BTreeMap::new(), kernel_sampling: false }
+        Emitter { p, types, out: String::new(), maps: vec![], luts: &[],motion:false,motion_tier:Determinism::Det,locals:vec![],temp:0,
+            prepare_light: false, in_prepared_light: false, baked_column: None, sampled_bakes: BTreeSet::new(), kernel_atomics: BTreeMap::new(), kernel_sampling: false, fixed: &NO_FIXED,
+            tables: BTreeMap::new(), foreign_rows: BTreeSet::new() }
     }
 
     fn ty_of(&self, e: &Expr) -> &Ty {
         &self.types[e.id as usize]
+    }
+
+    /// `wty`, with a row of another kind read in this module lowered to its own struct.
+    fn wt(&self, t: &Ty) -> String {
+        match t {
+            Ty::Row(k) if self.foreign_rows.contains(k) => format!("Row_{k}"),
+            _ => wty(t),
+        }
+    }
+
+    /// A table value (`[K]`) has no WGSL form: its rows are a module binding, so it leaves signatures and calls.
+    fn is_table(&self, e: &Expr) -> bool {
+        matches!(self.ty_of(e), Ty::Table(_))
     }
 
     pub fn resolve(&self, t: &TyExpr) -> Ty {
@@ -139,11 +158,13 @@ impl<'p, 'a> Emitter<'p, 'a> {
         let mut params: Vec<String> = f
             .params
             .iter()
+            .filter(|prm| !matches!(&prm.ty, Some(TyExpr::Table(_))))
             .map(|prm| match &prm.ty {
-                Some(TyExpr::Name(n)) if self.p.kinds.contains_key(n.name.as_str())=>format!("{}: Row",wgsl_name(&prm.name.name)),
+                Some(TyExpr::Name(n)) if self.p.kinds.contains_key(n.name.as_str())=>
+                    format!("{}: {}",wgsl_name(&prm.name.name),self.wt(&Ty::Row(n.name.clone()))),
                 Some(t) => {
                     let name = if f.raw.is_some() { prm.name.name.clone() } else { wgsl_name(&prm.name.name) };
-                    format!("{name}: {}", wty(&self.resolve(t)))
+                    format!("{name}: {}", self.wt(&self.resolve(t)))
                 }
                 None => format!("{}: Row", wgsl_name(&prm.name.name)),
             })
@@ -151,7 +172,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
         if self.baked_column.is_some() {
             params.push("loft_column_value: f32".into());
         }
-        let ret = f.ret.as_ref().map(|t| format!(" -> {}", wty(&self.resolve(t)))).unwrap_or_default();
+        let ret = f.ret.as_ref().map(|t| format!(" -> {}", self.wt(&self.resolve(t)))).unwrap_or_default();
         let _ = writeln!(self.out, "fn {name}({}){ret} {{", params.join(", "));
         if let Some(raw)=&f.raw{
             self.out.push_str(&crate::provenance::raw(f.name.span,&raw.body[1..raw.body.len()-1]));self.out.push_str("\n}\n");return;
@@ -186,7 +207,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
         match s {
             Stmt::Let { mutable, name, value, .. } => {
                 let v = self.expr(value);
-                let t = wty(self.ty_of(value));
+                let t = self.wt(self.ty_of(value));
                 let kw = if *mutable { "var" } else { "let" };
                 self.line(d, &format!("{kw} {}: {t} = {v};", wgsl_name(&name.name)));
                 self.locals.push(name.name.clone());
@@ -314,7 +335,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 }
                 let name = format!("loft_tmp_{}", self.temp);
                 self.temp += 1;
-                let ty = wty(self.ty_of(e));
+                let ty = self.wt(self.ty_of(e));
                 self.line(1, &format!("var {name}: {ty};"));
                 self.line(1, "{");
                 let (locals, maps) = (self.locals.len(), self.maps.len());
@@ -343,7 +364,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 let name = format!("loft_tmp_{}", self.temp);
                 self.temp += 1;
                 let condition = self.expr(condition);
-                let ty = wty(self.ty_of(e));
+                let ty = self.wt(self.ty_of(e));
                 self.line(1, &format!("var {name}: {ty};"));
                 self.line(1, &format!("if {condition} {{"));
                 for (i, arm) in [then, otherwise].into_iter().enumerate() {
@@ -401,18 +422,13 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 {
                     return format!("{}_cell",map_symbol(n));
                 }
-                if matches!(self.ty_of(base), Ty::Struct(k) if k == "PriorSample") {
-                    let base = self.expr(base);
-                    return match m.name.as_str() {
-                        "pos" => format!("{base}.pos_compliance.xyz"),
-                        "vel" => format!("{base}.vel_active.xyz"),
-                        "rot" => format!("{base}.rot"),
-                        "compliance" => format!("{base}.pos_compliance.w"),
-                        "active" => format!("({base}.vel_active.w != 0.0)"),
-                        _ => unreachable!("checked prior sample field"),
-                    };
-                }
                 self.member(base, m)
+            }
+            // Rows of a bound kind table; a kernel's `[T]` tables keep their array form.
+            ExprKind::Index(a, i) if matches!(self.ty_of(a), Ty::Table(k) if self.tables.contains_key(k)) => {
+                let Ty::Table(k) = self.ty_of(a) else { unreachable!("matched a table") };
+                let loader = self.tables[k].clone();
+                format!("{loader}(u32({}))", self.expr(i))
             }
             ExprKind::Index(a, i) => format!("{}[{}]", self.expr(a), self.expr(i)),
             ExprKind::Unary(op, x) => {
@@ -486,11 +502,6 @@ impl<'p, 'a> Emitter<'p, 'a> {
                     let ExprKind::Name(reason) = &args[0].value.kind else { unreachable!("checked reason") };
                     return format!("CheckValue(3u, {}u, 0.0)", loft_check::reason(reason).expect("checked reason") as u32);
                 }
-                if callee.name == "sample_prior" {
-                    let ExprKind::Name(name) = &args[0].value.kind else { unreachable!("checked plan name"); };
-                    let header = self.priors.expect("motion prior bindings")[name];
-                    return format!("sample_prior({header}u, {})", self.expr(&args[1].value));
-                }
                 if callee.name == "emit_event" {
                     let tag = match &args[0].value.kind {
                         ExprKind::Name(name) => format!("{}u", crate::events::event_tag(name)),
@@ -509,7 +520,8 @@ impl<'p, 'a> Emitter<'p, 'a> {
                     let ExprKind::Member(base, member) = &args[0].value.kind else { unreachable!("checked atomic destination") };
                     return format!("atomicAdd(&{}, {value})", self.member(base, member));
                 }
-                let a: Vec<String> = args.iter().map(|x| self.expr(&x.value)).collect();
+                let kept: Vec<&Arg> = args.iter().filter(|x| !self.is_table(&x.value)).collect();
+                let a: Vec<String> = kept.into_iter().map(|x| self.expr(&x.value)).collect();
                 if callee.name=="place"{return format!("loft_xform_yaw({}, {})",a[0],a.get(1).map(String::as_str).unwrap_or("0.0"))}
                 match callee.name.as_str(){
                     "workgroup_barrier" => return "workgroupBarrier()".into(),
@@ -565,6 +577,10 @@ impl<'p, 'a> Emitter<'p, 'a> {
     }
 
     fn member(&mut self, base: &Expr, name: &Ident) -> String {
+        if let Ty::Row(kind) = self.ty_of(base)
+            && let Some(value) = self.fixed.get(&(kind.clone(), name.name.clone())) {
+            return value.clone();
+        }
         let field = match self.ty_of(base) {
             Ty::Frame(_) => frame_field(&name.name).to_owned(),
             Ty::Row(_) => format!("r_{}", name.name),
@@ -582,15 +598,16 @@ impl<'p, 'a> Emitter<'p, 'a> {
         self.out.push_str(&crate::bake_tex::sampled_declarations(self.p, &self.sampled_bakes, self.kernel_sampling));
     }
 
-    pub fn row_header(&mut self, k: &KindDecl) {
-        // The row: the author's fields, then the compiler's hidden columns.
+    /// The row struct's fields and their loads from `buffer` (word `o` is the row's first), hidden columns included.
+    fn row_parts(&self, k: &KindDecl, buffer: &str) -> (Vec<String>, Vec<String>, u32) {
         let mut fields = vec![];
         let mut loads = vec![];
         let mut o = 0u32;
         for rf in &k.row {
             let t = self.resolve(&rf.ty);
-            let w = |i: u32| format!("rows[o + {}u]", o + i);
-            let load = match &t {
+            let w = |i: u32| format!("{buffer}[o + {}u]", o + i);
+            let fixed = self.fixed.get(&(k.name.name.clone(), rf.name.name.clone()));
+            let load = if let Some(value) = fixed { value.clone() } else { match &t {
                 Ty::F32 => w(0),
                 Ty::U32 | Ty::Id(_) => format!("bitcast<u32>({})", w(0)),
                 Ty::I32 => format!("bitcast<i32>({})", w(0)),
@@ -605,16 +622,42 @@ impl<'p, 'a> Emitter<'p, 'a> {
                     w(11)
                 ),
                 other @ Ty::Void | other @ Ty::AbstractInt | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Frame(_) | other @ Ty::Table(_) | other @ Ty::Verdict | other @ Ty::Struct(_) | other @ Ty::Array(..) | other @ Ty::Bsdf => unreachable!("checked row field type {other}"),
-            };
+            } };
             fields.push(format!("  r_{}: {},", rf.name.name, wty(&t)));
             loads.push(load);
             o += t.words().expect("checked storable");
         }
         let stride = o + abi::HIDDEN_WORDS;
         fields.push("  loft_lo: vec3<f32>,\n  loft_hi: vec3<f32>,\n  loft_lip: f32,".into());
-        loads.push(format!("vec3<f32>(rows[o + {o}u], rows[o + {}u], rows[o + {}u])", o + 1, o + 2));
-        loads.push(format!("vec3<f32>(rows[o + {}u], rows[o + {}u], rows[o + {}u])", o + 3, o + 4, o + 5));
-        loads.push(format!("rows[o + {}u]", o + 6));
+        loads.push(format!("vec3<f32>({buffer}[o + {o}u], {buffer}[o + {}u], {buffer}[o + {}u])", o + 1, o + 2));
+        loads.push(format!("vec3<f32>({buffer}[o + {}u], {buffer}[o + {}u], {buffer}[o + {}u])", o + 3, o + 4, o + 5));
+        loads.push(format!("{buffer}[o + {}u]", o + 6));
+        (fields, loads, stride)
+    }
+
+    /// A loader `fn {loader}(i: u32) -> {name}` for rows of `k` in the storage array `buffer` (declared by the caller);
+    /// a `name` other than `Row` also gets its struct. The loads are the ones `row_header` writes.
+    pub fn row_loader(&mut self, k: &KindDecl, name: &str, buffer: &str, loader: &str) {
+        let (fields, loads, stride) = self.row_parts(k, buffer);
+        if name != "Row" {
+            let _ = write!(self.out, "struct {name} {{\n{}\n}}\n", fields.join("\n"));
+        }
+        let _ = write!(self.out, "fn {loader}(i: u32) -> {name} {{\n  let o = i * {stride}u;\n  return {name}(\n    {}\n  );\n}}\n",
+            loads.join(",\n    "));
+    }
+
+    /// Bind another kind's rows read-only at (`group`, `binding`) and give them a loader, `K[i]` and `legs[i]` lower to it.
+    pub fn foreign_table(&mut self, k: &KindDecl, group: u32, binding: u32) {
+        let name = &k.name.name;
+        let _ = writeln!(self.out, "@group({group}) @binding({binding}) var<storage, read> loft_rows_{name}: array<f32>;");
+        self.row_loader(k, &format!("Row_{name}"), &format!("loft_rows_{name}"), &format!("loft_read_{name}"));
+        self.foreign_rows.insert(name.clone());
+        self.tables.insert(name.clone(), format!("loft_read_{name}"));
+    }
+
+    pub fn row_header(&mut self, k: &KindDecl) {
+        // The row: the author's fields, then the compiler's hidden columns.
+        let (fields, loads, stride) = self.row_parts(k, "rows");
         let pose = match pose_field(k) {
             Some(i) => format!("r.r_{}", k.row[i].name.name),
             None => "LoftXform(mat3x3<f32>(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0), vec3<f32>(0.0))".into(),
@@ -709,16 +752,20 @@ fn material_layout<'k>(p: &Prog<'k>, k: &'k KindDecl) -> Res<Layout<'k>> {
 const SHADE_ENTRY: &str = "// One workgroup per 8x8 tile that classify listed for this kind.";
 const TWIN_BINDINGS: &str = "@group(3) @binding(0) var<storage, read> twin_in";
 
-/// The text of one kind's module. `light` is the library fn the shade pass calls (named in the schedule).
-pub fn kind_module(p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[LutRef], draw: Draw, aov: Aov) -> Res<String> {
-    emit_kind_module(p, types, k, Some(light), luts, draw, aov, None)
-}
-
-pub fn kind_module_edit(
-    p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[LutRef],
-    draw: Draw, aov: Aov, edit: &str,
-) -> Res<String> {
-    emit_kind_module(p, types, k, Some(light), luts, draw, aov, Some(edit))
+/// The other kinds whose rows a kind's queries read (`K[i]`), in first-use order; group 1, slot 4 + j in its module.
+pub fn kind_reads(p: &Prog, k: &KindDecl) -> Vec<String> {
+    let mut roots: Vec<&FnDecl> = k.queries.iter().map(|(_, f)| f).collect();
+    roots.extend(k.fns.iter());
+    let (lib, _) = reachable(p, &roots, &[]);
+    let mut reads: Vec<String> = vec![];
+    for f in roots.into_iter().chain(lib) {
+        for (name, _) in References::function(f).names {
+            if name != k.name.name && p.kinds.contains_key(name) && !reads.iter().any(|r| r == name) {
+                reads.push(name.to_owned());
+            }
+        }
+    }
+    reads
 }
 
 fn traced_march(count_steps: bool) -> String {
@@ -729,12 +776,15 @@ fn traced_march(count_steps: bool) -> String {
     ])
 }
 
+/// The text of one kind's module. `light` is the library fn the shade pass calls (named in the schedule).
+/// `fixed` holds kind parameters as literals; the others are read from the row.
 pub fn emit_kind_module(
     p: &Prog, types: &[Ty], k: &KindDecl, light: Option<&str>, luts: &[LutRef],
-    draw: Draw, aov: Aov, edit: Option<&str>,
+    draw: Draw, aov: Aov, fixed: &BTreeMap<(String, String), String>,
 ) -> Res<String> {
     let mut em = Emitter::new(p, types);
     em.luts = luts;
+    em.fixed = fixed;
     em.header(abi::NONCE_PLACEHOLDER);
     let q = |which| k.query(which).is_some();
     let mut roots: Vec<&FnDecl> = k.queries.iter().map(|(_, f)| f).collect();
@@ -745,6 +795,10 @@ pub fn emit_kind_module(
     extra.extend(mesh_lobe);
     let (lib, consts) = reachable(p, &roots, &extra);
     em.row_header(k);
+    em.tables.insert(k.name.name.clone(), "load_row".into());
+    for (j, read) in kind_reads(p, k).iter().enumerate() {
+        em.foreign_table(p.kinds[read.as_str()], 1, 4 + j as u32);
+    }
     // The Bsdf struct: one field per bound lobe argument, in the material's lobe order.
     let layout = if mesh { Layout::default() } else { material_layout(p, k)? };
     let mut lobes: Vec<_> = layout.lobes.iter().map(|(name, args)| (*name, args.len())).collect();
@@ -815,10 +869,6 @@ pub fn emit_kind_module(
         em.func(f, "loft_surface_jvp");
     }
     for (which, f) in &k.queries {
-        if *which == QueryKind::Trace && let Some(source) = edit {
-            em.out.push_str(source);
-            continue;
-        }
         let n = match which {
             QueryKind::Visible => "q_visible",
             QueryKind::Trace => "q_trace",
@@ -829,7 +879,7 @@ pub fn emit_kind_module(
     }
     em.sampled_textures();
     // Draw-form glue: the vis entry points, how shade rebuilds the hit, and the twin's geometry.
-    let count_steps = aov == Aov::SdfSteps && draw == Draw::Traced && edit.is_none();
+    let count_steps = aov == Aov::SdfSteps && draw == Draw::Traced;
     let uses_world_hit = light.is_none() && aov == Aov::Beauty;
     let (mut vis, mut geometry, twin_geo) = match draw {
         Draw::Surface { nu, nv } => (
@@ -851,7 +901,6 @@ pub fn emit_kind_module(
 ".to_owned(), false),
                 Draw::Analytic => ("  // Closed form: the author's `visible` query, in the kind's space (a rigid pose keeps t).\n  let t = q_visible(row, lro, lrd);\n  if t < 0.0 { discard; }\n".to_owned(),
                     light == Some("woodblock_pigment") && aov == Aov::Beauty),
-                Draw::Traced if edit.is_some() => ("  let t = loft_edit_march(row, lro, lrd, span);\n  if t < 0.0 { discard; }\n".to_owned(), false),
                 Draw::Traced => (traced_march(count_steps), false),
                 Draw::Surface { .. } | Draw::Mesh { .. } => unreachable!("ray draw"),
             };
@@ -860,9 +909,7 @@ pub fn emit_kind_module(
             let visible_twin = if q(QueryKind::Visible) { "q_visible(row, pl, dl)" } else { "0.0" };
             (
                 render_template(include_str!("../../../stdlib/core/ray_vis.wgsl"), &[("PRIMARY_DIRECTION", primary_direction), ("HIT", &hit), ("DISTANCE", distance)]),
-                if edit.is_some() {
-                    include_str!("../../../stdlib/core/ray_geometry_edit.wgsl").to_owned()
-                } else if split_ao {
+                if split_ao {
                     // The tetrahedral sum and the five AO taps keep their original
                     // order. Separate the loops to compute only the active sample.
                     include_str!("../../../stdlib/core/ray_geometry_split_ao.wgsl").to_owned()
@@ -892,7 +939,7 @@ pub fn emit_kind_module(
     }
     let mut diagnostics = "";
     if let Draw::Surface { nu, nv } = draw {
-        vis.push_str(&surface::cached_grid(p, k.query(QueryKind::Surface).expect("surface query"), nu, nv));
+        vis.push_str(&surface::indexed_grid(p, k.query(QueryKind::Surface).expect("surface query"), nu, nv));
     }
     let shade: String = match aov {
         // The shelf light evaluates an emission-only stack exactly once at zero incident direction.
@@ -953,52 +1000,19 @@ pub fn emit_kind_module(
 /// t-derivative scaled by `dt`, the same weights the CPU evaluator uses.
 const LUTS: &str = concat!(include_str!("../../../stdlib/core/luts.wgsl"), "\n");
 
-pub fn cull_module(single_draw: bool) -> String {
-    // Direct row indices retain the lower row on equal stored depths with strict Less.
-    let draw = if single_draw { include_str!("../../../stdlib/core/cull_single.wgsl") }
-        else { include_str!("../../../stdlib/core/cull_multi.wgsl") };
-    render_template(PRELUDE, &[("NONCE", abi::NONCE_PLACEHOLDER)])
-        + &render_template(include_str!("../../../stdlib/core/cull.wgsl"), &[("DRAW", draw)])
-}
-
-pub fn classify_module() -> String {
-    classify_with_halo("")
-}
-
-fn classify_with_halo(halo: &str) -> String {
-    render_template(PRELUDE, &[("NONCE", abi::NONCE_PLACEHOLDER)])
-        + &render_template(include_str!("../../../stdlib/core/classify.wgsl"), &[("HALO", halo)])
-}
-
-/// `sky` is the library fn named by the schedule's present pass.
-pub fn present_module(p: &Prog, types: &[Ty], sky: &str, aov: Aov, paper: Option<&str>) -> String {
-    emit_present(p, types, sky, aov, paper, None)
-}
-
-fn emit_present(p: &Prog, types: &[Ty], sky: &str, aov: Aov, paper: Option<&str>, film: Option<&str>) -> String {
+/// A frame pass a schedule wrote (`loft-passes/src/frame_pass.rs`): the frame prelude, then, when a hole names Loft
+/// functions, the helpers and library they reach, then the filled template. The stock cull, classify and present
+/// modules are these.
+pub fn template_module(p: &Prog, types: &[Ty], functions: &[&str], body: &str) -> String {
+    if functions.is_empty() {
+        return render_template(PRELUDE, &[("NONCE", abi::NONCE_PLACEHOLDER)]) + body;
+    }
     let mut em = Emitter::new(p, types);
     em.header(abi::NONCE_PLACEHOLDER);
-    let mut roots = vec![sky];
-    if aov == Aov::Beauty {
-        roots.extend(paper);
-        roots.extend(film);
-    }
-    let (lib, consts) = reachable(p, &[], &roots);
+    let (lib, consts) = reachable(p, &[], functions);
     em.library(&lib, &consts);
-    let sky=fn_symbol(sky);
-    let film = film.map_or_else(|| "loft_aces".to_owned(), fn_symbol);
-    let resolve = match (aov, paper.map(fn_symbol)) {
-        (Aov::Beauty, Some(paper)) => render_template(include_str!("../../../stdlib/core/present_paper.wgsl"), &[("SKY", &sky), ("PAPER", &paper)]),
-        (Aov::Beauty, None) => format!("if textureLoad(vis_tex, px, 0).x == LOFT_EMPTY {{ c = {sky}(loft_ray(pos.xy), normalize(frame.sun.xyz)); }} return vec4<f32>({film}(c), 1.0);"),
-        (Aov::Overdraw, _) => "return vec4<f32>(c, 1.0);".into(),
-        (Aov::Depth, _) => "return vec4<f32>(select(c, vec3<f32>(1.0), textureLoad(vis_tex, px, 0).x == LOFT_EMPTY), 1.0);".into(),
-        (Aov::Albedo | Aov::Normal | Aov::Id | Aov::SdfSteps | Aov::LipschitzRatio, _) =>
-            "return vec4<f32>(select(c, vec3<f32>(0.0), textureLoad(vis_tex, px, 0).x == LOFT_EMPTY), 1.0);".into(),
-    };
-    em.out += &render_template(include_str!("../../../stdlib/core/present.wgsl"), &[("RESOLVE", &resolve)]);
-    em.out
+    em.out + body
 }
-
 
 pub fn bake_module(p: &Prog, types: &[Ty], decl: &BakeDecl) -> Res<(crate::bake_tex::Clock, u32, String)> {
     use crate::bake_tex::{Clock, size, workgroup};

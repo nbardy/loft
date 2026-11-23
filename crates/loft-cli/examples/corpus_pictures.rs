@@ -12,7 +12,7 @@ mod ordered_cull;
 fn compile(root: &Path, file: &str) -> Result<Program, Box<dyn Error>> {
     let graph = Graph::file(&root.join(file), "")?;
     let (mut program, _, _) = loft_passes::compile(&graph, &[]).map_err(|d| d.render(&graph))?;
-    ordered_cull::order_cull(&mut program)?;
+    ordered_cull::order_cull(&mut program, root)?;
     Ok(program)
 }
 

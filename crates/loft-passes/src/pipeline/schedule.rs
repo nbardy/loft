@@ -1,7 +1,7 @@
-use crate::{AuthoredCompute, CompileOptions, GPU_ORDER, Prog, arg, as_v3, check, emit,
-    fn_name_arg, kind_args, require_schedule_fn, shade_schedule};
+use crate::{AuthoredCompute, CompileOptions, GPU_ORDER, Prog, arg, as_v3, check, emit, kind_args, shade_schedule};
+use crate::frame_pass::FramePass;
 use crate::eval::Tables;
-use crate::program::{Orbit, Pass, abi};
+use crate::program::{Orbit, Pass, StepClock, abi};
 use crate::source::Graph;
 use emit::paths::{PathTrace, WorldResources};
 use emit::shade_tiles::{Lighting, Visibility};
@@ -17,18 +17,23 @@ pub(super) struct Schedule<'a> {
     pub(super) sun: [f32; 3],
     pub(super) lighting: Lighting<'a>,
     pub(super) sky: &'a str,
-    pub(super) passes: Vec<Pass>,
+    pub(super) steps: Vec<Step<'a>>,
     pub(super) drawn: Vec<&'a str>,
-    culled: Vec<&'a str>,
     casters: Vec<&'a str>,
     pub(super) shadow_size: u32,
+    pub(super) shadow_clock: StepClock,
     pub(super) path: Option<PathTrace>,
     pub(super) tiled_world: Option<PathTrace>,
     pub(super) path_entry: Option<&'a str>,
     pub(super) paper: Option<&'a str>,
-    pub(super) film: Option<&'a str>,
     pub(super) compute: AuthoredCompute,
     pub(super) ids: Vec<u32>,
+}
+
+/// A frame step: a compiler pass, or a pass the schedule wrote from a template (lowered once `edges` is known).
+pub(super) enum Step<'a> {
+    Stock(Pass),
+    Frame(FramePass<'a>),
 }
 
 #[derive(Default)]
@@ -36,16 +41,14 @@ struct Draft<'a> {
     camera: Option<Orbit>,
     sun: Option<[f32; 3]>,
     light: Option<Lighting<'a>>,
-    sky: Option<&'a str>,
-    passes: Vec<Pass>,
+    steps: Vec<Step<'a>>,
     drawn: Vec<&'a str>,
-    culled: Vec<&'a str>,
     casters: Vec<&'a str>,
     shadow_size: u32,
+    shadow_clock: StepClock,
     path: Option<PathTrace>,
     path_entry: Option<&'a str>,
     paper: Option<&'a str>,
-    film: Option<&'a str>,
 }
 
 pub(super) fn resolve<'a>(
@@ -62,8 +65,25 @@ pub(super) fn resolve<'a>(
     let mut compute_rows = BTreeMap::new();
     let mut available: HashSet<&str> = ["FrameUniform", "InputsBuf", "ParamsBuf", "RowTables", "LutTables", "BodyTables", "StateBuf", "PoseBuf"].into_iter().collect();
     available.extend(p.bakes.keys().copied());
+    let mut labels = HashSet::new();
     for pd in &sched.passes {
         if let Some(resources) = &pd.resources {
+            if pd.clock.is_some() {
+                return Err(Diag::new(Code::E520, pd.label.span, "`on` is lowered for `find_shadow_map` only in this build",
+                    "remove the clause; the pass runs every frame"));
+            }
+            if let Some(frame) = FramePass::classify(p, types, src, overrides, pd, resources)? {
+                if let Some(read) = frame.reads.iter().find(|r| !available.contains(**r)) {
+                    return Err(Diag::new(Code::E505, pd.label.span, format!("{read} read before it was written"), "schedule its producer before this pass"));
+                }
+                if !labels.insert(pd.label.name.as_str()) || p.kinds.contains_key(pd.label.name.as_str()) {
+                    return Err(Diag::new(Code::E505, pd.label.span, format!("duplicate render pass {}", pd.label.name),
+                        "give each frame pass its own label and schedule one producer per renderer resource"));
+                }
+                available.extend(frame.writes.iter().copied());
+                draft.steps.push(Step::Frame(frame));
+                continue;
+            }
             if let Some(read) = resources.reads.iter().find(|r| !available.contains(r.name.as_str())) {
                 return Err(Diag::new(Code::E505, read.span, format!("{} read before it was written", read.name), "schedule its producer before this pass"));
             }
@@ -72,15 +92,12 @@ pub(super) fn resolve<'a>(
             continue;
         }
         let verb = pd.verb.name.as_str();
-        let producer = if verb == "tonemap" { "tonemap_aces" } else { verb };
-        if GPU_ORDER.contains(&producer) && !emitted_passes.insert(producer) {
-            // Models write one `cull_indirect` per kind; say that the pass takes every kind at once.
-            let fix = if verb == "cull_indirect" {
-                "list every drawn kind in one call: `cull_indirect(Shell, Claw)` and `draw_indirect(Shell, Claw)`"
-            } else {
-                "schedule one producer per renderer resource"
-            };
-            return Err(Diag::new(Code::E505, pd.verb.span, format!("duplicate render pass {verb}"), fix));
+        if GPU_ORDER.contains(&verb) && !emitted_passes.insert(verb) {
+            return Err(Diag::new(Code::E505, pd.verb.span, format!("duplicate render pass {verb}"), "schedule one producer per renderer resource"));
+        }
+        if pd.clock.is_some() && verb != "find_shadow_map" {
+            return Err(Diag::new(Code::E520, pd.verb.span, format!("`on` is lowered for `find_shadow_map` only in this build, not `{verb}`"),
+                "remove the clause; the step runs every frame"));
         }
         match verb {
             "table" => {
@@ -102,16 +119,21 @@ pub(super) fn resolve<'a>(
         }
         available.extend(writes);
     }
-    let Draft { camera, sun, light, sky, passes, drawn, culled, casters, shadow_size,
-        path, path_entry, paper, film } = draft;
+    let Draft { camera, sun, light, steps, drawn, casters, shadow_size, shadow_clock,
+        path, path_entry, paper } = draft;
     let camera = camera.ok_or_else(|| Diag::new(Code::E520, sched.name.span, "no camera", "add `pass camera: orbit(at: ..., radius: ..., height: ..., period: ..., fov: ...);`"))?;
+    // The frame's sky is the present pass's `sky` hole: World shading's edge rays call the same function.
+    let sky = steps.iter().find_map(|step| match step {
+        Step::Frame(frame) => frame.sky(p),
+        Step::Stock(_) => None,
+    });
     let (Some(light), Some(sky), Some(sun)) = (light, sky, sun) else {
         return Err(Diag::new(Code::E520, sched.name.span, "incomplete raster schedule",
             "schedule shade_tiles and a tonemap pass"));
     };
-    if (matches!(light, Lighting::World { .. }) || film.is_some()) && path.is_some()
-        || film.is_some() && paper.is_some()
-        || matches!(light, Lighting::World { visibility: Visibility::SubpixelEdges, .. }) && paper.is_some()
+    if matches!(light, Lighting::World { .. }) && path.is_some()
+        || matches!(light, Lighting::World { visibility: Visibility::SubpixelEdges | Visibility::Coverage, .. }
+            | Lighting::Bsdf(_, Visibility::Coverage)) && paper.is_some()
     {
         return Err(Diag::new(Code::E520, sched.name.span, "conflicting raster and presentation recipes",
             "use one shade and film recipe for the raster schedule"));
@@ -122,8 +144,8 @@ pub(super) fn resolve<'a>(
         lamps: vec![], worlds: vec![], media: vec![],
     });
     Ok(Schedule {
-        decl: sched, rows_fns, camera, sun, lighting, sky, passes, drawn, culled, casters,
-        shadow_size, path, tiled_world, path_entry, paper, film, compute, ids: vec![],
+        decl: sched, rows_fns, camera, sun, lighting, sky, steps, drawn, casters,
+        shadow_size, shadow_clock, path, tiled_world, path_entry, paper, compute, ids: vec![],
     })
 }
 
@@ -134,13 +156,9 @@ impl<'a> Draft<'a> {
     ) -> Res<()> {
         let verb = pd.verb.name.as_str();
         match verb {
-            "run_laws" | "run_solver" | "check" => {}, // Lowered to fixed-tick dispatches below.
+            "run_laws" | "check" => {}, // Lowered to fixed-tick dispatches below.
             "orbit" => self.camera = Some(orbit(p, types, overrides, pd)?),
             "use_camera" => self.camera = Some(named_camera(p, modules, types, overrides, pd)?),
-            "cull_indirect" => {
-                self.culled = kind_args(p, pd)?;
-                self.passes.push(Pass::Cull);
-            }
             "render_bundle" => {
                 if !matches!(pd.args.first().map(|a| &a.value.kind), Some(ExprKind::Name(n)) if n == "Vis64") {
                     return Err(Diag::new(Code::E405, pd.verb.span, "the bundle draws into `Vis64` only", "write `render_bundle(Vis64) { draw_indirect(K); }`"));
@@ -149,15 +167,12 @@ impl<'a> Draft<'a> {
                     if call.name != "draw_indirect" {
                         return Err(Diag::new(Code::E520, call.span, format!("`{}` in a render bundle", call.name), "write `draw_indirect(Kind, ...)`"));
                     }
-                    let fake = PassDecl { label: pd.label.clone(), verb: call.clone(), args: args.iter().map(|a| Arg { name: None, value: clone_name(&a.value) }).collect(), body: vec![], resources: None };
+                    let fake = PassDecl { label: pd.label.clone(), verb: call.clone(), args: args.iter().map(|a| Arg { name: None, value: clone_name(&a.value) }).collect(), body: vec![], resources: None, clock: None };
                     for k in kind_args(p, &fake)? {
-                        if let Some(prm) = p.kinds[k].params.first() {
-                            return Err(Diag::new(Code::E405, prm.span, "kind variants are not lowered yet", "move the parameter into the row for now"));
-                        }
                         self.drawn.push(k);
                     }
                 }
-                self.passes.push(Pass::Vis((0..self.drawn.len() as u32).collect()));
+                self.steps.push(Step::Stock(Pass::Vis((0..self.drawn.len() as u32).collect())));
             }
             "find_shadow_map" => {
                 self.casters = kind_args(p, pd)?;
@@ -166,20 +181,14 @@ impl<'a> Draft<'a> {
                 if !(64..=8192).contains(&self.shadow_size) || (!sched.implicit && self.casters.is_empty()) {
                     return Err(Diag::new(Code::E520, pd.verb.span, "a shadow map needs casters and a size of 64 to 8192 texels", "write `find_shadow_map(Kind, ..., size: 1024u)`"));
                 }
-                self.passes.push(Pass::Shadow(vec![]));
-            }
-            "tile_classify" => {
-                let tile = arg(pd, "tile")?;
-                if as_f32(stage0(p, types, tile, overrides)?, tile.span)? != abi::TILE as f32 {
-                    return Err(Diag::new(Code::E405, tile.span, "tiles are 8x8", "write `tile: 8u`"));
-                }
-                self.passes.push(Pass::Classify);
+                self.shadow_clock = shadow_clock(pd, &self.casters)?;
+                self.steps.push(Step::Stock(Pass::Shadow(vec![])));
             }
             "shade_tiles" => {
                 self.light = Some(shade_schedule::lighting(p, types, pd, overrides)?);
                 let s = arg(pd, "sun")?;
                 self.sun = Some(as_v3(stage0(p, types, s, overrides)?, s.span)?);
-                self.passes.push(Pass::Shade(vec![]));
+                self.steps.push(Step::Stock(Pass::Shade(vec![])));
             }
             "screen_pass" => {
                 let (entry, path) = screen_pass(p, types, overrides, pd)?;
@@ -188,17 +197,8 @@ impl<'a> Draft<'a> {
                     return Err(Diag::new(Code::E505, pd.verb.span, "duplicate path pass", "schedule one path integrator"));
                 }
             }
+            // Not a pass: the present template reads it as the frame fact `paper`.
             "outline_and_paper" => { self.paper = Some(p.linked(pd.verb.span, "paper_grain")?); }
-            "tonemap_aces" | "tonemap" => {
-                self.sky = Some(fn_name_arg(p, pd, "sky")?);
-                if verb == "tonemap" {
-                    let name = fn_name_arg(p, pd, "film")?;
-                    require_schedule_fn(p, types, name, pd.verb.span,
-                        &[Ty::VecN(3)], Ty::VecN(3), "write fn film(color: rgb) -> rgb")?;
-                    self.film = Some(name);
-                }
-                self.passes.push(Pass::Present);
-            }
             other => {
                 return Err(Diag::new(
                     Code::E520,
@@ -217,16 +217,28 @@ fn renderer_effects(verb: &str, has_shadow_pass: bool) -> (&'static [&'static st
         "orbit" | "use_camera" => (&["FrameUniform"], &["CameraSlot"]),
         "run_laws" => (&["StateBuf", "RowTables"], &["PoseBuf"]),
         "check" => (&["RowTables", "PoseBuf"], &["VerdictBuf"]),
-        "cull_indirect" => (&["CameraSlot"], &["IndirectBuf"]),
         "render_bundle" => (&["IndirectBuf"], &["Vis64", "DepthBuf"]),
         "find_shadow_map" => (&["IndirectBuf"], &["ShadowMap"]),
-        "tile_classify" => (&["Vis64"], &["TileLists"]),
         "shade_tiles" if has_shadow_pass => (&["Vis64", "DepthBuf", "TileLists", "ShadowMap"], &["ColorHdr"]),
         "shade_tiles" => (&["Vis64", "DepthBuf", "TileLists"], &["ColorHdr"]),
         "outline_and_paper" => (&["ColorHdr", "Vis64"], &["ColorHdr"]),
         "screen_pass" => (&["CameraSlot"], &["ColorHdr"]),
-        "tonemap_aces" | "tonemap" => (&["ColorHdr"], &["Swapchain"]),
         _ => (&[], &[]),
+    }
+}
+
+/// `find_shadow_map(...) on load | on dirty(...)`. Dirty names the step's casters (`Casters` is all of them).
+fn shadow_clock(pd: &PassDecl, casters: &[&str]) -> Res<StepClock> {
+    match &pd.clock {
+        None => Ok(StepClock::Dirty),
+        Some(BakeClock::Load) => Ok(StepClock::Load),
+        Some(BakeClock::Dirty(names)) => {
+            if let Some(n) = names.iter().find(|n| n.name != "Casters" && !casters.contains(&n.name.as_str())) {
+                return Err(Diag::new(Code::E520, n.span, format!("the shadow map is dirty when its casters move; `{}` is not one", n.name),
+                    "write `on dirty(Casters)` or name caster kinds"));
+            }
+            Ok(StepClock::Dirty)
+        }
     }
 }
 
@@ -320,23 +332,32 @@ fn screen_pass<'a>(
 impl Schedule<'_> {
     pub(super) fn select_drawables(&mut self, p: &Prog<'_>, tables: &Tables) -> Res<()> {
         let sched = self.decl;
-        let Self { drawn, culled, casters, shadow_size, passes, path, tiled_world, .. } = self;
+        let Self { drawn, casters, shadow_size, steps, path, tiled_world, .. } = self;
+        let populated = |k: &&str| !tables[p.kind_index(k)].is_empty();
         if sched.implicit {
-            let populated = |k: &&str| !tables[p.kind_index(k)].is_empty();
-            culled.retain(populated);
             drawn.retain(populated);
             casters.retain(populated);
             if casters.is_empty() {
                 *shadow_size = 0;
-                passes.retain(|p| !matches!(p, Pass::Shadow(_)));
+                steps.retain(|step| !matches!(step, Step::Stock(Pass::Shadow(_))));
             }
         }
-        let mut a = culled.clone();
         let mut b = drawn.clone();
-        a.sort_unstable();
         b.sort_unstable();
-        if a != b || b.windows(2).any(|pair| pair[0] == pair[1]) || drawn.len() > abi::MAX_KINDS {
-            return Err(Diag::new(Code::E520, sched.name.span, format!("cull lists {culled:?} but the bundle draws {drawn:?}"), "cull each drawable kind once (up to 32)"));
+        if b.windows(2).any(|pair| pair[0] == pair[1]) || drawn.len() > abi::MAX_KINDS {
+            return Err(Diag::new(Code::E520, sched.name.span, format!("the bundle draws {drawn:?}"), "draw each drawable kind once (up to 32)"));
+        }
+        // The instance table holds every drawn kind's rows, so a frame pass that reads kinds lists them all.
+        for step in steps.iter_mut() {
+            let Step::Frame(frame) = step else { continue };
+            if !frame.reads_kinds { continue; }
+            if sched.implicit { frame.kinds.retain(populated); }
+            let mut a = frame.kinds.clone();
+            a.sort_unstable();
+            if a != b {
+                return Err(Diag::new(Code::E520, frame.decl.label.span, format!("cull lists {:?} but the bundle draws {drawn:?}", frame.kinds),
+                    "cull each drawable kind once (up to 32)"));
+            }
         }
         let ids: Vec<u32> = (0..drawn.len() as u32).collect();
         // Shadow-only geometry has row and shader resources but no primary draw.
@@ -358,11 +379,11 @@ impl Schedule<'_> {
         let caster_ids = casters.iter().map(|c| {
             drawn.iter().position(|d| d == c).map(|i| i as u32).ok_or_else(|| Diag::new(Code::E520, sched.name.span, format!("shadow caster `{c}` is not drawn"), "cast shadows from drawn kinds"))
         }).collect::<Res<Vec<_>>>()?;
-        for pass in passes {
-            match pass {
-                Pass::Vis(k) | Pass::Shade(k) => *k = ids.clone(),
-                Pass::Shadow(k) => *k = caster_ids.clone(),
-                Pass::Cull | Pass::Classify | Pass::Present => {}
+        for step in steps {
+            match step {
+                Step::Stock(Pass::Vis(k) | Pass::Shade(k)) => *k = ids.clone(),
+                Step::Stock(Pass::Shadow(k)) => *k = caster_ids.clone(),
+                Step::Stock(Pass::Authored(_) | Pass::Path(_)) | Step::Frame(_) => {}
             }
         }
         self.ids = ids;

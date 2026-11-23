@@ -1,0 +1,79 @@
+use stdlib::motion::body::{Walker, lane}
+use stdlib::motion::gait::{join, hold, commanded, goal, stride_lead, cycle_time}
+
+# Whole-run evidence for the gait checks. A check sees one row at one time, so this law folds every tick
+# into the row: the lowest pressure-point margin on an area support with every foot down (and, apart,
+# with some foot aloft), how far the capture point ever left
+# the support, ticks with no foot down, the mean cycle while cruising (and the mean prediction of the law), and the longest stance displacement while cruising. Schedule it after `present`.
+pub law audit(w: Walker, dt: s) writes w.{low_margin, swing_margin, escape, airborne, cruise, cruise_steps, cycle, cycle_pred, trail} {
+  let xa = [w.ax0, w.ax1, w.ax2, w.ax3]
+  let xb = [w.ax4, w.ax5, w.ax6, w.ax7]
+  let za = [w.az0, w.az1, w.az2, w.az3]
+  let zb = [w.az4, w.az5, w.az6, w.az7]
+  let sa = [w.span0, w.span1, w.span2, w.span3]
+  let sb = [w.span4, w.span5, w.span6, w.span7]
+  let ca = [w.clock0, w.clock1, w.clock2, w.clock3]
+  let cb = [w.clock4, w.clock5, w.clock6, w.clock7]
+  let c = [w.x, w.z]
+  let v = [w.vx, w.vz]
+  let tc = sqrt(w.rest_h / 9.81)
+  let capture = c + v * tc
+  let held = hold(xa, xb, za, zb, join([w.boundary_a, w.boundary_b]), capture, w.sole)
+  let lead = stride_lead(w, v, tc)
+  let facing = [cos(w.yaw), sin(w.yaw)]
+  let aa = [w.age0, w.age1, w.age2, w.age3]
+  let ab = [w.age4, w.age5, w.age6, w.age7]
+  var worst = 0m
+  var landed = 0.0
+  for i in 0..8 {
+    if i < w.sites && lane(sa, sb, i) == 0.0 {
+      worst = max(worst, length(goal(w, i, c, facing, lead) - [lane(xa, xb, i), lane(za, zb, i)]))
+      landed = landed + select(0.0, 1.0, lane(aa, ab, i) == 0.0)
+    }
+  }
+  let wish = length(commanded(time, w.stick_scale))
+  let cruising = wish > 0.0 && length(v) >= 0.8 * wish
+  var aloft = false
+  for i in 0..8 {
+    if i < w.sites && lane(sa, sb, i) > 0.0 { aloft = true }
+  }
+  let area = w.support_kind == 3.0
+  w.low_margin = select(w.low_margin, min(w.low_margin, w.cop_margin), area && !aloft)
+  w.swing_margin = select(w.swing_margin, min(w.swing_margin, w.cop_margin), area && aloft)
+  w.escape = select(max(w.escape, -held.z), w.escape, held.w == 0.0)
+  w.airborne = w.airborne + select(0.0, 1.0, w.support_kind == 0.0)
+  # Mean cycle while cruising: every foot lands once a cycle, so it is N times the cruise time per landing.
+  let cruise = w.cruise + select(0s, dt, cruising)
+  let steps = w.cruise_steps + select(0.0, landed, cruising)
+  # A field read after its assignment sees the new value, so the running mean uses the old one first.
+  w.cycle_pred = select(w.cycle_pred, (w.cycle_pred * w.cruise + cycle_time(w, length(v)) * dt) / max(cruise, 1e-6), cruising)
+  w.cruise = cruise
+  w.cruise_steps = steps
+  w.cycle = select(0s, f32(w.sites) * cruise / max(steps, 1.0), steps > 0.0)
+  w.trail = select(w.trail, max(w.trail, worst), cruising)
+}
+
+# Standing (every foot down), the wanted pressure point never leaves the support by more than the row
+# grid (0.25 mm). A negative margin means the support cannot give the acceleration the body asks for.
+pub check margin_held(w: Walker) -> m {
+  return if w.low_margin < -0.25mm { missed(-w.low_margin) } else { held(w.low_margin + 0.25mm) }
+}
+
+# No fall: some foot always down, and the capture point never further from the support than a leg
+# can reach horizontally, so one step could always catch it.
+pub check upright(w: Walker) -> m {
+  let hi = 0.98 * w.reach_hi
+  let cap = sqrt(max(0.0, hi * hi - w.rest_h * w.rest_h))
+  return if w.airborne > 0.0 || w.escape > cap { missed(w.escape) } else { held(cap - w.escape) }
+}
+
+# Planted toes travel less than 1 mm in total over the run.
+pub check no_slide(w: Walker) -> m {
+  return if w.slide > 1mm { missed(w.slide) } else { held(1mm - w.slide) }
+}
+
+# The mean cycle while cruising is within 25% of the mean of the duty-factor law over the same ticks.
+pub check cadence(w: Walker) -> s {
+  let error = abs(w.cycle - w.cycle_pred)
+  return if w.cycle <= 0s || error > 0.25 * w.cycle_pred { missed(error) } else { held(0.25 * w.cycle_pred - error) }
+}

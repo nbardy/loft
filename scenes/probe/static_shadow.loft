@@ -1,0 +1,49 @@
+# Probe A (W): static casters on a ground, with the shadow map at the dirty stage.
+use stdlib::geometry::analytic::{ray_capsule, ray_ground}
+use stdlib::geometry::layout::{grid_spot, palette}
+use stdlib::integrators::direct::{sun_sky}
+use stdlib::materials::bsdf::{ggx}
+use stdlib::sdf::solid::{capsule, box_sdf}
+use stdlib::sky::environment::{sky_color}
+
+space World
+
+kind Ground @World (radius: f) {
+  visible(ro, rd) = ray_ground(ro, rd, radius)
+  trace(p) = box_sdf(p - [0, -0.05, 0]@World, [radius, 0.05, radius])
+  material(p, n) {
+    ggx([0.45, 0.42, 0.38], 0.9, 0)
+  }
+}
+
+kind Capsule @World (a: p3@World, b: p3@World, r: m, albedo: rgb) {
+  visible(ro, rd) {
+    ray_capsule(ro, rd, a, b, r)
+  }
+  trace(p) {
+    capsule(p, a, b, r)
+  }
+  material(p, n) {
+    ggx(albedo, 0.55, 0)
+  }
+}
+
+param count: u = 20
+
+build {
+  emit Ground(radius: 9)
+  build for i in 0..count {
+    let c = [grid_spot(i, count, 2.4)]@World
+    emit Capsule(a: c + [0, 0.4, 0], b: c + [0, 1.4, 0], r: 0.35m, albedo: palette(i))
+  }
+}
+
+schedule Main {
+  orbit(at: [0, 0.6, 0]@World, radius: 12m, height: 6m, period: 24.0s, fov: 40deg)
+  cull_indirect(Ground, Capsule)
+  render_bundle(Vis64) { draw_indirect(Ground, Capsule) }
+  find_shadow_map(Capsule, size: 1024) on dirty(Casters)
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: sun_sky, sun: [0.45, 0.8, 0.35])
+  tonemap_aces(ColorHdr, sky: sky_color)
+}

@@ -12,7 +12,6 @@ loft-eval = { path = "../loft-eval" }
 loft-emit = { path = "../loft-emit" }
 loft-gltf = { path = "../loft-gltf" }
 loft-abi = { path = "../loft-abi" }
-loft-plan = { path = "../loft-plan" }
 serde-lexpr = "0.1"
 loft-parse = { path = "../loft-parse" }
 blake3 = "1"

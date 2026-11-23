@@ -189,7 +189,7 @@ fn program(fixture: Fixture) -> Result<Program, Failure> {
         .find(|pass| fixture.subject(pass))
         .and_then(|pass| match pass {
             Pass::Shade(ids) | Pass::Vis(ids) => Some(ids),
-            Pass::Cull | Pass::Shadow(_) | Pass::Classify | Pass::Present => None,
+            Pass::Shadow(_) | Pass::Authored(_) | Pass::Path(_) => None,
         })
         .ok_or_else(|| Failure::Compile("missing timed pass".into()))?;
     if ids.len() != fixture.kinds().len()
@@ -217,6 +217,7 @@ fn clone_kind(kind: &loft_passes::program::KindTable) -> loft_passes::program::K
         n_rows: kind.n_rows,
         lipschitz: kind.lipschitz.clone(),
         draw: kind.draw,
+        reads: kind.reads.clone(),
     }
 }
 
@@ -285,9 +286,10 @@ fn diagnostic(p: &mut Program, capture: Capture) -> Result<(), Failure> {
     if matches!(capture, Capture::Depth) {
         p.shadow_size = 0;
         p.passes
-            .retain(|pass| matches!(pass, Pass::Cull | Pass::Vis(_) | Pass::Present));
+            .retain(|pass| matches!(pass, Pass::Vis(_)) || pass.presents() || matches!(pass, Pass::Authored(a) if a.label == "cull"));
     }
-    let present = &mut p.modules[p.present];
+    let present = p.module_named("present").ok_or_else(|| Failure::Compile("missing present module".into()))?;
+    let present = &mut p.modules[present];
     present.naga = parse(READBACK)?;
     present.wgsl = READBACK.to_owned();
     Ok(())
@@ -403,8 +405,11 @@ fn digest(bytes: &[u8]) -> String {
 fn pin_cull_order(p: &mut Program) -> Result<(), Failure> {
     // Compact atomic appends can change the winning row at equal D32 depths.
     // The compiler's indexed cull fixes draw order for diagnostic comparisons.
-    let m = &mut p.modules[p.cull];
-    m.wgsl = loft_passes::emit::cull_module(true);
+    let cull = p.module_named("cull").ok_or_else(|| Failure::Compile("missing cull module".into()))?;
+    let m = &mut p.modules[cull];
+    // The stdlib cull fills its `draw` hole with one of these two fragments; swap compact for indexed.
+    let (compact, indexed) = (include_str!("../../../stdlib/core/cull_multi.wgsl"), include_str!("../../../stdlib/core/cull_single.wgsl"));
+    if m.wgsl.contains(compact) { m.wgsl = m.wgsl.replace(compact, indexed); }
     m.naga = parse(&m.wgsl)?;
     Ok(())
 }
@@ -853,7 +858,7 @@ fn add_mutant(p: &mut Program, f: Fixture) {
             let repeat = Pass::Vis(ids.clone());
             p.passes.insert(index + 1, repeat);
         }
-        Pass::Cull | Pass::Shadow(_) | Pass::Classify | Pass::Present => {
+        Pass::Shadow(_) | Pass::Authored(_) | Pass::Path(_) => {
             unreachable!("checked pass")
         }
     }

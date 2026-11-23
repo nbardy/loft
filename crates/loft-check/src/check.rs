@@ -5,8 +5,6 @@
 
 #[path = "kernel_units.rs"]
 mod kernel_units;
-#[path = "motion_source.rs"]
-pub mod motion_source;
 use crate::Prog;
 use loft_builtins::{ArgShape, Builtin, BuiltinSpec, PolyRule, RetShape, SigRule, lookup};
 use loft_parse::ast::*;
@@ -30,6 +28,8 @@ pub struct Ck<'p, 'a> {
     local_units: HashMap<Span, Dimension>,
     expr_units: HashMap<u32, Dimension>,
     ownership: Option<(String,Vec<String>)>,
+    /// A kind query is being checked: `K[i]` reads kind K's rows (laws declare `[K]` parameters instead).
+    query: bool,
     p: &'p Prog<'a>,
     types: &'p mut Vec<Ty>,
     scopes: Vec<HashMap<String, Local>>,
@@ -41,8 +41,9 @@ pub struct Ck<'p, 'a> {
     sig_vars: Vec<String>,
 }
 
-/// Kind parameter variants allowed per kind (draft §3: "E402: kind variant budget exceeded (12 > max 4)").
-pub const VARIANT_BUDGET: u64 = 4;
+/// Values a kind's parameters may jointly take (spec §2.4: "cardinality ≤ 8"). A scene compiles
+/// the one variant its rows use; stage 0 rejects rows that disagree.
+pub const VARIANT_BUDGET: u64 = 8;
 
 pub struct CheckedEffects {
     pub kernels: BTreeMap<String, BTreeMap<String, Determinism>>,
@@ -82,8 +83,8 @@ pub fn check(p: &Prog, types: &mut Vec<Ty>) -> Res<CheckedEffects> {
             ck.assignable(&t, &want, c.value.span)?; if t==Ty::AbstractInt {ck.set(&c.value,want);}
         }
     }
-    motion_source::check(&mut ck)?;
     for sc in p.scans.values() { ck.scan(sc)?; }
+    for k in p.kinds.values() { ck.kind_params(k)?; }
     for f in p.fns.values() { ck.func(f, None)?; }
     for k in p.kinds.values() {
         ck.kind(k)?;
@@ -108,7 +109,7 @@ pub fn check(p: &Prog, types: &mut Vec<Ty>) -> Res<CheckedEffects> {
         }
         for f in std::iter::once(&law.f).chain(reachable) {
             if f.refuses_unverified_raw() {
-                return Err(Diag::new(Code::E504, f.name.span, "motion reaches unverified raw WGSL", "use wgsl det (...) after verifying the block is deterministic"));
+                return Err(Diag::new(Code::E504, f.name.span, "motion reaches unverified raw WGSL", "mark the law nondet, or write the operation in Loft"));
             }
             calls.calls.extend(crate::references::References::function(f).calls);
         }
@@ -227,7 +228,7 @@ fn e003(span: Span, msg: impl Into<String>, fix: impl Into<String>) -> Diag {
 
 impl<'p,'a> Ck<'p,'a> {
     pub fn new(p:&'p Prog<'a>, types:&'p mut Vec<Ty>)->Self {
-        Self{p,types,scopes:vec![],comptime:false,ret:Ty::Void,fresh:0,sig_vars:vec![],hints:None,ownership:None,kernel:None,atomic_writes:BTreeMap::new(),pending_lowering:None,local_units:HashMap::new(),expr_units:HashMap::new()}
+        Self{p,types,scopes:vec![],comptime:false,ret:Ty::Void,fresh:0,sig_vars:vec![],hints:None,ownership:None,query:false,kernel:None,atomic_writes:BTreeMap::new(),pending_lowering:None,local_units:HashMap::new(),expr_units:HashMap::new()}
     }
 
     fn lookup(&self, n: &str) -> Option<&Local> {
@@ -285,7 +286,7 @@ impl<'p,'a> Ck<'p,'a> {
                     )),
                 };
             }
-            if matches!(s.name.as_str(), "World" | "Local") || self.comptime && !self.p.bodies.is_empty() && s.name == "Body" || self.p.spaces.contains(s.name.as_str()) {
+            if matches!(s.name.as_str(), "World" | "Local") || self.p.spaces.contains(s.name.as_str()) {
                 Ok(Space::Named(s.name.clone()))
             } else {
                 Err(Diag::new(
@@ -477,6 +478,8 @@ impl<'p,'a> Ck<'p,'a> {
         let Some(TyExpr::Name(k))=&first.ty else{return Err(e003(first.name.span,"missing target kind","annotate the first parameter with its kind"))};
         let kind=self.p.kinds.get(k.name.as_str()).ok_or_else(||Diag::new(Code::E011,k.span,"unknown target kind","declare this kind first"))?;
         for field in writes.into_iter().flatten(){if !kind.row.iter().any(|f|f.name.name==field.name){return Err(Diag::new(Code::E501,field.span,"writes names an unknown column","use a field of the target kind"))}}
+        // The GPU modules fold a kind parameter to the value its rows were emitted with.
+        for field in writes.into_iter().flatten(){if kind.params.iter().any(|prm|prm.name.name==field.name){return Err(Diag::new(Code::E501,field.span,format!("`{}` is a kind parameter, fixed when the row is emitted",field.name),"move it into the kind's column list to change it at run time"))}}
         self.ownership=writes.map(|w|(first.name.name.clone(),w.iter().map(|i|i.name.clone()).collect()));
         for p in checked.params.iter_mut().skip(1){
             if p.name.name=="dt" && p.ty.is_none(){p.ty=Some(TyExpr::Name(Ident{name:"f32".into(),span:p.name.span}));}
@@ -532,7 +535,9 @@ impl<'p,'a> Ck<'p,'a> {
         }
         Ok(())
     }
-    fn kind(&mut self, k: &KindDecl) -> Res<()> {
+    /// A kind's parameters, before any `emit` is checked: a parameter is also a column, so an
+    /// invalid one must be refused as a parameter rather than as a missing column.
+    fn kind_params(&mut self, k: &KindDecl) -> Res<()> {
         let mut variants: u64 = 1;
         for prm in &k.params {
             let t = self.resolve(&prm.ty, true)?;
@@ -579,6 +584,9 @@ impl<'p,'a> Ck<'p,'a> {
                 ));
             }
         }
+        Ok(())
+    }
+    fn kind(&mut self, k: &KindDecl) -> Res<()> {
         self.scopes=vec![HashMap::new()];self.comptime=true;
         for f in &k.row {
             let t = self.resolve(&f.ty, true)?;
@@ -591,7 +599,10 @@ impl<'p,'a> Ck<'p,'a> {
         let surface = k.query(QueryKind::Surface).is_some();
         let mut world: Option<(Space, Span)> = None;
         for (q, f) in &k.queries {
-            self.func(f, Some(&k.name.name))?;
+            self.query = true;
+            let checked = self.func(f, Some(&k.name.name));
+            self.query = false;
+            checked?;
             let sig: Vec<Ty> =
                 f.params.iter().skip(1).filter_map(|p| p.ty.as_ref().map(|t| self.resolve(t, true))).collect::<Res<_>>()?;
             let ret = f.ret.as_ref().map(|t| (t, self.resolve(t, true))).map(|(t, r)| (matches!(t, TyExpr::Field(_)), r));
@@ -1013,14 +1024,25 @@ impl<'p,'a> Ck<'p,'a> {
             }
             ExprKind::Member(base, m) => self.member(base, m),
             ExprKind::Index(base, i) => {
-                let b = self.expr(base)?;
+                let b = match &base.kind {
+                    // `K[i]` in a kind query reads another row (of K) through a row reference or an index.
+                    ExprKind::Name(n) if self.lookup(n).is_none() && self.p.kinds.contains_key(n.as_str()) => {
+                        if !self.query {
+                            return Err(Diag::new(Code::E108, base.span, format!("`{n}` rows are read through a table parameter here"),
+                                format!("declare `{}: [{n}]` after `dt` and index it", n.to_lowercase())));
+                        }
+                        self.set(base, Ty::Table(n.clone()))
+                    }
+                    _ => self.expr(base)?,
+                };
                 let it = self.expr(i)?;
                 if let Ty::Table(k)=b{
-                    if self.kernel.is_some() && matches!(it, Ty::U32 | Ty::AbstractInt) {
+                    // A row index (a contiguous child range is `first + i`) or a row reference of this kind.
+                    if matches!(it, Ty::U32 | Ty::AbstractInt) {
                         self.set(i, Ty::U32);
                         return Ok(if self.p.structs.contains_key(k.as_str()) { Ty::Struct(k) } else { Ty::Row(k) });
                     }
-                    if it!=Ty::Id(k.clone()){return Err(Diag::new(Code::E108,i.span,format!("expected an id of {k}, found {it}"),"index the table with an id emitted for this kind"))}return Ok(Ty::Row(k))
+                    if it!=Ty::Id(k.clone()){return Err(Diag::new(Code::E108,i.span,format!("expected an id of {k}, found {it}"),"index the table with an id emitted for this kind or a u32 row"))}return Ok(Ty::Row(k))
                 }
                 self.assignable(&it, &Ty::U32, i.span).or_else(|_| self.assignable(&it, &Ty::I32, i.span))?;
                 match b {
@@ -1133,14 +1155,6 @@ impl<'p,'a> Ck<'p,'a> {
                     )),
                 }
             }
-            Ty::Struct(k) if k == "PriorSample" => match m.name.as_str() {
-                "pos" => Ok(Ty::Geo(Geo::Pt, Space::Named("World".into()))),
-                "vel" => Ok(Ty::Geo(Geo::Vec, Space::Named("World".into()))),
-                "rot" => Ok(Ty::VecN(4)),
-                "compliance" => Ok(Ty::F32),
-                "active" => Ok(Ty::Bool),
-                _ => Err(e003(m.span, "unknown prior sample field", "use pos, vel, rot, compliance or active")),
-            },
             Ty::Struct(k) => {
                 let (_, fields) = self.p.structs[k.as_str()];
                 let f = fields.iter().find(|f| f.name.name == m.name).ok_or_else(||
@@ -1163,23 +1177,6 @@ impl<'p,'a> Ck<'p,'a> {
             return Err(Diag::new(Code::E405, a.span, "named arguments are schedule-only in Phase 0", "pass arguments by position"));
         }
         let spec = lookup(&callee.name);
-        if let Some(spec) = spec.filter(|spec| spec.id == Builtin::SamplePrior) {
-            builtin_arity(spec, args.len(), span)?;
-            let (prior, time) = (&args[0], &args[1]);
-            let decl = match &prior.value.kind {
-                ExprKind::Name(name) => self.p.plans.get(name.as_str()),
-                _ => None,
-            }.ok_or_else(|| e003(prior.value.span, "expected a named plan", "name a declared plan"))?;
-            if self.ownership.is_none() || !crate::plan_source::closed(self.p, decl) {
-                return Err(Diag::new(Code::E405, span, "sample_prior needs a closed plan and a motion law",
-                    "bind every plan parameter at Stage 0 and sample from a law"));
-            }
-            let actual = self.expr(&time.value)?;
-            self.assignable(&actual, &Ty::F32, time.value.span)?;
-            self.set(&time.value, Ty::F32);
-            self.set(&prior.value, Ty::U32);
-            return Ok(Ty::Struct("PriorSample".into()));
-        }
         if let Some(spec) = spec.filter(|spec| spec.sig == SigRule::Poly(PolyRule::TextureSample))
             && !self.p.fns.contains_key(callee.name.as_str())
         {
@@ -1236,7 +1233,7 @@ impl<'p,'a> Ck<'p,'a> {
         }
         if callee.name == EMIT_EVENT {
             if self.ownership.is_none() && self.kernel.is_none() {
-                return Err(e003(span, "emit_event requires an effectful entry", "call it in a law, solver or kernel"));
+                return Err(e003(span, "emit_event requires an effectful entry", "call it in a law or kernel"));
             }
             let [tag, instance, site, payload] = args else {
                 return Err(e003(span, "emit_event needs four arguments", "provide tag, instance_id, site_id and payload"));
@@ -1290,19 +1287,32 @@ impl<'p,'a> Ck<'p,'a> {
                 return Err(e003(f.name.span,"parameter type has not been inferred","annotate the parameter or call the helper with a typed argument"));
             }
             let mut vars: HashMap<String, Space> = HashMap::new();
+            // Space variables a space-less offset was accepted for: `sphere(local, r)` where `local` was computed
+            // without spaces (3 of 19 first attempts). The offset is in whatever space the call is in.
+            let mut loose: Vec<(String, Span)> = vec![];
             for (index, ((prm, t), s)) in f.params.iter().zip(&ts).zip(&sp).enumerate() {
                 let want = self.resolve(prm.ty.as_ref().expect("free fns type every parameter"), true)?;
                 let want=if let (Ty::Id(k),Ty::Row(_))=(&want,t){Ty::Row(k.clone())}else{want};
                 let want = self.unify(&want, t, &mut vars, *s, &prm.name)?;
                 let want=subst(&want,&vars);
                 if self.contextual(&args[index].value,t,&want){continue;}
+                if let (Ty::VecN(3), Ty::Geo(g, Space::Var(v))) = (t, &want) && vec_like(*g) {
+                    loose.push((v.clone(), *s));
+                    continue;
+                }
                 self.assignable(t, &want, *s)?; if *t==Ty::AbstractInt {self.set(&args[index].value,want);}
             }
             let ret = match &f.ret {
                 Some(r) => self.resolve(r, true)?,
                 None => Ty::Void,
             };
-            return Ok(subst(&ret, &vars));
+            let ret = subst(&ret, &vars);
+            // An unbound space must not escape into the result: then the offset needs its space spelled out.
+            if let Some((v, s)) = loose.iter().find(|(v, _)| matches!(&ret, Ty::Geo(_, Space::Var(r)) | Ty::Frame(Space::Var(r)) if r == v)) {
+                return Err(e104(*s, format!("a space-less vec3 where `v3@{v}` is expected and the result is in `{v}`"),
+                    "derive the offset from points (`p - at`) so the call knows its space"));
+            }
+            return Ok(ret);
         }
         if let Some(world) = crate::world::WorldCall::resolve(&callee.name, &ts, span)? {
             if matches!(world.query, crate::world::WorldQuery::Sky { .. }) {
@@ -1423,7 +1433,7 @@ impl<'p,'a> Ck<'p,'a> {
                         ArgShape::Vec2 => Ty::VecN(2),
                         ArgShape::Vec3 => Ty::VecN(3),
                         ArgShape::Bsdf => Ty::Bsdf,
-                        ArgShape::Plan | ArgShape::Reason => unreachable!("named builtin operands are checked before value operands"),
+                        ArgShape::Reason => unreachable!("named builtin operands are checked before value operands"),
                     };
                     self.assignable(actual, &expected, arg.value.span)?;
                     // Packed words and BSDF weights retain their contextual types in IR.
@@ -1443,7 +1453,6 @@ impl<'p,'a> Ck<'p,'a> {
                     RetShape::Vec4 => Ty::VecN(4),
                     RetShape::Verdict => Ty::Verdict,
                     RetShape::Bsdf => Ty::Bsdf,
-                    RetShape::PriorSample => Ty::Struct("PriorSample".into()),
                 })
             }
             SigRule::Poly(rule) => builtin_poly(spec.name, rule, &ts, &sp, span),
@@ -1602,6 +1611,10 @@ fn binary(op: BinOp, a: &Ty, b: &Ty, _sa: Span, sb: Span, span: Span) -> Res<Ty>
         }
         (Add | Sub | Mul | Div, Ty::VecN(n), Ty::VecN(m)) if n == m => Ok(a.clone()),
         (Mul | Div, Ty::VecN(_), s) if num(s) => Ok(a.clone()),
+        // A colour plus a number adds it to every channel, as in WGSL: `floor(lit * 4.0 + 0.5) / 4.0` is the
+        // banding idiom, and refusing it was 6 of 19 first-attempt failures in crab-repair-v1's opening rounds.
+        (Add | Sub, Ty::VecN(_), s) if num(s) => Ok(a.clone()),
+        (Add | Sub, s, Ty::VecN(_)) if num(s) => Ok(b.clone()),
         (Mul, s, Ty::VecN(_)) if num(s) => Ok(b.clone()),
         // Affine rules (draft §2A).
         (Sub, Ty::Geo(Pt, x), Ty::Geo(Pt, y)) => if x == y { Ok(Ty::Geo(Vec, x.clone())) } else { Err(mismatch(x, y)) },

@@ -1,4 +1,5 @@
 
+    textureStore(hdr, g.xy, vec4f(0.0));
     // Only border lanes read the halo; each corner also reads its diagonal.
     let local = g.xy & vec2u(7);
     let step = vec2i(select(select(0, 1, local.x == 7u), -1, local.x == 0u),

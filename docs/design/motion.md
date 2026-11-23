@@ -44,6 +44,36 @@ any blend, per body part and per moment.
 - **Adaptability**: a new body plan moves well with no new code beyond its description; any law or constraint can
   be replaced by the consumer.
 
+## Where motion work happens
+
+Motion work runs at one of three times, chosen by how often its inputs change:
+
+- **Build, once per body plan, on the CPU.** Anything fixed by the body plan: site count, sockets, homes,
+  neighbour IDs, the reach annulus and the starting support hull. `walker_plan` in `stdlib/motion/body.loft`
+  computes these and stores them in the row, so no tick recomputes them.
+- **Contact events.** The support hull depends only on which feet are planted and where, so the gait stores
+  it (`boundary_a`, `boundary_b`) and rebuilds it only on the tick a foot lifts or lands.
+- **Every tick, on the GPU.** The controller (foot choice, centre of pressure, capture point), the leash and
+  reach checks, IK and the springs. These read time and the previous row, so they cannot move earlier.
+
+Several feet can be aloft at once. A foot is aloft while its `span` column is positive; the phase plan
+(`lead`, `wave`), the sweep and the swing time are build constants, so the duty factor and each foot's
+target lift phase are a few operations per tick. The support test vetoes a lift that would leave the
+pressure point outside the remaining feet (bodies of three sites or fewer step dynamically instead, after
+shifting their weight). `stdlib::motion::audit` folds a run into checks (`margin_held`, `upright`,
+`no_slide`, `cadence`); `scenes/motion_bodies/` is the body test set. Theory and measurements:
+`agent_notes/2026-11-23_motion_stride/THEORY.md`, `agent_notes/2026-11-23_perf/motion-stride.md`.
+
+A consumer who wants a different split, such as a hull recomputed every tick for deforming ground or a
+reach annulus that changes with load, forks the gait file (`loft fork`) and edits the fork. The engine has
+no flag for it: the split is source a consumer owns, and a flag would be one more name to learn for what
+editing one function already does.
+
+Per-site state is plain scalar f32 columns, with no fp16: the CPU/GPU twin and the 0.05 mm planted check
+need f32 values on a binary grid (`row_scale`). Rows cannot hold arrays today, and `still`, `clip` and
+`profile` sample only scalar f32 columns a law writes, so the eight sites are eight scalar columns per
+quantity and `lane`/`put` index them as pairs of v4.
+
 ## Not goals
 
 - A general rigid-body physics engine for scenes (motion may use one; it is not the product).

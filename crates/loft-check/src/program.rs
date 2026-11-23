@@ -38,6 +38,9 @@ pub struct KindTable {
     /// The derived Lipschitz bound per row (also in the hidden column), for reports.
     pub lipschitz: Vec<f32>,
     pub draw: Draw,
+    /// Kinds (indices into the program's kinds) whose rows this kind's queries read, bound at group 1, slot 4 + j.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reads: Vec<u32>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,10 +90,26 @@ pub struct Dispatch {
     pub fields: Vec<(String, u32)>,
     pub layout_hash: [u8; 32],
     pub checks: Vec<String>,
+    /// Tables the laws and checks read (`[K]` parameters), in binding order (`DispatchResource::Read(j)`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reads: Vec<DispatchRead>,
+    /// Runs one tick per dispatch, in program order with the other lockstep dispatches (a cross-kind read).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub lockstep: bool,
+}
+
+/// One table a fixed-step dispatch reads. A read of the dispatch's own kind (`previous`) sees the rows as the last
+/// tick left them, through a copy the `snapshot` entry takes before each tick; any other read binds the live table.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct DispatchRead {
+    pub kind: String,
+    /// The kind's rows when no dispatch writes them: a drawn kind's table, or the packed words of a data kind.
+    pub input: DispatchRows,
+    pub previous: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
-pub enum DispatchResource { Rows, Arguments, Results, Outbox, Luts }
+pub enum DispatchResource { Rows, Arguments, Results, Outbox, Luts, Read(u32), Previous }
 
 #[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub struct DispatchBinding {

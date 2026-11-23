@@ -1,0 +1,42 @@
+use stdlib::geometry::analytic::{ray_ground}
+use stdlib::integrators::direct::{sun_sky}
+use stdlib::materials::bsdf::{ggx, emit_lobe}
+use stdlib::sdf::solid::{box_sdf}
+use stdlib::motion::body::{Walker, walker_plan, planted}
+use stdlib::motion::gait::{step, present, support_cases}
+
+# Eight legs on the adaptive gait (stdlib::motion::gait), no scripted alternation: the body leans
+# into its acceleration and each foot steps when its pin has strained far enough from its home.
+# Four sites per side, listed counterclockwise: the near side left to right, the far side right to left.
+
+kind SandDeck @World (radius: f) {
+  visible(ro, rd) = ray_ground(ro, rd, radius)
+  trace(p) = box_sdf(p - [0, -0.006, 0]@World, [radius, 0.006, radius])
+  material(p, n) {
+    let d = abs(fract(p.xyz * 2.8 + rgb(0.5)) - rgb(0.5))
+    let grid = 1.0 - smoothstep(0.003, 0.022, min(d.x, d.z))
+    let sand = mix([0.89, 0.71, 0.48], [0.59, 0.45, 0.30], grid)
+    ggx(sand * [0.78, 0.65, 0.45], 0.9, 0.0) + emit_lobe(sand * [0.29, 0.24, 0.19])
+  }
+}
+
+fn stage_sky(rd: rgb, sun: rgb) -> rgb = [0.89, 0.69, 0.44]
+
+camera Main { eye: [3.1, 2.5, 2.7]@World, at: [0, 0.33, -0.04]@World, fov: 0.63 }
+build {
+  walker_plan([0, 0, 0]@World, 0.0, 0.38, 0.0, [0.77, 0.062, 0.017], 0.45m, 0.58m, 0.62m, [0.0, 1.0, 1.2], 0m, 8,
+    [-0.24, -0.08, 0.08, 0.24], [0.24, 0.08, -0.08, -0.24], [-0.27, -0.27, -0.27, -0.27], [0.27, 0.27, 0.27, 0.27],
+    [-0.55, -0.23, 0.23, 0.55], [0.55, 0.23, -0.23, -0.55], [-0.62, -0.70, -0.70, -0.62], [0.62, 0.70, 0.70, 0.62])
+  emit SandDeck(radius: 30)
+}
+schedule Main {
+  run_laws(step, present)
+  check(planted, support_cases)
+  use_camera(Main)
+  cull_indirect(Walker, SandDeck)
+  render_bundle(Vis64) { draw_indirect(Walker, SandDeck) }
+  find_shadow_map(Walker, size: 1024)
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: sun_sky, sun: [-0.45, 0.82, -0.35])
+  tonemap_aces(ColorHdr, sky: stage_sky)
+}

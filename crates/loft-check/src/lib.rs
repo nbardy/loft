@@ -4,7 +4,6 @@ pub mod check;
 pub mod defaults;
 pub mod infer;
 pub mod paths;
-pub mod plan_source;
 mod prog;
 pub mod program;
 pub mod quant;

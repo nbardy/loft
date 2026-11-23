@@ -9,6 +9,8 @@ const SAMPLES: std::ops::Range<usize> = 188..192;
 
 pub(super) enum Reuse {
     EveryFrame,
+    /// `find_shadow_map(...) on load`: the first frame draws the map and every later frame keeps it.
+    Once { drawn: bool },
     Static {
         reads_params: bool,
         last: Option<Vec<u8>>,
@@ -22,15 +24,18 @@ impl Reuse {
         indexed: impl Fn(&loft_passes::program::KindTable) -> bool,
         editable: Option<usize>,
     ) -> Self {
+        if p.shadow_clock == loft_passes::program::StepClock::Load {
+            return Self::Once { drawn: false };
+        }
         let mut reads_params = false;
         let editable_module = editable.map(|id| p.kinds[id].module);
         for &id in casters {
             let kind = &p.kinds[id as usize];
-            // A tape can start reading time after publication, and promotion replaces its shader.
+            // An edit replaces this caster's shader, which may then read time or params.
             if editable_module == Some(kind.module) {
                 return Self::EveryFrame;
             }
-            let vertex = if indexed(kind) { "vs_indexed" } else { "vs" };
+            let vertex = if indexed(kind) { "vs_grid" } else { "vs" };
             let Some(params) = static_caster(&p.modules[kind.module].naga, vertex) else {
                 return Self::EveryFrame;
             };
@@ -45,6 +50,7 @@ impl Reuse {
     pub(super) fn needs_draw(&mut self, uniform: &[u8], params_changed: bool) -> bool {
         match self {
             Self::EveryFrame => true,
+            Self::Once { drawn } => !std::mem::replace(drawn, true),
             Self::Static { reads_params, last } => {
                 // The other bytes include the actual light projection and ray direction. The map,
                 // caster list, row/bounds buffers, indices, baked grid and LUTs belong to this load.

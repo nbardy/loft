@@ -6,6 +6,6 @@
   if any(px >= frame.size.xy) { return; }
   let v = textureLoad(vis_tex, px, 0).xy;
   let center = LoftRay(frame.eye.xyz, loft_ray(vec2f(px) + 0.5), 0.0001, 1e6);
-{{SHADE}}  textureStore(hdr, px, vec4f(color, 1.0));
+{{SHADE}}  textureStore(hdr, px, vec4f(color, {{ALPHA}}));
 }
 {{TWIN_BINDINGS}}{{TWIN}}

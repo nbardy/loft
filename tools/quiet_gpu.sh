@@ -1,48 +1,25 @@
 #!/usr/bin/env bash
-# Reserved timing window: GPU first, then both shared compile slots.
+# Usage: tools/quiet_gpu.sh COMMAND [ARG ...] | --wait
+# A timing window: the GPU with no build or simulation running beside it. agent-build grants the GPU
+# and every other slot together or none of them, so the GPU is never held while this queues behind a
+# build. Exit 69: the queue was busy and nothing ran. Exit 6: a build was seen during the window, so
+# the measurement is void.
 set -euo pipefail
 root="$(cd "$(dirname "$0")" && pwd -P)"
 if [[ ${1:-} != --locked ]]; then
   [[ $# -gt 0 ]] || { echo 'usage: quiet_gpu.sh COMMAND [ARG ...] | --wait' >&2; exit 2; }
-  exec "$root/gpu_lock.sh" "$root/quiet_gpu.sh" --locked "$@"
+  if ! command -v agent-build >/dev/null 2>&1; then
+    echo 'quiet_gpu: agent-build is not installed, so only the build watch below guards this window' >&2
+    LOFT_GPU_HOLDER=$$ exec "$root/quiet_gpu.sh" --locked "$@"
+  fi
+  exec agent-build --gpu --heavy --light --sim --max-minutes "${LOFT_QUIET_MINUTES:-30}" 'loft timing window' \
+    "$root/quiet_gpu.sh" --locked "$@"
 fi
 shift
-[[ -n ${LOFT_GPU_HOLDER:-} && -r /tmp/loft-gpu.lock &&
-   $(cat /tmp/loft-gpu.lock) == "$LOFT_GPU_HOLDER" ]] || exit 2
-source "$root/lib/build_gate.sh"
+[[ ${LOFT_GPU_HOLDER:-} =~ ^[1-9][0-9]*$ ]] || { echo 'quiet_gpu: --locked is internal' >&2; exit 2; }
 trap 'exit 143' HUP INT TERM
-if keel_gate_held '0|light'; then
-  echo 'quiet_gpu: finish the build before requesting a timing window' >&2
-  exit 2
-fi
 
-# Claim both slots together. A light build can need the heavy slot, so
-# release heavy immediately if light is busy. Bash keeps the inherited flocks.
-dir="$(keel_gate_dir)"
-mkdir -p "$dir"
-exec 8>>"$dir/slot.0" 9>>"$dir/slot.light"
-claim_build_slots() {
-  perl -MFcntl=:flock -e '
-    open my $heavy, ">&=", 8 or die $!;
-    open my $light, ">&=", 9 or die $!;
-    flock $heavy, LOCK_EX | LOCK_NB or do { exit 75 if $!{EWOULDBLOCK}; die $! };
-    flock $light, LOCK_EX | LOCK_NB or do {
-      my ($busy, $error) = ($!{EWOULDBLOCK}, "$!");
-      flock $heavy, LOCK_UN or die $!;
-      exit 75 if $busy;
-      die $error;
-    };
-  '
-}
-until claim_build_slots; do
-  code=$?
-  [[ $code == 75 ]] || exit "$code"
-  sleep 1
-done
-for slot in 0 light; do
-  printf 'holder=%s owner=%s label=loft quiet GPU\n' "$$" "$$" >"$dir/slot.$slot.info"
-done
-unset KEEL_GATE_HELD
+# The slots only cover jobs that ask for one. A cargo started directly is seen here instead.
 running_builds() {
   if [[ $OSTYPE == darwin* ]]; then
     python3 "$root/gates/darwin_builds.py"
@@ -50,15 +27,20 @@ running_builds() {
   fi
   ps -ax -o stat= -o comm= | awk '$1 !~ /(^Z|E)/ && $NF ~ /(^|\/)(cargo|rustc)$/'
 }
-while :; do
+# Bounded: every slot is held from here on, so a long wait would stall every other agent.
+for (( waited = 0; ; waited++ )); do
   builds="$(running_builds)"
   [[ -n "$builds" ]] || break
+  if (( waited >= 60 )); then
+    echo 'quiet_gpu: a build outside the shared slots is still running; nothing was timed' >&2
+    printf '%s\n' "$builds" >&2
+    exit 6
+  fi
   sleep 1
 done
 if [[ $1 == --wait ]]; then exit 0; fi
 
-# Direct cargo invocations can bypass the shared slots. Discard any window
-# where one was observed, even if it finished before the timed command did.
+# Discard any window where a build was observed, even if it finished before the timed command did.
 interference="$(mktemp)"
 trap 'kill ${monitor:+"$monitor"} 2>/dev/null || true; rm -f "$interference"' EXIT
 (
@@ -73,10 +55,10 @@ trap 'kill ${monitor:+"$monitor"} 2>/dev/null || true; rm -f "$interference"' EX
     fi
     sleep 0.2
   done
-) 8>&- 9>&- &
+) &
 monitor=$!
 status=0
-LOFT_QUIET_GPU="$LOFT_GPU_HOLDER" "$@" 8>&- 9>&- || status=$?
+LOFT_QUIET_GPU="$LOFT_GPU_HOLDER" "$@" || status=$?
 kill "$monitor" 2>/dev/null || true
 wait "$monitor" 2>/dev/null || true
 running_builds >>"$interference" || echo "final build observation failed" >>"$interference"

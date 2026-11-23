@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn cached_grid<'a>(p: &Prog<'a>, query: &'a FnDecl, nu: u32, nv: u32) -> String {
+pub(super) fn indexed_grid<'a>(p: &Prog<'a>, query: &'a FnDecl, nu: u32, nv: u32) -> String {
     let mut refs = References::default();
     let mut local = query.params.iter().skip(1).map(|p| p.name.name.as_str()).collect();
     refs.block(&query.body, &mut local);
@@ -18,27 +18,17 @@ pub(super) fn cached_grid<'a>(p: &Prog<'a>, query: &'a FnDecl, nu: u32, nv: u32)
         return String::new();
     }
     let cols = nu + 1;
-    let rows = nv + 1;
+    // The authored point does not read the row, so it equals the former load-time bake of row 0 for every row. Evaluating
+    // it in the vertex stage removes the bake pipeline, its buffer and the load dispatch (Hermit 14 -> 13 pipelines).
     format!(r"
-@group(2) @binding(5) var<storage, read> loft_grid: array<vec4<f32>>;
-@group(2) @binding(6) var<storage, read_write> loft_grid_out: array<vec4<f32>>;
-
-fn loft_grid_uv(i: u32) -> vec2<f32> {{
-  return vec2(f32(i % {cols}u) / {nu}.0, f32(i / {cols}u) / {nv}.0);
-}}
-
-@compute @workgroup_size(64)
-fn bake_surface(@builtin(global_invocation_id) id: vec3<u32>) {{
-  if id.x >= {cols}u * {rows}u {{ return; }}
-  let uv = loft_grid_uv(id.x);
-  loft_grid_out[id.x] = vec4(q_surface(load_row(0u), uv.x, uv.y), 1.0);
-}}
-
-@vertex fn vs_indexed(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VsOut {{
+@vertex fn vs_grid(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VsOut {{
   let r = visible[kp.base + ii];
   if r == LOFT_EMPTY {{ return VsOut(vec4f(2.0, 2.0, 2.0, 1.0), vec2f(0.0), r); }}
-  let wp = loft_xf_pt(loft_pose(load_row(r)), loft_grid[vi].xyz);
-  return VsOut(frame.view_proj * vec4<f32>(wp, 1.0), loft_grid_uv(vi), r);
+  // Divide the integer coordinates by the cell counts to keep both seam endpoints.
+  let uv = vec2(f32(vi % {cols}u) / {nu}.0, f32(vi / {cols}u) / {nv}.0);
+  let row = load_row(r);
+  let wp = loft_xf_pt(loft_pose(row), q_surface(row, uv.x, uv.y));
+  return VsOut(frame.view_proj * vec4<f32>(wp, 1.0), uv, r);
 }}
 ")
 }

@@ -510,7 +510,6 @@ dependencies = [
  "loft-builtins",
  "loft-ir",
  "loft-parse",
- "loft-plan",
  "serde",
 ]
 
@@ -524,7 +523,6 @@ dependencies = [
  "loft-parse",
  "loft-passes",
  "loft-runner",
- "loft-tier0",
  "naga",
  "png",
  "pollster",
@@ -598,7 +596,6 @@ dependencies = [
  "loft-ir",
  "loft-passes",
  "loft-runner",
- "loft-tier0",
  "naga",
  "pollster",
  "serde",
@@ -627,19 +624,11 @@ dependencies = [
  "loft-gltf",
  "loft-ir",
  "loft-parse",
- "loft-plan",
  "naga",
  "serde",
  "serde-lexpr",
  "serde_json",
  "tempfile",
-]
-
-[[package]]
-name = "loft-plan"
-version = "0.1.0"
-dependencies = [
- "loft-abi",
 ]
 
 [[package]]
@@ -665,21 +654,6 @@ dependencies = [
  "loft-format",
  "loft-ir",
  "naga",
-]
-
-[[package]]
-name = "loft-tier0"
-version = "0.1.0"
-dependencies = [
- "loft-abi",
- "loft-check",
- "loft-emit",
- "loft-eval",
- "loft-ir",
- "loft-parse",
- "loft-passes",
- "naga",
- "tempfile",
 ]
 
 [[package]]

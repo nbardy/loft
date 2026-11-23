@@ -27,7 +27,7 @@ fn all_aovs_and_engines_validate() {
     }
     for name in ["reference", "woodblock", "spectral_caustic"] {
         let (program, _) = compile(&sources("lipschitz_bound_mutant.loft", Some(name)), Aov::Beauty);
-        let shader = &program.modules[program.present].naga;
+        let shader = &program.modules[program.module_named("present").unwrap()].naga;
         assert!(shader.entry_points.iter().any(|e| e.name == "fs_present"));
         assert_eq!(shader.entry_points.iter().any(|e| e.name == "photons"), name == "spectral_caustic");
     }
@@ -90,6 +90,6 @@ fn spectral_study_lowers_the_blend_and_nested_boundaries() {
     assert!(trace(glass, 1, bubble) < -0.13);
     assert!((trace(bead, 0, bubble) + 0.052).abs() < 1e-6);
     assert_eq!(p.bakes[0].name, "StudyInk");
-    assert!(p.modules[p.present].wgsl.contains("mix(m0.c,m1.c,clamp(b.mix0,0.0,1.0))"));
-    assert!(p.modules[p.present].wgsl.contains("atomicAdd(&loft_local_bins"));
+    assert!(p.modules[p.module_named("present").unwrap()].wgsl.contains("mix(m0.c,m1.c,clamp(b.mix0,0.0,1.0))"));
+    assert!(p.modules[p.module_named("present").unwrap()].wgsl.contains("atomicAdd(&loft_local_bins"));
 }

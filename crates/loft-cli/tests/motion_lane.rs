@@ -534,8 +534,9 @@ fn profile_json_counts_executed_fixture() {
     let src = sources(include_str!("../../../stdlib/engines/capsules.loft"));
     let mut p = loft_passes::compile(&src, &[]).unwrap().0;
     let fixture = include_str!("../../../tests/fixtures/telemetry.wgsl");
-    p.modules[p.classify].naga = naga::front::wgsl::parse_str(fixture).unwrap();
-    p.modules[p.classify].name = "fixture".into();
+    let classify = p.module_named("classify").unwrap();
+    p.modules[classify].naga = naga::front::wgsl::parse_str(fixture).unwrap();
+    p.modules[classify].name = "fixture".into();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("profile.sexp");
     let json = dir.path().join("profile.json");

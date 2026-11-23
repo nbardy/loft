@@ -208,3 +208,18 @@ the secant ratios printed below.
 | F13 | Library candidates | Unchanged. |
 | — | √2 slack in `atan2` | Bound the (x, y) pair jointly through the provenance forms. |
 | — | `(k * x) * x` | Recognise a square through a constant factor. |
+
+## Merge onto the integrated tree, 23 Nov evening (unbuilt)
+
+`lane/integrate-meta` merged in by the meta-engine thread after the reset. Two conflicts, resolved by hand:
+
+- `loft-eval/src/eval.rs`: both sides' evaluator fields are kept (`forked` from this lane; `views` and `snapshots`
+  from probe-rows). `sample_prior` went with `cut-unused`, so the E405 arm covers `held`, `missed` and `unknown`,
+  and its fix text no longer names a motion plan.
+- `loft-passes/src/pipeline/stage0.rs`: the integrated tree derives every kind's shapes in one worker pool, so a
+  kind no longer has a wall time of its own. **F4's figure changes meaning:** each job is timed, and `derive_s` is
+  the kind's share of the wait, its jobs' seconds over the worker count. The 10 s threshold is unchanged. On a scene
+  with one slow kind the two definitions agree; on a scene with several the old one would have counted the other
+  kinds' work in the pool.
+
+No "Result" line above has been filled: this lane has never finished a build.

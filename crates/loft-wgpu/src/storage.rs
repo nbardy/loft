@@ -87,6 +87,7 @@ pub fn attachment(t: TextureDecl, limits: &wgpu::Limits) -> Result<wgpu::Texture
     let format = match t.format {
         ImageFormat::Rg32Uint => wgpu::TextureFormat::Rg32Uint,
         ImageFormat::Rgba16Float => wgpu::TextureFormat::Rgba16Float,
+        ImageFormat::Rgba32Float => wgpu::TextureFormat::Rgba32Float,
         ImageFormat::Depth32Float => wgpu::TextureFormat::Depth32Float,
     };
     if width == 0
@@ -94,14 +95,14 @@ pub fn attachment(t: TextureDecl, limits: &wgpu::Limits) -> Result<wgpu::Texture
         || width.max(height) > limits.max_texture_dimension_2d
         || layers != 1
         || !matches!(t.samples, 1 | 4)
-        || (t.samples == 4 && matches!(t.format, ImageFormat::Rgba16Float))
+        || (t.samples == 4 && matches!(t.format, ImageFormat::Rgba16Float | ImageFormat::Rgba32Float))
         || t.clear.is_some_and(|clear| clear.iter().any(|v| !v.is_finite()))
     {
         return Err(RunnerError::AbiMismatch);
     }
     let mut usage = T::TEXTURE_BINDING | T::RENDER_ATTACHMENT;
     if t.samples == 1 { usage |= T::COPY_SRC; }
-    if matches!(t.format, ImageFormat::Rgba16Float) {
+    if matches!(t.format, ImageFormat::Rgba16Float | ImageFormat::Rgba32Float) {
         usage |= T::STORAGE_BINDING;
     }
     Ok(wgpu::TextureDescriptor {

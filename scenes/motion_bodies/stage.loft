@@ -1,0 +1,17 @@
+use stdlib::geometry::analytic::{ray_ground}
+use stdlib::materials::bsdf::{ggx, emit_lobe}
+use stdlib::sdf::solid::{box_sdf}
+
+# The shared ground for the body test set: a sand deck with a 0.357 m grid, so stride and slide read.
+pub kind SandDeck @World (radius: f) {
+  visible(ro, rd) = ray_ground(ro, rd, radius)
+  trace(p) = box_sdf(p - [0, -0.006, 0]@World, [radius, 0.006, radius])
+  material(p, n) {
+    let d = abs(fract(p.xyz * 2.8 + rgb(0.5)) - rgb(0.5))
+    let grid = 1.0 - smoothstep(0.003, 0.022, min(d.x, d.z))
+    let sand = mix([0.89, 0.71, 0.48], [0.59, 0.45, 0.30], grid)
+    ggx(sand * [0.78, 0.65, 0.45], 0.9, 0.0) + emit_lobe(sand * [0.29, 0.24, 0.19])
+  }
+}
+
+pub fn stage_sky(rd: rgb, sun: rgb) -> rgb = [0.89, 0.69, 0.44]

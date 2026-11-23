@@ -3,6 +3,7 @@
 //!   loft check SCENE [--set NAME=VALUE]...      compile and run any scheduled checks at --t (default 0)
 //!   loft show SCENE [MODULE] [--set ...]        print the generated WGSL (every module, or the one named)
 //!   loft still SCENE OUT.png [--t SECONDS] [--set ...]
+//!   loft still SCENE OUT.png --edit EDITED --kind K   recompile kind K from EDITED, swap it in live, check against a fresh load
 //!   loft gate [--approve]                       the five gates on every scene in engines/gates.json
 //!   loft diff REFERENCE.png FRAME.png          compare a Phase 5 frame with its reference
 //!   loft load SCENE --nonce N [--set ...]       one load in this process with driver nonce N (cache experiments)
@@ -102,11 +103,6 @@ fn command(mut args: Vec<String>, set: &[(String, f64)]) -> Result<(), Failure> 
             let (program, report, _) = loft_passes::compile(&src, set).map_err(|d| Failure::Compile(render(&d, &src)))?;
             loft_cli::native::motion_layout(&program).map_err(Failure::Compile)?;
             let mut failed = false;
-            for (name, &header) in &program.priors {
-                let held = program.luts[header as usize + 3].to_bits() == 1;
-                println!("plan {name}: {}", if held { "Held" } else { "Unknown(SolveFailed)" });
-                failed |= !held;
-            }
             if program.dispatches.iter().any(|m| !m.checks.is_empty()) {
                 let g = loft_cli::native::gpu().map_err(Failure::Device)?;
                 for (name, verdict) in authored_checks(&g, &program, time).map_err(Failure::Device)? {
@@ -137,7 +133,7 @@ fn command(mut args: Vec<String>, set: &[(String, f64)]) -> Result<(), Failure> 
                 #[cfg(target_arch = "wasm32")]
                 {
                     let _ = (edit, kind);
-                    return Err(Failure::Device("edited stills require native pipeline promotion".into()));
+                    return Err(Failure::Device("edited stills need the native renderer".into()));
                 }
                 #[cfg(not(target_arch = "wasm32"))]
                 return edit_cmd::edited_still(&scene(&args)?, Path::new(&edit), &kind, set, time, Path::new(&args[2]), max_frame);
@@ -152,15 +148,25 @@ fn command(mut args: Vec<String>, set: &[(String, f64)]) -> Result<(), Failure> 
             exact(&args, 2, 2)?;
             let path = scene(&args)?;
             let g = loft_cli::native::gpu().map_err(Failure::Device)?;
-            let t = std::time::Instant::now();
             let src = sources(&path).map_err(Failure::Usage)?;
-            let (p, _, _) = loft_passes::compile(&src, set).map_err(|d| Failure::Compile(render(&d, &src)))?;
-            let front = t.elapsed().as_secs_f64();
-            let l = loft_cli::native::Loaded::new(&g, &p, (1280, 800), Some(nonce)).map_err(Failure::Device)?;
-            l.frame(&g, 0.0);
-            let gpu = l.gpu_ms(&g).map_err(Failure::Device)?.map_or_else(|| "unavailable".into(), |(ms, _)| format!("{ms:.2} ms"));
-            println!("load {:.3} s  front {front:.3} s  pipelines {:.1} ms  frame {gpu}  ({})",
-                t.elapsed().as_secs_f64(), l.stats.pipelines_ms, g.adapter);
+            // The Load gate's pair: a cold load (fresh derivation cache, new driver key), then the same load again.
+            let cache = std::env::temp_dir().join(format!("loft_load_{nonce}"));
+            std::fs::create_dir_all(&cache).map_err(|e| Failure::Usage(e.to_string()))?;
+            for pass in ["cold", "warm"] {
+                let t = std::time::Instant::now();
+                let (p, report, _) = loft_passes::compile_cached(&src, set, &cache).map_err(|d| Failure::Compile(render(&d, &src)))?;
+                let front = t.elapsed().as_secs_f64();
+                let l = loft_cli::native::Loaded::new(&g, &p, (1280, 800), Some(nonce)).map_err(Failure::Device)?;
+                println!("{pass} {:.3} s  front {front:.3} s  pipelines {:.1} ms ({}, slowest {:.0} ms)  ({}, precision {})",
+                    t.elapsed().as_secs_f64(), l.stats.pipelines_ms, l.stats.pipeline_ms.len(),
+                    l.stats.pipeline_ms.iter().map(|x| x.1).fold(0., f64::max), g.adapter, l.precision.name());
+                println!("  front stages (ms): {}", report.ms.iter().map(|(n, ms)| format!("{n} {ms:.0}")).collect::<Vec<_>>().join("  "));
+                if pass == "cold" {
+                    let mut each = l.stats.pipeline_ms.clone();
+                    each.sort_by(|a, b| b.1.total_cmp(&a.1));
+                    for (name, ms) in each { println!("  {ms:9.1} ms  {name}"); }
+                }
+            }
             Ok(())
         }
         _ => Err(Failure::Usage("usage: loft build|check|show|still|clip|gate|load|ir|render|profile|controls|fmt|fork|context|diff|lint".into())),
@@ -194,6 +200,13 @@ fn dispatch(mut args: Vec<String>) -> Result<ExitCode, Failure> {
     // Route using the same argument view as the original commands, then forward overrides unchanged.
     let mut parsed = args.clone();
     let set = overrides(&mut parsed).map_err(Failure::Usage)?;
+    // The one precision control: widths are decided by role unless the author forces f32 everywhere.
+    if let Some(choice) = flag(&mut parsed, "--precision")? {
+        if choice != "f32" {
+            return Err(Failure::Usage("--precision takes f32, the only choice; without it each role gets the width it needs".into()));
+        }
+        loft_cli::native::set_precision(loft_ir::precision::Precision::F32);
+    }
     let trace_requested = |tail: &[String]| tail.iter().any(|a| {
         matches!(a.as_str(), "--trace" | "--record" | "--replay" | "--format")
     });

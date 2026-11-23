@@ -15,6 +15,5 @@ fn shader(x: f) -> f = wgsl(x: f) -> f {
   return x; // }
 }
 schedule Demo {
-  waive MissingCut "intentional"
   pass overlay reads [ColorHdr] writes [Swapchain] { raster(verts: 3) }
 }
