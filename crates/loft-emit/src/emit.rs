@@ -887,7 +887,7 @@ pub fn emit_kind_module(
     }
     let mut diagnostics = "";
     if let Draw::Surface { nu, nv } = draw {
-        vis.push_str(&surface::cached_grid(p, k.query(QueryKind::Surface).expect("surface query"), nu, nv));
+        vis.push_str(&surface::indexed_grid(p, k.query(QueryKind::Surface).expect("surface query"), nu, nv));
     }
     let shade: String = match aov {
         // The shelf light evaluates an emission-only stack exactly once at zero incident direction.
