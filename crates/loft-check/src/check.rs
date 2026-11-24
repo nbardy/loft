@@ -371,6 +371,17 @@ impl<'p,'a> Ck<'p,'a> {
                     _ => format!("derive it from points in `{s}` (`p - at`), or add the space-less offset to one (`p - at - [x, y, z]`)"),
                 },
             ),
+            // Offsets passed as points were the commonest Generate error in crab-tools-v2/v3 (11 of 18 E003s): the
+            // SDF idiom `let q = p - root; capsule(q, ...)`. "convert the value to `p3@S`" did not say how.
+            (Ty::Geo(Geo::Vec, a), Ty::Geo(Geo::Pt, b)) if a == b => e003(span, format!("expected `{to}`, found `{from}`"),
+                format!("this is an offset (a difference like `p - root`), and a point is a place: pass the point itself \
+                         (`p`) and place the shape's points from it (`root + [x, y, z]`), or make the offset a point with \
+                         `[0, 0, 0]@{b} + offset`")),
+            (Ty::Geo(Geo::Pt, a), Ty::Geo(Geo::Vec, b)) if a == b => e003(span, format!("expected `{to}`, found `{from}`"),
+                "this is a point (a place), and an offset is a difference of points: subtract an origin (`p - at`)"),
+            (Ty::VecN(2), Ty::VecN(3)) => e003(span, format!("expected `{to}`, found `{from}`"),
+                "a 2-vector where a 3-vector is expected: widen it (`[v.x, 0.0, v.y]`), or use the planar function \
+                 (`noise2`, `fractal2`) for 2-D input"),
             // `coords` is the explicit way to drop a space; the hint used to say only "convert".
             (Ty::Geo(..), Ty::VecN(3)) => e003(span, format!("expected `{to}`, found `{from}`"),
                 "drop the space explicitly with `coords(value)`"),
