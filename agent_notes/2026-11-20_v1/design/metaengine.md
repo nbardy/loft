@@ -596,3 +596,79 @@ Written before any code.
   write.
 - Do not run parallel slices on files outside their ownership table. Do not start them before S0b.
 - Do not touch the `perf-*` branches or the `auncel/*` scenes.
+
+## 8. Review, 23 Nov 2026 evening
+
+By the thread that owns this design after the 16:48 reset. Read cold against `CORE.md`,
+`agent_notes/2026-11-23_meta_engine/DESIGN.md`, `PROBE_B.md`, the Auncel notes and S0's code. Nothing was built for
+this section. §1–§7 are unchanged above. Inherited: all of §1–§7. Mine: the findings and the changes in §8.3.
+
+### 8.1 What holds
+
+- **S1 (the typed program).** One place decides a name, a member or a call; three consumers match one exhaustive
+  view. No user-visible change, byte-identical output as its gate, about −250 lines. Keep as written.
+- **S3 (`link`).** One structural reading of a bundle instead of three, with typed refusals. Keep, with the tick-loop
+  requirement in R3.
+- **Typed kernels instead of WGSL strings in holes.** A stranger cannot tell what is in scope inside a string and the
+  checker sees none of it. Templates remain the parity escape.
+
+### 8.2 Findings
+
+| # | Finding | Evidence | Change |
+|---|---|---|---|
+| R1 | **Image passes lost the law.** DESIGN.md chose one construct, a law over any store (capability D), with kernels as the escape for scatter and ordered writes ("Kernels are the escape, not the default", §6 C). §1b writes a pure per-pixel function as a kernel, so its author must also write `global_id`, `on_screen`, an extent, a workgroup size and two read/write lists. Two of §1b's three self-found defects (which store, is it racy) exist only in the kernel form | 1b as a law over `ColorHdr` is 9 lines and needs none of those names. §1a says "reading another pixel of a store the same pass writes is E505"; DESIGN §5.3, which this design says it keeps, gives that read last frame's value and a second buffer. Under E505 TAA, à-trous and bloom (DESIGN use cases 2, 3, 5) need hand-written ping-pong | A per-element pure pass is a `law` over a `target`. Probe C (pending since DESIGN §11) is the first piece of S2, not a follow-up. The read rule applies to laws; E505 stays for kernels |
+| R2 | **1a's lighting change needs no new construct.** | `shade_tiles(Vis64, shade: f)` exists; `ShadeFn = fn(w: World, h: Hit, wo: d3@World, ink: bool, px: v2) -> rgb` (`docs/spec/06_ADDENDUM.md:103`; `stdlib/engines/realtime_matched.loft:100` uses it). The callback receives the hit point, so the pier lamp is a 6-line function today. The draw order is also writable today | 1a shows the cheap path first (`shade: harbor_shade`). P5 for 1a must name a change the callback cannot make, or 1a proves nothing about `kernel k[K]` and `K.hit` |
+| R3 | **1c costs most of a frame as written.** | PROBE_B measured two tick-clock compute passes and their two argument uploads at about 150 µs per tick on the M4, so about 75 µs per pass (predicted 10–20). 1c runs 4 passes per substep: `substeps: 8` is 32 passes per tick, 2.4 ms per tick, **4.8 ms per 60 fps frame for a 32-point rope**, against a 5 ms frame budget. The defaults (4 substeps) give 2.4 ms | Two changes. (a) S3's tick loop puts every tick pass of one tick in one compute pass and uploads arguments once per catch-up; the prediction for that is written before S3 runs. (b) A small body (a rope, a tail, the Auncel's 34 five-node strings) is an *island*: one GPU thread per owner row sweeps the rows it owns in order, with ticks fused in one dispatch as laws already are. That is DESIGN I4 and §5.5 ("island fusion"), which PROBE_B's P3 miss made necessary. It needs one rule, "a law may write the rows its row owns", and no schedule construct. `repeat … on tick` stays for large parallel systems |
+| R4 | **1c has a bug.** `xpbd_predict` runs over `rows(XpbdPoint)` and resets `links[i].lambda` for `i < rows(links)`, so links beyond the point count are never reset | A rope has fewer links than points; any mesh has more | A separate per-link law, which R1's rule gives for free |
+| R5 | **The three programs bind stores three ways.** 1b's fix makes a store a kernel parameter bound in `compute(…)`. 1a still names `Vis64` and `ColorHdr` in the kernel body. 1c declares `points:` and `links:` and never binds them | Today's rule is the 1b form: `compute(entry: scatter_float, …, particles: Packed, grid: FloatGrid)` (`scenes/particle_flip/native.loft:60`) | One rule in all three: a kernel's stores are parameters, bound at the pass |
+| R6 | **S0's `link` refused the design's own 1c.** It staged only top-level compute passes; `repeat(n) on tick { pass … }` puts the passes inside a loop. Its test comment said "a tick-clocked solver pass inside a loop" and tested a top-level one | `linked.rs` `stages()` at `0fb23df0` | Fixed on `loft/metaengine-core`: a tick initializer may name a loop, and its passes take the loop's stage |
+| R7 | `for lobe in b` needs a comment to say it is unrolled. By §1's own rule that is a defect | §1b | Not needed by any of the three programs. Leave cut 4 out of S2 until the fold has a form that reads without the comment |
+| R8 | **The Auncel requirements are absent.** Four workers building one scene found F5 (state as rows, not a recompile per frame), F6 (a law cannot write a point or a pose), F7 (cull bounds from declared ranges), and history longer than one frame | `agent_notes/2026-11-23_auncel/NOTES.md` §4–§5; that note asks for them to be added here | F6 blocks any stdlib physics written as laws (1c writes `p3@World` fields), so it lands with R3(b). F5, F7 and the frame ring are requirements on the piece that first needs them |
+| R9 | **S2 carries all the user-visible value and all the risk in one slice** (+520/−880 Rust, grammar, checker hooks, stage 0, every stock pass). S1 and S3 are refactors a user cannot see | §5.3 | Split S2 into vertical pieces. Each ends with one program a user can write and the Rust it deletes, the probe rule of DESIGN §11 |
+| R10 | Parallel slices each running builds is what the machine was doing when it reset | reset review | Slices are written in parallel and built one at a time by the lead, through `agent-build` |
+
+1b as a law, for R1 (proposed; the `target` parameter and `[Vis64]` read are capability D and R):
+
+```loft
+pub law hatch(p: ColorHdr, vis: [Vis64], spacing: f = 6, ink: rgb = [0.05, 0.04, 0.06]) writes p {
+  let id = vis[p.px].x
+  let edge = id != vis[p.px + [1, 0]].x || id != vis[p.px + [0, 1]].x
+  let luma = dot(p.rgb, [0.2126, 0.7152, 0.0722])
+  let along = fract((f32(p.px.x) + f32(p.px.y)) / spacing) < 0.5
+  let across = fract((f32(p.px.x) - f32(p.px.y)) / spacing) < 0.5
+  p = [select(p.rgb, ink, edge || (luma < 0.35 && along) || (luma < 0.12 && across)), 1.0]
+}
+```
+
+A scene writes `run_laws(hatch)` before the tonemap. An off-screen neighbour read returns the edge texel.
+
+### 8.3 Order after this review
+
+1. `lane/integrate-meta` gated and on main (owner's yes on the cut list and on `motion-stride`).
+2. `lane/fix-auncel` merged onto that main and built once. It fixes panics and wrong refusals that four of four
+   authors hit, and it edits `eval.rs`, `lip.rs` and `emit.rs`, which S1 rewrites, so it lands first.
+3. S0 (with R6) verified, then S0b.
+4. S3 and S1, written in parallel, built in that order.
+5. S2 in pieces, each with its prediction written first:
+   - **S2a, images:** top-level `target`, `T[px]`, a law over a target with the read rule. Programs: 1b as above,
+     and TAA (DESIGN P4: 0.40 ms at 1280×800). Deletes the `bake_tex` and `screen_pass` lowering paths.
+   - **S2b, kinds:** `for k in <kind set>`, `kernel k[K]`, `K.hit`. Program: a 1a whose change the `shade:`
+     callback cannot make. Moves `shade_tiles` and the shadow map to `stdlib/render/`.
+   - **S2c, ticks:** owner writes (R3b) with F6, then `repeat … on tick`. Program: 1c, with its frame cost
+     predicted from R3's numbers before it runs.
+
+### 8.4 The trainer is the first user
+
+The policy trained in `~/git/creative` writes Loft, so its failures and its interface are requirements here.
+Read from its code and notes on 23 Nov; nothing of its was run.
+
+| # | Fact | Consequence for this design |
+|---|---|---|
+| T1 | It runs `~/git/loft/target/release/loft` and symlinks `~/git/loft/stdlib` into every job (`training/loft/library.py:72`, `render.py:903`). Nothing is pinned by hash; receipts record `HEAD` | Moving local main changes `stdlib` under a running, paid run at once, and the binary at its next rebuild. Main moves only between trainer runs, or the trainer reads a pinned checkout |
+| T2 | Its prompt is `loft context` verbatim | Measured: 18,376 characters on main `116a64aa`, **24,460 on the integration tip** (+33%). 1,746 of that is the bodies of the four schedule functions probe-door moved to `stdlib/core.loft`, printed without their parameters, so the text names `kinds`, `vis`, `tile` and `edges` that it never declares. §7's "do not change `loft context` output" is already broken by the integration. A schedule function prints as its signature, like a `fn` |
+| T3 | 43 of its 44 seeds write the stock schedule out in full (`cull_indirect`, `render_bundle`, `find_shadow_map`, `tile_classify`, `shade_tiles`, `tonemap_aces`); 9 use `outline_and_paper`, 1 `bake_tex`, 1 `Walker` with `step` and `present`, 2 a `kernel` in an authored `pass` | P6 is tested on these seeds as well as the gate scenes. The `bake_tex` spelling, `outline_and_paper` and the packed-leg gait stay until the seeds are ported |
+| T4 | Open classes of model error: a law that writes a point or vector (2 of 13), loops over an array literal and other syntax (5 of 24), a divisor that can reach zero (3 of 24), a non-static lobe stack (2 of 24) | F6 moves up (R8). `for k in Drawables` must not read like the array loop the model already gets wrong; `for lobe in b` (R7) is in the same family |
+| T5 | It reads exit codes 1–5 as an invalid program, 7 as over budget and anything else as "stop the run"; it feeds diagnostics, with their `fix:` lines, to the model; it allows 2,000 ms of build per call | Exit codes and `fix:` text are interface. A panic (F1) or a new exit code stops a paid run |
+| T6 | No seed, sample or prompt uses a cut construct or the tape edit path (44 seeds, 231 + 276 `.loft` files searched) | The cut list costs the trainer nothing |
+
+Not yet checked: whether the 44 seeds pass `loft check` on the integration tip.
