@@ -1,0 +1,7 @@
+# F1 minimal: atan2 reachable from a trace (the lead's form).
+use stdlib::materials::bsdf::{lambert}
+kind K @World () {
+  trace(p) = length(coords(p)) - 1.0 + 0.0 * atan2(p.z, p.x)
+  material(p, n) = lambert(rgb(0.5))
+}
+build { emit K() }

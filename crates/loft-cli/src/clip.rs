@@ -132,9 +132,11 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
     let parent = c.out.parent().ok_or_else(|| Failure::Usage("--out requires a file or directory name".into()))?;
     fs::create_dir_all(parent).map_err(output_error)?;
     let stage = tempfile::tempdir_in(parent).map_err(output_error)?;
-    let live = c.live.iter().map(|(name, value)| compiled.prog().param_word(name)
-        .map(|word| (word, *value)).ok_or_else(|| Failure::Usage(format!("no live scalar param {name}"))))
-        .collect::<Result<Vec<_>, _>>()?;
+    let live = c.live.iter().map(|(name, value)| {
+        // A param declared in a sibling module has a linker key, not its authored name (F9a).
+        let key = loft_passes::param_key(&compiled.modules, name).map_err(|d| Failure::Compile(d.render(&src)))?;
+        compiled.prog().param_word(&key).map(|word| (word, *value)).ok_or_else(|| Failure::Usage(format!("no live scalar param {name}")))
+    }).collect::<Result<Vec<_>, _>>()?;
     let mut load_ms = 0.;
     let mut load = |program: &loft_passes::program::Program| {
         let start = Instant::now();

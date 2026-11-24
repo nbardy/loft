@@ -248,6 +248,8 @@ fn derive_kind(
         }
     }
     let types: &[Ty] = types;
+    // F4: what the author waits for once per geometry edit (cached afterwards), reported per kind by `check`.
+    let began = std::time::Instant::now();
     let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(shapes.len());
     let chunk = shapes.len().div_ceil(threads);
     let derived: Vec<lip::Derived> = if mesh_kind {
@@ -279,13 +281,14 @@ fn derive_kind(
             .collect();
         jobs.into_iter().map(|h| h.join().expect("derive thread")).collect::<Res<Vec<Vec<_>>>>().map(|v| v.into_iter().flatten().collect())
     })? };
-    pack_kind(k, id, rows, mesh_kind, mesh_asset, &shapes, &shape_of, &derived, step_scale, instances)
+    let derive_s = began.elapsed().as_secs_f64();
+    pack_kind(k, id, rows, mesh_kind, mesh_asset, &shapes, &shape_of, &derived, step_scale, derive_s, instances)
 }
 
 fn pack_kind<'a>(
     k: &KindDecl, id: usize, rows: &[Vec<RowVal>], mesh_kind: bool,
     mesh_asset: impl Fn(&[RowVal]) -> Res<&'a gltf::Mesh>, shapes: &[usize], shape_of: &[usize],
-    derived: &[lip::Derived], step_scale: Option<f32>, instances: &mut Vec<Instance>,
+    derived: &[lip::Derived], step_scale: Option<f32>, derive_s: f64, instances: &mut Vec<Instance>,
 ) -> Res<(KindTable, KindReport)> {
     let name = &k.name.name;
     let surface = k.query(QueryKind::Surface);
@@ -347,6 +350,7 @@ fn pack_kind<'a>(
         l_max: lips.iter().copied().fold(0.0, f32::max).into(),
         evals,
         cache_hits: derived.iter().filter(|d| d.evals == 0).count(),
+        derive_s,
         draw,
     };
     let stride = (words.len() / rows.len()) as u32;

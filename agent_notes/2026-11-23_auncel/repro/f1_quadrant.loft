@@ -1,0 +1,10 @@
+# F1: atan2 over a region that does not surround the axis: a finite bound exists (1/r away from the cut).
+use stdlib::materials::bsdf::{lambert}
+kind K @World () {
+  trace(p) {
+    let q = coords(p) - [3.0, 0.0, 0.0]
+    length(q) - 1.0 + 0.05 * sin(6.0 * atan2(q.z + 0.0, q.x + 3.0))
+  }
+  material(p, n) = lambert(rgb(0.5))
+}
+build { emit K() }

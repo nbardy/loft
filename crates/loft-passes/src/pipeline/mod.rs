@@ -27,6 +27,10 @@ pub(super) fn compile(src: &Graph, opts: &CompileOptions<'_>) -> Res<(Program, R
     let mut timings = Timings { clock: Instant::now(), ms: vec![] };
     let mut modules = parse_all(src)?;
     let meshes = gltf::lower(src, &mut modules)?;
+    let resolved = opts.overrides.iter()
+        .map(|(name, v)| Ok((param_key(&modules, name)?, *v)))
+        .collect::<Res<Vec<_>>>()?;
+    let opts = &CompileOptions { overrides: &resolved, ..*opts };
     apply_overrides(&mut modules, opts.overrides)?;
     timings.lap("parse+ad");
 
@@ -41,6 +45,36 @@ pub(super) fn compile(src: &Graph, opts: &CompileOptions<'_>) -> Res<(Program, R
     let lowered = lower_passes::lower(&p, &modules, &mut types, src, opts, &mut schedule, &mut scene, &mut timings)?;
     let assembled = assemble::assemble(&p, &types, schedule, scene, lowered, timings.ms)?;
     Ok(assembled.finish(modules, types, meshes))
+}
+
+/// The declaration key of the `param` an author names on the command line (`--set NAME=V`, `--live NAME=V`).
+/// The linker renames a non-entry module's declarations to `loft_m_<path>_<name>`, so matching the authored name
+/// against declaration names found only entry-file params: a sibling module's param was refused, or, when the
+/// entry declared one of the same name, silently left unchanged (F9a). Every module's link table maps the names
+/// it sees to keys. One param: its key. Several distinct params with that name: an error naming each. None: the
+/// name itself, which the caller reports as unknown.
+pub fn param_key(modules: &[Module], name: &str) -> Res<String> {
+    let params: std::collections::BTreeMap<&str, &ConstDecl> = modules.iter().flat_map(|m| &m.items)
+        .filter_map(|it| if let Item::Const(c) = it && c.comptime { Some((c.name.name.as_str(), c)) } else { None })
+        .collect();
+    let keys: std::collections::BTreeSet<&str> = modules.iter().flat_map(|m| &m.links)
+        .filter(|(authored, key)| authored == name && params.contains_key(key.as_str()))
+        .map(|(_, key)| key.as_str())
+        .chain(params.contains_key(name).then_some(name))
+        .collect();
+    let mut found = keys.iter().map(|key| params[key]);
+    match (found.next(), found.next()) {
+        (Some(c), None) => Ok(c.name.name.clone()),
+        (None, _) => Ok(name.to_owned()),
+        (Some(first), Some(second)) => {
+            let mut d = Diag::new(Code::E011, first.name.span, format!("`{name}` names {} different parameters", keys.len()),
+                "declare the parameter once, `pub` in one module, and import it where it is read");
+            for c in std::iter::once(second).chain(found) {
+                d = d.note(c.name.span, "another parameter with this name");
+            }
+            Err(d)
+        }
+    }
 }
 
 fn apply_overrides(modules: &mut [Module], overrides: &[(String, f64)]) -> Res<()> {

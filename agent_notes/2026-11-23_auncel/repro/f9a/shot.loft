@@ -1,0 +1,3 @@
+# F9a sibling module: the param lives here.
+pub param size: f = 1.0 in 0.1..3.0
+pub fn radius() -> f = size

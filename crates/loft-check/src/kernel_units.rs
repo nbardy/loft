@@ -77,9 +77,9 @@ impl Ck<'_, '_> {
                 }
                 let first = || dim(&args[0].value);
                 match callee.name.as_str() {
-                    "sin" | "cos" => { self.expect_unit(&args[0].value, ANGLE)?; SCALAR }
+                    "sin" | "cos" | "tan" => { self.expect_unit(&args[0].value, ANGLE)?; SCALAR }
                     "atan2" => { common(&args[0].value, &args[1].value)?; ANGLE }
-                    "acos" => { self.expect_unit(&args[0].value, SCALAR)?; ANGLE }
+                    "acos" | "asin" | "atan" => { self.expect_unit(&args[0].value, SCALAR)?; ANGLE }
                     "exp" | "log" | "pow" => { for a in args { self.expect_unit(&a.value, SCALAR)?; } SCALAR }
                     "abs" | "length" | "coords" | "subgroup_add" | "floor" | "fract" => first(),
                     "sqrt" => first().map(|x| x * 0.5),

@@ -21,6 +21,10 @@ pub trait Scalar: Clone + std::fmt::Debug {
     fn min(&self, o: &Self) -> Self;
     fn max(&self, o: &Self) -> Self;
     fn pow(&self, o: &Self) -> Self;
+    /// `self * self`: one value, so the product of its interval with itself is not two independent factors.
+    fn sqr(&self) -> Self;
+    /// `atan2(self, x)`, `self` being y.
+    fn atan2(&self, x: &Self) -> Self;
     /// `Some` when decided for every point.
     fn cmp(&self, op: BinOp, o: &Self) -> Option<bool>;
     /// Largest |x|.
@@ -53,6 +57,69 @@ pub enum Un {
     Floor,
     Fract,
     Sign,
+    Acos,
+    Asin,
+    Atan,
+    Tan,
+    Log,
+}
+
+/// A condition over a region of points, for every frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Truth {
+    /// The same answer at every point of the region and every frame.
+    Known(bool),
+    /// One answer for every point of the region at each frame, unknown at compile time: it reads `time` (or
+    /// another value that does not move with the point). Each frame takes one arm everywhere.
+    PerFrame,
+    /// Different answers at different points of the region: a break in space.
+    PerPoint,
+}
+
+impl Truth {
+    /// The undecided answer that combines `self` and `o`: a point-dependent operand makes the result one.
+    fn undecided(self, o: Truth) -> Truth {
+        if self == Truth::PerPoint || o == Truth::PerPoint { Truth::PerPoint } else { Truth::PerFrame }
+    }
+    fn and(self, o: Truth) -> Truth {
+        match (self, o) {
+            (Truth::Known(false), _) | (_, Truth::Known(false)) => Truth::Known(false),
+            (Truth::Known(true), x) | (x, Truth::Known(true)) => x,
+            (a, b) => a.undecided(b),
+        }
+    }
+    fn or(self, o: Truth) -> Truth {
+        match (self, o) {
+            (Truth::Known(true), _) | (_, Truth::Known(true)) => Truth::Known(true),
+            (Truth::Known(false), x) | (x, Truth::Known(false)) => x,
+            (a, b) => a.undecided(b),
+        }
+    }
+    fn not(self) -> Truth {
+        match self {
+            Truth::Known(b) => Truth::Known(!b),
+            other @ (Truth::PerFrame | Truth::PerPoint) => other,
+        }
+    }
+    fn equals(self, o: Truth, eq: bool) -> Truth {
+        match (self, o) {
+            (Truth::Known(a), Truth::Known(b)) => Truth::Known((a == b) == eq),
+            (a, b) => a.undecided(b),
+        }
+    }
+    /// Either branch of a per-frame fork: equal answers stay, different known answers differ per frame.
+    fn either(self, o: Truth) -> Truth {
+        if self == o { self } else { self.undecided(o) }
+    }
+    /// A comparison the scalar domain left undecided (`None`) is per frame when neither side moves with the
+    /// point (F2: `time > 3.0` in a trace).
+    fn compared<S: Scalar>(decided: Option<bool>, p: &S, q: &S) -> Truth {
+        match decided {
+            Some(b) => Truth::Known(b),
+            None if p.lip() == 0.0 && q.lip() == 0.0 => Truth::PerFrame,
+            None => Truth::PerPoint,
+        }
+    }
 }
 
 /// A rigid transform: `p -> r * p + t`, `r` row-major. Always rigid: the only constructor is origin + yaw.
@@ -105,7 +172,7 @@ pub enum Val<S> {
     S(S),
     /// Components and the vector's Euclidean Lipschitz bound.
     V(Vec<S>, f64),
-    B(Option<bool>),
+    B(Truth),
     U(u32),
     I(i32),
     X(Rigid),
@@ -211,6 +278,9 @@ pub struct Eval<'p, 'a, S> {
     pub luts: &'p [Lut],
     pub source: Option<&'p loft_check::source::Graph>,
     imports: std::collections::HashMap<Span, crate::import_table::Rows>,
+    /// Values already returned by per-frame paths of the current call or expression arm (an `if` on time whose
+    /// one arm returns while the other falls through). The call's result is their join with its own.
+    forked: Option<Val<S>>,
 }
 
 fn err(span: Span, msg: impl Into<String>, fix: impl Into<String>) -> Diag {
@@ -224,7 +294,7 @@ fn norm<S: Scalar>(v: &[S]) -> f64 {
 
 impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
     pub fn new(p: &'p Prog<'a>, types: &'p [Ty], tables: Tables, overrides: &'p [(String, f64)]) -> Self {
-        Eval { p, types, tables, overrides, env: vec![], cause: None, steps: 0, vector_bound_changed: false, time:S::frame_time(), luts: &[], source: None, imports: Default::default() }
+        Eval { p, types, tables, overrides, env: vec![], cause: None, steps: 0, vector_bound_changed: false, time:S::frame_time(), luts: &[], source: None, imports: Default::default(), forked: None }
     }
 
     /// Binds a name for the expressions evaluated next (a scan's parameter); `unbind` drops the latest.
@@ -241,7 +311,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
             RowVal::V(v) => Val::V(v.iter().map(|x| S::c(f64::from(*x))).collect(), 0.0),
             RowVal::U(u) => Val::U(*u),
             RowVal::I(i) => Val::I(*i),
-            RowVal::B(b) => Val::B(Some(*b)),
+            RowVal::B(b) => Val::B(Truth::Known(*b)),
             RowVal::X(x) => Val::X(*x),
         }
     }
@@ -251,16 +321,21 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
         if f.raw.is_some(){return Err(Diag::new(Code::E405,span,"raw WGSL has no CPU evaluation","use a Loft expression for build-time evaluation or CPU twin queries"))}
         let mark = self.env.len();
         let saved = std::mem::take(&mut self.env);
+        let forked = self.forked.take();
         for (prm, a) in f.params.iter().zip(args.iter()) {
             self.env.push((prm.name.name.as_str(), Slot::Val(a.clone())));
         }
         let out = self.block(&f.body);
         self.env = saved;
+        let early = std::mem::replace(&mut self.forked, forked);
         debug_assert_eq!(self.env.len(), mark);
         let mut v = match out? {
             Flow::Ret(v) => v,
             Flow::Next => Val::Void,
         };
+        if let Some(x) = early {
+            v = join_val(x, v, span)?;
+        }
         if let Some(a) = f.attrs.iter().find(|a| a.name.name == "lipschitz") {
             v = self.axiom(a, f, &args, v, span);
         }
@@ -370,20 +445,50 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                     None => Val::Void,
                 }));
             }
-            Stmt::If { cond, then, otherwise } => {
-                let c = self.expr(cond)?;
-                let Val::B(Some(b)) = c else {
+            Stmt::If { cond, then, otherwise } => match self.expr(cond)? {
+                Val::B(Truth::Known(b)) => {
+                    let blk = if b { Some(then) } else { otherwise.as_ref() };
+                    if let Some(blk) = blk {
+                        return self.block(blk);
+                    }
+                }
+                // F2: the condition holds at every point of the region or at none (it reads time), so each frame
+                // runs one arm everywhere. Run both from the same environment and join what each path leaves:
+                // variables where both fall through, values where both return. A path that returns while the
+                // other falls through is held in `forked` and joined into the call's result.
+                Val::B(Truth::PerFrame) => {
+                    let before = self.env.clone();
+                    let a = self.block(then)?;
+                    let after_a = std::mem::replace(&mut self.env, before);
+                    let b = match otherwise {
+                        Some(o) => self.block(o)?,
+                        None => Flow::Next,
+                    };
+                    let after_b = std::mem::take(&mut self.env);
+                    match (a, b) {
+                        (Flow::Ret(x), Flow::Ret(y)) => {
+                            self.env = after_a;
+                            return Ok(Flow::Ret(join_val(x, y, cond.span)?));
+                        }
+                        (Flow::Ret(x), Flow::Next) => {
+                            self.env = after_b;
+                            self.fork(x, cond.span)?;
+                        }
+                        (Flow::Next, Flow::Ret(y)) => {
+                            self.env = after_a;
+                            self.fork(y, cond.span)?;
+                        }
+                        (Flow::Next, Flow::Next) => self.env = join_env(after_a, after_b, cond.span)?,
+                    }
+                }
+                _ => {
                     return Err(err(
                         cond.span,
                         "this branch depends on the point and cannot be decided over a region",
                         "Phase 0 derives bounds for straight-line fields; write the branch with min/max/select",
                     ));
-                };
-                let blk = if b { Some(then) } else { otherwise.as_ref() };
-                if let Some(blk) = blk {
-                    return self.block(blk);
                 }
-            }
+            },
             Stmt::Each { var, values, body, .. }=>{
                 for e in values{let value=self.expr(e)?; self.bind(&var.name,value); let flow=self.block(body)?;self.unbind();if let Flow::Ret(_)=flow{return Ok(flow)}}
             }
@@ -541,6 +646,8 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
 
     fn expr_arm(&mut self, arm: &'a ExprBlock) -> Res<Val<S>> {
         let mark = self.env.len();
+        // A `return` inside an arm ends the arm, so per-frame returns taken inside it join the arm's value.
+        let forked = self.forked.take();
         let result = (|| {
             for stmt in &arm.body.stmts {
                 if let Flow::Ret(value) = self.stmt(stmt)? { return Ok(value); }
@@ -548,7 +655,31 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
             self.expr(&arm.value)
         })();
         self.env.truncate(mark);
-        result
+        match (result, std::mem::replace(&mut self.forked, forked)) {
+            (Ok(v), Some(x)) => join_val(x, v, arm.value.span),
+            (result, _) => result,
+        }
+    }
+
+    /// Hold a value returned on one per-frame path while the other path continues.
+    fn fork(&mut self, x: Val<S>, span: Span) -> Res<()> {
+        self.forked = Some(match self.forked.take() {
+            Some(prev) => join_val(prev, x, span)?,
+            None => x,
+        });
+        Ok(())
+    }
+
+    /// Both arms of an `if` expression on a per-frame condition, from one environment; the arms' values and
+    /// the variables they assign are joined.
+    fn both_arms(&mut self, then: &'a ExprBlock, otherwise: &'a ExprBlock, span: Span) -> Res<Val<S>> {
+        let before = self.env.clone();
+        let a = self.expr_arm(then)?;
+        let after_a = std::mem::replace(&mut self.env, before);
+        let b = self.expr_arm(otherwise)?;
+        let after_b = std::mem::take(&mut self.env);
+        self.env = join_env(after_a, after_b, span)?;
+        join_val(a, b, span)
     }
 
     fn expr_inner(&mut self, e: &'a Expr) -> Res<Val<S>> {
@@ -577,15 +708,22 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
             }
             ExprKind::If { condition, then, otherwise } => {
                 match self.expr(condition)? {
-                    Val::B(Some(true)) => self.expr_arm(then),
-                    Val::B(Some(false)) => self.expr_arm(otherwise),
-                    Val::B(None) if then.body.stmts.is_empty() && otherwise.body.stmts.is_empty() => {
+                    Val::B(Truth::Known(true)) => self.expr_arm(then),
+                    Val::B(Truth::Known(false)) => self.expr_arm(otherwise),
+                    Val::B(Truth::PerFrame) => self.both_arms(then, otherwise, condition.span),
+                    // The value jumps where the condition flips, so the join's range encloses the field but no L
+                    // does. (This arm used to keep the larger arm's L: `if p.x > 0.0 { sphere } else { 5.0 }`
+                    // derived L = 1 for a field that steps by 6 at x = 0.)
+                    Val::B(Truth::PerPoint) if then.body.stmts.is_empty() && otherwise.body.stmts.is_empty() => {
                         let a = self.expr(&then.value)?;
                         let b = self.expr(&otherwise.value)?;
+                        if self.cause.is_none() {
+                            self.cause = Some((condition.span, "a branch on the point: the field jumps where the condition flips".into()));
+                        }
                         Ok(match (a, b) {
-                            (Val::S(a), Val::S(b)) => Val::S(a.join(&b)),
-                            (Val::V(a, al), Val::V(b, bl)) => Val::V(a.into_iter().zip(b).map(|(a, b)| a.join(&b)).collect(), al.max(bl)),
-                            (Val::B(a), Val::B(b)) => Val::B(if a == b { a } else { None }),
+                            (Val::S(a), Val::S(b)) => Val::S(a.join(&b).with_lip(f64::INFINITY)),
+                            (Val::V(a, _), Val::V(b, _)) => Val::V(a.into_iter().zip(b).map(|(a, b)| a.join(&b)).collect(), f64::INFINITY),
+                            (Val::B(a), Val::B(b)) => Val::B(if a == b { a } else { Truth::PerPoint }),
                             (_, _) => return Err(err(e.span, "incompatible interval branches", "use a continuous field expression")),
                         })
                     }
@@ -600,7 +738,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                     Ty::Void | Ty::Bool | Ty::F32 | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) | Ty::Frame(_) | Ty::Table(_) | Ty::Verdict | Ty::Struct(_) | Ty::Array(..) | Ty::Id(_) | Ty::Bsdf => Val::S(S::c(f64::from(v as f32))),
                 })
             }
-            ExprKind::Bool(b) => Ok(Val::B(Some(*b))),
+            ExprKind::Bool(b) => Ok(Val::B(Truth::Known(*b))),
             ExprKind::String(_) => Err(err(e.span, "string outside an asset call", "use a Stage 0 asset call")),
             ExprKind::Name(n) => {
                 if let Some(slot) = self.lookup(n) {
@@ -679,12 +817,18 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                     (UnOp::Neg, Val::S(s)) => Val::S(s.neg()),
                     (UnOp::Neg, Val::V(c, l)) => Val::vector(c.iter().map(S::neg).collect(), l),
                     (UnOp::Neg, Val::I(i)) => Val::I(-i),
-                    (UnOp::Not, Val::B(b)) => Val::B(b.map(|b| !b)),
+                    (UnOp::Not, Val::B(b)) => Val::B(b.not()),
                     (_, other) => unreachable!("checked unary on {other:?}"),
                 })
             }
             ExprKind::Binary(op, a, b) => {
                 let (x, y) = (self.expr(a)?, self.expr(b)?);
+                // F11: `q.x * q.x` is one value squared. As a product of two independent copies of its interval
+                // it can go negative (x in [-1, 1] gives [-1, 1]), and then `1 + 8 * min(x * x, 0.35)` is a divisor
+                // that "can reach zero". The square's range starts at 0; its L is the product rule's own.
+                if *op == BinOp::Mul && same_read(a, b) && let Val::S(s) = &x {
+                    return Ok(Val::S(s.sqr()));
+                }
                 self.binary(*op, x, y, a, b, e.span)
             }
             ExprKind::Ctor { ty: _, args } => {
@@ -706,7 +850,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 let name = callee.name.as_str();
                 let builtin = lookup(name).map(|spec| spec.id);
                 let function = self.p.fns.get(name).copied();
-                if builtin == Some(Builtin::Conditional) && let Val::B(Some(b))=self.expr(&args[2].value)? {
+                if builtin == Some(Builtin::Conditional) && let Val::B(Truth::Known(b))=self.expr(&args[2].value)? {
                     return self.expr(&args[usize::from(b)].value);
                 }
                 if builtin == Some(Builtin::Place) {
@@ -794,12 +938,12 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 BitXor => Val::U(p ^ q),
                 Shl => Val::U(p.wrapping_shl(*q)),
                 Shr => Val::U(p.wrapping_shr(*q)),
-                Lt => Val::B(Some(p < q)),
-                Le => Val::B(Some(p <= q)),
-                Gt => Val::B(Some(p > q)),
-                Ge => Val::B(Some(p >= q)),
-                Eq => Val::B(Some(p == q)),
-                Ne => Val::B(Some(p != q)),
+                Lt => Val::B(Truth::Known(p < q)),
+                Le => Val::B(Truth::Known(p <= q)),
+                Gt => Val::B(Truth::Known(p > q)),
+                Ge => Val::B(Truth::Known(p >= q)),
+                Eq => Val::B(Truth::Known(p == q)),
+                Ne => Val::B(Truth::Known(p != q)),
                 And | Or => unreachable!("checked"),
             },
             (_, Val::U(_), Val::I(q)) => return self.binary(op, x.clone(), Val::U(*q as u32), a, b, span),
@@ -810,12 +954,12 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 Mul => Val::I(p.wrapping_mul(*q)),
                 Div => Val::I(p.checked_div(*q).ok_or_else(|| err(span, "i32 division by zero", "guard the divisor"))?),
                 Rem => Val::I(p.checked_rem(*q).ok_or_else(|| err(span, "i32 remainder by zero", "guard the divisor"))?),
-                Lt => Val::B(Some(p < q)),
-                Le => Val::B(Some(p <= q)),
-                Gt => Val::B(Some(p > q)),
-                Ge => Val::B(Some(p >= q)),
-                Eq => Val::B(Some(p == q)),
-                Ne => Val::B(Some(p != q)),
+                Lt => Val::B(Truth::Known(p < q)),
+                Le => Val::B(Truth::Known(p <= q)),
+                Gt => Val::B(Truth::Known(p > q)),
+                Ge => Val::B(Truth::Known(p >= q)),
+                Eq => Val::B(Truth::Known(p == q)),
+                Ne => Val::B(Truth::Known(p != q)),
                 BitAnd => Val::I(p & q),
                 BitOr => Val::I(p | q),
                 BitXor => Val::I(p ^ q),
@@ -823,24 +967,16 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 Shr => Val::I(p.wrapping_shr(*q as u32)),
                 And | Or => unreachable!("checked"),
             },
-            (And, Val::B(p), Val::B(q)) => Val::B(match (p, q) {
-                (Some(false), _) | (_, Some(false)) => Some(false),
-                (Some(true), Some(true)) => Some(true),
-                _ => None,
-            }),
-            (Or, Val::B(p), Val::B(q)) => Val::B(match (p, q) {
-                (Some(true), _) | (_, Some(true)) => Some(true),
-                (Some(false), Some(false)) => Some(false),
-                _ => None,
-            }),
-            (Eq | Ne, Val::B(p), Val::B(q)) => Val::B(p.zip(*q).map(|(p, q)| (p == q) == (op == Eq))),
+            (And, Val::B(p), Val::B(q)) => Val::B(p.and(*q)),
+            (Or, Val::B(p), Val::B(q)) => Val::B(p.or(*q)),
+            (Eq | Ne, Val::B(p), Val::B(q)) => Val::B(p.equals(*q, op == Eq)),
             _ => match (sv(&x), sv(&y)) {
                 (Val::S(p), Val::S(q)) => match op {
                     Add => Val::S(p.add(&q)),
                     Sub => Val::S(p.sub(&q)),
                     Mul => Val::S(p.mul(&q)),
                     Div => Val::S(p.div(&q)),
-                    Lt | Le | Gt | Ge | Eq | Ne => Val::B(p.cmp(op, &q)),
+                    Lt | Le | Gt | Ge | Eq | Ne => Val::B(Truth::compared(p.cmp(op, &q), &p, &q)),
                     Rem | And | Or | BitAnd | BitOr | BitXor | Shl | Shr => unreachable!("checked float op {op:?}"),
                 },
                 (Val::V(p, lp), Val::V(q, lq)) => {
@@ -967,7 +1103,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
             UnpackFp8E4m3 => return crate::quant::twin(Quant::Fp8E4M3, &v, e.span),
             UnpackFp8E5m2 => return crate::quant::twin(Quant::Fp8E5M2, &v, e.span),
             FrameAxes => self.build(v,12),
-            HasSky=>Val::B(Some(self.p.kind_order.iter().position(|k|*k=="Sky").and_then(|i|self.tables.get(i)).is_some_and(|t|!t.is_empty()))),
+            HasSky=>Val::B(Truth::Known(self.p.kind_order.iter().position(|k|*k=="Sky").and_then(|i|self.tables.get(i)).is_some_and(|t|!t.is_empty()))),
             SkyZenith | SkyHorizon | SunColor => {
                 let (kind, column, default) = match builtin {
                     SkyZenith => ("Sky", 0, loft_check::defaults::ENV_DEFAULTS[1]),
@@ -1077,8 +1213,10 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 self.arith(BinOp::Add, a, dt)
             }
             Select | Conditional => match &v[2] {
-                Val::B(Some(true)) => v[1].clone(),
-                Val::B(Some(false)) => v[0].clone(),
+                Val::B(Truth::Known(true)) => v[1].clone(),
+                Val::B(Truth::Known(false)) => v[0].clone(),
+                // F2: one arm everywhere at each frame, so the larger arm's L.
+                Val::B(Truth::PerFrame) => join_val(v[0].clone(), v[1].clone(), e.span)?,
                 Val::Void | Val::S(_) | Val::V(..) | Val::B(_) | Val::U(_) | Val::I(_) | Val::X(_) | Val::Row(..) | Val::MapRef(..) | Val::Bsdf(_) => match (&v[0], &v[1]) {
                     (Val::S(a), Val::S(b)) => Val::S(a.join(b).with_lip(f64::INFINITY)),
                     (Val::V(a, _), Val::V(b, _)) => Val::V(a.iter().zip(b).map(|(p, q)| p.join(q)).collect(), f64::INFINITY),
@@ -1089,9 +1227,12 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
             Distance | Dist => length(&self.arith(BinOp::Sub, v[0].clone(), v[1].clone())),
             Dot => {
                 let (Val::V(a, la), Val::V(b, lb)) = (&v[0], &v[1]) else { unreachable!("checked dot") };
-                let mut s = a[0].mul(&b[0]);
+                // `dot(v, v)` of one read is a sum of squares (F11), never negative.
+                let square = matches!(&e.kind, ExprKind::Call { args, .. } if same_read(&args[0].value, &args[1].value));
+                let term = |i: usize| if square { a[i].sqr() } else { a[i].mul(&b[i]) };
+                let mut s = term(0);
                 for i in 1..a.len() {
-                    s = s.add(&a[i].mul(&b[i]));
+                    s = s.add(&term(i));
                 }
                 Val::S(s.with_lip(norm(a) * lb + norm(b) * la))
             }
@@ -1127,10 +1268,41 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
             Vec2 | Vec2f => self.build(v, 2),
             Vec3 | Vec3f => self.build(v, 3),
             Vec4 | Vec4f => self.build(v, 4),
-            Acos | Atan2 | Fma | Log | Asin | Atan | Tan | Exp2 | Log2 | Round | Place | Sample
-            | SampleLod | SampleC2 | DSample | SamplePrior | Held | Missed | Unknown
+            // F1: these passed the checker and panicked here (`unreachable!("checked builtin atan2")`).
+            Acos => self.explained(map1(&v[0], Un::Acos), e.span, "acos has slope 1/sqrt(1 - x²): unbounded at ±1, and NaN outside [-1, 1]"),
+            Asin => self.explained(map1(&v[0], Un::Asin), e.span, "asin has slope 1/sqrt(1 - x²): unbounded at ±1, and NaN outside [-1, 1]"),
+            Atan => map1(&v[0], Un::Atan),
+            Tan => self.explained(map1(&v[0], Un::Tan), e.span, "tan has a pole at every odd multiple of π/2 inside this argument's range"),
+            Log => self.explained(map1(&v[0], Un::Log), e.span, "log has slope 1/x: unbounded at 0, and NaN below"),
+            Atan2 => self.explained(map2(&v[0], &v[1], S::atan2), e.span,
+                "atan2 jumps by 2π across the negative x axis (y = 0, x < 0) and its slope 1/r is unbounded at the origin; \
+                 the region meets one of them. Put angular detail in `material`, or write cos/sin of the angle from the \
+                 components x/r, y/r"),
+            Fma => {
+                let ab = self.arith(BinOp::Mul, v[0].clone(), v[1].clone());
+                self.arith(BinOp::Add, ab, v[2].clone())
+            }
+            SamplePrior | Held | Missed | Unknown => {
+                return Err(Diag::new(Code::E405, e.span, format!("`{}` has no CPU evaluation here", spec(builtin).name),
+                    "use it in a `check` or a motion plan, which run on the GPU"));
+            }
+            // The checker refuses these names (E011) or dispatches them before argument evaluation (above).
+            Exp2 | Log2 | Round | Place | Sample | SampleLod | SampleC2 | DSample
                 => unreachable!("checked builtin {}", spec(builtin).name),
         })
+    }
+
+    /// Records why a builtin's bound is unbounded, so E211 names the function rather than the expression.
+    fn explained(&mut self, v: Val<S>, span: Span, why: &str) -> Val<S> {
+        let unbounded = match &v {
+            Val::S(s) => s.lip().is_infinite(),
+            Val::V(_, l) => l.is_infinite(),
+            Val::Void | Val::B(_) | Val::U(_) | Val::I(_) | Val::X(_) | Val::Row(..) | Val::MapRef(..) | Val::Bsdf(_) => false,
+        };
+        if unbounded && self.cause.is_none() {
+            self.cause = Some((span, why.into()));
+        }
+        v
     }
 
     /// `eval_bsdf(b, n, v, l)`: each lobe bottom first, `c = c * below + own` (the lobe's vec4 is own rgb and the
@@ -1182,7 +1354,8 @@ fn map1<S: Scalar>(x: &Val<S>, f: Un) -> Val<S> {
             // abs is 1-Lipschitz componentwise, so it keeps the vector bound; the rest bound per component.
             let l = match f {
                 Un::Abs => *l,
-                Un::Sin | Un::Cos | Un::Sqrt | Un::Exp | Un::Floor | Un::Fract | Un::Sign => c.iter().map(|s| s.lip() * s.lip()).sum::<f64>().sqrt(),
+                Un::Sin | Un::Cos | Un::Sqrt | Un::Exp | Un::Floor | Un::Fract | Un::Sign | Un::Acos | Un::Asin | Un::Atan
+                | Un::Tan | Un::Log => c.iter().map(|s| s.lip() * s.lip()).sum::<f64>().sqrt(),
             };
             Val::vector(c, l)
         }
@@ -1233,6 +1406,65 @@ fn sum_sq<S: Scalar>(c: &[S]) -> S {
     s
 }
 
+/// The two values a per-frame fork can leave: ranges joined, the larger L (each frame takes one path everywhere).
+fn join_val<S: Scalar>(a: Val<S>, b: Val<S>, span: Span) -> Res<Val<S>> {
+    Ok(match (a, b) {
+        (Val::S(a), Val::S(b)) => Val::S(a.join(&b)),
+        (Val::V(a, la), Val::V(b, lb)) if a.len() == b.len() => Val::V(a.iter().zip(&b).map(|(a, b)| a.join(b)).collect(), la.max(lb)),
+        (Val::B(a), Val::B(b)) => Val::B(a.either(b)),
+        (Val::Void, Val::Void) => Val::Void,
+        (Val::U(a), Val::U(b)) if a == b => Val::U(a),
+        (Val::I(a), Val::I(b)) if a == b => Val::I(a),
+        (Val::X(a), Val::X(b)) if a == b => Val::X(a),
+        (Val::Row(k, r), Val::Row(k2, r2)) if (k, r) == (k2, r2) => Val::Row(k, r),
+        (Val::MapRef(n, f), Val::MapRef(n2, f2)) if (&n, f) == (&n2, f2) => Val::MapRef(n, f),
+        (a, b) => return Err(err(
+            span,
+            format!("a branch on time leaves two values the bound evaluator cannot join ({} and {})", kind_name(&a), kind_name(&b)),
+            "compute integers, transforms and rows outside the branch; branch on floats (select) inside it",
+        )),
+    })
+}
+
+fn kind_name<S>(v: &Val<S>) -> &'static str {
+    match v {
+        Val::Void => "nothing",
+        Val::S(_) => "a float",
+        Val::V(..) => "a vector",
+        Val::B(_) => "a bool",
+        Val::U(_) => "a u32",
+        Val::I(_) => "an i32",
+        Val::X(_) => "a transform",
+        Val::Row(..) => "a row",
+        Val::MapRef(..) => "a map",
+        Val::Bsdf(_) => "a material",
+    }
+}
+
+/// The environments two per-frame paths fall through with: same names, same order (each arm's block truncated its
+/// own bindings), so slot by slot.
+fn join_env<'a, S: Scalar>(a: Vec<(&'a str, Slot<S>)>, b: Vec<(&'a str, Slot<S>)>, span: Span) -> Res<Vec<(&'a str, Slot<S>)>> {
+    debug_assert_eq!(a.len(), b.len());
+    a.into_iter().zip(b).map(|((name, x), (_, y))| Ok((name, match (x, y) {
+        (Slot::Val(x), Slot::Val(y)) => Slot::Val(join_val(x, y, span)?),
+        // A map is bound once and never assigned: both paths hold the same one.
+        (map @ Slot::Map { .. }, Slot::Map { .. }) => map,
+        (Slot::Val(_), Slot::Map { .. }) | (Slot::Map { .. }, Slot::Val(_)) => {
+            return Err(err(span, format!("a branch on time rebinds `{name}` as a map on one path only"), "bind the map outside the branch"));
+        }
+    }))).collect()
+}
+
+/// Two operands that read one value: the same name, field or swizzle of a name. Reads are pure, so both evaluate
+/// to the same value in one environment.
+fn same_read(a: &Expr, b: &Expr) -> bool {
+    match (&a.kind, &b.kind) {
+        (ExprKind::Name(x), ExprKind::Name(y)) => x == y,
+        (ExprKind::Member(x, m), ExprKind::Member(y, n)) => m.name == n.name && same_read(x, y),
+        _ => false,
+    }
+}
+
 fn sign_cell<S: Scalar>(x: &S) -> S {
     // cell = +1 where x >= 0, else -1 (matches the emitted `select(-1.0, 1.0, x >= 0.0)`).
     match x.cmp(BinOp::Ge, &S::c(0.0)) {
@@ -1259,7 +1491,7 @@ pub fn concrete<S: Scalar>(v: &Val<S>, span: Span) -> Res<RowVal> {
         Val::V(c, _) => RowVal::V(c.iter().map(ex).collect::<Res<_>>()?),
         Val::U(u) => RowVal::U(*u),
         Val::I(i) => RowVal::I(*i),
-        Val::B(Some(b)) => RowVal::B(*b),
+        Val::B(Truth::Known(b)) => RowVal::B(*b),
         Val::X(x) => RowVal::X(*x),
         other @ Val::Void | other @ Val::B(_) | other @ Val::Row(..) | other @ Val::MapRef(..) | other @ Val::Bsdf(_) => return Err(err(span, format!("cannot store {other:?} in a row"), "store numbers, vectors, points or Xforms")),
     })
@@ -1294,6 +1526,11 @@ impl Scalar for f32 {
             Un::Exp => self.exp(),
             Un::Floor => self.floor(),
             Un::Fract => self - self.floor(),
+            Un::Acos => self.acos(),
+            Un::Asin => self.asin(),
+            Un::Atan => self.atan(),
+            Un::Tan => self.tan(),
+            Un::Log => self.ln(),
             // WGSL sign(0) = 0.
             Un::Sign => {
                 if *self > 0.0 {
@@ -1314,6 +1551,12 @@ impl Scalar for f32 {
     }
     fn pow(&self, o: &f32) -> f32 {
         self.powf(*o)
+    }
+    fn sqr(&self) -> f32 {
+        self * self
+    }
+    fn atan2(&self, x: &f32) -> f32 {
+        f32::atan2(*self, *x)
     }
     fn cmp(&self, op: BinOp, o: &f32) -> Option<bool> {
         Some(match op {

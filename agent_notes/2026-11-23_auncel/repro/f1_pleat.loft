@@ -1,0 +1,10 @@
+# F1: the pleat use: cos(n * atan2(z, x)) on a body round the y axis. Sound answer: rejected (E211).
+use stdlib::materials::bsdf::{lambert}
+kind K @World () {
+  trace(p) {
+    let q = coords(p)
+    length(q) - 1.0 + 0.01 * cos(12.0 * atan2(q.z, q.x))
+  }
+  material(p, n) = lambert(rgb(0.5))
+}
+build { emit K() }

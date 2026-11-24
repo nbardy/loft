@@ -1,0 +1,8 @@
+# F9a: --set on a param declared only in a sibling module. The field's L equals `size`, so `check` shows it.
+use stdlib::materials::bsdf::{lambert}
+use self::shot::{radius}
+kind K @World () {
+  trace(p) = (length(coords(p)) - 1.0) * radius()
+  material(p, n) = lambert(rgb(0.5))
+}
+build { emit K() }
