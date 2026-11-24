@@ -672,3 +672,33 @@ Read from its code and notes on 23 Nov; nothing of its was run.
 | T6 | No seed, sample or prompt uses a cut construct or the tape edit path (44 seeds, 231 + 276 `.loft` files searched) | The cut list costs the trainer nothing |
 
 Not yet checked: whether the 44 seeds pass `loft check` on the integration tip.
+
+## 9. Results, 25 Nov 2026: S0, S1 and S3 are not merged
+
+Scored against §6. §1–§8 are unchanged above. Counts are `tools/lines.py` on each tree.
+
+| Tree | Rust core | Against main |
+|---|---:|---:|
+| main `3628005a` | 29,362 | |
+| main + S0 (`c2936583`) | 29,814 | +452: `typed.rs` 188, `linked.rs` 260, 4 elsewhere |
+| main + S0 + S3 (`loft/me-host` `1afd3cd6`) | 29,784 | +422; S3 alone is −30 |
+
+| # | Prediction | Verdict |
+|---|---|---|
+| P2 | S1 deletes ≥ 300 and adds ≤ 200 | **missed before any code.** The S1 worker counted the arms in today's code: the emitter's call and name arms go from about 129 lines to about 100, the evaluator's by about 10, and the checker gains about 45 for recording. Net about −5 ± 30. The −250 was the spike's four-dispatcher figure; the fourth dispatcher was the tape VM, which `cut-tape` had already deleted. K2 applies: only step 4 is kept (`9bcc02f4`: the motion-math class comes from the builtin catalog, −10 lines) |
+| S3 lines | −120 ± 60 | **missed: −30.** `distinct_passes` and `children` go, but `passes` stays (three other walkers use it), the runner links twice (an initializer can rewrite a bake pass), and the plan printer, the web projection and the error mapping add back most of what the structural checks removed |
+| P9 | S0–S3 together −350 ± 250 | **missed: +422** with `typed.rs`, +234 without it. K6 applies: not merged |
+| P1, P8, P10 | byte-identical modules; gates hold; every corpus bundle links | not run: S1 was not written, and S3 was compiled (workspace and wasm32) but never tested |
+
+**What that leaves.** S1 and S3 were the two parts of this design a user cannot see. Their case was fewer lines for
+one implementation of each contract, and on today's tree they are not fewer lines. `link` would also not have
+delivered its typed refusals to a runner user: `RunnerError` has no variant that carries the text, so every structural
+fault still surfaces as `AbiMismatch`. Neither is merged. The branches stay for reference: `loft/me-typed`,
+`loft/me-host` (which has `loft show --plan` and the browser projection, compiled and untested), `loft/me-int`.
+
+**The redesign from here is §8.3 item 5 only**: the pieces a user can write, each landed on main on its own with
+its prediction written first. None of them needs `Typed` or `Linked`. A piece that must know whether an argument is
+a function or a kind records that where it needs it.
+
+A baseline for their byte-identity checks exists: `loft show` of every `.loft` source on main `3628005a`, 267 shown
+of 272, hashed in the primary checkout's `out/meta/me_baseline/` with the two scripts that make and compare it.
