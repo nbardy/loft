@@ -702,3 +702,55 @@ a function or a kind records that where it needs it.
 
 A baseline for their byte-identity checks exists: `loft show` of every `.loft` source on main `3628005a`, 267 shown
 of 272, hashed in the primary checkout's `out/meta/me_baseline/` with the two scripts that make and compare it.
+
+## 10. Piece 1: a law over a frame image (written 25 Nov, before any code)
+
+From a read of the source by a design agent (its blueprint is summarised here; nothing was built). This replaces
+§1b and the first half of §8.3's S2a. Inherited: DESIGN.md capability D and Probe A's frame passes. Mine: the
+decisions below and the cut of TAA from this piece.
+
+**What a user writes.**
+
+```loft
+# stdlib/styles/hatch.loft
+pub law hatch(p: ColorHdr, vis: [Vis64], spacing: f = 6, ink: rgb = [0.05, 0.04, 0.06]) writes p {
+  let id = vis[p.px]
+  let edge = id != vis[p.px + [1, 0]] || id != vis[p.px + [0, 1]]
+  let luma = dot(p.rgb, [0.2126, 0.7152, 0.0722])
+  let along = fract((p.px.x + p.px.y) / spacing) < 0.5
+  let across = fract((p.px.x - p.px.y) / spacing) < 0.5
+  p = [select(p.rgb, ink, edge || (luma < 0.35 && along) || (luma < 0.12 && across)), 1.0]
+}
+```
+
+A scene schedules it by calling it, between shading and the tonemap: `hatch(spacing: 5)`.
+
+**Decisions.**
+- The first parameter names a frame image; `p` is that pixel's value (a `v4`) and `p.px` its coordinate (a `v2` of
+  whole numbers). `writes p` assigns the pixel.
+- A `[T]` parameter over a frame image is read by coordinate, `vis[px]`, clamped to the image, so a neighbour read
+  at the border returns the edge texel. A read of `Vis64` is the surface id, a `u`. Its second word means different
+  things for ray kinds and surface kinds, so it is not exposed; depth comes from `DepthBuf` when a piece needs it.
+- **One way to schedule it:** the law's name called as a step, with its scalar and vector parameters as named
+  arguments. `run_laws(hatch)` stays for laws over kinds. The image parameters are bound by their types.
+- A law may not take `[T]` of the image it writes. DESIGN §5.3 gives that read last frame's image, which would
+  surprise the author of a blur and needs a second persistent buffer. It is a typed error until the history piece.
+- Lowering reuses Probe A's frame pass: a generated compute entry over the image in 8×8 workgroups. The law reads
+  the current colour texture and writes a second one, which later passes bind. A scene with no image law allocates
+  and emits nothing new.
+- **Not in this piece:** top-level `target`, history and TAA. The read found that reprojection needs a previous
+  camera the 256-byte frame uniform has no room for, that `Vis64`'s second word is not depth on surface kinds, and
+  that the portable bundle freezes the camera. Those are a piece of their own. `screen_pass` is a path integrator
+  and is not replaced by a law (DESIGN §7.1 was wrong about that); `bake_tex` could become sugar for a law later,
+  for about 75–130 lines.
+
+**Predictions.**
+
+| # | Prediction | Falsified if |
+|---|---|---|
+| H1 | `hatch` compiles as written above and a scene that calls it shows ink on silhouettes and hatching in shade | it needs a construct not listed here |
+| H2 | Counted Rust +270 ± 80 (parse 40, check 60, emit 60, passes 105, hosts 5) | outside 190–350 |
+| H3 | `loft show` is byte-identical on main's 267 shown sources (the baseline of §9) | any hash moves |
+| H4 | GPU cost of the pass at 1280×800: **0.27 ms** (24 B per pixel × 1.024 M pixels ÷ 90 GB/s; the bandwidth figure is DESIGN P4's and unmeasured) | above 0.46 ms, the no-cache-hit figure |
+| H5 | A scene that calls one image law gains exactly one module and one pipeline; other scenes gain none | any other count moves |
+| H6 | No CPU twin exists for image passes, so the law's verdict is Unknown, not Held | — |
