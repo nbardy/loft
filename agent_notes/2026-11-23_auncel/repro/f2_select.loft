@@ -1,0 +1,7 @@
+# F2: a select whose condition depends only on time.
+use stdlib::materials::bsdf::{lambert}
+kind K @World () {
+  trace(p) = select(length(coords(p)) - 1.0, length(coords(p)) - 0.5, time > 3.0)
+  material(p, n) = lambert(rgb(0.5))
+}
+build { emit K() }

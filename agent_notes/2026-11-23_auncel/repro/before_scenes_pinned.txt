@@ -1,0 +1,13 @@
+## boss
+kind HermitBoss   Traced  rows    1  shapes   1  derived L 1.0000..1.0000  bound evals 2492
+kind BossStage    Traced  rows    1  shapes   1  derived L 1.0000..1.0000  bound evals 11770
+real 3.25
+## heron
+kind HuntingHeron Traced  rows    1  shapes   1  derived L 1.0000..1.0000  bound evals 2123
+kind HeronStage   Traced  rows    3  shapes   3  derived L 1.0000..1.0000  bound evals 11012
+kind HeronFish    Traced  rows    1  shapes   1  derived L 1.0000..1.0000  bound evals 1507
+real 3.20
+## crab
+kind Scramble     Traced  rows    1  shapes   1  derived L 1.0000..1.0000  bound evals 3116
+kind ScrambleBed  Traced  rows    1  shapes   1  derived L 1.0000..1.0000  bound evals 7476
+real 4.46

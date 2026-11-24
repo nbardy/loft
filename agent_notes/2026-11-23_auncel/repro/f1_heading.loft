@@ -1,0 +1,12 @@
+# F1: the common case in the Auncel scenes: atan2 of a time-dependent heading, not of the point.
+use stdlib::materials::bsdf::{lambert}
+kind K @World () {
+  trace(p) {
+    let head = atan2(sin(0.3 * time), cos(0.3 * time))
+    map m = p |> rot_y(head)
+    let q = coords(m.p)
+    length(q / [1.0, 0.5, 0.5]) * 0.5 - 0.5
+  }
+  material(p, n) = lambert(rgb(0.5))
+}
+build { emit K() }

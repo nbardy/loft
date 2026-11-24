@@ -1,0 +1,140 @@
+## f1_atan2
+
+thread '<unnamed>' (11347746) panicked at crates/loft-eval/src/eval.rs:1119:20:
+internal error: entered unreachable code: checked builtin atan2
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'main' (11347740) panicked at crates/loft-passes/src/pipeline/stage0.rs:280:43:
+derive thread: Any { .. }
+## f1_acos
+error[E011]: unknown function `atan`
+  --> agent_notes/2026-11-23_auncel/repro/f1_acos.loft:6:67
+   |
+  6 |     length(q) - 1.0 + 0.01 * acos(clamp(q.y, -0.5, 0.5)) + 0.01 * atan(q.x) + 0.01 * asin(clamp(q.z, -0.5, 0.5))
+   |                                                                   ^^^^
+   = fix: declare it with `fn`, or check the spelling
+
+## f1_heading
+
+thread '<unnamed>' (11347755) panicked at crates/loft-eval/src/eval.rs:1119:20:
+internal error: entered unreachable code: checked builtin atan2
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'main' (11347752) panicked at crates/loft-passes/src/pipeline/stage0.rs:280:43:
+derive thread: Any { .. }
+## f1_pleat
+
+thread '<unnamed>' (11347763) panicked at crates/loft-eval/src/eval.rs:1119:20:
+internal error: entered unreachable code: checked builtin atan2
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'main' (11347757) panicked at crates/loft-passes/src/pipeline/stage0.rs:280:43:
+derive thread: Any { .. }
+## f1_quadrant
+
+thread '<unnamed>' (11347768) panicked at crates/loft-eval/src/eval.rs:1119:20:
+internal error: entered unreachable code: checked builtin atan2
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'main' (11347766) panicked at crates/loft-passes/src/pipeline/stage0.rs:280:43:
+derive thread: Any { .. }
+## f2_select
+error[E211]: sphere tracer requires a proven Lipschitz bound; row 0 derives `Unbounded`
+  --> agent_notes/2026-11-23_auncel/repro/f2_select.loft:3:6
+   |
+  3 | kind K @World () {
+   |      ^
+  --> agent_notes/2026-11-23_auncel/repro/f2_select.loft:4:14
+   |
+  4 |   trace(p) = select(length(coords(p)) - 1.0, length(coords(p)) - 0.5, time > 3.0)
+   |              ------ this expression has no finite Lipschitz bound over the region
+   = fix: clamp the denominator away from zero, keep branches out of the field, or move the term to `material`
+
+## f2_if
+error[E701]: this branch depends on the point and cannot be decided over a region
+  --> agent_notes/2026-11-23_auncel/repro/f2_if.loft:6:8
+   |
+  6 |     if time > 3.0 {
+   |        ^^^^^^^^^^
+   = fix: Phase 0 derives bounds for straight-line fields; write the branch with min/max/select
+
+## f2_ifexpr
+error[E701]: this branch depends on the point and cannot be decided over a region
+  --> agent_notes/2026-11-23_auncel/repro/f2_ifexpr.loft:7:8
+   |
+  7 |     if time > 2.0 { r = 0.75 }
+   |        ^^^^^^^^^^
+   = fix: Phase 0 derives bounds for straight-line fields; write the branch with min/max/select
+
+## f2_point
+error[E211]: sphere tracer requires a proven Lipschitz bound; row 0 derives `Unbounded`
+  --> agent_notes/2026-11-23_auncel/repro/f2_point.loft:3:6
+   |
+  3 | kind K @World () {
+   |      ^
+  --> agent_notes/2026-11-23_auncel/repro/f2_point.loft:4:14
+   |
+  4 |   trace(p) = select(length(coords(p)) - 1.0, 5.0, p.x > 0.0)
+   |              ------ this expression has no finite Lipschitz bound over the region
+   = fix: clamp the denominator away from zero, keep branches out of the field, or move the term to `material`
+
+## f2_point_ifexpr
+error[E701]: this branch depends on the point and cannot be decided over a region
+  --> agent_notes/2026-11-23_auncel/repro/f2_point_ifexpr.loft:4:17
+   |
+  4 |   trace(p) = if p.x > 0.0 { length(coords(p)) - 1.0 } else { 5.0 }
+   |                 ^^^^^^^^^
+   = fix: Phase 0 derives bounds for straight-line fields; write the branch with min/max/select
+
+## f11_min
+error[E211]: sphere tracer requires a proven Lipschitz bound; row 0 derives `Unbounded`
+  --> agent_notes/2026-11-23_auncel/repro/f11_min.loft:3:6
+   |
+  3 | kind K @World (w: f in 0.0..1.0) {
+   |      ^
+  --> agent_notes/2026-11-23_auncel/repro/f11_min.loft:7:13
+   |
+  7 |     let b = 1.0 / (1.0 + 8.0 * min(q.x * q.x, 0.35))
+   |             ---------------------- this expression has no finite Lipschitz bound over the region
+   = fix: clamp the denominator away from zero, keep branches out of the field, or move the term to `material`
+
+## f9c_tan
+error[E011]: unknown function `tan`
+  --> agent_notes/2026-11-23_auncel/repro/f9c_tan.loft:4:47
+   |
+  4 |   trace(p) = length(coords(p)) - 1.0 + 0.01 * tan(clamp(p.y, -1.0, 1.0))
+   |                                               ^^^
+   = fix: declare it with `fn`, or check the spelling
+
+## f9b_const_loop
+error[E701]: WGSL validation in K: error: Function [21] 'loft_user_bumps' is invalid
+    ┌─ wgsl:123:1
+    │  
+123 │ ╭ fn loft_user_bumps(loft_local_q: vec3<f32>) -> f32 {
+124 │ │   var loft_local_s: f32 = 0.0;
+125 │ │   for (var loft_local_i: u32 = 0u; loft_local_i < loft_const_N; loft_local_i++) {
+    │ │                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^ naga::ir::Expression [7]
+126 │ │     loft_local_s = (loft_local_s + (0.01 * sin((f32(loft_local_i) * loft_local_q.y))));
+127 │ │   }
+128 │ │   return loft_local_s;
+129 │ │ }
+    │ ╰─^ naga::ir::Function [21]
+    │  
+    = Expression [7] is invalid
+## f9a/main.loft --set size=2
+f9a/main.loft --set size=2: No such file or directory (os error 2)
+## f9a/dup.loft --set size=2
+f9a/dup.loft --set size=2: No such file or directory (os error 2)
+## f9a/dup.loft
+kind K            Traced  rows    1  shapes   1  derived L 1.0000..1.0000  bound evals 1584
+modules 4  passes [Cull, Vis([0]), Classify, Shade([0]), Present]
+## f2_point_letif.loft
+kind K            Traced  rows    1  shapes   1  derived L 1.0000..1.0000  bound evals 829
+modules 4  passes [Cull, Vis([0]), Classify, Shade([0]), Present]
+## f9a/main.loft --set size=2
+error[E011]: `--set size`: no scene parameter with this name
+   = fix: override a declared `param`
+
+## f9a/dup.loft --set size=2
+kind K            Traced  rows    1  shapes   1  derived L 2.0000..2.0000  bound evals 1584
+modules 4  passes [Cull, Vis([0]), Classify, Shade([0]), Present]

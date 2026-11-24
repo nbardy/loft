@@ -1,0 +1,10 @@
+# F1: acos, atan and asin in a trace, away from their singular points.
+use stdlib::materials::bsdf::{lambert}
+kind K @World () {
+  trace(p) {
+    let q = coords(p)
+    length(q) - 1.0 + 0.01 * acos(clamp(q.y, -0.5, 0.5)) + 0.01 * atan(q.x) + 0.01 * asin(clamp(q.z, -0.5, 0.5))
+  }
+  material(p, n) = lambert(rgb(0.5))
+}
+build { emit K() }

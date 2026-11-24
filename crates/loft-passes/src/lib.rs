@@ -8,6 +8,7 @@ mod cache;
 mod authored_compute;
 mod motion;
 mod pipeline;
+pub use pipeline::param_key;
 mod provenance;
 mod shade_schedule;
 mod shader;
@@ -113,6 +114,8 @@ pub struct KindReport {
     pub l_max: f64,
     pub evals: u64,
     pub cache_hits: usize,
+    /// Wall seconds deriving this kind's bounds (near 0 when every shape was cached).
+    pub derive_s: f64,
     pub draw: Draw,
 }
 

@@ -1,0 +1,10 @@
+# Control: a point-dependent if expression bound by let, no statements in its arms.
+use stdlib::materials::bsdf::{lambert}
+kind K @World () {
+  trace(p) {
+    let d = if p.x > 0.0 { length(coords(p)) - 1.0 } else { 5.0 }
+    d
+  }
+  material(p, n) = lambert(rgb(0.5))
+}
+build { emit K() }

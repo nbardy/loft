@@ -1,0 +1,13 @@
+# F2: an if statement on time, with a return in each arm.
+use stdlib::materials::bsdf::{lambert}
+kind K @World () {
+  trace(p) {
+    let q = coords(p)
+    if time > 3.0 {
+      return length(q) - 0.5
+    }
+    length(q) - 1.0
+  }
+  material(p, n) = lambert(rgb(0.5))
+}
+build { emit K() }

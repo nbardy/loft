@@ -104,7 +104,9 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
     }
     let prog = compiled.prog();
     let live = opts.live.iter().map(|(name, value)| {
-        Ok((prog.param_word(name).ok_or_else(|| Failure::Usage(format!("no live scalar param {name}")))?, *value))
+        // A param declared in a sibling module has a linker key, not its authored name (F9a).
+        let key = loft_passes::param_key(&compiled.modules, name).map_err(|d| Failure::Compile(d.render(&src)))?;
+        Ok((prog.param_word(&key).ok_or_else(|| Failure::Usage(format!("no live scalar param {name}")))?, *value))
     }).collect::<Result<Vec<_>, Failure>>()?;
     let g = native::gpu().map_err(Failure::Device)?;
     if opts.max_frame.is_some() { budget::timestamps(g.timestamps)?; }

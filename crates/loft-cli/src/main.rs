@@ -25,6 +25,10 @@ use loft_cli::{authored_checks, budget, budget::Failure, flag, overrides, render
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+/// Per kind, the cold bound derivation `check` warns about. The shipped scenes derive each kind in well under
+/// it; every slow case the Auncel authors measured was above it (2 to 9 min, and 7 to 125 s after restructuring).
+const SLOW_DERIVE_S: f64 = 10.0;
+
 fn command(mut args: Vec<String>, set: &[(String, f64)]) -> Result<(), Failure> {
     let cmd = args.first().cloned().unwrap_or_default();
     let time = if matches!(cmd.as_str(), "check" | "still") {
@@ -112,8 +116,14 @@ fn command(mut args: Vec<String>, set: &[(String, f64)]) -> Result<(), Failure> 
             }
             if failed { return Err(Failure::Truth("authored checks failed".into())); }
             for k in &report.kinds {
-                println!("kind {:<12} {:?}  rows {:>4}  shapes {:>3}  derived L {:.4}..{:.4}  bound evals {}",
-                    k.name, k.draw, k.rows, k.shapes, k.l_min, k.l_max, k.evals);
+                println!("kind {:<12} {:?}  rows {:>4}  shapes {:>3}  derived L {:.4}..{:.4}  bound evals {}  derive {:.2} s",
+                    k.name, k.draw, k.rows, k.shapes, k.l_min, k.l_max, k.evals, k.derive_s);
+            }
+            for k in report.kinds.iter().filter(|k| k.derive_s > SLOW_DERIVE_S) {
+                println!("warning: kind {} took {:.1} s to derive its bounds ({} evaluations). It is cached until the trace \
+                    or a shape field changes, and every such edit pays it again. Slow in practice: rotation maths written \
+                    out in the trace (use rot_x/rot_y/rot_z map stages), `unproved` blocks, long loops, a box as a reach \
+                    bound (use an ellipsoid), and detail that belongs in `material`.", k.name, k.derive_s, k.evals);
             }
             println!("modules {}  passes {:?}", program.modules.len(), program.passes);
             Ok(())

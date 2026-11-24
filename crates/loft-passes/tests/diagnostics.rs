@@ -297,3 +297,70 @@ kind Sphere @World (expo: f) {
 build { emit Sphere(expo: 2) }
 "#).unwrap();
 }
+
+/// F1: `atan2`, `acos`, `log` and `fma` passed the checker and panicked the bound evaluator
+/// (`unreachable!("checked builtin atan2")`); `asin`, `atan` and `tan` were unknown names (E011). Each now derives
+/// a bound. `atan2` on a body round the axis, where its value jumps by 2π and its slope is 1/r, is E211, not a panic.
+#[test]
+fn inverse_trig_in_a_trace_derives_a_bound_or_e211() {
+    let ok = "let o = [0,0,0]@Body; let c = clamp(q.y, -0.5, 0.5);
+    return sphere(q - o, 0.5) + 0.01 * (acos(c) + asin(c) + atan(q.x) + tan(c) + log(2.0 + c) + fma(q.x, 0.5, 0.1) + atan2(q.z, q.x + 2.0));";
+    if let Err((_, text)) = compile(&kind("", ok, OK_MATERIAL)) {
+        panic!("{text}");
+    }
+    let (code, text) = compile(&kind("", "return sphere(q - [0,0,0]@Body, 0.5) + 0.01 * cos(12.0 * atan2(q.z, q.x));", OK_MATERIAL))
+        .expect_err("atan2 round the axis has no finite bound");
+    assert_eq!(code, Code::E211, "{text}");
+    assert!(text.contains("atan2 jumps by 2π"), "{text}");
+}
+
+/// F2: a branch on `time` takes one arm at every point of the region, so its bound is the larger arm's. A branch on
+/// the point stays refused, including the `if` expression that used to keep the larger arm's L across the jump
+/// (`if q.x > 0.0 { sphere } else { 5.0 }` derived L = 1 for a field that steps at x = 0).
+#[test]
+fn a_branch_on_time_is_bounded_by_its_arms_and_a_branch_on_the_point_is_not() {
+    for trace in [
+        "let o = [0,0,0]@Body; return select(sphere(q - o, 0.5), sphere(q - o, 0.4), time > 3.0);",
+        // A statement after an `if` block needs its own line: on one line the parser asks for `;` (E001).
+        "let o = [0,0,0]@Body; if time > 3.0 { return sphere(q - o, 0.4); }
+         return sphere(q - o, 0.5);",
+        "let o = [0,0,0]@Body; var r = 0.5; if time > 2.0 { r = 0.45; }
+         let d = if time > 3.0 { let s = 0.4; sphere(q - o, s) } else { sphere(q - o, r) }; return d;",
+    ] {
+        if let Err((_, text)) = compile(&kind("", trace, OK_MATERIAL)) {
+            panic!("{text}");
+        }
+    }
+    expect(Code::E211, &kind("", "let o = [0,0,0]@Body; return select(sphere(q - o, 0.5), 5.0, q.x > 0.0);", OK_MATERIAL));
+    expect(Code::E211, &kind("", "let o = [0,0,0]@Body; let d = if q.x > 0.0 { sphere(q - o, 0.5) } else { 5.0 }; return d;", OK_MATERIAL));
+}
+
+/// F9b: an untyped integer const as a loop bound in a function the trace reaches was emitted `i32` against the
+/// `u32` loop index, and WGSL validation refused the module.
+#[test]
+fn an_untyped_const_bounds_a_gpu_loop() {
+    let scene = format!("const N = 6
+fn bumps(y: f) -> f {{
+  var s = 0.0
+  for i in 0..N {{ s = s + 0.01 * sin(f32(i) * y) }}
+  s
+}}
+{}", kind("", "return sphere(q - [0,0,0]@Body, 0.5) + bumps(q.y);", OK_MATERIAL));
+    if let Err((_, text)) = compile(&scene) {
+        panic!("{text}");
+    }
+}
+
+/// F9a: `--set NAME` reached only entry-file params. A sibling module's param was refused, and with a second param
+/// of the same name in the entry, the sibling's was silently left unchanged. Both scenes' L is the param's value.
+#[test]
+fn set_reaches_a_sibling_modules_param_and_refuses_an_ambiguous_name() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/sibling_param");
+    let set = [("size".to_string(), 2.0)];
+    let src = loft_passes::source::Graph::file(&dir.join("main.loft"), "").unwrap();
+    let (_, report, _) = loft_passes::compile(&src, &set).unwrap_or_else(|d| panic!("{}", d.render(&src)));
+    assert_eq!(report.kinds[0].l_max, 2.0);
+    let src = loft_passes::source::Graph::file(&dir.join("dup.loft"), "").unwrap();
+    let Err(d) = loft_passes::compile(&src, &set) else { panic!("two params named `size` must not both answer --set size") };
+    assert_eq!(d.code, Code::E011, "{}", d.render(&src));
+}
