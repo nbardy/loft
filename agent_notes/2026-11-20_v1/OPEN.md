@@ -570,6 +570,30 @@ Each was worked around in authored Loft and none is fixed in the engine. Figures
   finite bound (E212). Displacement is limited to sums of sines: a 3 mm two-set ridge field raised the otter head's
   derived L from 3.41 to 5.53; its frame was 71 ms at 960x720 where the other variants of the same batch took
   22 to 50 ms.
+- **Primary visibility is 90 to 97% of a character frame.** Warmed `loft profile`, Apple M4, 960x720, 120 frames,
+  run flagged contended (load control 1.95 ms against 0.08 quiet), median ms for Vis / Shade / frame: plain ball
+  1.2 / 2.4 / 4.2; the same with the sun only 1.2 / 0.7 / 2.4; base otter head 12.7 / 1.2 / 14.2; walrus (about
+  1,100 rods) 30.9 / 2.3 / 33.4; heron 46.5 / 1.3 / 48.8; otter with strands 105.7 / 2.6 / 108.4. Every row is
+  drawn as its world-aligned box and each covered pixel traces; depth is written by the fragment shader, so
+  nothing is rejected early. The heron's surface needs few steps per hit and still costs 46 ms, so the time is
+  in rays that miss inside boxes (`out/meta/perf/steps_and_overdraw.png`). Lane `loft/perf` owns the fix.
+- **The sky term is most of shading.** `sun_sky`'s twelve samples are 1.7 of the ball's 2.4 ms of shade.
+- **Derived bounds are loose for common shapes** (three workers, from `loft check`): stdlib `round_cone` about 2.2,
+  an ellipsoid written as `(q - c) / r` 2 to 2.9, a rotation by dot rows 1.7, a sheared coordinate about 2.
+  Capsules, spheres and `round_box` stay at 1. The heron went from 345 ms to about 50 by using only those.
+- **A field cannot skip far parts.** Branching on the point in `trace` is E701, so a head of 15 blended parts
+  evaluates all 15 at every step everywhere. The march discards a ray after 192 steps, which tears holes when
+  the bound is above about 5.
+- **Stdlib lobes take no normal tilt and cannot be called from a lobe.** Normal detail means copying `ggx`,
+  `sheen` and `coat` into the scene with `n + tilt`. Two workers did.
+- **A build function takes no named or default arguments** (E405): characters are posed by 6 to 16 positional
+  numbers. Lane `loft/lang`.
+- **A kind with no rows cannot be listed in a schedule** (E602), and a module cannot export a schedule or a
+  group of kinds (E505 on a parameterised schedule call), so every scene lists a character's kinds three times.
+  Lane `loft/lang`.
+- **A material cannot `select` between `Bsdf` values.** Lane `loft/lang`.
+- **The light callback gets no position**, so a lantern is a second directional light; `PointLamp` is not read
+  by `sun_sky`.
 - **The built binary reads the primary checkout's `stdlib/` live.** A worktree cannot add or change a stdlib module
   and see it; a worker's library has to be a sibling module (`use self::name`) until it is merged.
 

@@ -25,6 +25,10 @@ Environment:
                   lipschitz_ratio, overdraw). Roughness, material masks and a normal tilt applied inside a
                   lobe have no view: render those from the scene as flat colour.
 
+The time on a tile is ONE COLD FRAME: it flags a scene that is far too slow and is not a measurement. Frame
+time means the warmed median and p95 from `loft profile SCENE --size WxH --frames 120 --json OUT`, whose JSON
+also gives the time per pass and says whether the run was contended.
+
 The script takes the GPU slot itself (agent-build --gpu). Do not wrap it and do not run two at once.
 """
 import hashlib
@@ -107,7 +111,7 @@ for s in scenes:
             t.write(json.dumps(dict(time=time.strftime("%Y-%m-%dT%H:%M:%S"), round=rnd, scene=s.stem, label=label, parent=parent,
                                     sha=sha, loft=str(out / f"{s.stem}.loft"), image=str(out / f"{s.stem}.webp") if status == "ok" else None,
                                     gpu_ms=round(ms, 1), status="ok" if status == "ok" else status[:200])) + "\n")
-    tiles.append((out / f"{s.stem}.webp", f"{s.stem}: {label}  [{ms:.0f} ms]" if status == "ok" else f"{s.stem}: FAILED"))
+    tiles.append((out / f"{s.stem}.webp", f"{s.stem}: {label}  [cold {ms:.0f} ms]" if status == "ok" else f"{s.stem}: FAILED"))
     for aov in AOVS if status == "ok" else []:
         da = work / f"{s.stem}-{sha}-{aov}"
         da.mkdir(parents=True, exist_ok=True)

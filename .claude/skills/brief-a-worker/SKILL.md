@@ -48,7 +48,8 @@ repo does not say: the owner's words, what is wrong today, and what done looks l
   beside the final picture.
 - Do not run the whole test suite per worker. Under load it times out and the failures are noise; the integrator runs
   it once on a quiet machine.
-- If it profiles, it follows `frame-time`: one state, and say when other workers were on the GPU.
+- If it profiles, it follows `frame-time`: one state, and say when other workers were on the GPU. Frame time in a
+  report is a warmed `loft profile`, never the cold frame printed on a sheet tile.
 
 ## Splitting so branches merge
 
