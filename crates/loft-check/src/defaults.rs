@@ -8,10 +8,52 @@ pub const ENV_DEFAULTS: [&str; 3] = ["DEFAULT_SUN_COLOR", "DEFAULT_ZENITH", "DEF
 /// schedule function from `library` (parametrised schedules of every module).
 pub fn schedule(modules: &mut Vec<Module>, next: &mut u32, recipe: Option<ScheduleDecl>, library: &[ScheduleDecl]) -> Res<()> {
     compose(modules, next, recipe)?;
+    let worlds: std::collections::BTreeMap<_, _> = modules.iter().flat_map(|m| &m.items)
+        .filter_map(|item| match item {
+            Item::World(name, members) => Some((name.name.clone(), members.clone())),
+            _ => None,
+        }).collect();
     if let Some(s) = modules.iter_mut().flat_map(|m| &mut m.items).find_map(|i| {
         if let Item::Schedule(s) = i { Some(s) } else { None }
     }) {
         s.passes = expand(std::mem::take(&mut s.passes), library, 0)?;
+        // Expand only at kind-list boundaries. A world passed to a lighting function stays a World value.
+        let expand_names = |names: &mut Vec<Ident>| {
+            *names = std::mem::take(names).into_iter().flat_map(|n| {
+                worlds.get(&n.name).cloned().unwrap_or_else(|| vec![n])
+            }).collect();
+        };
+        let mut expand_args = |args: &mut Vec<Arg>| {
+            let mut expanded = Vec::new();
+            for arg in std::mem::take(args) {
+                if arg.name.is_none() && let ExprKind::Name(n) = &arg.value.kind
+                    && let Some(members) = worlds.get(n)
+                {
+                    for member in members {
+                        expanded.push(Arg { name: None, value: Expr {
+                            id: *next, span: arg.value.span, kind: ExprKind::Name(member.name.clone()),
+                        } });
+                        *next += 1;
+                    }
+                } else { expanded.push(arg); }
+            }
+            *args = expanded;
+        };
+        for pass in &mut s.passes {
+            if let Some(resources) = &mut pass.resources { expand_names(&mut resources.reads); }
+            match pass.verb.name.as_str() {
+                "find_shadow_map" => {
+                    expand_args(&mut pass.args);
+                    if let Some(BakeClock::Dirty(names)) = &mut pass.clock { expand_names(names); }
+                }
+                "render_bundle" => {
+                    for (verb, args) in &mut pass.body {
+                        if verb.name == "draw_indirect" { expand_args(args); }
+                    }
+                }
+                _ => {}
+            }
+        }
     }
     Ok(())
 }
@@ -164,6 +206,7 @@ fn bind(function: &ScheduleDecl, call: &PassDecl) -> Res<Env> {
 fn substitute(step: &PassDecl, env: &Env) -> Res<PassDecl> {
     let mut step = step.clone();
     step.args = arguments(&step.args, env)?;
+    if let Some(BakeClock::Dirty(names)) = &mut step.clock { *names = stores(names, env)?; }
     for (_, args) in &mut step.body {
         *args = arguments(args, env)?;
     }

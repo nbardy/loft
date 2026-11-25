@@ -140,6 +140,13 @@ error[E211]: unclamped divisor can reach zero (`L = Unbounded`)
 
 ---
 
+### Worlds in schedule kind lists
+
+A module can export `pub world Figure { things: [Head, Coat] }`. In frame-pass reads,
+`draw_indirect`, `find_shadow_map`, and the shadow step's `on dirty` list, a world name expands
+in place to its declared kinds in order. This also applies to `cull_indirect`, whose schedule
+reads its arguments. Members resolve in the declaring module, including its private kinds.
+
 # FILE 3: `docs/spec/loft.lark` (Lark CFG + `logos` Lexer Spec)
 
 Drop `loft.lark` directly into `llguidance` / XGrammar for 100% syntactically valid LLM rollouts.

@@ -41,6 +41,27 @@ const RIGHT: &str =
     "use self::leaf as base\nfn shade() -> f = base::value() + 2.0\npub fn sample() -> f = shade()";
 
 #[test]
+fn an_imported_world_splices_private_kinds_in_declaration_order() {
+    let file = "kind Head @World () {}\nkind Coat @World () {}\npub world Figure { things: [Coat, Head] }";
+    let scene = graph("use self::parts as p\nschedule Main {
+        pass cull reads [CameraSlot, p::Figure] writes [IndirectBuf] {}
+        render_bundle(Vis64) { draw_indirect(p::Figure) }
+        find_shadow_map(p::Figure, size: 512) on dirty(p::Figure)
+    }", &[("scene.loft", ""), ("stdlib/core.loft", CORE), ("parts.loft", file)]);
+    let (modules, _) = scene.parsed().unwrap_or_else(|e| panic!("{}", e.render(&scene)));
+    let index = Prog::index(&modules).unwrap();
+    let passes = &index.schedule.unwrap().passes;
+    let members = index.worlds.values().next().unwrap().iter().map(|n| n.name.as_str()).collect::<Vec<_>>();
+    let reads = &passes[0].resources.as_ref().unwrap().reads[1..];
+    assert_eq!(reads.iter().map(|n| n.name.as_str()).collect::<Vec<_>>(), members);
+    for args in [&passes[1].body[0].1[..], &passes[2].args[..2]] {
+        assert_eq!(args.len(), members.len());
+        assert!(args.iter().zip(&members).all(|(a, n)| matches!(&a.value.kind, loft_parse::ast::ExprKind::Name(k) if k == *n)));
+    }
+    assert!(matches!(&passes[2].clock, Some(loft_parse::ast::BakeClock::Dirty(names)) if names.len() == 2));
+}
+
+#[test]
 fn one_leaf_and_two_lexical_helpers() {
     let text = format!(
         "{ROOT}\nuse self::left as ink\nuse self::right as light\nfn result() -> f = ink::sample() + light::sample()"

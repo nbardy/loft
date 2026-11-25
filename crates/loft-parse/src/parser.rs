@@ -305,7 +305,7 @@ impl<'src> Parser<'src, '_> {
         if self.eat(keyword) {
             self.expect("[")?;
             while !self.eat("]") {
-                names.push(self.ident()?);
+                names.push(self.reference()?);
                 if !self.eat(",") {
                     self.expect("]")?;
                     break;
@@ -681,9 +681,9 @@ impl<'src> Parser<'src, '_> {
         }
         self.expect("dirty")?;
         self.expect("(")?;
-        let mut names = vec![self.ident()?];
+        let mut names = vec![self.reference()?];
         while self.eat(",") {
-            names.push(self.ident()?);
+            names.push(self.reference()?);
         }
         self.expect(")")?;
         Ok(BakeClock::Dirty(names))

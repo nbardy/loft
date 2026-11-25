@@ -64,7 +64,7 @@ sched_stmt:  "pass" LIDENT ("reads" "[" resource_list "]")? ("writes" "[" resour
            | "type" "Radiance" "=" type_expr
            | expr block? step_clock?
 step_clock:  "on" ("load" | "dirty" "(" resource_list ")")
-resource_list: IDENT ("," IDENT)* ","?
+resource_list: name_ref ("," name_ref)* ","?
 
 // --- Types (only after ':' or '->') ---
 type_expr:   unit_expr

@@ -741,6 +741,9 @@ impl Scope<'_> {
                         self.ident(&mut pass.verb)?;
                     }
                     self.args(&mut pass.args, &params)?;
+                    if let Some(BakeClock::Dirty(names)) = &mut pass.clock {
+                        for n in names.iter_mut().filter(|n| !params.contains(&n.name)) { self.ident(n)?; }
+                    }
                     for (name, args) in &mut pass.body {
                         self.ident(name)?;
                         self.args(args, &params)?;

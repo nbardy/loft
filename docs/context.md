@@ -50,6 +50,8 @@ schedule Print {
 }
 ```
 
+Export a character's kinds together with `pub world Figure { things: [Head, Coat] }`. Import `Figure` and use it in `cull_indirect(Figure)`, `draw_indirect(Figure)` and `find_shadow_map(Figure, size: 512)`. Define a second world when fewer parts cast shadows.
+
 ## Verify the picture and the cost
 
 Run `loft check scene.loft` for types, bounds and scheduled checks. Run `loft lint scene.loft` for authoring diagnostics and `loft show scene.loft --plan` to inspect lowering. Capture `loft still scene.loft shot.png --t 0` and `loft clip scene.loft --out frames --size 512x512 --frames 16 --fps 16`. Run `loft profile scene.loft --size 512x512 --frames 60`. Compare stills, motion and p95 at the same camera, times and resolution. Fork or replace the failing layer, then repeat.

@@ -111,7 +111,7 @@ pub(super) fn resolve<'a>(
                 }
                 rows_fns.push(p.fns[v]);
             }
-            _ => draft.lower_pass(p, modules, types, overrides, sched, pd)?,
+            _ => draft.lower_pass(p, modules, types, overrides, pd)?,
         }
         let (reads, writes) = renderer_effects(verb, has_shadow_pass);
         if let Some(read) = reads.iter().find(|r| !available.contains(**r)) {
@@ -152,7 +152,7 @@ pub(super) fn resolve<'a>(
 impl<'a> Draft<'a> {
     fn lower_pass(
         &mut self, p: &Prog<'a>, modules: &'a [Module], types: &mut Vec<Ty>,
-        overrides: &[(String, f64)], sched: &ScheduleDecl, pd: &'a PassDecl,
+        overrides: &[(String, f64)], pd: &'a PassDecl,
     ) -> Res<()> {
         let verb = pd.verb.name.as_str();
         match verb {
@@ -178,8 +178,8 @@ impl<'a> Draft<'a> {
                 self.casters = kind_args(p, pd)?;
                 let e = arg(pd, "size")?;
                 self.shadow_size = as_f32(stage0(p, types, e, overrides)?, e.span)? as u32;
-                if !(64..=8192).contains(&self.shadow_size) || (!sched.implicit && self.casters.is_empty()) {
-                    return Err(Diag::new(Code::E520, pd.verb.span, "a shadow map needs casters and a size of 64 to 8192 texels", "write `find_shadow_map(Kind, ..., size: 1024u)`"));
+                if !(64..=8192).contains(&self.shadow_size) {
+                    return Err(Diag::new(Code::E520, pd.verb.span, "a shadow map needs a size of 64 to 8192 texels", "write `find_shadow_map(Kind, ..., size: 1024u)`"));
                 }
                 self.shadow_clock = shadow_clock(pd, &self.casters)?;
                 self.steps.push(Step::Stock(Pass::Shadow(vec![])));
