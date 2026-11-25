@@ -40,6 +40,9 @@ impl<'a> References<'a> {
 
     fn from_body(f: &'a FnDecl, proof_only: bool) -> Self {
         let mut refs = Self { proof_only, ..Self::default() };
+        for default in f.params.iter().filter_map(|p| p.default.as_ref()) {
+            refs.expr(default, &[]);
+        }
         let mut locals = f.params.iter().map(|p| p.name.name.as_str()).collect();
         refs.block(&f.body, &mut locals);
         if let Some(raw) = &f.raw { refs.calls.extend(&raw.references); }

@@ -62,3 +62,5 @@ Exit codes (§17) are 0 success, 1 compile, 2 truth, 3 picture/twin parity, 4 lo
 - **Frozen motion.** Schedule each law and read its updated columns in the pose or material. Compare multiple times. Authored checks can measure pin drift or missed contacts.
 
 Catalog headings give import paths. Schedule signatures show pass order.
+
+Pose builders can take defaults. With `build fn pose(at: p3@World, yaw: rad = 0rad, blink: f = 0.0)`, call `pose(at, blink: 1.0)`. Positional arguments come first.

@@ -267,6 +267,7 @@ pub struct Eval<'p, 'a, S> {
     pub tables: Tables,
     pub overrides: &'p [(String, f64)],
     /// Names borrow the source: no allocation per binding.
+    evaluating_defaults: Vec<u32>,
     env: Vec<(&'a str, Slot<S>)>,
     /// The first expression that made a Lipschitz bound unbounded: where, and why.
     pub cause: Option<(Span, String)>,
@@ -298,7 +299,7 @@ fn norm<S: Scalar>(v: &[S]) -> f64 {
 
 impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
     pub fn new(p: &'p Prog<'a>, types: &'p [Ty], tables: Tables, overrides: &'p [(String, f64)]) -> Self {
-        Eval { p, types, tables, overrides, env: vec![], cause: None, steps: 0, vector_bound_changed: false, time:S::frame_time(), luts: &[], source: None, imports: Default::default(), forked: None, views: Default::default(), snapshots: vec![] }
+        Eval { p, types, tables, overrides, evaluating_defaults: vec![], env: vec![], cause: None, steps: 0, vector_bound_changed: false, time:S::frame_time(), luts: &[], source: None, imports: Default::default(), forked: None, views: Default::default(), snapshots: vec![] }
     }
 
     /// Binds a name for the expressions evaluated next (a scan's parameter); `unbind` drops the latest.
@@ -906,6 +907,23 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 if let Some(f) = function {
                     if f.attrs.iter().any(|a| a.name.name == "lobe") {
                         return Ok(Val::Bsdf(vec![Layer::Lobe(callee.name.clone(), vals)]));
+                    }
+                    if f.comptime && (args.len() != f.params.len() || args.iter().any(|a| a.name.is_some())) {
+                        use loft_check::check::{build_arguments, BuildArgument};
+                        let bound = build_arguments(f, args, e.span)?.into_iter().map(|slot| match slot {
+                            BuildArgument::Supplied(i) => Ok(vals[i].clone()),
+                            BuildArgument::Default(prm, default) => {
+                                if self.evaluating_defaults.contains(&default.id) {
+                                    return Err(Diag::new(Code::E403, default.span, format!("cyclic default for `{}`", prm.name.name),
+                                        "supply the argument explicitly or remove the recursive default"));
+                                }
+                                self.evaluating_defaults.push(default.id);
+                                let value = self.module_expr(default);
+                                self.evaluating_defaults.pop();
+                                value
+                            }
+                        }).collect::<Res<_>>()?;
+                        return self.call_fn(f, bound, e.span);
                     }
                     return self.call_fn(f, vals, e.span);
                 }

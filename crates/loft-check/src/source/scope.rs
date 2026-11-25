@@ -615,6 +615,9 @@ impl Scope<'_> {
             .map(|p| p.name.name.clone())
             .collect::<Vec<_>>();
         for p in &mut f.params {
+            if let Some(default) = &mut p.default {
+                self.expr(default, &[])?;
+            }
             if let Some(ty) = &mut p.ty {
                 self.ty(ty, &[])?;
             }

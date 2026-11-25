@@ -122,3 +122,24 @@ fn import_failures_retain_the_offending_source() {
         }
     }
 }
+
+#[test]
+fn build_call_binds_by_name_and_defaults_in_the_defining_module() {
+    let files = [
+        ("scene.loft", ""), ("stdlib/core.loft", CORE),
+        ("pose.loft", "const neutral = 2.0\npub build fn pose(x: f, y: f = neutral, z: f = 0.0) -> f = x + y * 10.0 + z * 100.0"),
+    ];
+    let source = |call: &str| format!("{ROOT}\nuse self::pose::{{pose}}\nbuild fn example(neutral: f) -> f = {call}");
+    let scene = graph(&source("pose(1.0, z: neutral)"), &files);
+    let (modules, types) = front(&scene).unwrap_or_else(|e| panic!("{}", e.render(&scene)));
+    let p = Prog::index(&modules).unwrap();
+    let mut ev = Eval::<f32>::new(&p, &types, vec![], &[]);
+    assert!(matches!(ev.call_fn(p.fns["example"], vec![Val::S(3.0)], loft_ir::Span::NONE), Ok(Val::S(321.0))));
+    for (call, message) in [
+        ("pose(1.0, x: 2.0)", "supplied twice"), ("pose(z: 0.0)", "missing build argument"),
+        ("pose(w: 0.0)", "unknown build parameter"), ("pose(x: 1.0, 2.0)", "positional argument after"),
+    ] {
+        let err = front(&graph(&source(call), &files)).unwrap_err();
+        assert!(err.msg.contains(message), "{}", err.msg);
+    }
+}

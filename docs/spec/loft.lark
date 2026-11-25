@@ -53,11 +53,13 @@ write_set:   LIDENT ("." "{" ident_list "}")?
 check_decl:  "check" LIDENT "(" params ")" "->" type_expr block
 
 world_decl:  "world" UIDENT "{" field_inits "}"
-build_fn:    "build" "fn" LIDENT "(" params? ")" ("->" type_expr)? fn_body
+build_fn:    "build" "fn" LIDENT "(" build_params? ")" ("->" type_expr)? fn_body
+build_params: build_param ("," build_param)* ","?
+build_param: param ("=" expr)?
 build_blk:   "build" block
 sched_decl:  "schedule" IDENT ("(" sched_params? ")")? "{" (_NL? sched_stmt (_sep sched_stmt)* _sep?)? "}"
 sched_params: sched_param ("," sched_param)* ","?
-sched_param: ".." LIDENT | param
+sched_param: ".." LIDENT | build_param
 sched_stmt:  "pass" LIDENT ("reads" "[" resource_list "]")? ("writes" "[" resource_list "]")? block step_clock?
            | "type" "Radiance" "=" type_expr
            | expr block? step_clock?
@@ -75,7 +77,7 @@ type_expr:   unit_expr
 
 gen_params:  "[" UIDENT ("," UIDENT)* ","? "]"
 params:      param ("," param)* ","?
-param:       LIDENT (":" type_expr)? ("=" expr)?
+param:       LIDENT (":" type_expr)?
 ident_list:  LIDENT ("," LIDENT)* ","?
 field_inits: (_NL? field_init (("," | _sep) field_init)* ("," | _sep)?)?
 field_init:  LIDENT ":" expr

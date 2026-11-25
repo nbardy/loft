@@ -23,6 +23,13 @@
 | `check` | Target `h: Kind`, read tables `[Other]`, verdict unit `-> rad` / `-> m` | `held` / `missed` / `unknown` typing |
 | Expressions | `@S` only on space change; unit suffix only when ambiguous | Numeric promotion (`0`, `1` unify with `f`/`m`/`rad`/`s`); `[x, y, z]` affine type (`p3`/`v3`/`d3`/`rgb`); block tail return |
 
+### Build function arguments
+
+A build call accepts leading positional arguments followed by `name: value` arguments in any order.
+Each position or label binds one distinct parameter. A missing argument takes its parameter's
+`= expression` default. The compiler checks defaults in the declaring module at stage zero.
+Supplied expressions evaluate once in source order, then omitted defaults evaluate in declaration order.
+
 ### 2.2 Spaces, Affine Geometry & Domain Maps
 
 * `p3@S - p3@S -> v3@S`; `p3@S + v3@S -> p3@S`; `p3@S + p3@S -> E101`; `S1 != S2 -> E104`.
@@ -187,7 +194,9 @@ check_decl:  "check" LIDENT "(" params ")" "->" type_expr block
 retarget_decl: "retarget" UIDENT "from" UIDENT "to" UIDENT "{" field_inits "}"
 
 world_decl:  "world" UIDENT "{" field_inits "}"
-build_fn:    "build" "fn" LIDENT "(" params? ")" fn_body
+build_fn:    "build" "fn" LIDENT "(" build_params? ")" ("->" type_expr)? fn_body
+build_params: build_param ("," build_param)* ","?
+build_param: param ("=" expr)?
 build_blk:   "build" block
 sched_decl:  "schedule" UIDENT "{" (_NL? sched_stmt (_SEP sched_stmt)* _SEP?)? "}"
 sched_stmt:  expr block?
