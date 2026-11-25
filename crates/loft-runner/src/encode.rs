@@ -294,7 +294,7 @@ pub struct FrameOptions<'a> {
     pub omit_wave: Option<u16>,
     /// Additional waves with retained outputs. Each omitted wave leaves its attachments intact.
     pub omit_waves: &'a [u16],
-    pub scissors: Option<&'a dyn Fn(u16, ModuleId) -> Option<command::ScissoredDraw>>,
+    pub scissors: Option<&'a dyn Fn(u16, ModuleId) -> Option<([u32; 2], u32)>>,
 }
 
 #[derive(Default)]
@@ -448,9 +448,10 @@ impl Instance {
             Order::Run(_) | Order::Repeat(..) => clock.to,
         }).collect();
         // `lockstep`: the tick this call advances to, and whether it is the group's first and last dispatch.
+        let mut raster_error = None;
         let mut record = |id, lockstep: Option<(u32, bool, bool)>| {
             let wave = c.waves[&id];
-            if initializers.contains(&id) || options.omit_wave == Some(wave) || options.omit_waves.contains(&wave) { return; }
+            if raster_error.is_some() || initializers.contains(&id) || options.omit_wave == Some(wave) || options.omit_waves.contains(&wave) { return; }
             if let Some(bytes) = c.templates.change(id, &mut template, clock.time as f32) {
                 batch.flush();
                 let bytes = options.uniform.map_or(bytes, |f| f(template.expect("selected frame table")));
@@ -465,7 +466,7 @@ impl Instance {
                 Operation::Draw(draw) => {
                     let pass = draw.pass(target.expect("validated targets"), tables, &mut written,
                         &c.fixed, &cmd.groups, |module| options.scissors.and_then(|f| f(wave, module)));
-                    batch.push(c.waves[&id], pass);
+                    match pass { Ok(pass) => batch.push(wave, pass), Err(error) => raster_error = Some(error) }
                 }
                 Operation::Mips(_, chain) => {
                     batch.flush();
@@ -514,6 +515,7 @@ impl Instance {
                 Order::Run(_) | Order::Repeat(..) => item.visit(&mut |id| record(id, None)),
             }
         }
+        if let Some(error) = raster_error { return Err(error); }
         batch.flush();
         if batch.stamp_error { return Err(RunnerError::Capacity); }
         if let (Some(buf), Some(events)) = (event_buffer.as_ref(), &mut self.outbox) { events.end(batch.encoder,buf); }

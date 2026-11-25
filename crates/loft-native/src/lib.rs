@@ -3,7 +3,6 @@ mod motion;
 #[cfg(not(target_arch = "wasm32"))]
 mod edit;
 mod reuse;
-mod scissor;
 #[cfg(not(target_arch = "wasm32"))]
 pub use edit::{EditReceipt, EditSession};
 use loft_passes::emit::Aov;
@@ -93,7 +92,7 @@ pub struct Loaded {
     kind_words: Vec<[u32; 4]>,
     params: Mutex<(Vec<f32>, bool)>,
     visibility: Mutex<reuse::Reuse>,
-    segments: loft_passes::program::SegmentRows,
+    tiled_modules: std::collections::BTreeSet<ModuleId>,
     shadow: Option<(u16, u32, Mutex<reuse::Reuse>)>,
     #[cfg(not(target_arch = "wasm32"))]
     instance_bounds: wgpu::Buffer,
@@ -399,6 +398,8 @@ impl Loaded {
             p.camera, p.sun, size, 0., sun, alternate.map(|(lo, hi, side)| sun_camera(p.sun, lo, hi, side)));
         let plan = loft_passes::bundle::lower_program(p, params, size, loft_passes::bundle::Options {
             nonce, overdraw: aov == Aov::Overdraw, picture_only: true,
+            segment_tiles: p.camera.fixed_eye.is_none() && editable.is_none() && aov == Aov::Beauty
+                && reuse::Reuse::stock_visibility(p).is_some(),
             // An edit swaps the editable kind's module, so its load keeps the software world.
             hardware_ray_query: editable.is_none() && loft_runner::ray_query::has_aabb_capacity(d, p.instances.len()),
             precision: precision(), features: device_features(d),
@@ -465,9 +466,6 @@ impl Loaded {
         let indexed = |kind: &loft_passes::program::KindTable| aov != Aov::Overdraw
             && p.modules[kind.module].naga.entry_points.iter().any(|e| e.name == "vs_grid");
         let visibility = Mutex::new(reuse::Reuse::visibility(p, indexed, editable));
-        let segments = if editable.is_none() && aov == Aov::Beauty && reuse::Reuse::stock_visibility(p).is_some() {
-            p.segments.clone()
-        } else { Default::default() };
         let shadow = plan.shadow_wave.and_then(|wave| {
             let [(i, casters)] = p.passes.iter().enumerate().filter_map(|(i, pass)| match pass {
                 Pass::Shadow(casters) => Some((i, casters)),
@@ -498,7 +496,7 @@ impl Loaded {
             luts: p.luts.clone(), kind_words, params: Mutex::new((p.params.clone(), false)),
             #[cfg(not(target_arch = "wasm32"))] lut_table: plan.luts,
             #[cfg(not(target_arch = "wasm32"))] instance_bounds,
-            visibility, segments, shadow,
+            visibility, tiled_modules: plan.tiled_modules, shadow,
             color, planes: [plan.visibility, plan.depth], color_view, clock, stats, precision: plan.precision })
     }
 
@@ -579,11 +577,8 @@ impl Loaded {
     fn record_report(&self, runner: &mut Runner, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView,
         t: f32, samples: u32, options: FrameOptions<'_>) -> Result<loft_runner::frame::FrameRecord, String> {
         let uniform = |table| self.uniform(t, samples, table != self.frame_table);
-        let projection = (!self.segments.is_empty()).then(|| scissor::Projection::new(self.camera,t,self.size));
-        let scissors = |wave, module: ModuleId| {
-            if wave != 1 { return None; }
-            Some(projection.as_ref()?.draw(self.segments.get(&module.0)?))
-        };
+        let scissors = |wave, module: ModuleId| (wave == 1 && self.tiled_modules.contains(&module))
+            .then_some(([self.size.0, self.size.1], loft_passes::bundle::SEGMENT_TILE_SIDE));
         runner.encode_frame(self.id, encoder, target, t.into(), FrameOptions {
             uniform: Some(&uniform), scissors: Some(&scissors), ..options
         })

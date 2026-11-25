@@ -955,11 +955,11 @@ pub fn emit_kind_module(
             // near offset as traversal. Proxy interpolation rounds that ray
             // differently, which can move a secondary origin across a surface.
             let primary_direction = if uses_world_hit { "loft_ray(v.pos.xy)" } else { "normalize(v.wp - ro)" };
-            // A scissored native draw uses vertices 36..72 and authored row order.
-            // Other hosts and the shadow pass draw the original vertices 0..36.
+            // Each disjoint native scissor retains the original compacted row order.
+            // first_vertex selects its list. Other hosts and shadows draw vertices 0..36.
             let direct = draw == Draw::Analytic && aov == Aov::Beauty && segment_arguments(p, k, sources).is_some();
             let (row_id, corner_id) = if direct {
-                ("var r = ii; if vi < 36u { r = visible[kp.base + ii]; }", "vi % 36u")
+                ("var slot = kp.base + ii; if vi >= 36u { slot = (vi / 36u - 1u) * kp.n_rows + ii; } let r = visible[slot];", "vi % 36u")
             } else { ("let r = visible[kp.base + ii];", "vi") };
             let (hit, split_ao) = match draw {
                 Draw::Analytic if uses_world_hit => (r"  let near = select(0.0001, 0.0, frame.cold.y == 1u);

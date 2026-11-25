@@ -63,21 +63,27 @@ impl Render {
     }
 
     pub fn pass(&self, target: &Target<'_>, tables: &BTreeMap<TableId, Table>, written: &mut std::collections::BTreeSet<TableId>,
-                fixed: &BindGroup, groups: &[Group], scissors: impl FnOnce(ModuleId) -> Option<command::ScissoredDraw>) -> command::Pass {
+                fixed: &BindGroup, groups: &[Group], scissors: impl FnOnce(ModuleId) -> Option<([u32; 2], u32)>) -> super::Result<command::Pass> {
         let (colors, depth) = self.spec.targets.views(target, |id| tables.get(&id)?.attachment(), written);
         let (_, pipelines, _, bundle) = self.cached.as_ref().expect("prepared raster pass");
         if let [draw] = self.spec.draws.as_slice()
             && draw.index.is_none()
-            && let Some(geometry) = scissors(draw.decl.module)
+            && let Some((size, side)) = scissors(draw.decl.module)
         {
+            if side == 0 || size.contains(&0) { return Err(RunnerError::Capacity); }
+            let args = &tables[&draw.decl.args];
+            let count = u64::from(size[0].div_ceil(side)) * u64::from(size[1].div_ceil(side));
+            if draw.decl.offset_bytes != 0 || count > interop::logical_size(&args.decl).min(args.bytes()?.size()) / 16 {
+                return Err(RunnerError::Capacity);
+            }
             let raster = command::Raster::Scissored {
                 pipeline: pipelines[0].clone(),
                 groups: std::iter::once(fixed).chain(groups.iter().map(Group::bound)).cloned().collect(),
-                draw: geometry,
+                args: args.bytes()?.clone(), size, side,
             };
-            return command::Pass::Render { colors, depth, rasters: vec![raster] };
+            return Ok(command::Pass::Render { colors, depth, rasters: vec![raster] });
         }
-        bundle.attach(colors, depth)
+        Ok(bundle.attach(colors, depth))
     }
 }
 

@@ -33,16 +33,9 @@ pub struct Draw<'a> {
 }
 
 #[derive(Clone)]
-pub struct ScissoredDraw {
-    pub size: [u32; 2],
-    pub vertices: Range<u32>,
-    pub instances: Vec<(Range<u32>, [u32; 4])>,
-}
-
-#[derive(Clone)]
 pub enum Raster {
     Bundle { bundle: RenderBundle, draws: u32 },
-    Scissored { pipeline: RenderPipeline, groups: Vec<BindGroup>, draw: ScissoredDraw },
+    Scissored { pipeline: RenderPipeline, groups: Vec<BindGroup>, args: Buffer, size: [u32; 2], side: u32 },
 }
 
 impl Raster {
@@ -115,7 +108,7 @@ impl Pass {
             Self::Render { colors, depth, rasters } => {
                 record_render(encoder, colors, depth.as_ref(), rasters, stamps);
                 rasters.iter().map(|r| match r { Raster::Bundle { draws, .. } => *draws,
-                    Raster::Scissored { draw, .. } => draw.instances.len() as u32 }).sum()
+                    Raster::Scissored { size, side, .. } => size[0].div_ceil(*side) * size[1].div_ceil(*side) }).sum()
             }
         }
     }
@@ -159,17 +152,21 @@ fn record_render(enc: &mut CommandEncoder, colors: &[Color], depth: Option<&Dept
                 Raster::Bundle { bundle, .. } => Some(bundle),
                 Raster::Scissored { .. } => None,
             })),
-            Raster::Scissored { pipeline, groups, draw } => {
+            Raster::Scissored { pipeline, groups, args, size, side } => {
                 pass.set_pipeline(pipeline);
                 for (slot, group) in groups.iter().enumerate() {
                     pass.set_bind_group(slot as u32, group, &[]);
                 }
-                for (instances, [x,y,w,h]) in &draw.instances {
-                    pass.set_scissor_rect(*x,*y,*w,*h);
-                    pass.draw(draw.vertices.clone(), instances.clone());
+                let mut offset = 0;
+                for y in (0..size[1]).step_by(*side as usize) {
+                    for x in (0..size[0]).step_by(*side as usize) {
+                        pass.set_scissor_rect(x, y, (*side).min(size[0] - x), (*side).min(size[1] - y));
+                        pass.draw_indirect(args, offset);
+                        offset += 16;
+                    }
                 }
-                // The following cached bundle inherits the pass scissor.
-                pass.set_scissor_rect(0, 0, draw.size[0], draw.size[1]);
+                // Later draws inherit the scissor, including a following cached bundle.
+                pass.set_scissor_rect(0, 0, size[0], size[1]);
             }
         }
     }
