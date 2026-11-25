@@ -255,3 +255,5 @@ The native AB ring uses a separate measurement protocol: an immediate 120-frame 
 | otter-1280x800 | 155.69 / 166.07 Q | 68.27 / 87.01 C | 12.80 / 15.58 Q | 0.66 / 0.65 |
 
 [Every warm-device attempt](orbit/warm-device) · [Combined AB measurements](orbit/scissor-ab) · [Host instrument](../../crates/loft-cli/examples/fresh_blocks.rs)
+
+The grouped host-cost forecast held: its median increment was 0.12–0.22 ms on walrus and 0.58–0.69 ms on final otter. The GPU-speed forecast did not transfer between quiet windows. For example, at 1280×800 the grouped final otter took 15.58 ms p95 in the AB ring and 76.15 ms p95 in the fully bracketed contiguous block. Both passed the same 1.10 ms control threshold, and the latter issued the expected 497 native commands. On walrus at 960 the corresponding quiet p95 values were 12.16 and 24.27 ms. A bracket measures its own time window. These runs do not establish sustained 60 fps across operating conditions. The separate timings remain in the report.
