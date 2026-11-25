@@ -165,3 +165,46 @@ At frame 60 of the 960×720 orbit, the instrument clears the same textures and d
 | [Bit](orbit/thin/otter-Bit-vis-replay.json.gz) | 3,238,049 | 164,730 | 731,529 | 23,616 | 1.72 / 0.29 / 0.48 | 19,078 | 0 |
 | [Strand](orbit/thin/otter-Strand-vis-replay.json.gz) | 96,849,778 | 4,230,331 | 2,503,784 | 10,819 | 22.86 / 3.68 / 2.72 | 8,514 | 0 |
 All twelve fixed-order scissor replays, covering four kinds at frames 0, 60 and 119, preserved every visibility word. At the middle pose, the coverage model predicted 2.508 million scissored Strand fragments and measured 2.504 million. It predicted 4.244 million for the strip and measured 4.230 million. A correct launch-count model can still miss native p95. Full-frame timing includes the other kinds, pass scheduling and the cost of hundreds of draws.
+
+### Hardware scissors on the moving camera
+
+Each entry is GPU p50 / p95 in ms. In the left comparison original and guard ran consecutively. In the right comparison the same guard binary ran immediately before the combined build. The forecast column was frozen before the scissor build and applies to the combined build. Original and guard forecasts are in the first table.
+
+| Scene and raster | Original | Guard | Adjacent guard | Predicted with both | Measured with both |
+|---|---:|---:|---:|---:|---:|
+| ball-960x720 | 4.36 / 6.13 C | 2.49 / 4.45 Q | 4.44 / 8.76 C | 2.5 / 4.5 | 4.47 / 7.02 C |
+| base-960x720 | 9.90 / 10.76 C | 7.14 / 9.61 Q | 7.42 / 10.09 C | 5.5 / 8 | 4.68 / 6.71 C |
+| walrus-960x720 | 21.59 / 23.32 C | 11.48 / 13.16 C | 11.19 / 12.24 C | 9.5 / 12 | 9.57 / 10.83 C |
+| heron-960x720 | 25.95 / 31.20 C | 7.98 / 9.30 C | 8.28 / 10.11 C | 8 / 9.3 | 4.27 / 8.65 C |
+| otter-960x720 | 57.82 / 62.82 C | 26.14 / 33.85 C | 31.10 / 37.76 C | 13 / 18 | 13.06 / 15.96 C |
+| walrus-1280x800 | 26.12 / 26.97 C | 13.13 / 14.52 C | 14.48 / 16.64 C | 11 / 13.5 | 11.71 / 13.28 Q |
+| heron-1280x800 | 38.42 / 40.90 C | 10.23 / 12.40 C | 6.06 / 9.62 C | 10.2 / 12.4 | 5.99 / 9.74 C |
+| otter-1280x800 | 78.36 / 85.80 C | 31.64 / 35.85 C | 36.57 / 44.79 Q | 16 / 21 | 14.36 / 16.96 Q |
+
+All six passes in these budgets come from the same actual combined-build p95-ranked frame, in GPU milliseconds. The last column gives the extra time above 16.7 ms at that rank.
+
+| Scene and raster | Cull | Vis | Shadow | Classify | Shade | Present | Frame | Excess |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| ball-960x720 | 0.01 | 1.57 | 0.00 | 0.18 | 4.74 | 0.51 | 7.02 | 0.00 |
+| base-960x720 | 0.01 | 5.17 | 0.00 | 0.05 | 1.36 | 0.12 | 6.71 | 0.00 |
+| walrus-960x720 | 0.01 | 9.18 | 0.00 | 0.03 | 1.46 | 0.15 | 10.83 | 0.00 |
+| heron-960x720 | 0.02 | 5.03 | 0.00 | 0.13 | 3.21 | 0.26 | 8.65 | 0.00 |
+| otter-960x720 | 0.01 | 14.14 | 0.00 | 0.04 | 1.62 | 0.15 | 15.96 | 0.00 |
+| walrus-1280x800 | 0.01 | 10.54 | 0.00 | 0.06 | 2.58 | 0.11 | 13.28 | 0.00 |
+| heron-1280x800 | 0.03 | 5.84 | 0.00 | 0.16 | 3.52 | 0.20 | 9.74 | 0.00 |
+| otter-1280x800 | 0.01 | 14.56 | 0.00 | 0.05 | 2.21 | 0.12 | 16.96 | 0.26 |
+
+The picture columns give identical frames out of 120 / largest RGBA8 channel error / largest changed-pixel count per frame / sum of changed pixels over the orbit. Counts include alpha. Diff images use the frame with the largest channel error.
+
+| Scene and raster | Guard vs original | Guard + scissors vs original |
+|---|---|---|
+| ball-960x720 | 120 / 0 / 0 / 0 | 120 / 0 / 0 / 0 |
+| base-960x720 | 120 / 0 / 0 / 0 | 120 / 0 / 0 / 0 |
+| walrus-960x720 | [84 / 107 / 4 / 48](orbit/revised/revised-walrus-960x720.png) | [2 / 113 / 7 / 349](orbit/scissor/scissor-walrus-960x720.png) |
+| heron-960x720 | 120 / 0 / 0 / 0 | 120 / 0 / 0 / 0 |
+| otter-960x720 | 120 / 0 / 0 / 0 | [117 / 48 / 1 / 3](orbit/scissor/scissor-otter-960x720.png) |
+| walrus-1280x800 | [78 / 106 / 3 / 52](orbit/revised/revised-walrus-1280x800.png) | [2 / 192 / 8 / 439](orbit/scissor/scissor-walrus-1280x800.png) |
+| heron-1280x800 | 120 / 0 / 0 / 0 | 120 / 0 / 0 / 0 |
+| otter-1280x800 | 120 / 0 / 0 / 0 | [117 / 59 / 1 / 3](orbit/scissor/scissor-otter-1280x800.png) |
+
+[All adjacent guard profiles](orbit/pre-scissor) · [Combined profiles, per-frame hashes and diffs](orbit/scissor)
