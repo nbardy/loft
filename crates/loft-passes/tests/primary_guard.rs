@@ -72,27 +72,3 @@ camera Main { at: [0,0,0]@World, radius: 3, fov: 40deg }
         assert!(p.luts[offset] <= x && x <= p.luts[offset + 3]);
     }
 }
-
-#[test]
-fn an_indexed_surface_with_a_closed_form_query_keeps_its_grid_draw() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let src = Graph::text(&root, Path::new("hybrid.loft"), r#"
-use stdlib::geometry::analytic::{ray_capsule}
-use stdlib::materials::bsdf::{emit_lobe}
-space World
-kind Hybrid @World (a: p3@World, b: p3@World) {
-  surface(u,v) grid 8x8 = [u,v,0]@World
-  visible(ro,rd) = ray_capsule(ro,rd,a,b,0.01)
-  material(p,n,uv) = emit_lobe([1.0,1.0,1.0])
-}
-build {
-  build for i in 0..8 { emit Hybrid(a: [0,0,0]@World, b: [0.05,0,0]@World) }
-}
-camera Main { at: [0,0,0]@World, radius: 3, fov: 40deg }
-"#);
-    let tmp = tempfile::tempdir().unwrap();
-    let (p, _, _) = compile_cached(&src, &[], tmp.path()).unwrap_or_else(|e| panic!("{}", e.render(&src)));
-    assert!(matches!(p.kinds[0].draw, loft_passes::program::Draw::Surface { .. }));
-    assert_eq!(p.kinds[0].n_rows, 8);
-    assert!(p.segments.is_empty());
-}

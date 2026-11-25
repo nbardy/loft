@@ -33,6 +33,34 @@ pub(super) fn evaluate<'a>(
     timings.lap("stage0");
 
     schedule.select_drawables(p, &tables)?;
+    let mut ev = Eval::<f32>::new(p, types, tables, opts.overrides);
+    let mut segments = crate::program::SegmentRows::new();
+    for (module, name) in schedule.drawn.iter().enumerate() {
+        let k = p.kinds[*name];
+        let Some(args) = emit::segment_arguments(p, k, src) else { continue };
+        let kind = p.kind_index(name);
+        if ev.tables[kind].len() < 8 { continue; }
+        let query = k.query(QueryKind::Visible).expect("recognized exact segment");
+        let mut balls = Vec::with_capacity(ev.tables[kind].len());
+        for row in 0..ev.tables[kind].len() {
+            ev.bind(&query.params[0].name.name, Val::Row(kind, row));
+            let [a, b, ra, rb] = args.map(|e| ev.expr(e).and_then(|v| eval::concrete(&v, e.span)));
+            ev.unbind();
+            let pose = pose_field(k).and_then(|index| ev.tables[kind][row].get(index));
+            let world = |point: [f32; 3], radius: f32| {
+                let p = if let Some(RowVal::X(x)) = pose {
+                    let v = rot(x, point);
+                    [0, 1, 2].map(|i| v[i] + x.t[i])
+                } else { point };
+                [p[0], p[1], p[2], radius]
+            };
+            let a = world(as_v3(a?, args[0].span)?, as_f32(ra?, args[2].span)?);
+            let b = world(as_v3(b?, args[1].span)?, as_f32(rb?, args[3].span)?);
+            balls.push([a, b]);
+        }
+        segments.insert(module as u32, balls);
+    }
+    let tables = ev.tables;
     let mut kinds = vec![];
     let mut instances = vec![];
     let mut reports = vec![];
@@ -77,35 +105,6 @@ pub(super) fn evaluate<'a>(
         kinds.push(kind);
         reports.push(report);
     }
-    let mut ev = Eval::<f32>::new(p, types, tables, opts.overrides);
-    let mut segments = crate::program::SegmentRows::new();
-    // Surface and mesh geometry take precedence even when the kind also has a visible query.
-    for (module, _) in kinds.iter().enumerate().filter(|(_, k)| k.draw == Draw::Analytic && k.n_rows >= 8) {
-        let name = &schedule.drawn[module];
-        let k = p.kinds[*name];
-        let Some(args) = emit::segment_arguments(p, k, src) else { continue };
-        let kind = p.kind_index(name);
-        let query = k.query(QueryKind::Visible).expect("recognized exact segment");
-        let mut balls = Vec::with_capacity(ev.tables[kind].len());
-        for row in 0..ev.tables[kind].len() {
-            ev.bind(&query.params[0].name.name, Val::Row(kind, row));
-            let [a, b, ra, rb] = args.map(|e| ev.expr(e).and_then(|v| eval::concrete(&v, e.span)));
-            ev.unbind();
-            let pose = pose_field(k).and_then(|index| ev.tables[kind][row].get(index));
-            let world = |point: [f32; 3], radius: f32| {
-                let p = if let Some(RowVal::X(x)) = pose {
-                    let v = rot(x, point);
-                    [0, 1, 2].map(|i| v[i] + x.t[i])
-                } else { point };
-                [p[0], p[1], p[2], radius]
-            };
-            let a = world(as_v3(a?, args[0].span)?, as_f32(ra?, args[2].span)?);
-            let b = world(as_v3(b?, args[1].span)?, as_f32(rb?, args[3].span)?);
-            balls.push([a, b]);
-        }
-        segments.insert(module as u32, balls);
-    }
-    let tables = ev.tables;
     timings.lap("derive");
     Ok(Stage0Scene { tables, luts, lut_words, lut_refs, segments, guard_table, params, kinds, instances, reports })
 }
