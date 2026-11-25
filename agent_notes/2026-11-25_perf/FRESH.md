@@ -289,3 +289,46 @@ The second kernel scans the original compacted slots in each 32×32 screen tile 
 The native primary beauty path enables the pass for immutable stock exact-segment calls under the stock cull schedule and an orbiting camera. The other passes keep their ordinary draws. The gather scans each compacted slot twice per tile and reserves four bytes per tile per possible row. Strand’s 3,729 rows reserve 9.82 MiB at 960 and 14.22 MiB at 1280. A 64 MiB per-kind and 128 MiB scene limit sends oversized cases through their original draws. The portable serialized program also has the original draw path. [Binning shader](../../crates/loft-passes/src/bundle/segment_tiles.wgsl) · [Native lowering and storage limits](../../crates/loft-passes/src/bundle/segment_tiles.rs)
 
 The original final-otter capture repeated exactly on all 240 frames across both sizes. The grouped build changed one pixel on three frames at each size. With the same deterministic culler in both builds, all 240 otter frames and all 240 walrus frames matched byte for byte. That control isolates draw-order sensitivity in the earlier grouped experiment. [Original repeat](orbit/repeat-original) · [Ordered grouped-scissor RGBA](orbit/ordered-scissor)
+
+### Stable screen tiles on the moving camera
+
+Each entry is GPU p50 / p95 in ms. In the left comparison original and guard ran consecutively. In the right comparison the same guard binary ran immediately before the combined build. The forecast column was frozen before the tile build and applies to the combined build. Original and guard forecasts are in the first table.
+
+| Scene and raster | Original | Guard | Adjacent guard | Predicted with both | Measured with both |
+|---|---:|---:|---:|---:|---:|
+| ball-960x720 | 4.36 / 6.13 C | 2.49 / 4.45 Q | 1.15 / 1.23 Q | 2.5 / 4.5 | 1.17 / 2.48 Q |
+| base-960x720 | 9.90 / 10.76 C | 7.14 / 9.61 Q | 5.09 / 7.73 Q | 5.5 / 8.5 | 3.25 / 3.61 Q |
+| walrus-960x720 | 21.59 / 23.32 C | 11.48 / 13.16 C | 25.92 / 30.53 Q | 11 / 15.5 | 11.74 / 16.40 Q |
+| heron-960x720 | 25.95 / 31.20 C | 7.98 / 9.30 C | 3.95 / 8.37 C | 6 / 9 | 2.32 / 4.28 Q |
+| otter-960x720 | 57.82 / 62.82 C | 26.14 / 33.85 C | 47.94 / 61.67 Q | 16 / 22 | 25.49 / 29.71 Q |
+| walrus-1280x800 | 26.12 / 26.97 C | 13.13 / 14.52 C | 21.88 / 36.08 Q | 14 / 19 | 15.69 / 21.05 Q |
+| heron-1280x800 | 38.42 / 40.90 C | 10.23 / 12.40 C | 2.89 / 3.20 Q | 6 / 10 | 3.02 / 6.88 Q |
+| otter-1280x800 | 78.36 / 85.80 C | 31.64 / 35.85 C | 52.93 / 63.28 C | 19 / 25 | 14.14 / 18.47 C |
+
+All six passes in these budgets come from the same actual combined-build p95-ranked frame, in GPU milliseconds. The last column gives the extra time above 16.7 ms at that rank.
+
+| Scene and raster | Cull | Vis | Shadow | Classify | Shade | Present | Frame | Excess |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| ball-960x720 | 0.00 | 1.05 | 0.00 | 0.18 | 0.87 | 0.38 | 2.48 | 0.00 |
+| base-960x720 | 0.03 | 2.64 | 0.00 | 0.03 | 0.84 | 0.06 | 3.61 | 0.00 |
+| walrus-960x720 | 0.08 | 11.38 | 0.00 | 0.09 | 4.60 | 0.24 | 16.40 | 0.00 |
+| heron-960x720 | 0.00 | 2.63 | 0.00 | 0.17 | 1.25 | 0.22 | 4.28 | 0.00 |
+| otter-960x720 | 0.46 | 22.55 | 0.00 | 0.20 | 6.31 | 0.18 | 29.71 | 13.01 |
+| walrus-1280x800 | 0.09 | 14.89 | 0.00 | 0.15 | 5.56 | 0.36 | 21.05 | 4.35 |
+| heron-1280x800 | 0.01 | 1.99 | 0.00 | 0.19 | 4.37 | 0.33 | 6.88 | 0.00 |
+| otter-1280x800 | 0.24 | 15.52 | 0.00 | 0.06 | 2.43 | 0.21 | 18.47 | 1.77 |
+
+The picture columns give identical frames out of 120 / largest RGBA8 channel error / largest changed-pixel count per frame / sum of changed pixels over the orbit. Counts include alpha. Diff images use the frame with the largest channel error.
+
+| Scene and raster | Guard vs original | Guard + tiles vs original |
+|---|---|---|
+| ball-960x720 | 120 / 0 / 0 / 0 | 120 / 0 / 0 / 0 |
+| base-960x720 | 120 / 0 / 0 / 0 | 120 / 0 / 0 / 0 |
+| walrus-960x720 | [84 / 107 / 4 / 48](orbit/revised/revised-walrus-960x720.png) | [80 / 107 / 4 / 59](orbit/tiles/tiles-walrus-960x720.png) |
+| heron-960x720 | 120 / 0 / 0 / 0 | 120 / 0 / 0 / 0 |
+| otter-960x720 | 120 / 0 / 0 / 0 | 120 / 0 / 0 / 0 |
+| walrus-1280x800 | [78 / 106 / 3 / 52](orbit/revised/revised-walrus-1280x800.png) | [76 / 109 / 3 / 57](orbit/tiles/tiles-walrus-1280x800.png) |
+| heron-1280x800 | 120 / 0 / 0 / 0 | 120 / 0 / 0 / 0 |
+| otter-1280x800 | 120 / 0 / 0 / 0 | 120 / 0 / 0 / 0 |
+
+[All adjacent guard profiles](orbit/pre-tiles) · [Combined profiles, per-frame hashes and diffs](orbit/tiles)
