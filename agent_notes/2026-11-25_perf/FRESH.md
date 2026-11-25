@@ -340,3 +340,67 @@ I deferred composite operand pruning after scoring changes 1 and 2 at `3118c4cc`
 A prototype needs a spatial subdivision of the guarded region, interval certificates for operand dominance in each cell, and lazy evaluation of the surviving field expression. For Loft’s compact polynomial smooth minimum, an operand that is farther away than the blend support cannot affect the result. The comparison needs a float margin, the original equal-value choice, and the exact lower or upper blend rule. The remaining operations must preserve expression order. An initial implementation for smooth min/max trees would take an estimated one to two engineering weeks. It needs original-RGBA and field-value comparisons at cell boundaries; execution divergence and per-cell storage can offset the arithmetic saving. This is the operand-pruning direction developed in [Zanni’s sparse SDF evaluation](https://arxiv.org/abs/2304.09673).
 
 On the slowest quiet final-otter tail frames, primary visibility consumed 22.55 ms out of 29.71 at 960, and 28.57 ms out of 36.90 at 1280. Holding the other passes fixed leaves 9.54 and 8.37 ms for Vis: reductions of 58% and 71%. At 1280 the slowest quiet walrus frame leaves 5.79 ms for a 19.34 ms Vis pass, also a 70% reduction. Its shade and classification passes alone took 10.32 ms on that frame. Operand savings alone at the measured replay rates fall short. Exact submission of fewer thin-row draws, cheaper surviving field evaluations and the non-Vis tail each have separate budgets. The original halved-fields forecast for heron has particularly little work left after the guard.
+
+### Final native controls and field work
+
+Each linked row covers 120 complete moving frames per attempt. Times are GPU p50 / p95 in ms. Immediate is the ordinary CLI. AB immediate and AB ring share a device and have independent brackets. The contiguous warm-device block first warmed the device, then bracketed the complete orbit. Q requires both measured load controls ≤1.10 ms. C retains the first attempt when all attempts of that type were flagged. The final column is the number of images that match the ordinary original capture out of 120.
+
+| Character and raster | Immediate | AB immediate | AB ring | Warm block | Exact frames |
+|---|---:|---:|---:|---:|---:|
+| walrus-960x720 | 11.74 / 16.40 Q | 9.28 / 13.30 Q | 8.99 / 13.95 Q | 9.14 / 14.47 Q | 80 |
+| heron-960x720 | 2.32 / 4.28 Q | 2.11 / 4.81 Q | 1.98 / 4.58 Q | 1.92 / 2.10 Q | 120 |
+| otter-960x720 | 25.49 / 29.71 Q | 12.58 / 16.94 C | 12.38 / 17.64 Q | 12.76 / 17.46 Q | 120 |
+| walrus-1280x800 | 15.69 / 21.05 Q | 14.79 / 20.74 C | 16.13 / 30.25 Q | 18.09 / 26.77 Q | 76 |
+| heron-1280x800 | 3.02 / 6.88 Q | 2.81 / 6.15 Q | 3.19 / 7.16 Q | 2.75 / 3.93 Q | 120 |
+| otter-1280x800 | 14.14 / 18.47 C | 24.50 / 36.90 Q | 19.53 / 34.15 Q | 21.97 / 35.42 Q | 120 |
+
+The following range includes every quiet attempt across those four methods. The pass split belongs to the slowest quiet p95-ranked frame. Its gap is the extra work that would have to be removed to reach 16.7 ms in that measured window. A blank range means no attempt passed both brackets.
+
+| Character and raster | Quiet / attempted | Quiet p95 range ms | Slowest method | Cull / Vis / other ms | Gap ms |
+|---|---:|---:|---|---:|---:|
+| walrus-960x720 | 4/4 | 13.30–16.40 | native | 0.08 / 11.38 / 4.94 | 0.00 |
+| heron-960x720 | 4/4 | 2.10–4.81 | immediate | 0.00 / 1.89 / 2.91 | 0.00 |
+| otter-960x720 | 3/7 | 17.46–29.71 | native | 0.46 / 22.55 / 6.69 | 13.01 |
+| walrus-1280x800 | 3/5 | 21.05–30.25 | ring | 0.13 / 19.34 / 10.77 | 13.55 |
+| heron-1280x800 | 5/6 | 3.93–7.16 | ring | 0.02 / 3.55 / 3.59 | 0.00 |
+| otter-1280x800 | 3/7 | 34.15–36.90 | immediate | 0.35 / 28.57 / 7.97 | 20.20 |
+
+Host submission covers 30 ordinary frames, after all GPU timing, draining the previous frame before each sample. It includes encoding and queue submission. These times run on the CPU.
+
+| Scene | Commands, guard → tiles | Guard CPU p50 | Tiles CPU p50 / p95 | Median change | Warm-block control before / after ms |
+|---|---:|---:|---:|---:|---:|
+| walrus-960x720 | 21 → 712 | 0.92 | 1.27 / 1.74 | +0.35 | 0.46 / 0.45 |
+| heron-960x720 | 23 → 23 | 0.87 | 0.66 / 1.15 | -0.21 | 0.45 / 0.46 |
+| otter-960x720 | 23 → 1405 | 0.89 | 1.98 / 2.51 | +1.09 | 0.45 / 0.46 |
+| walrus-1280x800 | 21 → 1022 | 0.87 | 1.62 / 1.98 | +0.76 | 0.90 / 1.03 |
+| heron-1280x800 | 23 → 23 | 0.89 | 0.86 / 1.04 | -0.03 | 0.72 / 0.91 |
+| otter-1280x800 | 23 → 2025 | 0.92 | 2.47 / 17.91 | +1.54 | 0.75 / 1.03 |
+
+[Raw immediate profiles](orbit/tiles) · [AB timing](orbit/tiles-ab) · [Every warm-device attempt](orbit/warm-device)
+
+At the actual p95-ranked pose of the ordinary combined run, each isolated guard draw ran seven times and the counter split field evaluations by whether the ray hit. The last column is half of each draw’s variable time above the independently measured empty pass, summed over listed fields. This is an optimistic estimate for operand pruning.
+
+| Scene | P95 frame index | Fields | Hit / miss evaluations M | Half variable draw ms |
+|---|---:|---|---:|---:|
+| [base-960x720](orbit/residual-tiles/base-960x720.json.gz) | 80 | Otter | 3.879 / 6.287 | 1.24 |
+| [walrus-960x720](orbit/residual-tiles/walrus-960x720.json.gz) | 7 | Hide, Cap | 3.671 / 7.277 | 9.25 |
+| [heron-960x720](orbit/residual-tiles/heron-960x720.json.gz) | 98 | HeronHead | 0.136 / 0.542 | 0.46 |
+| [otter-960x720](orbit/residual-tiles/otter-960x720.json.gz) | 52 | Head4, Torso | 3.693 / 7.159 | 5.77 |
+| [walrus-1280x800](orbit/residual-tiles/walrus-1280x800.json.gz) | 90 | Hide, Cap | 4.857 / 9.231 | 3.32 |
+| [heron-1280x800](orbit/residual-tiles/heron-1280x800.json.gz) | 88 | HeronHead | 0.173 / 0.650 | 0.58 |
+| [otter-1280x800](orbit/residual-tiles/otter-1280x800.json.gz) | 101 | Head4, Torso | 4.919 / 9.728 | 9.92 |
+
+The ordered-culler pairs isolate the effect of binning from the ordinary culler’s choice of equal-depth winner. The four score columns give exact frames, maximum channel error, largest changed-pixel count per frame and total changed pixels over the 120-frame clip.
+
+| Scene | Original repeat | Ordered group of eight vs ordered original | Ordered tiles vs ordered original |
+|---|---|---|---|
+| walrus-960x720 | [78 / 110 / 4 / 60](orbit/repeat-original/repeat-original-walrus-960x720.png) | 120 / 0 / 0 / 0 | 120 / 0 / 0 / 0 |
+| otter-960x720 | 120 / 0 / 0 / 0 | 120 / 0 / 0 / 0 | 120 / 0 / 0 / 0 |
+| walrus-1280x800 | [83 / 106 / 4 / 50](orbit/repeat-original/repeat-original-walrus-1280x800.png) | 120 / 0 / 0 / 0 | 120 / 0 / 0 / 0 |
+| otter-1280x800 | 120 / 0 / 0 / 0 | 120 / 0 / 0 / 0 | 120 / 0 / 0 / 0 |
+
+On walrus-960x720, 22 of the 40 stable frames that differed from the first original matched the second original exactly. The pair of original samples does not enumerate every possible tie winner.
+
+On walrus-1280x800, 17 of the 44 stable frames that differed from the first original matched the second original exactly. The pair of original samples does not enumerate every possible tie winner.
+
+Both fixed-order walrus references used the existing stock `cull_single` body for every kind. The stable candidate preserves all 120 RGBA outputs at each raster. Its native AB ring measured 8.99 / 12.90 ms versus the original 18.80 / 25.44 at 960, and 10.84 / 16.93 ms versus 26.30 / 34.09 at 1280. All four were quiet; the larger deterministic run exceeded the 16.7 ms target by 0.23 ms. The original ordinary source retains the atomic culler. The prewritten ±25% small-raster and 22 ms large-raster predictions for the ordered ring both held. [Ordered original timing](orbit/ordered-original-ab) · [Ordered combined timing](orbit/ordered-tiles-ab)
