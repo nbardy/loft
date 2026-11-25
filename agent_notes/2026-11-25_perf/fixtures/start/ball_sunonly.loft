@@ -1,0 +1,46 @@
+# plain starter: a 20 cm ball with a lump, no fur yet
+use stdlib::sky::environment::{sky_color}
+use stdlib::sdf::solid::{smin, box_sdf}
+use stdlib::geometry::analytic::{ray_ground}
+use stdlib::materials::bsdf::{lambert, ggx}
+
+const Fur = [0.10, 0.065, 0.040]
+const Ground = [0.20, 0.20, 0.19]
+
+# The study pelt: a ball of radius 0.10 m at height 0.11 m with a lower lump to +x, so there is a silhouette
+# against the sky, a grazing edge, a concave join and a contact shadow. Fur flows toward -x.
+fn sun_only(b: Bsdf, n: rgb, v: rgb, sun: rgb, shadow: f, ao: f) -> rgb {
+  eval_bsdf(b, n, v, sun) * sun_color() * shadow + eval_bsdf(b, n, v, rgb(0.0))
+}
+
+kind Pelt @World () {
+  trace(p) {
+    let d = (p - [0.0, 0.11, 0.0]@World).xyz
+    let e = (p - [0.15, 0.07, 0.0]@World).xyz
+    let ball = length(d) - 0.10
+    let lump = (length(e / [0.11, 0.065, 0.075]) - 1.0) * 0.065
+    smin(ball, lump, 0.04)
+  }
+  material(p, n) = lambert(Fur)
+}
+
+kind Floor @World () {
+  visible(ro, rd) = ray_ground(ro, rd, 40m)
+  trace(p) = box_sdf(p - [0, -0.5, 0]@World, [40, 0.5, 40])
+  material(p, n) = ggx(Ground, 0.8, 0.0)
+}
+
+camera View { eye: [0.34, 0.21, 0.52]@World, at: [0.06, 0.105, 0.0]@World, fov: 36.0deg }
+build {
+  emit Pelt()
+  emit Floor()
+}
+schedule Main {
+  use_camera(View)
+  cull_indirect(Pelt, Floor)
+  render_bundle(Vis64) { draw_indirect(Pelt, Floor) }
+  find_shadow_map(Pelt, size: 1024)
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: sun_only, sun: [0.55, 0.62, 0.56])
+  tonemap_aces(ColorHdr, sky: sky_color)
+}

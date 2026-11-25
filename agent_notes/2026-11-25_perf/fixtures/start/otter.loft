@@ -1,0 +1,229 @@
+# otter4 base: r08 c3 with fur shaded as fur
+use stdlib::integrators::direct::{sun_sky}
+use stdlib::sky::environment::{sky_color}
+use stdlib::sdf::solid::{smin, box_sdf, round_cone}
+use stdlib::geometry::analytic::{ray_ground, ray_round_cone, ray_sphere}
+use stdlib::materials::bsdf::{lambert, ggx, sheen}
+use stdlib::noise::value::{vnoise}
+
+fn el(q: rgb, c: rgb, r: rgb) -> f {
+  (length((q - c) / r) - 1.0) * min(r.x, min(r.y, r.z))
+}
+
+fn rbox(q: rgb, c: rgb, h: rgb, r: f) -> f {
+  let d = abs(q - c) - h + rgb(r)
+  length(max(d, rgb(0.0))) + min(max(d.x, max(d.y, d.z)), 0.0) - r
+}
+
+fn smax(a: f, b: f, k: f) -> f {
+  0.0 - smin(0.0 - a, 0.0 - b, k)
+}
+
+const Choc = [0.06, 0.038, 0.024]
+const Cheek = [0.16, 0.115, 0.08]
+const Bib = [0.36, 0.335, 0.285]
+const Face = [0.135, 0.108, 0.084]
+const Pale = [0.62, 0.6, 0.54]
+const Black = [0.012, 0.01, 0.009]
+const Deep = [0.03, 0.042, 0.034]
+const Peat = [0.075, 0.062, 0.036]
+const SunDir = [0.55, 0.62, 0.56]
+
+fn ggx_term(nh: f, nv: f, nl: f, rough: f) -> f {
+  let a = max(rough * rough, 0.002)
+  let a2 = a * a
+  let q = nh * nh * (a2 - 1.0) + 1.0
+  let vis = 0.5 / max(nl * sqrt(nv * nv * (1.0 - a2) + a2) + nv * sqrt(nl * nl * (1.0 - a2) + a2), 0.00001)
+  a2 / (3.14159265 * q * q) * vis
+}
+
+# Fur is a pelt of fibres lying along `flow`, not a smooth dielectric skin. The diffuse wraps 0.35 past the
+# terminator (normalised, so it reflects no more than Lambert). The highlight is an anisotropic GGX, narrow
+# along the fibre (0.35) and wide across it (0.85), so it runs ACROSS the flow as on hair; `gloss` scales it for
+# fibres shadowing each other. Both widths exceed one of sun_sky's twelve sky samples (0.58 rad), so the sky
+# integrates without separate highlights. `glint` is the water film at roughness 0.25, and it answers the sun
+# only: against a sky sample a lobe that narrow returns about 15 times the sky the sample stands for.
+lobe fur(albedo: rgb, flow: rgb, gloss: f, glint: f, tilt: rgb, n: rgb, v: rgb, l: rgb) {
+  if dot(l, l) < 0.5 || dot(n, l) <= -0.35 {
+    return v4(rgb(0.0), 1.0)
+  }
+  let m = normalize(n + tilt)
+  let wrap = max(dot(m, l) + 0.35, 0.0) / 1.8225
+  let nl = max(dot(m, l), 0.0)
+  let nv = max(dot(m, v), 0.02)
+  let h = normalize(v + l)
+  let t = normalize(flow - m * dot(m, flow) + rgb(0.00001))
+  let ht = dot(h, t) / 0.35
+  let hb = dot(h, cross(m, t)) / 0.85
+  let hn = dot(h, m)
+  let q = ht * ht + hb * hb + hn * hn
+  let d = 1.0 / (0.93462 * q * q)
+  let vis = 0.25 / max(nl + nv - nl * nv, 0.0001)
+  let f = 0.04 + 0.96 * pow(1.0 - max(dot(v, h), 0.0), 5.0)
+  let film = glint * step(0.995, dot(l, SunDir)) * ggx_term(max(hn, 0.0), nv, max(nl, 0.0001), 0.25)
+  v4(albedo * (0.318309886 * wrap) + rgb(f * (gloss * d * vis + film) * nl), 1.0)
+}
+
+lobe sheet(albedo: rgb, rough: f, tilt: rgb, n: rgb, v: rgb, l: rgb) {
+  let m = normalize(n + tilt)
+  let nl = max(dot(m, l), 0.0)
+  let nv = max(dot(m, v), 0.02)
+  let h = normalize(v + l)
+  let nh = max(dot(m, h), 0.0)
+  let f = 0.02 + 0.98 * pow(1.0 - max(dot(v, h), 0.0), 5.0)
+  v4((albedo * (0.318309886 * (1.0 - f)) + rgb(f * ggx_term(nh, nv, nl, rough))) * nl, 1.0)
+}
+
+fn streak(q: rgb, fx: f, fy: f) -> f {
+  vnoise([q.x * fx, q.y * fy, q.z * fy])
+}
+
+fn foot(x: f, z: f) -> f {
+  length([(x - 0.407) / 0.153, z / 0.1])
+}
+
+fn ripple(x: f, z: f) -> f {
+  let rr = foot(x, z)
+  let ring = sin((rr - 1.0) * 26.0) * (1.0 - smoothstep(1.3, 3.2, rr)) * smoothstep(1.0, 1.15, rr)
+  let back = max(0.407 - x, 0.0)
+  let arm = abs(abs(z) - 0.1 - 0.30 * back)
+  let wake = sin(arm * 120.0) * (1.0 - smoothstep(0.0, 0.05, arm)) * smoothstep(0.05, 0.15, back) * (1.0 - smoothstep(0.5, 1.4, back))
+  let swell = vnoise([x * 5.0, 0.0, z * 3.2]) + 0.5 * vnoise([x * 13.0, 3.0, z * 8.0])
+  0.55 * swell + 0.9 * ring + 0.8 * wake
+}
+
+kind Otter @World () {
+  trace(p) {
+    let dh = (p - [0.52, 0.0633, 0.0]@World).xyz
+    let q = [0.9962 * dh.x + 0.0872 * dh.y, -0.0872 * dh.x + 0.9962 * dh.y, 1.0 * dh.z]
+    let qa = [q.x, q.y, abs(q.z)]
+    let dn = (p - [0.3461, -0.0078, 0.0]@World).xyz
+    let u = [0.9659 * dn.x + 0.2588 * dn.y, -0.2588 * dn.x + 0.9659 * dn.y, 1.0 * dn.z]
+    let w = p.xyz
+    let cranium = el(q, [0.0, -0.0041, 0.0], [0.079, 0.0413, 0.0893])
+    let cheek = el(qa, [0.0132, -0.0165, 0.051], [0.0632, 0.0313, 0.0442])
+    let muzzle = rbox(q, [0.115, -0.017, 0.0], [0.04, 0.026, 0.048], 0.0143)
+    let chin = el(q, [0.095, -0.0365, 0.0], [0.038, 0.0117, 0.0384])
+    let pad = el(qa, [0.127, -0.0201, 0.0374], [0.036, 0.0203, 0.0264])
+    let lobe = el(qa, [0.153, -0.0062, 0.011], [0.008, 0.01, 0.013])
+    let tip = el(q, [0.151, -0.0172, 0.0], [0.007, 0.008, 0.009])
+    let nape = el(q, [-0.0949, 0.0429, 0.0], [0.035, 0.022, 0.075])
+    let stop = el(q, [0.085, 0.0347, 0.0], [0.0184, 0.0165, 0.0468])
+    let nostril = el(qa, [0.161, -0.0082, 0.012], [0.0045, 0.0032, 0.0042])
+    let ear = el(qa, [-0.0595, 0.0155, 0.0792], [0.0192, 0.0168, 0.012])
+    let neck = el(u, [0.03, 0.0, 0.0], [0.13, 0.08, 0.09])
+    let throat = el(u, [0.07, -0.03, 0.0], [0.1, 0.05, 0.075])
+    let back = el(w, [0.1937, -0.145, 0.0], [0.12, 0.095, 0.09])
+    let skull_all = smin(smin(smin(smin(cranium, cheek, 0.03), muzzle, 0.012), chin, 0.025), pad, 0.016)
+    let head = smax(skull_all, q.y + 0.03 * q.x - 0.0309, 0.02)
+    let head_n = smax(smax(smax(smin(smin(head, lobe, 0.004), tip, 0.006), 0.0 - nape, 0.025), 0.0 - stop, 0.02), 0.0 - nostril, 0.002)
+    let whole = smin(smin(smin(smin(head_n, ear, 0.008), neck, 0.07), throat, 0.05), back, 0.06)
+    max(whole, 0.0 - p.y)
+  }
+  material(p, n) {
+    let dh = (p - [0.52, 0.0633, 0.0]@World).xyz
+    let q = [0.9962 * dh.x + 0.0872 * dh.y, -0.0872 * dh.x + 0.9962 * dh.y, 1.0 * dh.z]
+    let qa = [q.x, q.y, abs(q.z)]
+    let lobe = el(qa, [0.153, -0.0062, 0.011], [0.008, 0.01, 0.013])
+    let tip = el(q, [0.151, -0.0172, 0.0], [0.007, 0.008, 0.009])
+    let pad = smin(lobe, tip, 0.006)
+    let nose = 1.0 - smoothstep(0.0, 0.0025, pad)
+    let s1 = streak(q, 7.0, 190.0)
+    let s2 = streak(q + [3.1, 1.7, 0.4], 14.7, 342.0)
+    let low = 1.0 - smoothstep(0.003, 0.03, p.y)
+    let tuft = pow(streak(q + [0.7, 5.3, 2.2], 21.0, 171.0), 3.0) * (0.1 + 0.5 * low)
+    let clump = s1 * 0.6 + s2 * 0.25 + tuft
+    let crown = smoothstep(0.55, 0.9, n.y) * (1.0 - low)
+    let jaw = 1.0 - smoothstep(0.0, 0.025, q.y - (-0.034 + 0.12 * max(q.x - 0.03, 0.0)))
+    let throat = (1.0 - smoothstep(0.010, 0.032, p.y)) * smoothstep(0.42, 0.50, p.x)
+    let bib = smoothstep(0.25, 0.75, max(jaw, throat) + 0.25 * (s2 - 0.5))
+    let glint = smoothstep(0.7, 0.9, streak(q + [9.1, 0.3, 4.4], 10.5, 152.0)) * 0.6
+    let cheek = smoothstep(0.0425, 0.0723, qa.z) * (1.0 - smoothstep(-0.015, 0.02, q.y)) * 0.5
+    let face = smoothstep(-0.06, 0.08, q.x) * (1.0 - 0.7 * crown) * 0.8
+    var c = mix(Choc, Cheek, cheek) * (0.7 + 0.6 * clump)
+    c = mix(c, Face * (0.8 + 0.4 * clump), face)
+    c = mix(c, Bib * 0.72 * (0.9 + 0.2 * clump), bib)
+    c = c * (1.0 * (1.0 - 0.6 * low * (1.0 - 0.4 * bib)))
+    c = mix(c, Black, nose)
+    let e = 0.003
+    let gy = streak(q + [0.0, e, 0.0], 7.0, 190.0) - streak(q - [0.0, e, 0.0], 7.0, 190.0)
+    let gz = streak(q + [0.0, 0.0, e], 7.0, 190.0) - streak(q - [0.0, 0.0, e], 7.0, 190.0)
+    let tilt = [0.0, gy, gz] * ((0.45 + 0.35 * low) * (1.0 + 2.0 * tuft) * (1.0 - nose))
+    fur(c, [0.9962, 0.0872, 0.0] + tilt * 0.6, 0.5 * (1.0 - nose), mix(glint, 1.0, nose), tilt) + sheen(c * (1.0 * (1.0 - nose)), 0.5)
+  }
+}
+
+kind Water @World () {
+  visible(ro, rd) = ray_ground(ro, rd, 40m)
+  trace(p) = box_sdf(p - [0, -0.5, 0]@World, [40, 0.5, 40])
+  material(p, n) {
+    let e = 0.003
+    let h0 = ripple(p.x, p.z)
+    let gx = ripple(p.x + e, p.z) - h0
+    let gz = ripple(p.x, p.z + e) - h0
+    let tilt = [gx, 0.0, gz] * 1.1
+    let patch = vnoise([p.x * 1.3, 0.0, p.z * 0.9])
+    let tint = mix(Deep, Peat, smoothstep(0.3, 0.8, patch) * 0.7)
+    let meniscus = 0.12 + 0.88 * smoothstep(0.98, 1.09, foot(p.x, p.z))
+    sheet(tint * meniscus, 0.12, tilt)
+  }
+}
+
+kind Whisker @World (a: p3@World, b: p3@World, ra: m, rb: m) {
+  visible(ro, rd) = ray_round_cone(ro, rd, a, b, ra, rb)
+  trace(p) = round_cone(p, a, b, ra, rb)
+  material(p, n) = lambert(Pale)
+}
+
+build fn whiskers(h: p3@World, fw: rgb, up: rgb, lz: rgb, pad: rgb, rad: rgb, aim: rgb, len: f, r: f, curl: f) {
+  build for side_id in 0..2 {
+    let side = select(-1.0, 1.0, side_id == 1)
+    build for i in 0..3 {
+      build for j in 0..5 {
+        let a = f32(j) / 4.0 - 0.5
+        let b = f32(i) / 2.0 - 0.5
+        let nx = 0.6 * a + 0.15
+        let ny = 0.75 * b
+        let nz = sqrt(max(1.0 - nx * nx - ny * ny, 0.05))
+        let lr = [pad.x + rad.x * nx * 0.92, pad.y + rad.y * ny * 0.92, side * (pad.z + rad.z * nz * 0.92)]
+        let ld = normalize([aim.x - 0.3 * a + 0.4 * nx, aim.y - 0.35 * b + 0.4 * ny, side * (aim.z + 0.4 * nz)])
+        let l2 = normalize(ld + [0.0 - 0.08 * curl, 0.0 - 0.35 * curl, 0.0])
+        let k = len * (1.0 - 0.3 * abs(b) - 0.2 * (0.5 - a))
+        let lm = lr + ld * (0.5 * k)
+        let lt = lm + l2 * (0.5 * k)
+        let wr = fw * lr.x + up * lr.y + lz * lr.z
+        let wm = fw * lm.x + up * lm.y + lz * lm.z
+        let wt = fw * lt.x + up * lt.y + lz * lt.z
+        let root = h + [wr.x, wr.y, wr.z]
+        let mid = h + [wm.x, wm.y, wm.z]
+        let tip = h + [wt.x, wt.y, wt.z]
+        emit Whisker(a: root, b: mid, ra: r, rb: r * 0.6)
+        emit Whisker(a: mid, b: tip, ra: r * 0.6, rb: r * 0.2)
+      }
+    }
+  }
+}
+
+kind Bead @World (c: p3@World, r: m) {
+  visible(ro, rd) = ray_sphere(ro, rd, c, r)
+  trace(p) = length(p - c) - r
+  material(p, n) = ggx(Black, 0.06, 0.0)
+}
+
+camera View { eye: [0.8901, 0.1523, 0.6929]@World, at: [0.5217, 0.028, 0.0]@World, fov: 38.0deg }
+build {
+  emit Otter()
+  emit Water()
+  whiskers([0.52, 0.0633, 0.0]@World, [0.9962, 0.0872, 0.0], [-0.0872, 0.9962, 0.0], [0.0, 0.0, 1.0], [0.127, -0.0201, 0.0374], [0.036, 0.0203, 0.0264], [1.3, -0.06, 0.8], 0.1581, 0.0007, 0.25)
+  emit Bead(c: [0.6034, 0.0717, 0.0469]@World, r: 0.0095)
+  emit Bead(c: [0.6034, 0.0717, -0.0469]@World, r: 0.0095)
+}
+schedule Main {
+  use_camera(View)
+  cull_indirect(Otter, Water, Whisker, Bead)
+  render_bundle(Vis64) { draw_indirect(Otter, Water, Whisker, Bead) }
+  find_shadow_map(Otter, size: 1024)
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: sun_sky, sun: [0.55, 0.62, 0.56])
+  tonemap_aces(ColorHdr, sky: sky_color)
+}

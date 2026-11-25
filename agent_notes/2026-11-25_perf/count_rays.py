@@ -7,6 +7,7 @@ import json
 import math
 import re
 import sys
+import subprocess
 from pathlib import Path
 
 import numpy as np
@@ -101,13 +102,13 @@ class Raster:
         self.count = dev.create_buffer(size=256*5*4,usage=U.STORAGE|U.COPY_SRC|U.COPY_DST)
         self.cg = group(counter_layout,[(9,self.count)])
 
-    def draw(self, kinds, count=False, repetitions=1, timing=False):
+    def draw(self, kinds, count=False, repetitions=1, timing=False, occluded=False):
         enc=dev.create_command_encoder()
         if count: enc.clear_buffer(self.count)
         stamps=dict(query_set=self.query,beginning_of_pass_write_index=0,end_of_pass_write_index=1) if timing else None
         rp=enc.begin_render_pass(timestamp_writes=stamps,
             color_attachments=[dict(view=self.cview,resolve_target=None,load_op='clear',store_op='store',clear_value=(2**32-1,0,0,0))],
-            depth_stencil_attachment=dict(view=self.dview,depth_load_op='clear',depth_clear_value=1,depth_store_op='store'))
+            depth_stencil_attachment=dict(view=self.dview,depth_load_op='clear',depth_clear_value=0 if occluded else 1,depth_store_op='store'))
         for beauty, probe, rows, n in kinds:
             rp.set_pipeline(probe if count else beauty)
             rp.set_bind_group(0,self.frame); rp.set_bind_group(1,rows)
@@ -127,6 +128,18 @@ class Raster:
 
 
 def collect(name):
+    # The lane can also run from its pinned local baseline build and fixture copies.
+    basename = {'ball':'start/ball','base':'start/otter','walrus':'walrus/tq',
+                'heron':'heron/h02_hero_q3','otter':'otter/hero_q3'}[name]
+    scene = P.parent/'baseline/source/fixtures'/(basename+'.loft')
+    for ext in ('ir','show'):
+        dest = P/f'{name}.{ext}'
+        if not dest.exists() or not dest.stat().st_size:
+            tmp = dest.with_suffix('.counter-tmp')
+            with tmp.open('w') as file:
+                args = ['ir',scene] if ext=='ir' else ['show',scene,'--json']
+                subprocess.run([P.parent/'baseline/loft',*args],stdout=file,check=True)
+            tmp.replace(dest)
     text=(P/f'{name}.ir').read_text().rsplit(' (kinds ',1)[1]
     modules=json.loads((P/f'{name}.show').read_text())['modules']
     def vec(key): return np.fromstring(re.search(key+r'[^#]*#\(([^)]+)',text)[1],sep=' ')
@@ -153,7 +166,8 @@ def collect(name):
         cc=cal.draw([spec],True)
         # Four draws amortize the single attachment clear/store. All use late frag_depth.
         tt=[cal.draw([spec],repetitions=4,timing=True) for _ in range(9)][2:]
-        records[kind]=dict(rows=n,draw=draw,L=max(map(float,ls.split())),target=counts,
+        hidden=[cal.draw([spec],repetitions=4,timing=True,occluded=True) for _ in range(5)][1:]
+        records[kind]=dict(calibration_occluded_four_ms=hidden,rows=n,draw=draw,L=max(map(float,ls.split())),target=counts,
                            calibration=cc,calibration_four_draw_ms=tt)
         print(name,kind,counts, round(np.median(tt),3),flush=True)
     if not records: raise ValueError('no raster kinds parsed')

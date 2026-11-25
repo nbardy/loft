@@ -1,0 +1,22 @@
+# FINAL: the merged otter, default smirk, q3
+# parent: r07/hero_q3
+use self::otter::{marrow, raft, Eye, Torso, Coat, Belt, Tail, Bit, Log, Water, water}
+use self::forms::{Head4}
+use self::fur::{Strand}
+use self::mat::{maq_light, river_sky}
+camera View { eye: [0.8092, 0.5379, 0.7042]@World, at: [-0.0300, 0.3050, 0.0000]@World, fov: 38.0deg }
+build {
+  # marrow(at, lean sway crouch nod turn tilt head fat leg tail gaff form expr mode fur)
+  marrow([0.0, 0.065, 0.0]@World, 0.14, 0.04, 0.01, 0.1, 0.22, 0.12, 0.95, 0.95, 1.1, 0.9, -0.3, 4.0, 0.0, 0.0, 2.0)
+  raft([0.0, 0.065, 0.0]@World, 0.0)
+  water(0.0)
+}
+schedule Main {
+  use_camera(View)
+  cull_indirect(Head4, Eye, Torso, Coat, Belt, Tail, Bit, Log, Strand, Water)
+  render_bundle(Vis64) { draw_indirect(Head4, Eye, Torso, Coat, Belt, Tail, Bit, Log, Strand, Water) }
+  find_shadow_map(Head4, Eye, Torso, Coat, Belt, Tail, Bit, Log, Strand, Water, size: 1024)
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: maq_light, sun: [-0.70, 0.32, -0.30])
+  tonemap_aces(ColorHdr, sky: river_sky)
+}
