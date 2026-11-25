@@ -42,6 +42,10 @@ repo does not say: the owner's words, what is wrong today, and what done looks l
   Commit everything it wants kept; do not push, merge or remove the worktree.
 - The shell hook rejects `>` redirects (use `tee`). One scene per process. `echo ====` breaks in zsh.
 - Pictures are WebP under `out/` (ignored by git); final ones are copied to `~/git/loft/out/<topic>/`.
+- Rounds of variants go through `tools/render_sheet.py`: one GPU job per round, one labelled sheet, and a trail line
+  per render (program, picture, parent, frame time) so rejected variants are kept as data. A brief that reaches
+  materials asks for a channel sheet (`SHEET_AOVS=albedo,normal`, plus the scene's own roughness and mask views)
+  beside the final picture.
 - Do not run the whole test suite per worker. Under load it times out and the failures are noise; the integrator runs
   it once on a quiet machine.
 - If it profiles, it follows `frame-time`: one state, and say when other workers were on the GPU.

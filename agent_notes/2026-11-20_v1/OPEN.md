@@ -552,6 +552,27 @@ The X2f size audit and four proposed cuts are recorded in [the lean-down plan](d
 - Deferred: the native MetalBackend (predicted 0.09–0.19 ms for 2.3–3.8k lines), HDR+Present fusion, f16 shading, ground fBM bake, and consumer Wasm passes until check.rs (86.5 KB) is split.
 - Superseded briefs: s1_exec, s1_motion_fma, s1_web, is1 and sci_chain.sh, which are covered by x2a, x2b and x2e.
 
+## Engine gaps found by the otter, fur and character work (25 Nov)
+
+Each was worked around in authored Loft and none is fixed in the engine. Figures are measured in renders unless marked derived.
+
+- **No environment reflection.** `stdlib/integrators/direct.loft` `sun_sky` integrates the sky as 12 point samples
+  of 1.05 sr. A lobe narrower than one sample returns many times the sky it stands for (derived from GGX: at roughness 0.10
+  about 1,170x at a sample's centre and nothing between samples). A crop of the old otter's crown shows the
+  samples as a row of separate dots. Flat water at roughness 0.12 measured (32, 40, 35) of 255 where a mirrored sky gives
+  (66, 81, 94). Workaround: a lobe returns the mirrored `sky_dome` at the emission query (`l = 0`) and gates its
+  glossy term to the sun. A light function cannot do this for a `Bsdf` it did not write, because `eval_bsdf` does
+  not expose roughness or F0.
+- **No roughness or material view.** `--aov` gives albedo, normal, depth and id, and the normal is the one handed
+  to `material`: a tilt applied inside a lobe does not show. Roughness, coat, sheen, that tilt and the material
+  mask have to be rendered by copying the material and returning a flat colour.
+- **No noise in a traced field.** `vnoise` (any `floor`) derives `Unbounded` (E211), and a field with it has no
+  finite bound (E212). Displacement is limited to sums of sines: a 3 mm two-set ridge field raised the otter head's
+  derived L from 3.41 to 5.53; its frame was 71 ms at 960x720 where the other variants of the same batch took
+  22 to 50 ms.
+- **The built binary reads the primary checkout's `stdlib/` live.** A worktree cannot add or change a stdlib module
+  and see it; a worker's library has to be a sibling module (`use self::name`) until it is merged.
+
 ## Std library rule and anti-patterns (owner, 20 Nov)
 - A std function earns its place when it replaces a recurring, sufficiently complicated block costing ≥3× the tokens of its call (PHILOSOPHY §4).
 - **Anti-pattern (seen in Buddies expeditions):** re-implementing standard functional patterns (`map`, `await`, filter, fold) as tiny renamed wrappers that cover one or two calls under a new name. That adds names and saves nothing. Std functions are LARGE, real blocks: a leg family, a shell generator, a layered material, a gait law, a camera rig. Never a renamed one-liner.

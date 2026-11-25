@@ -32,11 +32,16 @@ below exists.
    - states that must be told apart are told apart at the same camera and resolution;
    - the base variant's pictures do not change (the approved picture gate where the scene is covered).
    A passing number is necessary, not sufficient: the contrast figure passed while shut eyes were dark balls.
-5. **Predict, build, look, score.** Predictions go in `DIRECTION.md` under the round before the first render. Then
+5. **Look at the channels before changing a material.** `--aov albedo` and `--aov normal` on `loft still` or `loft clip`
+   show the base colour and the surface normal without light; roughness, material masks and any normal tilt applied
+   inside a lobe the scene renders itself as flat colour. Name the channel that is wrong, then change that one. The otter was called "too shiny" and the fix
+   removed every highlight without looking: the next vote preferred nearly anything to the matte result, including
+   the variant that put the glints back. When the owner names a defect, show a small move and its opposite.
+6. **Predict, build, look, score.** Predictions go in `DIRECTION.md` under the round before the first render. Then
    look at the pictures yourself, from the `game` camera first, and list what is wrong before reporting what is right.
-6. **An action has a consequence in the world.** A grab that sets the boat back down, or a slam nothing responds to,
+7. **An action has a consequence in the world.** A grab that sets the boat back down, or a slam nothing responds to,
    will come back as "I'd love to see it really toss the boat". Ask of every attack: what does the other boat feel?
-7. **End on a page, opened.** Every round ends with one HTML page under `out/<round>/index.html`: clips first, then
+8. **End on a page, opened.** Every round ends with one HTML page under `out/<round>/index.html`: clips first, then
    the comparison sheet (before and after, or variants side by side), the measured numbers, the weak spots, and the
    choices the owner may want to reverse. Open it (`open out/<round>/index.html`). A list of file paths is not a
    deliverable.
