@@ -91,6 +91,7 @@ for name in scenes.keys() - {'sun'}:
     calwork = 0.
     caltraced = 0.
     ideal = 0.
+    ideal_field = 0.
     work = dict(trace_miss=0., trace_hit=0., analytic_miss=0., analytic_hit=0.)
     contribution = {}
     rates = {}
@@ -106,6 +107,7 @@ for name in scenes.keys() - {'sun'}:
         rate = cost / (shc + smc if traced else pc)
         if traced:
             caltraced += cost
+            ideal_field += rate * data['shaded']
             work['trace_miss'] += sm * rate
             work['trace_hit'] += sh * rate
         else:
@@ -135,6 +137,7 @@ for name in scenes.keys() - {'sun'}:
                         budget={k:(observed[1]-empty)*v/target_work for k,v in work.items()},
                         raster_clear_estimate=empty, non_visibility=orig['p50']-observed[1],
                         one_query_frame=orig['p50']-observed[1]+empty+ideal*(correction if cal else 1.),
+                        eight_query_frame=orig['p50']-observed[1]+empty+(ideal+7*ideal_field)*(correction if cal else 1.),
                         kinds={k:(observed[1]-empty)*v/target_work for k,v in contribution.items()})
 # Two-column nonnegative least squares. Include both boundary solutions.
 shared = {}

@@ -178,5 +178,6 @@ def collect(name):
     for i,record in enumerate(records.values()): record['shaded']=int(np.sum(ids==i))
     (P/f'{name}.counts.json').write_text(json.dumps(dict(adapter=adapter.info['device'],cal_empty_ms=empty,cal_combined_ms=combined,kinds=records),indent=2))
 
-for name in sys.argv[2:]:
-    collect(name)
+if __name__ == '__main__':
+    for name in sys.argv[2:]:
+        collect(name)
