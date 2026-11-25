@@ -171,11 +171,12 @@ def collect(name):
                            calibration=cc,calibration_four_draw_ms=tt)
         print(name,kind,counts, round(np.median(tt),3),flush=True)
     if not records: raise ValueError('no raster kinds parsed')
+    combined = [cal.draw(all_kinds,timing=True) for _ in range(12)][3:]
     test.draw(all_kinds)
     raw=q.read_texture(dict(texture=test.color),dict(bytes_per_row=960*8,rows_per_image=720),(960,720,1))
     ids=np.frombuffer(raw,np.uint32).reshape(-1,2)[:,0]>>24
     for i,record in enumerate(records.values()): record['shaded']=int(np.sum(ids==i))
-    (P/f'{name}.counts.json').write_text(json.dumps(dict(adapter=adapter.info['device'],cal_empty_ms=empty,kinds=records),indent=2))
+    (P/f'{name}.counts.json').write_text(json.dumps(dict(adapter=adapter.info['device'],cal_empty_ms=empty,cal_combined_ms=combined,kinds=records),indent=2))
 
 for name in sys.argv[2:]:
     collect(name)
