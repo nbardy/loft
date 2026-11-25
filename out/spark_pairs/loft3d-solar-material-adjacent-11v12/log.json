@@ -1,0 +1,53 @@
+{
+  "alignment": {
+    "format": "png",
+    "framing": "orbit still, subject centred, 1280x800 PNG",
+    "size": [
+      1280,
+      800
+    ]
+  },
+  "created_by": "loft-still-01",
+  "criteria": "Which robot reads more solar-scavenger? Judge rust vs mirror only.",
+  "pair_id": "loft3d-solar-material-adjacent-11v12",
+  "renders": [
+    {
+      "params": {
+        "chain": "solar-material",
+        "kind": "adjacent",
+        "t": 11
+      },
+      "path": "out/spark_pairs/loft3d/solar-material/step_11.png",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 11 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=11).",
+      "sha256": "41f1c55b091701e66eda2019dfa29d27dd452457f1e431ea4957958fb54c224f",
+      "side": "a",
+      "size": [
+        1280,
+        800
+      ]
+    },
+    {
+      "params": {
+        "chain": "solar-material",
+        "kind": "adjacent",
+        "t": 12
+      },
+      "path": "out/spark_pairs/loft3d/solar-material/step_12.png",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 12 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=12).",
+      "sha256": "51c2f8f8c1d2528a306bbb54d39d4e9e1048437200842064e72d0225aa4e485c",
+      "side": "b",
+      "size": [
+        1280,
+        800
+      ]
+    }
+  ],
+  "scene_check": {
+    "exit": 0,
+    "scene": "out/spark_pairs/chains/solar-material/chain.loft",
+    "summary": [
+      "kind Capsule      Analytic  rows    4  shapes   4  derived L 1.0000..1.0000  bound evals 0  derive 0.00 s",
+      "modules 4  passes [cull, Vis([0]), classify, Shade([0]), present]"
+    ]
+  }
+}

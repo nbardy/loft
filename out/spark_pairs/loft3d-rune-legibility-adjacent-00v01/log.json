@@ -18,7 +18,7 @@
         "t": 0
       },
       "path": "out/spark_pairs/loft3d/rune-legibility/step_00.png",
-      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 0/10 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=0).",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 0 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=0).",
       "sha256": "1707ce0838d76f9eeb016777ae701e7ca0e910f829de84296f9b2e12bf4dcf2d",
       "side": "a",
       "size": [
@@ -33,7 +33,7 @@
         "t": 1
       },
       "path": "out/spark_pairs/loft3d/rune-legibility/step_01.png",
-      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 1/10 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=1).",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 1 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=1).",
       "sha256": "ecd5137793cc62a5b07ae7605fb365cde1c88c58f358c141d3b6e7f4598ad0f5",
       "side": "b",
       "size": [

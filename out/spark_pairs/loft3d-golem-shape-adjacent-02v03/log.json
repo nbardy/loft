@@ -18,8 +18,8 @@
         "t": 2
       },
       "path": "out/spark_pairs/loft3d/golem-shape/step_02.png",
-      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 2/10 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=2).",
-      "sha256": "bad6bd1b4bb9c112c3f88e48523295a7009595849f30ac5ec04cdbb3cec4faae",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 2 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=2).",
+      "sha256": "4985a675f122fc8055c66e42c39f1a6c010821be4a88144cefea86e69b12922d",
       "side": "a",
       "size": [
         1280,
@@ -33,8 +33,8 @@
         "t": 3
       },
       "path": "out/spark_pairs/loft3d/golem-shape/step_03.png",
-      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 3/10 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=3).",
-      "sha256": "0535b6dd8d083bb20073ae46f85847c7ba21ab704c1e66a5cf64b37f5a0697ce",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 3 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=3).",
+      "sha256": "268bef8b5bea7f7a42f1d640ec0050b283f8c111a60d7d02eec8edd39b72ddcb",
       "side": "b",
       "size": [
         1280,

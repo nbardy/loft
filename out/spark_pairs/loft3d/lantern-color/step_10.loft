@@ -25,10 +25,10 @@ kind Capsule @World (a: p3@World, b: p3@World, r: m, albedo: rgb) {
   }
 }
 
-param step: u = 10 in 0..10
+param step: u = 10 in 0..40
 
 build fn axis_f(step: u) -> f {
-  f32(step) / 10.0
+  f32(step) / 40.0
 }
 
 build fn shell_roll(slot: u) -> u {
@@ -41,7 +41,7 @@ build {
   # paper body: warm cream -> cool moon-paper, per-channel lerp (mid-tones
   # so the sun does not wash it white)
   let paper = [0.88 - 0.26 * f, 0.74 - 0.04 * f, 0.55 + 0.27 * f]
-  emit Capsule(a: c + [-0.25, -0.30, 0], b: c + [0.25, 0.30, 0], r: 0.30m, albedo: paper)
+  emit Capsule(a: c + [0.0, -0.30, 0], b: c + [0.0, 0.30, 0], r: 0.30m, albedo: paper)
   # warm core glow sits proud of the paper front, always on (identity anchor)
   emit Capsule(a: c + [0.0, -0.05, 0.26], b: c + [0.0, -0.05, 0.26], r: 0.12m, albedo: [1.0, 0.62, 0.20])
   # cool shell ribs ring the paper and take over with f

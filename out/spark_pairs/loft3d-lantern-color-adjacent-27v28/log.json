@@ -1,0 +1,53 @@
+{
+  "alignment": {
+    "format": "png",
+    "framing": "orbit still, subject centred, 1280x800 PNG",
+    "size": [
+      1280,
+      800
+    ]
+  },
+  "created_by": "loft-still-01",
+  "criteria": "Which lantern feels cozier? Judge glow color and warmth only.",
+  "pair_id": "loft3d-lantern-color-adjacent-27v28",
+  "renders": [
+    {
+      "params": {
+        "chain": "lantern-color",
+        "kind": "adjacent",
+        "t": 27
+      },
+      "path": "out/spark_pairs/loft3d/lantern-color/step_27.png",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): paper lantern with glow core, orbit camera, 1280x800 still; chain lantern-color iteration step 27 (scene out/spark_pairs/chains/lantern-color/chain.loft, param step=27).",
+      "sha256": "7caa924dbec4d5bd13e7f0364d1ef78da7fe25e70356c1c58699752a886c7913",
+      "side": "a",
+      "size": [
+        1280,
+        800
+      ]
+    },
+    {
+      "params": {
+        "chain": "lantern-color",
+        "kind": "adjacent",
+        "t": 28
+      },
+      "path": "out/spark_pairs/loft3d/lantern-color/step_28.png",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): paper lantern with glow core, orbit camera, 1280x800 still; chain lantern-color iteration step 28 (scene out/spark_pairs/chains/lantern-color/chain.loft, param step=28).",
+      "sha256": "12f543b8809334b11d2feb69a5592d86406d116d2354adc4021402f2e3a0dfc3",
+      "side": "b",
+      "size": [
+        1280,
+        800
+      ]
+    }
+  ],
+  "scene_check": {
+    "exit": 0,
+    "scene": "out/spark_pairs/chains/lantern-color/chain.loft",
+    "summary": [
+      "kind Capsule      Analytic  rows    4  shapes   4  derived L 1.0000..1.0000  bound evals 0  derive 0.00 s",
+      "modules 4  passes [cull, Vis([0]), classify, Shade([0]), present]"
+    ]
+  }
+}

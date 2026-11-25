@@ -1,0 +1,53 @@
+{
+  "alignment": {
+    "format": "png",
+    "framing": "orbit still, subject centred, 1280x800 PNG",
+    "size": [
+      1280,
+      800
+    ]
+  },
+  "created_by": "loft-still-01",
+  "criteria": "Which tablet is more legible? Judge glyph clarity vs ornament only.",
+  "pair_id": "loft3d-rune-legibility-adjacent-35v36",
+  "renders": [
+    {
+      "params": {
+        "chain": "rune-legibility",
+        "kind": "adjacent",
+        "t": 35
+      },
+      "path": "out/spark_pairs/loft3d/rune-legibility/step_35.png",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 35 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=35).",
+      "sha256": "c9e24258a9140034180b5dc0a5cdedbd0d2746f32b04bf757c467988ff6c1a47",
+      "side": "a",
+      "size": [
+        1280,
+        800
+      ]
+    },
+    {
+      "params": {
+        "chain": "rune-legibility",
+        "kind": "adjacent",
+        "t": 36
+      },
+      "path": "out/spark_pairs/loft3d/rune-legibility/step_36.png",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 36 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=36).",
+      "sha256": "c9e24258a9140034180b5dc0a5cdedbd0d2746f32b04bf757c467988ff6c1a47",
+      "side": "b",
+      "size": [
+        1280,
+        800
+      ]
+    }
+  ],
+  "scene_check": {
+    "exit": 0,
+    "scene": "out/spark_pairs/chains/rune-legibility/chain.loft",
+    "summary": [
+      "kind Capsule      Analytic  rows    7  shapes   7  derived L 1.0000..1.0000  bound evals 0  derive 0.00 s",
+      "modules 4  passes [cull, Vis([0]), classify, Shade([0]), present]"
+    ]
+  }
+}

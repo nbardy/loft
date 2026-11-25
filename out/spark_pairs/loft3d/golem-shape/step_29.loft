@@ -1,0 +1,58 @@
+use stdlib::geometry::analytic::{ray_capsule}
+use stdlib::integrators::direct::{sun_sky}
+use stdlib::materials::bsdf::{ggx}
+use stdlib::sdf::solid::{capsule}
+use stdlib::sky::environment::{sky_color}
+
+# golem-shape chain: the SAME guardian as the PIL step renders, authored in
+# Loft. step 0 = round boulder body, step 10 = wide cut-slab guardian.
+# Mirrors out/spark_pairs/chains/golem-shape/step_XX.png (same t index).
+
+space World
+
+kind Capsule @World (a: p3@World, b: p3@World, r: m, albedo: rgb) {
+
+  visible(ro, rd) {
+    ray_capsule(ro, rd, a, b, r)
+  }
+  trace(p) {
+    capsule(p, a, b, r)
+  }
+  material(p, n) {
+    ggx(albedo, 0.55, 0)
+  }
+}
+
+param step: u = 29 in 0..40
+
+build fn axis_f(step: u) -> f {
+  f32(step) / 40.0
+}
+
+build {
+  let f = axis_f(step)
+  let c = [0.0, 0.0, 0.0]@World
+  let skin = [0.58, 0.54, 0.48]
+  # torso: upright; thick round column -> slim frame with wide shoulders
+  let r = 0.46m - 0.16m * f
+  emit Capsule(a: c + [0.0, 0.55, 0], b: c + [0.0, 1.55, 0], r: r, albedo: skin)
+  let hw = 0.30 + 0.28 * f
+  emit Capsule(a: c + [-hw, 1.62, 0], b: c + [hw, 1.62, 0], r: 0.24m - 0.04m * f, albedo: skin * 1.05)
+  # stubby arms track the shoulder ends (identity anchor across steps)
+  let ax = hw + 0.28
+  emit Capsule(a: c + [-ax, 1.57, 0], b: c + [-ax - 0.10, 0.80, 0.08], r: 0.11m, albedo: skin * 0.9)
+  emit Capsule(a: c + [ax, 1.57, 0], b: c + [ax + 0.10, 0.80, 0.08], r: 0.11m, albedo: skin * 0.9)
+  # head bar + kind amber eyes, fixed (only the silhouette votes here)
+  emit Capsule(a: c + [-0.30, 1.98, 0], b: c + [0.30, 1.98, 0], r: 0.26m, albedo: skin * 1.08)
+  emit Capsule(a: c + [-0.16, 2.00, 0.24], b: c + [-0.16, 2.00, 0.24], r: 0.055m, albedo: [1.0, 0.62, 0.15])
+  emit Capsule(a: c + [0.16, 2.00, 0.24], b: c + [0.16, 2.00, 0.24], r: 0.055m, albedo: [1.0, 0.62, 0.15])
+}
+
+schedule Main {
+  orbit(at: [0, 1.0, 0]@World, radius: 4.4m, height: 2.2m, period: 24.0s, fov: 40deg)
+  cull_indirect(Capsule)
+  render_bundle(Vis64) { draw_indirect(Capsule) }
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: sun_sky, sun: [0.45, 0.8, 0.35])
+  tonemap_aces(ColorHdr, sky: sky_color)
+}

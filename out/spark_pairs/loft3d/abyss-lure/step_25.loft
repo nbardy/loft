@@ -1,0 +1,62 @@
+use stdlib::geometry::analytic::{ray_capsule}
+use stdlib::integrators::direct::{sun_sky}
+use stdlib::materials::bsdf::{ggx}
+use stdlib::sdf::solid::{capsule}
+use stdlib::sky::environment::{sky_color}
+
+# abyss-lure chain: brass diver helmet, lure stalk sweeping wide side arc
+# (step 0) to tall centre-top arc (step 10). Joints ride a two-bone chain
+# driven by f. Mirrors the abyss-lure step renders (same t index).
+
+space World
+
+kind Capsule @World (a: p3@World, b: p3@World, r: m, albedo: rgb) {
+
+  visible(ro, rd) {
+    ray_capsule(ro, rd, a, b, r)
+  }
+  trace(p) {
+    capsule(p, a, b, r)
+  }
+  material(p, n) {
+    ggx(albedo, 0.55, 0)
+  }
+}
+
+param step: u = 25 in 0..40
+
+build fn axis_f(step: u) -> f {
+  f32(step) / 40.0
+}
+
+build {
+  let f = axis_f(step)
+  let c = [0.0, 0.0, 0.0]@World
+  let brass = [0.55, 0.42, 0.26]
+  # helmet dome + collar, fixed (identity anchor)
+  emit Capsule(a: c + [-0.42, 1.55, 0], b: c + [0.42, 1.55, 0], r: 0.42m, albedo: brass)
+  emit Capsule(a: c + [-0.50, 1.05, 0], b: c + [0.50, 1.05, 0], r: 0.16m, albedo: brass * 0.85)
+  # glowing porthole, fixed
+  emit Capsule(a: c + [0.0, 1.55, 0.42], b: c + [0.0, 1.55, 0.42], r: 0.16m, albedo: [0.35, 0.75, 0.80])
+  # lure stalk: base rooted in the helmet crown, tip sweeps with f
+  let bx = 0.0
+  let by = 1.93
+  let tx = -0.85 + 0.95 * f
+  let ty = 2.35 + 0.55 * f
+  let mx = (bx + tx) * 0.5 - 0.25 * (1.0 - f)
+  let my = (by + ty) * 0.5 + 0.35
+  let m = [mx, my, 0.05]@World
+  emit Capsule(a: c + [bx, by, 0], b: m, r: 0.035m, albedo: brass * 0.9)
+  emit Capsule(a: m, b: c + [tx, ty, 0.05], r: 0.03m, albedo: brass * 0.9)
+  # lure bulb, fixed glow
+  emit Capsule(a: c + [tx, ty, 0.05], b: c + [tx, ty, 0.05], r: 0.09m, albedo: [0.59, 0.92, 0.94])
+}
+
+schedule Main {
+  orbit(at: [0, 1.2, 0]@World, radius: 4.2m, height: 2.0m, period: 24.0s, fov: 40deg)
+  cull_indirect(Capsule)
+  render_bundle(Vis64) { draw_indirect(Capsule) }
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: sun_sky, sun: [0.45, 0.8, 0.35])
+  tonemap_aces(ColorHdr, sky: sky_color)
+}

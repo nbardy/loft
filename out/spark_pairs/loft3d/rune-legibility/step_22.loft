@@ -1,0 +1,68 @@
+use stdlib::geometry::analytic::{ray_capsule}
+use stdlib::integrators::direct::{sun_sky}
+use stdlib::materials::bsdf::{ggx}
+use stdlib::math::sampling::{sample_key}
+use stdlib::sdf::solid::{capsule}
+use stdlib::sky::environment::{sky_color}
+
+# rune-legibility chain: stone tablet with six glyph stems; ornament branch
+# strokes accrete with f via seeded keep rolls (nested: step t+1 keeps every
+# stroke of step t). Mirrors the rune-legibility step renders (same t index).
+
+space World
+
+kind Capsule @World (a: p3@World, b: p3@World, r: m, albedo: rgb) {
+
+  visible(ro, rd) {
+    ray_capsule(ro, rd, a, b, r)
+  }
+  trace(p) {
+    capsule(p, a, b, r)
+  }
+  material(p, n) {
+    ggx(albedo, 0.55, 0)
+  }
+}
+
+param step: u = 22 in 0..40
+
+build fn axis_f(step: u) -> f {
+  f32(step) / 40.0
+}
+
+build fn branch_roll(slot: u) -> u {
+  u32(sample_key(1234, slot, 3, 0, 7) * 100.0)
+}
+
+# One of six glyphs: stem always, two branch strokes kept by roll.
+# Glyphs ride proud of the slab face (z 0.50 + r vs slab r 0.52).
+build fn glyph(gx: f, slot_base: u, keep: u, stone: rgb) {
+  let o = [gx, 1.10, 0.50]@World
+  emit Capsule(a: o + [0.0, -0.35, 0], b: o + [0.0, 0.35, 0], r: 0.035m, albedo: stone * 0.45)
+  if branch_roll(slot_base) < keep {
+    emit Capsule(a: o + [0.0, 0.05, 0], b: o + [0.16, 0.22, 0], r: 0.028m, albedo: stone * 0.45)
+  }
+  if branch_roll(slot_base + 1) < keep {
+    emit Capsule(a: o + [0.0, -0.08, 0], b: o + [-0.15, 0.06, 0], r: 0.028m, albedo: stone * 0.45)
+  }
+}
+
+build {
+  let f = axis_f(step)
+  let stone = [0.58, 0.54, 0.48]
+  # tablet slab, fixed (identity anchor)
+  emit Capsule(a: [-1.05, 1.10, 0.0]@World, b: [1.05, 1.10, 0.0]@World, r: 0.52m, albedo: stone)
+  let keep = u32(100.0 * f)
+  build for g in 0..6 {
+    glyph(-0.75 + f32(g) * 0.30, g * 2, keep, stone)
+  }
+}
+
+schedule Main {
+  orbit(at: [0, 1.1, 0]@World, radius: 5.5m, height: 1.6m, period: 24.0s, fov: 40deg)
+  cull_indirect(Capsule)
+  render_bundle(Vis64) { draw_indirect(Capsule) }
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: sun_sky, sun: [0.45, 0.8, 0.35])
+  tonemap_aces(ColorHdr, sky: sky_color)
+}

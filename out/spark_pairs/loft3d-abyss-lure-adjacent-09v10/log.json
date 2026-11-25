@@ -18,8 +18,8 @@
         "t": 9
       },
       "path": "out/spark_pairs/loft3d/abyss-lure/step_09.png",
-      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 9/10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=9).",
-      "sha256": "6777f77de906e3476e8f229ec288beab709ed761c073a9956a7dd5a561fd8eee",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 9 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=9).",
+      "sha256": "9d41def81e2f57db7cacc970e8358e6ab52a8d2b137465228a249cbbf698912b",
       "side": "a",
       "size": [
         1280,
@@ -33,8 +33,8 @@
         "t": 10
       },
       "path": "out/spark_pairs/loft3d/abyss-lure/step_10.png",
-      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 10/10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=10).",
-      "sha256": "529cb536ee55c6952e20cff757738ca902e7cd97bc7a52859fbb3095f9c20bfe",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=10).",
+      "sha256": "0d06b8c99d38a441b42d1db7b7871364333fa7774ba41fd6e7341e102b0ac5f2",
       "side": "b",
       "size": [
         1280,

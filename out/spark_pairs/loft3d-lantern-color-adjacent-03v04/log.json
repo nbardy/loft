@@ -18,8 +18,8 @@
         "t": 3
       },
       "path": "out/spark_pairs/loft3d/lantern-color/step_03.png",
-      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): paper lantern with glow core, orbit camera, 1280x800 still; chain lantern-color iteration step 3/10 (scene out/spark_pairs/chains/lantern-color/chain.loft, param step=3).",
-      "sha256": "5bca6099ef47a353fc2bfdbeb64f0cdb999b8b85b03f219f27f54b1e9689a770",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): paper lantern with glow core, orbit camera, 1280x800 still; chain lantern-color iteration step 3 (scene out/spark_pairs/chains/lantern-color/chain.loft, param step=3).",
+      "sha256": "24f345499a68b6495272b7a7d7b0e84f37e52487c65ee01e5db6c091bd7992c9",
       "side": "a",
       "size": [
         1280,
@@ -33,8 +33,8 @@
         "t": 4
       },
       "path": "out/spark_pairs/loft3d/lantern-color/step_04.png",
-      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): paper lantern with glow core, orbit camera, 1280x800 still; chain lantern-color iteration step 4/10 (scene out/spark_pairs/chains/lantern-color/chain.loft, param step=4).",
-      "sha256": "fcccbe8ed9c2775a59c4f2892097de66763bf76dbd3b0ec42245c67bcdd04208",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): paper lantern with glow core, orbit camera, 1280x800 still; chain lantern-color iteration step 4 (scene out/spark_pairs/chains/lantern-color/chain.loft, param step=4).",
+      "sha256": "179de9e65d4d56e7dfda22d81734e12501ef65174eb7a7e8edc758bc871c7fe6",
       "side": "b",
       "size": [
         1280,

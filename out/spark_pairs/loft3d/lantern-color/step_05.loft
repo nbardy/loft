@@ -25,10 +25,10 @@ kind Capsule @World (a: p3@World, b: p3@World, r: m, albedo: rgb) {
   }
 }
 
-param step: u = 5 in 0..10
+param step: u = 5 in 0..40
 
 build fn axis_f(step: u) -> f {
-  f32(step) / 10.0
+  f32(step) / 40.0
 }
 
 build fn shell_roll(slot: u) -> u {

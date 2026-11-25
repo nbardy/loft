@@ -1,0 +1,53 @@
+{
+  "alignment": {
+    "format": "png",
+    "framing": "orbit still, subject centred, 1280x800 PNG",
+    "size": [
+      1280,
+      800
+    ]
+  },
+  "created_by": "loft-still-01",
+  "criteria": "Which golem has better moss integration? Judge moss coverage only.",
+  "pair_id": "loft3d-golem-texture-adjacent-10v11",
+  "renders": [
+    {
+      "params": {
+        "chain": "golem-texture",
+        "kind": "adjacent",
+        "t": 10
+      },
+      "path": "out/spark_pairs/loft3d/golem-texture/step_10.png",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 10 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=10).",
+      "sha256": "14ab80cfa9167c58233060e91ec42c2daf5742c77781d38d3d1a5f103246fac8",
+      "side": "a",
+      "size": [
+        1280,
+        800
+      ]
+    },
+    {
+      "params": {
+        "chain": "golem-texture",
+        "kind": "adjacent",
+        "t": 11
+      },
+      "path": "out/spark_pairs/loft3d/golem-texture/step_11.png",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 11 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=11).",
+      "sha256": "911fa39b6b6680adb1e215c89e8644ff76138bb93b834bcb62c642b76e15afdf",
+      "side": "b",
+      "size": [
+        1280,
+        800
+      ]
+    }
+  ],
+  "scene_check": {
+    "exit": 0,
+    "scene": "out/spark_pairs/chains/golem-texture/chain.loft",
+    "summary": [
+      "kind Capsule      Analytic  rows    9  shapes   9  derived L 1.0000..1.0000  bound evals 0  derive 0.00 s",
+      "modules 4  passes [cull, Vis([0]), classify, Shade([0]), present]"
+    ]
+  }
+}

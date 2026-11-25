@@ -1,0 +1,73 @@
+use stdlib::geometry::analytic::{ray_capsule}
+use stdlib::integrators::direct::{sun_sky}
+use stdlib::materials::bsdf::{ggx}
+use stdlib::math::sampling::{sample_key}
+use stdlib::sdf::solid::{capsule}
+use stdlib::sky::environment::{sky_color}
+
+# golem-texture chain: fixed round guardian, moss tufts grow 5% -> 80%.
+# Nested by construction: step t+1 keeps every tuft of step t (same seeded
+# roll, rising keep threshold), mirroring golem-texture/step_XX.png.
+
+space World
+
+kind Capsule @World (a: p3@World, b: p3@World, r: m, albedo: rgb) {
+
+  visible(ro, rd) {
+    ray_capsule(ro, rd, a, b, r)
+  }
+  trace(p) {
+    capsule(p, a, b, r)
+  }
+  material(p, n) {
+    ggx(albedo, 0.55, 0)
+  }
+}
+
+param step: u = 18 in 0..40
+
+build fn axis_f(step: u) -> f {
+  f32(step) / 40.0
+}
+
+# Seeded keep roll in 0..100 for one moss slot (same idiom as the lattice).
+build fn tuft_roll(slot: u) -> u {
+  u32(sample_key(41, slot, 0, 0, 7) * 100.0)
+}
+
+# Tufts sit proud of the torso surface (z 0.44 + r 0.05 vs body r 0.46).
+build fn moss_tuft(slot: u, skin: rgb) {
+  let x = (f32(slot % 5) - 2.0) * 0.15
+  let y = 0.60 + f32(slot / 5) * 0.13
+  let g = 0.45 + 0.15 * sin(f32(slot) * 1.7 + 0.4)
+  let o = [x, y, 0.44]@World
+  emit Capsule(a: o, b: o + [0.02, 0.05, 0.03], r: 0.05m, albedo: [0.30 * g + 0.12, 0.55 * g + 0.18, 0.26 * g + 0.10])
+}
+
+build {
+  let f = axis_f(step)
+  let c = [0.0, 0.0, 0.0]@World
+  let skin = [0.58, 0.54, 0.48]
+  emit Capsule(a: c + [0.0, 0.55, 0], b: c + [0.0, 1.55, 0], r: 0.46m, albedo: skin)
+  emit Capsule(a: c + [-0.30, 1.62, 0], b: c + [0.30, 1.62, 0], r: 0.24m, albedo: skin * 1.05)
+  emit Capsule(a: c + [-0.58, 1.57, 0], b: c + [-0.68, 0.80, 0.08], r: 0.11m, albedo: skin * 0.9)
+  emit Capsule(a: c + [0.58, 1.57, 0], b: c + [0.68, 0.80, 0.08], r: 0.11m, albedo: skin * 0.9)
+  emit Capsule(a: c + [-0.30, 1.98, 0], b: c + [0.30, 1.98, 0], r: 0.26m, albedo: skin * 1.08)
+  emit Capsule(a: c + [-0.16, 2.00, 0.24], b: c + [-0.16, 2.00, 0.24], r: 0.055m, albedo: [1.0, 0.62, 0.15])
+  emit Capsule(a: c + [0.16, 2.00, 0.24], b: c + [0.16, 2.00, 0.24], r: 0.055m, albedo: [1.0, 0.62, 0.15])
+  let keep = 5 + u32(75.0 * f)
+  build for slot in 0..40 {
+    if tuft_roll(slot) < keep {
+      moss_tuft(slot, skin)
+    }
+  }
+}
+
+schedule Main {
+  orbit(at: [0, 1.0, 0]@World, radius: 4.4m, height: 2.2m, period: 24.0s, fov: 40deg)
+  cull_indirect(Capsule)
+  render_bundle(Vis64) { draw_indirect(Capsule) }
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: sun_sky, sun: [0.45, 0.8, 0.35])
+  tonemap_aces(ColorHdr, sky: sky_color)
+}

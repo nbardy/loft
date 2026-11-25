@@ -1,0 +1,53 @@
+{
+  "alignment": {
+    "format": "png",
+    "framing": "orbit still, subject centred, 1280x800 PNG",
+    "size": [
+      1280,
+      800
+    ]
+  },
+  "created_by": "loft-still-01",
+  "criteria": "Which lure reads better at thumbnail size? Judge stalk silhouette only.",
+  "pair_id": "loft3d-abyss-lure-baseline-00v27",
+  "renders": [
+    {
+      "params": {
+        "chain": "abyss-lure",
+        "kind": "baseline",
+        "t": 0
+      },
+      "path": "out/spark_pairs/loft3d/abyss-lure/step_00.png",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 0 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=0).",
+      "sha256": "a96f127afd9d681ef8cb61bc99ecc0e184844d1c3821c5e1e29e17ec7147eca9",
+      "side": "a",
+      "size": [
+        1280,
+        800
+      ]
+    },
+    {
+      "params": {
+        "chain": "abyss-lure",
+        "kind": "baseline",
+        "t": 27
+      },
+      "path": "out/spark_pairs/loft3d/abyss-lure/step_27.png",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 27 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=27).",
+      "sha256": "b4c7a81d90fc7c55a8a9eab2b162f0f3d31f90eb9f1cb841730fbb13a4913819",
+      "side": "b",
+      "size": [
+        1280,
+        800
+      ]
+    }
+  ],
+  "scene_check": {
+    "exit": 0,
+    "scene": "out/spark_pairs/chains/abyss-lure/chain.loft",
+    "summary": [
+      "kind Capsule      Analytic  rows    6  shapes   6  derived L 1.0000..1.0000  bound evals 0  derive 0.00 s",
+      "modules 4  passes [cull, Vis([0]), classify, Shade([0]), present]"
+    ]
+  }
+}

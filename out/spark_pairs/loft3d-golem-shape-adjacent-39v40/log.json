@@ -1,0 +1,53 @@
+{
+  "alignment": {
+    "format": "png",
+    "framing": "orbit still, subject centred, 1280x800 PNG",
+    "size": [
+      1280,
+      800
+    ]
+  },
+  "created_by": "loft-still-01",
+  "criteria": "Which golem reads as the friendlier forest guardian? Judge silhouette only.",
+  "pair_id": "loft3d-golem-shape-adjacent-39v40",
+  "renders": [
+    {
+      "params": {
+        "chain": "golem-shape",
+        "kind": "adjacent",
+        "t": 39
+      },
+      "path": "out/spark_pairs/loft3d/golem-shape/step_39.png",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 39 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=39).",
+      "sha256": "39baa0788c8ea7633b7d2ac0c9062ff07e7194b85ec827913c185084d468d0ae",
+      "side": "a",
+      "size": [
+        1280,
+        800
+      ]
+    },
+    {
+      "params": {
+        "chain": "golem-shape",
+        "kind": "adjacent",
+        "t": 40
+      },
+      "path": "out/spark_pairs/loft3d/golem-shape/step_40.png",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 40 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=40).",
+      "sha256": "a4f7fec8762d1556be0a3aa32e62fb03b05ac0b8340d4b29e218711af19fcbab",
+      "side": "b",
+      "size": [
+        1280,
+        800
+      ]
+    }
+  ],
+  "scene_check": {
+    "exit": 0,
+    "scene": "out/spark_pairs/chains/golem-shape/chain.loft",
+    "summary": [
+      "kind Capsule      Analytic  rows    7  shapes   7  derived L 1.0000..1.0000  bound evals 0  derive 0.00 s",
+      "modules 4  passes [cull, Vis([0]), classify, Shade([0]), present]"
+    ]
+  }
+}
