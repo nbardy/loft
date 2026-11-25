@@ -432,3 +432,15 @@ The tile build also changes the work formula. It projects each surviving segment
 ### Verification on the branch
 
 The final lab CLI build succeeded. The stable version passed eleven compiler and bounds tests, three native tests, two attachment tests and five GPU runner tests on Metal. Before the final binning pass, the guard also passed the evaluator interval tests and the CLI passed ten clip, sampling and profile-contract tests. The standalone GPU order test compared every row index in nine tiles for both four- and five-word indirect arguments, starting with 142 shuffled slots, including holes and a partial screen edge. All 18 lists matched the expected ordered subsequences. The static recheck verified corpus identities and GPU dependency pins; the two grammar recognizers matched 360 of 365 expectations, with the same five pre-existing archived character fixtures failing. The loaded-scene experiment also exercised a warm proof cache and a geometry hot edit. The integrator owns the full workspace run. No parser, checker, schedule-language or material-lowering change was required. [Lab build](orbit/tiles/final-build.txt.gz) · [Compiler tests](orbit/tiles/test-passes.txt.gz) · [Native tests](orbit/tiles/test-native.txt.gz) · [GPU runner](orbit/tiles/test-runner.txt.gz) · [Permuted row-order test](orbit/tiles/permuted-cull.json.gz) · [Static verification](orbit/tiles/static.txt.gz)
+
+### Actual thin-row launches and empty-draw cost
+
+
+At the midpoint of the 960×720 orbit, the following independent replay feeds the same deliberately permuted slots to the original draw and to the compiled GPU tile kernels. All shaders do their original intersection and depth work. The sparse oracle submits only indirect draws known to contain instances, with the mask read before the timed draw. Its timing excludes producing a usable command list on the host.
+
+| Kind | Occupied / submitted tiles | Original → tiled launches | Original → tiled hits | Original / dense / sparse GPU ms | Vis64 differing pixels dense / sparse |
+|---|---:|---:|---:|---:|---:|
+| [Whisker](orbit/tiles/base-Whisker-fragment-replay.json.gz) | 24 / 690 | 6,916,484 → 315,392 | 5,133 → 5,133 | 3.70 / 0.47 / 0.40 | 0 / 0 |
+| [Bit](orbit/tiles/otter-Bit-fragment-replay.json.gz) | 175 / 690 | 3,238,049 → 361,212 | 23,616 → 23,616 | 1.70 / 0.39 / 0.34 | 0 / 0 |
+| [Strand](orbit/tiles/otter-Strand-fragment-replay.json.gz) | 79 / 690 | 96,849,778 → 6,226,944 | 10,819 → 10,819 | 35.10 / 5.66 / 5.53 | 0 / 0 |
+| [Rod](orbit/tiles/walrus-Rod-fragment-replay.json.gz) | 109 / 690 | 31,202,634 → 5,203,599 | 177,414 → 177,414 | 14.01 / 3.26 / 3.19 | 0 / 0 |
