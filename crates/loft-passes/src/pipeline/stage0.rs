@@ -75,20 +75,21 @@ pub(super) fn evaluate<'a>(
     let guard_header = lut_words.len();
     let traced = |plan: &KindPlan<'_, '_>| plan.trace.is_some() && plan.surface.is_none()
         && plan.k.query(QueryKind::Visible).is_none();
-    if plans.iter().any(traced) {
+    // Only a kind with a guard gets records (10 words per row) and a table entry; the shader of an unguarded kind has
+    // no guard prefix and never reads the table. A scene with no guarded kind carries no table at all.
+    let guarded: Vec<bool> = plans.iter().zip(&derived)
+        .map(|(plan, (derived, _))| traced(plan) && derived.iter().any(|s| s.guard.is_some())).collect();
+    if guarded.contains(&true) {
         lut_words.resize(guard_header + plans.len(), 0.0);
     }
-    for (plan, (derived, derive_s)) in plans.iter().zip(&derived) {
+    for ((plan, (derived, derive_s)), &guarded) in plans.iter().zip(&derived).zip(&guarded) {
         let first = lut_words.len();
-        // A hot edit can change whether this kind admits a guard. Give each
-        // traced row its own record so no other kind's LUT addresses move.
-        if traced(plan) {
+        // A hot edit that gains or loses a guard changes the LUT length; `edit.rs` then reloads instead of patching.
+        if guarded {
             let address = |n: usize| u32::try_from(n).map_err(|_| Diag::new(
                 Code::E602, plan.k.name.span, "visibility intervals exceed the LUT address range", "reduce the number of rows"));
             lut_words[guard_header + plan.id] = f32::from_bits(address(lut_words.len())?);
-            if derived.iter().any(|s| s.guard.is_some()) {
-                guard_table[plan.id] = Some(address(guard_header)?);
-            }
+            guard_table[plan.id] = Some(address(guard_header)?);
             for &shape in &plan.shape_of {
                 let s = &derived[shape];
                 let words = match &s.guard {

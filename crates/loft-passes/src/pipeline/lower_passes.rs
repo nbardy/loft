@@ -37,10 +37,15 @@ pub(super) fn lower(
     };
     let fixed = fixed_parameters(p, &scene.tables)?;
     let mut texts = Vec::new();
-    for ((name, kt), guard) in drawn.iter().zip(kinds).zip(&scene.guard_table) {
+    let mut tiled = vec![];
+    for (module, ((name, kt), guard)) in drawn.iter().zip(kinds).zip(&scene.guard_table).enumerate() {
+        if emit::tile_form(p, p.kinds[*name], kt.draw, aov, src) { tiled.push(module as u32); }
         let shader = emit::emit_kind_module(p, types, p.kinds[*name], light, lut_refs, kt.draw, aov, &fixed, guard.map(|base| (base, loft_eval::guard::EYE_REACH)), src)?;
         texts.push((name.to_string(), shader));
     }
+    // Stage 0 collects endpoint rows for every stock segment kind whatever the aov. Only kinds whose module was just
+    // emitted in tile form keep them, so a bundle cannot build tile lists for a shader that ignores them.
+    scene.segments.retain(|module, _| tiled.contains(module));
     // Rows a kind's queries read (`K[i]`) bind to the read kind's table in the vis, shadow and shade passes. The tiled
     // World and the path tracer compile every kind into one module, which has no such binding.
     for (i, name) in drawn.iter().enumerate() {

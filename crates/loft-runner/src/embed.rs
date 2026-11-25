@@ -66,10 +66,15 @@ impl Render {
                 fixed: &BindGroup, groups: &[Group], scissors: impl FnOnce(ModuleId) -> Option<([u32; 2], u32)>) -> super::Result<command::Pass> {
         let (colors, depth) = self.spec.targets.views(target, |id| tables.get(&id)?.attachment(), written);
         let (_, pipelines, _, bundle) = self.cached.as_ref().expect("prepared raster pass");
-        if let [draw] = self.spec.draws.as_slice()
-            && draw.index.is_none()
-            && let Some((size, side)) = scissors(draw.decl.module)
-        {
+        // `scissors` answering Some marks this module's draw as a tile draw: its bundle holds only tile 0's row list,
+        // so no ordinary draw can stand in for it. A tile draw that cannot be scissored is an error, never a picture
+        // that silently shows one tile's rows across the screen. A host that sets `Options::segment_tiles` must pass
+        // `FrameOptions::scissors`; the bundle carries no tile mark the runner could check without it.
+        if let Some((size, side)) = self.spec.draws.first().and_then(|draw| scissors(draw.decl.module)) {
+            let [draw] = self.spec.draws.as_slice() else {
+                return Err(RunnerError::Unsupported("a tile draw must be the only draw of its pass"));
+            };
+            if draw.index.is_some() { return Err(RunnerError::Unsupported("a tile draw cannot be indexed")); }
             if side == 0 || size.contains(&0) { return Err(RunnerError::Capacity); }
             let args = &tables[&draw.decl.args];
             let count = u64::from(size[0].div_ceil(side)) * u64::from(size[1].div_ceil(side));

@@ -395,6 +395,7 @@ impl Instance {
         self.record_frame(d, enc, clock, target, FrameOptions::default()).map(|_| ())
     }
 
+    /// On `Err` the encoder holds the passes recorded before the failure; the caller must drop it, not submit it.
     pub fn record_frame(&mut self, d: &wgpu::Device, enc: &mut wgpu::CommandEncoder, clock: Clock<'_>,
         target: Option<&embed::Target<'_>>, options: FrameOptions<'_>) -> Result<FrameRecord> {
         let result = self.record_uploaded_frame(d, enc, clock, target, options);
