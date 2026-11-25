@@ -3,12 +3,13 @@ import argparse
 import shutil
 import subprocess
 
-from fresh import checkpoint, notes, out
+from fresh import checkpoint, notes, out, scenes
 
 parser = argparse.ArgumentParser()
 parser.add_argument("size")
+parser.add_argument("--scene", choices=("walrus", "otter"), default="walrus")
 args = parser.parse_args()
-source = out / "source/fixtures/walrus/tq.loft"
+source = out / "source/fixtures" / (scenes[args.scene] + ".loft")
 fixed = source.with_name("fixed_order.loft")
 # A dispatch resolves its template paths relative to the authoring schedule.
 local = fixed.parent / "core"
@@ -26,10 +27,12 @@ for variant, executable, path in [
     ("ordered-guard", "revised", fixed),
     ("ordered-scissor", "scissor", fixed),
 ]:
-    dest = out / variant / f"walrus-{args.size}-clip"
+    if args.scene == "otter" and variant == "ordered-guard":
+        continue
+    dest = out / variant / f"{args.scene}-{args.size}-clip"
     if not (dest / "meta.json").exists():
         subprocess.run([out / executable / "loft", "clip", path, "--size", args.size,
                         "--frames", "120", "--fps", "60", "--out", dest], check=True)
     assert len(list(dest.glob("frame_*.png"))) == 120
     checkpoint(variant, dest.name + "-meta.json", (dest / "meta.json").read_bytes(),
-               f"Record {variant} walrus {args.size} reference clip")
+               f"Record {variant} {args.scene} {args.size} reference clip")
