@@ -32,6 +32,8 @@ Two *fresh-view* experiments use the original executable. One adds a rejection s
 
 The direct guard replay preserved the number of geometric hits in all six fields. Starter Otter went from 52.80 to 20.72 million field evaluations, walrus Hide from 33.81 to 15.89 million, Cap from 21.31 to 5.46 million, and HeronHead from 59.29 to 1.38 million. The final Head4 went from 71.40 to 9.32 million and Torso from 51.32 to 11.04 million. A box can shorten the far end of a ray even when its projected silhouette fills the screen. This matters for Hide, whose inner box admits all 691,200 rays before the near/far test.
 
+Taking the original, head and head-plus-torso variants consecutively gave frame medians of 61.99, 50.99 and 33.58 ms. Reversing the order gave 81.42, 51.07 and 31.84 ms respectively. With both guards, p95 was 47.01 and 39.14 ms. The torso removed another 17.43 and 19.14 ms of measured Vis, below the forecast of 30.80 ms from the original rates. The combined Vis saving was 28.51 and 48.88 ms against a 52.45 ms forecast. All six controls were flagged. The original Vis varied from 60.08 ms in these adjacent experiments to 135.92 ms in an earlier run with the identical program, rows and camera. Those observations have disjoint ±30% intervals, so absolute throughput needs calibration in the operating window.
+
 ## Authoring a fast character
 
 1. Put independent, spatially separated pieces in separate kinds. Keep pieces that need a continuous smooth join together.
@@ -51,6 +53,8 @@ HeronHead's box is 128 m on each axis although the model is smaller than a metre
 The walrus hide has a 512 m wide proof box and L of 1.00. The cap's box is 192 m wide. The two fields together use 50.16 million evaluations on misses. The 1,113 Rod rows run 32.19 million analytic queries and return 154,878 hits, roughly 208 invocations per geometrical hit. Costs multiply before shading sees a single rod.
 
 The final otter generates 116.71 million primary proxy fragments. Strand accounts for 109.30 million of them and reports 8,247 geometric hits, about 13,250 fragment invocations per hit. Head4 spends 69.75 million field evaluations on misses and Torso another 48.68 million. The isolated calibration attributes roughly 40 ms of the original median frame to Torso, 26 ms to Strand and 25 ms to Head4. It takes work on all three to make a new view fast.
+
+The large L values on the otters shorten every march step. The heron and walrus already run at L close to one. The character authors changed geometry, field arithmetic, bounds and L together, so those design iterations do not isolate an L-only saving. Ordinary point-dependent control flow that cannot be decided over a region is rejected during field-bound evaluation (E701). A compiler proof of operand dominance could eliminate work while preserving smooth joins.
 
 The evaluator starts its interval proof on a cube extending 1,024 m in each direction. Its breadth-first stopping condition uses the width of the surviving *candidate cells*. The six face searches choose a leaf size from that width divided by 64, with a 62.5 mm minimum. Interval dependency can leave cells far from the object alive. The resulting boxes can be valid and very loose. Even the minimum leaf is wide compared with millimetre fibres. The older artist ablations agree on direction. The heron fell from 340–370 ms to 53–73 ms across successive design iterations. Replacing the final otter's real head by a simplified three-part skull took a head-only tile from 51.3 to 13.4 ms. Those are changed assets and separate experiments.
 
@@ -73,6 +77,8 @@ These are the first native runs, with zero of 120 nonzero Vis intervals after th
 
 The highest candidate p95 across the first three runs, covering all three characters, was 2.64 ms at 960×720 and 13.72 ms at 1280×800. The first control bracket was consistently about 1.94 ms at the smaller size and 2.81 ms at the larger size. The native contention threshold is 1.10 ms on **each** bracket. The one-triangle control of roughly 0.08 ms is a separate instrument.
 
+The quiet native ring pairs at 960×720 were 40.13 / 41.64 to 2.51 / 4.21 ms for heron and 114.12 / 131.77 to 5.04 / 11.10 ms for final otter. The walrus original passed both controls and the retained walrus failed at least one bracket on every standard and ring attempt. At 1280×800 every retained run for all three characters failed at least one bracket. The 16.7 ms p95 acceptance condition is demonstrated for two of the three fixed views at 960×720 and remains open at 1280×800. [All control counts, timing modes and image results](MEASUREMENTS.md).
+
 ## Engineering choices for a changing view
 
 | Priority | Change | Conditional fresh Vis saving in ms, ball / starter / walrus / heron / otter | Build cost and risk |
@@ -82,9 +88,20 @@ The highest candidate p95 across the first three runs, covering all three charac
 | 3 | Prove operands of composite fields unable to affect a hard or smooth minimum over a cell, then eliminate their evaluations. | 0 / 5.6 / 7.8 / 16.9 / 34.2 if arithmetic halves in the expensive fields | One to two engineering weeks for the proof, generated shader variants and testing. Preserve smooth-blend support, expression order, rounding and numerical bounds. |
 | 4 | Reuse the remaining shading and presentation on a fully invariant view | Up to the remaining measured 1–4 ms at 960×720 in these first runs. No saving on a changing material or camera. | Additional dependency analysis across light, material, sky, present and host targets. An untracked input produces stale color. |
 
-The savings overlap, especially for composite pruning after empty-space rejection. For the final otter, even the first two design targets together leave about 18.6 ms of the original 100.0 ms median at 960×720. The remaining gap includes traced hits and the cost of reaching a surface on rays that survive the guard. A 16.7 ms p95 leaves less headroom than a 16.7 ms median. No production moving-view optimization in this lane certifies that target.
+The savings overlap, especially for composite pruning after empty-space rejection. For the final otter, even the first two design targets together leave about 18.6 ms of the original 100.0 ms median at 960×720. The quiet original final otter independently quantifies the fresh-frame budget. Its p95-ranked frame took 93.76 ms, including 91.09 ms Vis and 2.68 ms for the other passes. Holding those other passes fixed leaves 14.02 ms for Vis, requiring an 84.6% cut on that sampled frame. The remaining gap includes traced hits and the cost of reaching a surface on rays that survive the guard. A 16.7 ms p95 leaves less headroom than a 16.7 ms median. No production moving-view optimization in this lane certifies that target.
 
 The original sphere marcher and analytic solvers, interval proof and retained shadow map come from Loft. This lane extended the existing shadow invalidation analysis to primary visibility. The guarded-interval and strand-sphere experiments were derived directly from the counts and the existing solver algebra. Tiled rejection and branch-and-bound operand pruning are established techniques. Retaining the original proxy interpolation and march entry is the constraint imposed by this renderer's image contract.
+
+## Predictions scored
+
+| Experiment | Predicted | Measured outcome |
+|---|---|---|
+| Retain fixed visibility | Zero warm Vis intervals and all three under 16.7 ms p95 at both sizes | Zero warm Vis on every fixture. In paired quiet ring runs heron and final otter met the threshold at 960×720. The other four character/resolution pairs lack a quiet retained timing. The larger walrus has one nonidentical pixel in one frame. |
+| Predict fresh Vis from counts | Within 30% in five independent camera tests | 2/5 from isolated 672×504 rates, 0/5 after native per-scene normalization at that raster, 5/5 after equal-raster native calibration. A shared two-class fit reached 4/5 at equal raster. |
+| Enclosing sphere before analytic rod solver | Save 0–1, 1–4 and 15–35 ms for starter, walrus and final otter | First Vis savings 1.20, 0.52 and 1.56 ms. All three forecasts missed their stated bands. No production change. |
+| Inner bounds for starter, walrus, heron and final skull | Save 7–11, 10–18, 28–40 and 25–45 ms Vis | Adjacent original versus guarded saved 9.09, 7.17, 37.84 and 69.15 ms. The final skull saved 44.36 ms against the older original. Absolute savings depend on the operating window. |
+| Add the torso guard | Another 24–36 ms Vis, then 30.80 ms from measured surviving work | Adjacent forward and reverse comparisons saved 17.43 and 19.14 ms beyond the head guard. The counters confirmed 40.28 million fewer field evaluations on this pose. |
+| Isolate the sky loop and AO | Save 1.2–1.8 and 0.1–0.5 ms of Shade | Measured 1.39–1.50 and 0.22–0.34 ms respectively. |
 
 ## Reproducing a number
 
@@ -93,3 +110,5 @@ The scene paths below are relative to the copied `fixtures/` directory. The two 
 Use the baseline binary from `2afc5e55` and the candidate from `12c91988` or its comment-only follow-up. Each was built with `tools/dev.sh build loft-cli --fast`. For timing, run `loft profile SCENE --size 960x720 --frames 120 --json FILE` with the declared GPU slot. For a counter replay, save `loft ir SCENE` as `NAME.ir` and `loft show SCENE --json` as `NAME.show` in the model directory. The counter uses wgpu-py 0.33.0, NumPy 2.5.5 and Metal timestamps. [Counter](count_rays.py) · [Held-out camera calibration](same_size.py) · [Frame hashing](hash_frames.py) · [Pixel comparison](compare_pixels.py) · [Scoring](score.py).
 
 The sphere guard can be applied to an isolated standard library with [the Loft source patch](strand-guard.patch). [The field guard generator](guard_study.py) creates the four pose-specific authored queries from the original IR bounds and field bodies. Its optional `torso` argument adds the torso guard to a copy of the head-guarded otter.
+
+The static checks passed, including both grammar recognizers on 351 inputs, 295 corpus identities and the wgpu / naga pins. The two focused test executables prepared with the lab profile passed all three native tests and all five runner tests inside the exclusive GPU slot. The archived logs include the complete test output.

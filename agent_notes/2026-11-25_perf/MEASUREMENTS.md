@@ -9,7 +9,7 @@ All timing pairs are nearest-rank GPU p50 / p95 milliseconds from 120 timed fram
 | Starter otter | 960x720 | 15.84 / 33.66 C | 3.92 / 4.79 C | 120/120, max 0 |
 | Walrus | 960x720 | 26.53 / 99.26 C | 1.86 / 2.15 C | 120/120, max 0 |
 | Heron | 960x720 | 37.01 / 41.19 C | 1.00 / 1.25 C | 120/120, max 0 |
-| Final otter | 960x720 | 100.02 / 148.47 C | 1.99 / 2.09 C | 120/120, max 0 |
+| Final otter | 960x720 | 100.02 / 148.47 C | 1.86 / 2.08 Q | 120/120, max 0 |
 | Walrus | 1280x800 | 38.40 / 55.66 C | 2.50 / 2.67 C | 119/120, max 24 |
 | Heron | 1280x800 | 94.81 / 114.52 C | 5.00 / 5.87 C | 120/120, max 0 |
 | Final otter | 1280x800 | 189.83 / 221.20 C | 2.84 / 10.83 C | 120/120, max 0 |
@@ -87,6 +87,17 @@ The all-ray counter also replayed the original march with the exact guard interv
 | Final otter | Head4 | 71.40 | 9.32 | 0 | 21.65 |
 | Final otter | Torso | 51.32 | 11.04 | 0 | 30.80 |
 
+The final otter also has two adjacent fresh-view triplets within a single GPU reservation. The second takes the reverse order. All use the original binary at 960×720. The measured reduction in evaluations had predicted 21.65 ms for the head plus 30.80 ms for the torso at the original calibration rates.
+
+| Run order | Final otter | Vis p50 | Frame p50 | Frame p95 | Control |
+| --- | --- | --- | --- | --- | --- |
+| 1 | Original | 60.08 | 61.99 | 91.96 | C |
+| 1 | Head | 49.00 | 50.99 | 70.42 | C |
+| 1 | Head and torso | 31.57 | 33.58 | 47.01 | C |
+| 2 | Head and torso | 30.03 | 31.84 | 39.14 | C |
+| 2 | Head | 49.17 | 51.07 | 87.85 | C |
+| 2 | Original | 78.91 | 81.42 | 90.20 | C |
+
 ## Ball lighting control
 
 Two integrations retain ambient occlusion and two make it dead. The sun-only AO control multiplies the direct term by AO to keep its five field samples live. These controls change lighting by design. They are excluded from all picture-preserving speedups.
@@ -109,5 +120,31 @@ These conditional savings overlap. All are relative to original fresh Vis. The b
 | Walrus | 11.05 | 4.87 | 7.78 |
 | Heron | 29.75 | 0.00 | 16.86 |
 | Final otter | 55.39 | 26.01 | 34.18 |
+
+## Paired deferred-timestamp check
+
+These are the ring half of native immediate/ring A/B runs in a separate GPU-slot window. The same mode applies to both members of each pair.
+
+| View | Raster | Original ring | Retained ring |
+| --- | --- | --- | --- |
+| Walrus | 960x720 | 30.68 / 32.72 Q | 4.35 / 4.84 C |
+| Heron | 960x720 | 40.13 / 41.64 Q | 2.51 / 4.21 Q |
+| Final otter | 960x720 | 114.12 / 131.77 Q | 5.04 / 11.10 Q |
+| Walrus | 1280x800 | 48.61 / 55.67 C | 7.48 / 10.09 C |
+| Heron | 1280x800 | 58.09 / 101.99 Q | 3.11 / 3.62 C |
+| Final otter | 1280x800 | 212.96 / 233.16 C | 6.54 / 7.18 C |
+
+## Native contention brackets across retries
+
+These are all immediate observations from the four standard attempts and the immediate half of each A/B run, followed by the ring observations. Each count is quiet / total for that scene, build and raster. The held-out camera and experimental bounds studies have their own controls.
+
+| View | Raster | Original immediate | Original ring | Retained immediate | Retained ring |
+| --- | --- | --- | --- | --- | --- |
+| Walrus | 960x720 | 0/5 | 1/1 | 0/6 | 0/2 |
+| Heron | 960x720 | 0/5 | 1/1 | 0/6 | 1/2 |
+| Final otter | 960x720 | 0/5 | 1/1 | 1/5 | 1/1 |
+| Walrus | 1280x800 | 0/6 | 0/2 | 0/6 | 0/2 |
+| Heron | 1280x800 | 0/5 | 1/1 | 0/6 | 0/2 |
+| Final otter | 1280x800 | 0/6 | 0/2 | 0/6 | 0/2 |
 
 The archive contains the actual brackets, 120 pass and frame observations per profile, per-kind counters, per-frame image digests and the independent calibration records. [Download raw measurements](measurements.tar.gz).

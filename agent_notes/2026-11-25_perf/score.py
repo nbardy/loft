@@ -202,10 +202,13 @@ for name,model in models.items():
                           model_saved_ms=model['kinds'][short]*(1.-after/before))
     model['guard_work']=saved
 paired_ring = {}
-for path in sorted(root.glob('*/*-ab.json')):
+for path in sorted(root.glob('*/*-ab*.json')):
     phase = path.parent.name
     scene, size, _ = path.stem.split('-')
-    paired_ring['/'.join([phase,size,scene])] = profile(path, 'ring')
+    key = '/'.join([phase,size,scene])
+    value = profile(path, 'ring')
+    if key not in paired_ring or (paired_ring[key]['contended'] and not value['contended']):
+        paired_ring[key] = value
 hashes = {}
 for size in ('960x720', '1280x800'):
     for name, stem in scenes.items():
