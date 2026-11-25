@@ -89,6 +89,7 @@ for name in scenes.keys() - {'sun'}:
     modules = {m['name']: m['wgsl'] for m in read(root/'model'/f'{name}.show')['modules']}
     empty = counts['cal_empty_ms']
     calwork = 0.
+    caltraced = 0.
     ideal = 0.
     work = dict(trace_miss=0., trace_hit=0., analytic_miss=0., analytic_hit=0.)
     contribution = {}
@@ -104,6 +105,7 @@ for name in scenes.keys() - {'sun'}:
         cost = (ms - empty)/4
         rate = cost / (shc + smc if traced else pc)
         if traced:
+            caltraced += cost
             work['trace_miss'] += sm * rate
             work['trace_hit'] += sh * rate
         else:
@@ -126,12 +128,31 @@ for name in scenes.keys() - {'sun'}:
     correction = (cal['vis'] - empty)/calwork if cal else None
     models[name] = dict(raw=empty+target_work, normalized=empty+correction*target_work if cal else None,
                         cal_ms=cal['vis'] if cal else None, scale=correction,
+                        work_cal=[caltraced, calwork-caltraced],
+                        work_target=[work['trace_hit']+work['trace_miss'],work['analytic_hit']+work['analytic_miss']],
                         actual=orig['vis'], totals=totals, shaded=visible,
                         field_root_calls=root_calls, rates=rates,
                         budget={k:(observed[1]-empty)*v/target_work for k,v in work.items()},
                         raster_clear_estimate=empty, non_visibility=orig['p50']-observed[1],
                         one_query_frame=orig['p50']-observed[1]+empty+ideal*(correction if cal else 1.),
                         kinds={k:(observed[1]-empty)*v/target_work for k,v in contribution.items()})
+# Two-column nonnegative least squares. Include both boundary solutions.
+shared = {}
+if len(models) == 5 and all(m['cal_ms'] is not None for m in models.values()):
+    rows = [[x/(m['cal_ms']-m['raster_clear_estimate']) for x in m['work_cal']] for m in models.values()]
+    aa = sum(a*a for a,b in rows)
+    ab = sum(a*b for a,b in rows)
+    bb = sum(b*b for a,b in rows)
+    ay, by = [sum(col) for col in zip(*rows)]
+    det = aa*bb-ab*ab
+    candidates = [(ay/aa,0.), (0.,by/bb)]
+    if det > 0:
+        candidates.append(((ay*bb-by*ab)/det,(by*aa-ay*ab)/det))
+    fit = min((x for x in candidates if min(x)>=0),
+              key=lambda x:sum((a*x[0]+b*x[1]-1.)**2 for a,b in rows))
+    shared['multipliers'] = fit
+    for m in models.values():
+        m['shared_prediction'] = m['raster_clear_estimate'] + sum(a*b for a,b in zip(fit,m['work_target']))
 hashes = {}
 for size in ('960x720', '1280x800'):
     for name, stem in scenes.items():
@@ -141,5 +162,5 @@ for size in ('960x720', '1280x800'):
             before, after = map(read,pair)
             hashes[size+'/'+name] = dict(frames=len(before), exact=sum(a==b for a,b in zip(before,after)),
                                          unique_before=len(set(before)), unique_after=len(set(after)))
-print(json.dumps(dict(selected=selected, attempts=attempts, models=models, hashes=hashes,
+print(json.dumps(dict(selected=selected, attempts=attempts, models=models, shared=shared, hashes=hashes,
                       diagnostics=read(root/'aov-summary.json')), indent=2, sort_keys=True))
