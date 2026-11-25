@@ -12,6 +12,7 @@ pub mod paths;
 #[path="material_shape.rs"]
 mod material_shape;
 mod surface;
+mod thin;
 mod lighting;
 pub mod shade_tiles;
 mod column;
@@ -838,7 +839,7 @@ fn traced_march(count_steps: bool, guard: Option<(u32, f32)>) -> String {
 /// `fixed` holds kind parameters as literals; the others are read from the row.
 pub fn emit_kind_module(
     p: &Prog, types: &[Ty], k: &KindDecl, light: Option<&str>, luts: &[LutRef],
-    draw: Draw, aov: Aov, fixed: &BTreeMap<(String, String), String>, guard: Option<(u32, f32)>,
+    draw: Draw, aov: Aov, fixed: &BTreeMap<(String, String), String>, guard: Option<(u32, f32)>, sources: &loft_ir::Sources,
 ) -> Res<String> {
     let mut em = Emitter::new(p, types);
     em.luts = luts;
@@ -953,6 +954,11 @@ pub fn emit_kind_module(
             // near offset as traversal. Proxy interpolation rounds that ray
             // differently, which can move a secondary origin across a surface.
             let primary_direction = if uses_world_hit { "loft_ray(v.pos.xy)" } else { "normalize(v.wp - ro)" };
+            let thin = if draw == Draw::Analytic && aov == Aov::Beauty {
+                thin::position(&mut em, k, sources)
+            } else { None };
+            let position = if thin.is_some() { "loft_thin_position(row, frame.view_proj * vec4<f32>(wp, 1.0))" }
+                else { "frame.view_proj * vec4<f32>(wp, 1.0)" };
             let (hit, split_ao) = match draw {
                 Draw::Analytic if uses_world_hit => (r"  let near = select(0.0001, 0.0, frame.cold.y == 1u);
   let local_t = q_visible(row, loft_xf_pt(xf, ro + near * rd), lrd);
@@ -968,7 +974,7 @@ pub fn emit_kind_module(
             let distance = if count_steps { "((bitcast<u32>(t) & 0xffffff00u) | steps)" } else { "bitcast<u32>(t)" };
             let visible_twin = if q(QueryKind::Visible) { "q_visible(row, pl, dl)" } else { "0.0" };
             (
-                render_template(include_str!("../../../stdlib/core/ray_vis.wgsl"), &[("PRIMARY_DIRECTION", primary_direction), ("HIT", &hit), ("DISTANCE", distance)]),
+                render_template(include_str!("../../../stdlib/core/ray_vis.wgsl"), &[("THIN", thin.as_deref().unwrap_or("")), ("POSITION", position), ("PRIMARY_DIRECTION", primary_direction), ("HIT", &hit), ("DISTANCE", distance)]),
                 if split_ao {
                     // The tetrahedral sum and the five AO taps keep their original
                     // order. Separate the loops to compute only the active sample.

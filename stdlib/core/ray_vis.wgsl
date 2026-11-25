@@ -3,7 +3,7 @@ const LOFT_CUBE: array<u32, 36> = array<u32, 36>(1u, 3u, 7u, 1u, 7u, 5u, 0u, 6u,
 struct VsOut { @builtin(position) pos: vec4<f32>, @location(0) wp: vec3<f32>, @location(1) @interpolate(flat) row: u32 }
 struct FsOut { @location(0) vis: vec2<u32>, @builtin(frag_depth) depth: f32 }
 
-// The proxy: the row's derived AABB, back faces (the camera may be inside it).
+{{THIN}}// The proxy: the row's derived AABB, back faces (the camera may be inside it).
 @vertex fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VsOut {
   let r = visible[kp.base + ii];
   if r == LOFT_EMPTY { return VsOut(vec4f(2.0, 2.0, 2.0, 1.0), vec3f(0.0), r); }
@@ -11,7 +11,7 @@ struct FsOut { @location(0) vis: vec2<u32>, @builtin(frag_depth) depth: f32 }
   let c = LOFT_CUBE[vi];
   let corner = vec3<f32>(f32(c & 1u), f32((c >> 1u) & 1u), f32((c >> 2u) & 1u));
   let wp = mix(row.loft_lo, row.loft_hi, corner);
-  return VsOut(frame.view_proj * vec4<f32>(wp, 1.0), wp, r);
+  return VsOut({{POSITION}}, wp, r);
 }
 
 const LOFT_TETRA: array<vec3<f32>, 4> = array<vec3<f32>, 4>(vec3<f32>(1.0, -1.0, -1.0), vec3<f32>(-1.0, -1.0, 1.0),

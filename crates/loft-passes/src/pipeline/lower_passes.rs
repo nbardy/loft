@@ -38,7 +38,7 @@ pub(super) fn lower(
     let fixed = fixed_parameters(p, &scene.tables)?;
     let mut texts = Vec::new();
     for ((name, kt), guard) in drawn.iter().zip(kinds).zip(&scene.guard_table) {
-        let shader = emit::emit_kind_module(p, types, p.kinds[*name], light, lut_refs, kt.draw, aov, &fixed, guard.map(|base| (base, loft_eval::guard::EYE_REACH)))?;
+        let shader = emit::emit_kind_module(p, types, p.kinds[*name], light, lut_refs, kt.draw, aov, &fixed, guard.map(|base| (base, loft_eval::guard::EYE_REACH)), src)?;
         texts.push((name.to_string(), shader));
     }
     // Rows a kind's queries read (`K[i]`) bind to the read kind's table in the vis, shadow and shade passes. The tiled
