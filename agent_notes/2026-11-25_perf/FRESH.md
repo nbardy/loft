@@ -137,3 +137,31 @@ At 960 the second original-only walrus capture differed from the first original 
 Timing and picture comparisons use the stock CLI’s two time generators. The profile multiplies an f32 frame index by an f32 interval; the clip rounds a double-precision frame time once. On this orbit 76/120 profile timestamps are one f32 ULP above the corresponding clip timestamp. Every profile pair uses the same profile times, and every image pair uses the same clip times.
 
 At 1280×800, frame 60 of the walrus differs between the screen-strip and guard builds at 1,140 pixels, with a largest channel error of 133. The strip already fails the picture requirement on this frame. It is an experimental timing result. The hardware-scissor build uses the old clip coordinates throughout. [Strip shader](strip.wgsl) · [Native scissor projection](../../crates/loft-native/src/scissor.rs)
+
+### Raster-strip timing and image differences
+
+In the strip build, every 120-frame clip using an eligible solver changed on every frame. Ball and heron have no eligible solver. All timing pairs below used immediate timestamps and both attempts were flagged. Times are GPU p50 / p95 in milliseconds. Each linked image shows the largest channel error across the 120-frame original comparison. The last four numbers are exact frames / largest channel error / peak changed pixels on a frame / total changed pixels.
+
+| Scene and raster | Guard in this pair | Predicted guard + strip | Measured guard + strip | RGBA result |
+|---|---:|---:|---:|---|
+| ball-960x720 | 2.37 / 4.26 C | 2.5 / 4.5 | 4.02 / 5.17 C | 120 / 0 / 0 / 0 |
+| base-960x720 | 7.78 / 9.87 C | 5.8 / 8.1 | 7.09 / 8.74 C | [0 / 176 / 474 / 39,785](orbit/thin/thin-base-960x720.png) |
+| walrus-960x720 | 13.05 / 15.74 C | 8.2 / 10.2 | 13.81 / 19.99 C | [0 / 243 / 1,302 / 122,066](orbit/thin/thin-walrus-960x720.png) |
+| heron-960x720 | 6.06 / 10.07 C | 8.0 / 9.3 | 6.43 / 9.32 C | 120 / 0 / 0 / 0 |
+| otter-960x720 | 39.21 / 49.31 C | 12 / 16 | 15.89 / 18.68 C | [0 / 244 / 851 / 87,694](orbit/thin/thin-otter-960x720.png) |
+| walrus-1280x800 | 16.54 / 20.01 C | 9 / 11 | 13.21 / 16.16 C | [0 / 253 / 1,588 / 137,036](orbit/thin/thin-walrus-1280x800.png) |
+| heron-1280x800 | 5.59 / 9.55 C | 10.2 / 12.4 | 2.82 / 3.54 C | 120 / 0 / 0 / 0 |
+| otter-1280x800 | 48.27 / 65.04 C | 15.5 / 19.5 | 17.67 / 20.31 C | [0 / 244 / 949 / 99,851](orbit/thin/thin-otter-1280x800.png) |
+At 960 the strip saved 30.63 ms at the final otter’s p95 and added 4.25 ms at the walrus’s p95 relative to the immediately preceding guard. Predicting total time directly from fragment count overestimated the gain on the walrus. The calibrated per-fragment rate also depends on primitive size, GPU operating state and the work remaining outside that draw.
+
+### Fragment launches and visibility words
+
+At frame 60 of the 960×720 orbit, the instrument clears the same textures and draws one kind in a fixed row order. Each time is the median of seven uncensored draws. The hit counter counts successful per-fragment solves, including overlapping surfaces. The final two columns count pixels where either 32-bit visibility word differs from the original draw.
+
+| Kind | Original launches | Strip launches | Scissor launches | Original hits | Original / strip / scissor ms | Strip changed pixels | Scissor changed pixels |
+|---|---:|---:|---:|---:|---|---:|---:|
+| [Whisker](orbit/thin/base-Whisker-vis-replay.json.gz) | 6,916,484 | 114,163 | 411,915 | 5,133 | 3.61 / 0.36 / 0.54 | 3,727 | 0 |
+| [Rod](orbit/thin/walrus-Rod-vis-replay.json.gz) | 31,202,634 | 1,878,641 | 9,970,921 | 177,414 | 8.66 / 2.20 / 6.59 | 35,833 | 0 |
+| [Bit](orbit/thin/otter-Bit-vis-replay.json.gz) | 3,238,049 | 164,730 | 731,529 | 23,616 | 1.72 / 0.29 / 0.48 | 19,078 | 0 |
+| [Strand](orbit/thin/otter-Strand-vis-replay.json.gz) | 96,849,778 | 4,230,331 | 2,503,784 | 10,819 | 22.86 / 3.68 / 2.72 | 8,514 | 0 |
+All twelve fixed-order scissor replays, covering four kinds at frames 0, 60 and 119, preserved every visibility word. At the middle pose, the coverage model predicted 2.508 million scissored Strand fragments and measured 2.504 million. It predicted 4.244 million for the strip and measured 4.230 million. A correct launch-count model can still miss native p95. Full-frame timing includes the other kinds, pass scheduling and the cost of hundreds of draws.
