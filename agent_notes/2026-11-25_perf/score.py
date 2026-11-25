@@ -149,6 +149,7 @@ for name in scenes.keys() - {'sun'}:
                         field_root_calls=root_calls, rates=rates,
                         budget={k:(observed[1]-empty)*v/target_work for k,v in work.items()},
                         raster_clear_estimate=empty, non_visibility=orig['p50']-observed[1],
+                        one_query_work=ideal,eight_query_work=ideal+7*ideal_field,
                         one_query_frame=orig['p50']-observed[1]+empty+ideal*(correction if cal else 1.),
                         eight_query_frame=orig['p50']-observed[1]+empty+(ideal+7*ideal_field)*(correction if cal else 1.),
                         opportunities_ms={k:(observed[1]-empty)*v/target_work for k,v in upper.items()},
@@ -175,6 +176,12 @@ if len(models) == 5 and all(m['cal_ms'] is not None for m in models.values()):
     for m in models.values():
         m['shared_prediction'] = m['raster_clear_estimate'] + sum(a*b for a,b in zip(fit,m['work_target']))
 held_out = {p.name.removesuffix('-prediction.json'): read(p) for p in (root/'paired').glob('*-prediction.json')}
+for name,v in held_out.items():
+    model=models[name]
+    coeff=(v['cal_vis']-pooled_empty)/v['rotated_weight']
+    fixed=model['non_visibility']+pooled_empty
+    model['one_query_frame']=fixed+coeff*model['one_query_work']
+    model['eight_query_frame']=fixed+coeff*model['eight_query_work']
 if len(held_out) == 5:
     rows = [[x/(v['cal_vis']-pooled_empty) for x in v['class_rotated']] for v in held_out.values()]
     fit = class_fit(rows)
