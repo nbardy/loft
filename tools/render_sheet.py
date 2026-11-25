@@ -47,7 +47,7 @@ if len(sys.argv) != 4:
 src_dir, worker, rnd = Path(sys.argv[1]).resolve(), sys.argv[2], sys.argv[3]
 if not os.environ.get("RENDER_SHEET_IN_SLOT"):
     os.environ["RENDER_SHEET_IN_SLOT"] = "1"
-    cmd = [str(Path.home() / ".local/bin/agent-build"), "--gpu", "--max-wait", "90", "--max-minutes", "20",
+    cmd = [str(Path.home() / ".local/bin/agent-build"), "--gpu", "--max-wait", "90", "--max-minutes", "10",
            f"sheet {worker}/{rnd}", sys.executable, *sys.argv]
     sys.exit(subprocess.run(cmd).returncode)
 
