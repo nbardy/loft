@@ -1,5 +1,7 @@
 # Why the character views are slow
 
+The moving-camera continuation measures newly rendered visibility at both delivery sizes and compares every frame with the original. [Fresh-frame results and certified bounds](FRESH.md)
+
 Apple M4, Metal, macOS 15.5. The original fixtures are pinned beside this report. Baseline revision `2afc5e55`. The two CLI builds used the checkout's lab profile. All normal profiles use authored source, 30 warmup frames and 120 timed frames with immediate GPU timestamps. The image test hashes the decoded RGBA8 bytes of frames 0 through 119 at 60 Hz, including the first draw. The GPU pass numbers exclude CPU scene compilation, GPU queue waiting on the host, PNG encoding and display synchronization.
 
 The production change retains primary visibility for an unchanged camera and geometry. The native renderer matched the original byte for byte in 720/720 corresponding 960×720 frames. At 1280×800, heron and final otter matched in 120/120 each. The walrus matched in 119/120. On the remaining frame one pixel differed by a maximum of 24 in RGBA8, and the candidate kept a value the original had produced on 119 frames. [Timing and model tables](MEASUREMENTS.md) · [Raw measurement archive](measurements.tar.gz) · [Full-frame difference](diffs/candidate-1280x800-walrus-diff.png) · [Original, retained and amplified difference at the affected pixel](diffs/candidate-1280x800-walrus-original-candidate-diff.png).

@@ -87,3 +87,7 @@ The two builds ran consecutively for each input. All 120 measured primary visibi
 | Final otter | 1280×800 | 78.36 / 85.80 C | 31.64 / 35.85 C | 0.01 / 29.27 / 0 / 0.05 / 2.21 / 0.10 |
 
 The observed 960 guard p95 was 4.3 ms above forecast on heron and 10.6 / 19.0 ms below forecast on walrus / final otter. Operating-window differences affect even the ball control. On the larger final otter the guarded p95 still needs 19.15 ms removed to reach budget. The actual p95-ranked pass costs and the large run-to-run control shifts belong in the final budget. [Original timings](orbit/paired-original) · [Guard timings](orbit/revised)
+
+The paired p95-ranked final otter frames spent 32.02 ms and 33.49 ms in Vis at the two sizes. Keeping the other passes at their observed costs leaves 14.87 ms and 14.34 ms for primary visibility. Even the small raster needs a further 54% reduction in that pass on the sampled tail frame. The guarded heron median still paid 3.42 / 4.70 ms in shade. The original calibrated model counted relatively little shading at the original camera and operating point.
+
+The proof attempts every eligible traced kind. A query with a clock dependency, live geometry parameter, scheduled law, foreign row access, bake, raw helper or an unsupported operation uses its original interval. Authored Lipschitz estimates and the rotation, ellipsoid and round-cone rules are unchanged. Traced guards are derived once per distinct eligible shape and loaded with its rows. The camera can still move independently.
