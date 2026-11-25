@@ -2,15 +2,16 @@
 # /// script
 # dependencies = ["pillow", "numpy"]
 # ///
+import argparse
 from hashlib import sha256
 import json
 from pathlib import Path
-import sys
+import subprocess
 
 import numpy as np
 from PIL import Image
 
-from fresh import out, scenes
+from fresh import checkpoint, notes, out, root, scenes
 
 
 def profile(folder, stem, probe):
@@ -68,7 +69,11 @@ def compare(before, after, size, diff_path):
 
 
 if __name__ == "__main__":
-    phase, *extra = sys.argv[1:]
+    parser = argparse.ArgumentParser()
+    parser.add_argument("phase")
+    parser.add_argument("--record", action="store_true")
+    args = parser.parse_args()
+    phase = args.phase
     probe = phase == "proxy"
     folder = out / phase
     report = {}
@@ -80,8 +85,15 @@ if __name__ == "__main__":
             after = folder / (stem if probe else stem + "-clip")
             if phase != "original" and before.exists() and (after / "frame_119.png").exists():
                 result = result or {}
-                result["pixels"] = compare(before, after, tuple(map(int, res.split("x"))),
-                                           out / "diffs" / f"{phase}-{stem}.png")
+                diff = (notes / "orbit" / phase if args.record else out / "diffs") / f"{phase}-{stem}.png"
+                result["pixels"] = compare(before, after, tuple(map(int, res.split("x"))), diff)
+                if args.record:
+                    if result["pixels"]["diff"]:
+                        subprocess.run(["git", "add", "--", diff], cwd=root, check=True)
+                        if subprocess.run(["git", "diff", "--cached", "--quiet", "--", diff], cwd=root).returncode:
+                            subprocess.run(["git", "commit", "-m", f"Save {phase} {stem} worst-frame difference", "--", diff], cwd=root, check=True)
+                    checkpoint(phase, stem + "-score.json", json.dumps(result, sort_keys=True).encode(),
+                               f"Score {phase} {stem}: {result['pixels']['exact']}/120 exact moving frames")
             if result:
                 report[stem] = result
                 summary = result.get("pixels", {})
