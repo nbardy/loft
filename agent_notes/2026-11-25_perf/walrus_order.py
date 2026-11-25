@@ -1,5 +1,6 @@
 """Hold projected geometry and the draw order fixed across the two native builds."""
 import argparse
+import shutil
 import subprocess
 
 from fresh import checkpoint, notes, out
@@ -9,6 +10,11 @@ parser.add_argument("size")
 args = parser.parse_args()
 source = out / "source/fixtures/walrus/tq.loft"
 fixed = source.with_name("fixed_order.loft")
+# A dispatch resolves its template paths relative to the authoring schedule.
+local = fixed.parent / "core"
+local.mkdir(exist_ok=True)
+for template in ["cull.wgsl", "cull_single.wgsl"]:
+    shutil.copy2(notes.parents[1] / "stdlib/core" / template, local / template)
 body = (notes.parents[1] / "stdlib/core.loft").read_text().split("pub schedule cull_indirect", 1)[1].split("\n}\n", 1)[0]
 choice = 'if drawn == 1 { "core/cull_single.wgsl" } else { "core/cull_multi.wgsl" }'
 assert choice in body and source.read_text().count("cull_indirect(") == 1
