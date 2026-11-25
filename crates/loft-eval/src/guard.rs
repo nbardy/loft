@@ -111,6 +111,53 @@ fn proof_cube(outer: &Derived, posed: bool) -> ([f64; 3], f64) {
     (origin, radius + PAD + PAD_REL * (radius + norm(origin)))
 }
 
+fn hit_band(origin: [f64; 3], cell: Cell) -> f64 {
+    let mid = centre(cell);
+    let r = 0.5 * norm(AXES.map(|i| cell.1[i] - cell.0[i]));
+    let max_t = f64::from(EYE_REACH) + norm(AXES.map(|i| mid[i] - origin[i])) + r;
+    0.0001 + 0.000201 * max_t
+}
+
+/// Try to shave a coarse hull without spending any more work on its interior.
+/// Each cut needs a proof for its entire slab. An undecided leaf or exhausted
+/// budget leaves the last proved face in place.
+fn trim_faces(hull: &mut Cell, mut empty: impl FnMut(Cell) -> bool) -> u32 {
+    let mut evals = 0;
+    for axis in AXES {
+        for low in [true, false] {
+            let limit = evals + 2048;
+            let face = |c: Cell| if low { c.0[axis] } else { c.1[axis] };
+            let mut stop = if low { hull.1[axis] } else { hull.0[axis] };
+            while (face(*hull) - stop).abs() > CELL_WIDTH && evals < limit {
+                let split = 0.5 * (face(*hull) + stop);
+                let mut slab = *hull;
+                if low { slab.1[axis] = split; } else { slab.0[axis] = split; }
+                let mut pending = vec![slab];
+                let mut proved = true;
+                while let Some(cell) = pending.pop() {
+                    if evals == limit { proved = false; break; }
+                    evals += 1;
+                    if empty(cell) { continue; }
+                    let widths = AXES.map(|i| cell.1[i] - cell.0[i]);
+                    let i = AXES.into_iter().max_by(|&i, &j| widths[i].total_cmp(&widths[j])).unwrap();
+                    if widths[i] <= CELL_WIDTH { proved = false; break; }
+                    let mid = 0.5 * (cell.0[i] + cell.1[i]);
+                    let (mut a, mut b) = (cell, cell);
+                    a.1[i] = mid;
+                    b.0[i] = mid;
+                    pending.extend([a, b]);
+                }
+                if proved {
+                    if low { hull.0[axis] = split; } else { hull.1[axis] = split; }
+                } else {
+                    stop = split;
+                }
+            }
+        }
+    }
+    evals
+}
+
 /// The proof covers the whole raster box, even when rotating a local box enlarged
 /// its world AABB. Cells left by the work limit are retained whole.
 pub fn derive<'a>(
@@ -129,6 +176,11 @@ pub fn derive<'a>(
     let mut table = vec![vec![]; ev.tables.len()];
     table[kind].push(ev.tables[kind][row].clone());
     let mut gpu = Eval::<Floats>::new(ev.p, ev.types, table, ev.overrides);
+    let mut outside = |cell: Cell| {
+        let p = Val::V(AXES.map(|i| Floats(Iv { lo: cell.0[i], hi: cell.1[i], l: 0.0 })).to_vec(), 0.0);
+        matches!(gpu.call_fn(trace, vec![Val::Row(kind, 0), p], span),
+            Ok(Val::S(d)) if d.0.lo > hit_band(origin, cell) + PAD)
+    };
     let mut evals = 0;
     let mut hull = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
     let mut pending = std::collections::VecDeque::from([root]);
@@ -146,8 +198,7 @@ pub fn derive<'a>(
         let mid = centre(cell);
         let widths = AXES.map(|i| cell.1[i] - cell.0[i]);
         let r = 0.5 * norm(widths);
-        let max_t = f64::from(EYE_REACH) + norm(AXES.map(|i| mid[i] - origin[i])) + r;
-        let band = 0.0001 + 0.000201 * max_t;
+        let band = hit_band(origin, cell);
         let mut evaluate = |(lo, hi): Cell| -> Res<Iv> {
             evals += 1;
             let point = Val::V(
@@ -185,20 +236,7 @@ pub fn derive<'a>(
             // Confirm the proposed cut with outward arithmetic. In particular,
             // giant cancelling terms can move an f32 zero far outside the f64 hull.
             evals += 1;
-            let p = Val::V(
-                AXES.map(|i| {
-                    Floats(Iv {
-                        lo: cell.0[i],
-                        hi: cell.1[i],
-                        l: 0.0,
-                    })
-                })
-                .to_vec(),
-                0.0,
-            );
-            if let Ok(Val::S(d)) = gpu.call_fn(trace, vec![Val::Row(kind, 0), p], span)
-                && d.0.lo > band + PAD
-            {
+            if outside(cell) {
                 continue;
             }
         }
@@ -213,6 +251,9 @@ pub fn derive<'a>(
             AXES.map(|i| if k >> i & 1 == 0 { mid[i] } else { cell.1[i] }),
         ));
         pending.extend(children);
+    }
+    if evals >= 24_000 && hull.0[0].is_finite() {
+        evals += trim_faces(&mut hull, outside);
     }
     // An empty proof can use the outer box; this keeps the row record finite.
     let (mut lo, mut hi) = if hull.0[0].is_finite() { hull } else { root };
