@@ -30,6 +30,8 @@ impl Reuse {
         Self::geometry(p, casters, indexed, editable)
     }
 
+    // A compacted cull list can submit equal-depth rows in different orders. Retention
+    // keeps the first draw's legal winner at those pixels until the view invalidates.
     pub(super) fn visibility(
         p: &Program, indexed: impl Fn(&loft_passes::program::KindTable) -> bool, editable: Option<usize>,
     ) -> Self {
@@ -100,8 +102,8 @@ impl Reuse {
             Self::EveryFrame => true,
             Self::Once { drawn } => !std::mem::replace(drawn, true),
             Self::Static { reads_params, last } => {
-                // The other bytes include the actual light projection and ray direction. The map,
-                // caster list, row/bounds buffers, indices, baked grid and LUTs belong to this load.
+                // Projection, eye/ray direction and extent participate in both keys. The row
+                // buffers, indices, baked grid, LUTs and attachment allocation belong to this load.
                 let same_projection = last.as_ref().is_some_and(|previous| {
                     uniform[..TIME.start] == previous[..TIME.start]
                         && uniform[TIME.end..SAMPLES.start] == previous[TIME.end..SAMPLES.start]
