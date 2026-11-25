@@ -131,3 +131,5 @@ The native AB command times an immediate pass and then another 30 warmups and 12
 | walrus-1280x800 | 38.73 / 44.24 Q | 21.77 / 29.74 Q | 0.91 / 0.90 |
 | heron-1280x800 | 46.11 / 49.27 Q | 2.66 / 3.77 C | 2.39 / 0.75 |
 | otter-1280x800 | 155.69 / 166.07 Q | 68.27 / 87.01 C | 2.81 / 1.02 |
+
+At 960 the second original-only walrus capture differed from the first original on 42 of 120 PNGs. On 20 of those 42, the original repeat exactly reproduced the guarded PNG. This establishes intrinsic baseline variation at the moving camera. It does not assign the remaining pixels to the culler. The fixed-order test evaluates that explanation using the same cull kernel on both builds. [Original repeat metadata](orbit/repeat-original)
