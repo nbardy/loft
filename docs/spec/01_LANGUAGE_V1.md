@@ -230,7 +230,7 @@ field_inits: (_NL? field_init (("," | _SEP) field_init)* ("," | _SEP)?)?
 field_init:  LIDENT ":" expr
 
 // --- Statements & Blocks ---
-block:       "{" (_NL? stmt (_SEP stmt)* _SEP?)? "}"
+block:       "{" _NL* (stmt (_SEP stmt)* _SEP?)? "}"
 stmt:        "let" LIDENT (":" type_expr)? "=" expr
            | "var" LIDENT (":" type_expr)? "=" expr
            | "map" LIDENT "=" expr

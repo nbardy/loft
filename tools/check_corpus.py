@@ -1,5 +1,6 @@
 """Check the frozen Phase 5 partition against its pinned example revision and seed sets."""
 from collections import Counter
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -27,6 +28,13 @@ def check():
     counts = Counter(identity.split("/", 1)[0] for identity in ids[125:])
     if counts != {s["set"]: s["rows"] for s in sources["seeds"]["sets"]}:
         raise ValueError("corpus seed counts differ from the source manifest")
+    fixtures = root / "tests/characters"
+    for name, revision, source, blob in json.loads((fixtures / "sources.json").read_bytes()):
+        data = (fixtures / "before" / name).read_bytes()
+        digest = hashlib.sha1(f"blob {len(data)}\0".encode() + data).hexdigest()
+        if digest != blob or not (fixtures / name).is_file():
+            raise ValueError(f"{name} differs from its character fixture source {revision}:{source}")
+    print("4 character authoring fixture sources verified")
     print("295 distinct Phase 5 identities in 20 batches")
 
 

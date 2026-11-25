@@ -1,0 +1,446 @@
+# The Long Verdict, the heron executioner. One module. A scene calls `heron(...)` once; it emits the figure as small kinds
+# (cloak, head and neck, leg, stole, bell, ten weights), each with its own tight bound, so a ray only pays for the part it
+# meets (round 4 showed one big kind cost 340 ms a frame). Fig is the figure's own space: x forward, y up from the post
+# top, z to her left; the pose is `place(top_of_post, yaw)`.
+use stdlib::sdf::solid::{smin, round_cone, sphere, box_sdf, capsule}
+use stdlib::geometry::analytic::{ray_ground}
+use stdlib::materials::bsdf::{lambert, sheen, ggx, emit_lobe}
+use stdlib::noise::value::{vnoise, fbm2, hash3}
+
+space Fig
+
+const POST_CLAY = [0.30, 0.28, 0.26]
+const MIST = [0.52, 0.58, 0.58]
+const WATER_CLAY = [0.16, 0.17, 0.17]
+
+# An ellipsoid of radii r about c (a lower bound of the true distance, as the otter study used).
+fn el(q: rgb, c: rgb, r: rgb) -> f {
+  (length((q - c) / r) - 1.0) * min(r.x, min(r.y, r.z))
+}
+
+# A round cone between two points of a local frame, each end with its own radius.
+fn rc(q: rgb, a: rgb, b: rgb, ra: f, rb: f) -> f {
+  round_cone([q.x, q.y, q.z]@World, [a.x, a.y, a.z]@World, [b.x, b.y, b.z]@World, ra, rb)
+}
+
+# A capsule (exact distance, Lipschitz 1) between two points of a local frame. The figure uses these instead of round cones:
+# the derived Lipschitz bound of round_cone is 2.15 and the march takes that many more steps (r06: 85 to 146 ms a frame).
+fn cap(q: rgb, a: rgb, b: rgb, r: f) -> f {
+  capsule([q.x, q.y, q.z]@World, [a.x, a.y, a.z]@World, [b.x, b.y, b.z]@World, r)
+}
+
+fn head_c(rise: f, stoop: f) -> rgb = [0.030 + 0.022 * stoop, 0.310 + rise, 0.0]
+
+# The neck: a cubic from the shoulder to the head whose control points make an S (curl is its depth).
+fn neck_at(rise: f, stoop: f, curl: f, t: f) -> rgb {
+  let hc = head_c(rise, stoop)
+  let p0 = [0.006, 0.290, 0.0]
+  let span = hc.y - p0.y
+  let p1 = [p0.x + 0.040 * curl, p0.y + 0.42 * span, 0.0]
+  let p2 = [hc.x - 0.045 * curl, hc.y - 0.42 * span, 0.0]
+  let u = 1.0 - t
+  p0 * (u * u * u) + p1 * (3.0 * u * u * t) + p2 * (3.0 * u * t * t) + hc * (t * t * t)
+}
+
+# The hem is a straight line; the torn felt is sixteen separate strips (HeronTatter rows), because a sawtooth in the field
+# raises its Lipschitz bound, and so the march cost, for the whole cloak.
+
+# Tabard geometry as plain functions of height so the stole and the weights can sit on its surface.
+fn tab_t(y: f) -> f = clamp((y - 0.080) / 0.205, 0.0, 1.0)
+fn tab_r(sweep: f, y: f) -> f = mix(0.034 + 0.008 * sweep, 0.029, tab_t(y))
+fn tab_cx(sweep: f, y: f) -> f = mix(-0.026 * sweep, -0.002, tab_t(y))
+
+# The felt tabard: a thin shell (7 mm) of an elliptical cone, open at the hem and cut open at both sides above the
+# hem, so the front and back hang as two panels joined at the shoulders and the body shows between them.
+fn tabard_d(f: rgb, sweep: f, squeeze: f) -> f {
+  let tp = [f.x, f.y, f.z * squeeze]
+  let low = cap(tp, [-0.026 * sweep, 0.075, 0.0], [-0.012 * sweep - 0.001, 0.170, 0.0], 0.0335 + 0.007 * sweep)
+  let up = cap(tp, [-0.012 * sweep - 0.001, 0.170, 0.0], [-0.002, 0.285, 0.0], 0.030)
+  let sh = length(tp - [-0.004, 0.290, 0.0]) - 0.036
+  let d = smin(smin(low, up, 0.02), sh, 0.02)
+  let shell = max(d, -d - 0.007)
+  let slot = max(0.031 - abs(f.z), abs(f.y - 0.185) - 0.075)
+  max(max(shell, 0.0 - slot), 0.088 - f.y)
+}
+
+# The body under the cloak, and the folded wings that bulge behind the shoulders.
+fn body_d(f: rgb, sweep: f, squeeze: f) -> f {
+  let tp = [f.x, f.y, f.z * squeeze]
+  let torso = cap(f, [-0.010, 0.160, 0.0], [-0.010, 0.250, 0.0], 0.031)
+  let wing = cap(tp, [-0.026 - 0.016 * sweep, 0.190, 0.0], [-0.026 - 0.016 * sweep, 0.285, 0.0], 0.026)
+  smin(torso, wing, 0.02)
+}
+
+# The cowl: a soft ring of felt where the hood lies round the base of the neck.
+fn cowl_d(f: rgb, cowl: f) -> f {
+  let g = [f.x, f.y, f.z * 0.85]
+  let a = cap(g, [0.004, 0.292, 0.0], [0.004, 0.296, 0.0], 0.030 + 0.007 * cowl)
+  let b = cap(g, [0.005, 0.306, 0.0], [0.005, 0.310, 0.0], 0.022 + 0.006 * cowl)
+  let c = cap(g, [0.006, 0.322, 0.0], [0.006, 0.326, 0.0], 0.016 + 0.004 * cowl)
+  smin(smin(a, b, 0.012), c, 0.012)
+}
+
+fn cloak_d(f: rgb, sweep: f, squeeze: f, cowl: f) -> f =
+  min(min(tabard_d(f, sweep, squeeze), body_d(f, sweep, squeeze)), cowl_d(f, cowl))
+
+# Stole: a narrow strip from the left shoulder down the front, standing 4 mm off the felt.
+fn front_x(sweep: f, y: f) -> f {
+  # sqrt(r^2 - (z squeeze)^2) is about 0.76 r at the stole's z; no square root, so the bound stays small.
+  tab_cx(sweep, y) + 0.76 * tab_r(sweep, y) + 0.004
+}
+fn stole_d(f: rgb, sweep: f) -> f {
+  let xa = front_x(sweep, 0.292)
+  # The felt's front edge slants 0.02 forward per metre of drop with no sweep and 0.073 backward with full sweep.
+  let u = f.x - (xa + (0.292 - f.y) * (0.020 - 0.093 * sweep))
+  let q = [u, f.y - 0.196, f.z - 0.030]
+  box_sdf([q.x, q.y, q.z]@World - [0.0, 0.0, 0.0]@World, [0.0010, 0.0945, 0.0070]) - 0.0015
+}
+
+# Where lead weight i hangs: round the hem, 4 mm below it (a build-time helper).
+fn weight_at(sweep: f, squeeze: f, i: u) -> rgb {
+  let th = 0.6283 * f32(i) + 0.31
+  let cx = tab_cx(sweep, 0.088)
+  let r = tab_r(sweep, 0.088)
+  [cx + r * cos(th), 0.083, r * sin(th) / squeeze]
+}
+
+# Strip j of torn felt: from the hem outward and down, 1.8 to 3.4 cm long (a build-time helper: the two ends of a capsule).
+fn tatter_top(sweep: f, squeeze: f, j: u) -> rgb {
+  let th = 0.3927 * f32(j) + 0.05
+  let cx = tab_cx(sweep, 0.088)
+  let r = tab_r(sweep, 0.088)
+  [cx + r * cos(th), 0.091, r * sin(th) / squeeze]
+}
+fn tatter_tip(sweep: f, squeeze: f, j: u) -> rgb {
+  let th = 0.3927 * f32(j) + 0.05
+  let len = 0.018 + 0.016 * (0.5 + 0.5 * sin(f32(j) * 2.7))
+  let top = tatter_top(sweep, squeeze, j)
+  [top.x + 0.004 * cos(th), top.y - len, top.z + 0.004 * sin(th) / squeeze]
+}
+
+# The bell: a cord from the hem past the post to a bronze bell whose lip just touches the water (y = -0.16).
+fn bell_d(f: rgb) -> f {
+  let cord = cap(f, [0.012, 0.092, 0.050], [0.012, -0.118, 0.075], 0.0016)
+  # A flared bell: five short capsules of rising radius, blended into one smooth cone with a rolled lip.
+  var d = cap(f, [0.012, -0.121, 0.075], [0.012, -0.123, 0.075], 0.0045)
+  d = smin(d, cap(f, [0.012, -0.130, 0.075], [0.012, -0.132, 0.075], 0.0070), 0.006)
+  d = smin(d, cap(f, [0.012, -0.138, 0.075], [0.012, -0.140, 0.075], 0.0092), 0.006)
+  d = smin(d, cap(f, [0.012, -0.146, 0.075], [0.012, -0.148, 0.075], 0.0112), 0.006)
+  d = smin(d, cap(f, [0.012, -0.152, 0.075], [0.012, -0.153, 0.075], 0.0125), 0.005)
+  min(cord, d)
+}
+
+fn leg(q: rgb) -> f {
+  var d = cap(q, [0.0, 0.140, 0.0], [-0.008, 0.058, 0.0], 0.0070)
+  d = min(d, length(q - [-0.008, 0.058, 0.0]) - 0.0090)
+  d = min(d, cap(q, [-0.008, 0.058, 0.0], [0.010, 0.0065, 0.0], 0.0052))
+  for i in 0..3 {
+    let th = (f32(i) - 1.0) * 0.5
+    d = min(d, cap(q, [0.010, 0.005, 0.0], [0.010 + 0.040 * cos(th), 0.0025, 0.040 * sin(th)], 0.0038))
+  }
+  min(d, cap(q, [0.010, 0.005, 0.0], [-0.016, 0.0025, 0.0], 0.0034))
+}
+
+
+# hq: head frame (x along the beak, y the crown, z across); yq: head position, heading only (x forward, y up).
+# kind 0 blade (flat small skull, ribbons), 1 hooded (a cowl dome over the back of the skull), 2 stern (heavy brow shelf,
+# short plumes). The weights are 0 or 1; an inactive part is pushed 1 m away rather than branched on.
+fn head(hq: rgb, yq: rgb, kind: f) -> f {
+  let w1 = step(0.5, kind) * (1.0 - step(1.5, kind))
+  let w2 = step(1.5, kind)
+  let hz = [hq.x, hq.y, abs(hq.z)]
+  let sk = [hq.x, hq.y * 1.05, hq.z]
+  let skull = cap(sk, [-0.014, 0.0, 0.0], [0.012, 0.0, 0.0], 0.0215)
+  let brow = length(hz - [0.010, 0.011, 0.011]) - (0.0090 + 0.004 * w2)
+  let hood = length(hq - [-0.012, 0.003, 0.0]) - 0.030 + 1.0 - w1
+  # The bill: four capsules of falling radius, taller than wide (y is scaled), blended.
+  let bq = [hq.x, hq.y * 0.72, hq.z]
+  let b1 = cap(bq, [0.016, 0.0, 0.0], [0.070, 0.0, 0.0], 0.0098)
+  let b2 = cap(bq, [0.070, 0.0, 0.0], [0.125, 0.0, 0.0], 0.0072)
+  let b3 = cap(bq, [0.125, 0.0, 0.0], [0.170, 0.0, 0.0], 0.0049)
+  let b4 = cap(bq, [0.170, 0.0, 0.0], [0.215, 0.0, 0.0], 0.0026)
+  let bill = smin(smin(b1, b2, 0.006), smin(b3, b4, 0.004), 0.006)
+  let eye = length(hz - [0.011, 0.004, 0.0145]) - 0.0105
+  var d = min(smin(smin(smin(skull, brow, 0.01), hood, 0.012), bill, 0.012), eye)
+  let zq = [yq.x, yq.y, abs(yq.z)]
+  let k = 1.0 - 0.4 * w2
+  let o = [-0.008, 0.020, 0.008]
+  let w1p = [-0.035 * k, 0.024, 0.012]
+  let w2p = [-0.065 * k, 0.010, 0.016]
+  let w3p = [-0.090 * k, -0.022 * k, 0.018]
+  let w4p = [-0.105 * k, -0.066 * k, 0.020]
+  let w5p = [-0.110 * k, -0.110 * k, 0.021]
+  d = min(d, min(cap(zq, o, w1p, 0.0070), min(cap(zq, w1p, w2p, 0.0058), min(cap(zq, w2p, w3p, 0.0045), min(cap(zq, w3p, w4p, 0.0030), cap(zq, w4p, w5p, 0.0016))))))
+  d
+}
+
+# Neck, head, beak and plumes in one kind: they blend into each other.
+fn head_d(f: rgb, hq: rgb, yq: rgb, rise: f, stoop: f, curl: f, kind: f) -> f {
+  var d = 1.0
+  for i in 0..7 {
+    let t0 = f32(i) / 7.0
+    let t1 = f32(i + 1) / 7.0
+    d = smin(d, cap(f, neck_at(rise, stoop, curl, t0), neck_at(rise, stoop, curl, t1), mix(0.0200, 0.0135, 0.5 * (t0 + t1))), 0.008)
+  }
+  smin(d, head(hq, yq, kind), 0.006)
+}
+
+# The point in the head's own frames: hq has x along the beak (pitch down), yq follows the heading only.
+fn head_frame(pose: xf@Fig>World, p: p3@World, rise: f, stoop: f, look: rad, pitch: rad) -> rgb {
+  let q = inv(pose) * p
+  let hc = head_c(rise, stoop)
+  map hd = q |> move([0.0 - hc.x, 0.0 - hc.y, 0.0 - hc.z]) |> rot_y(look) |> rot_z(0.0 - pitch)
+  coords(hd.p)
+}
+fn head_yaw(pose: xf@Fig>World, p: p3@World, rise: f, stoop: f, look: rad) -> rgb {
+  let q = inv(pose) * p
+  let hc = head_c(rise, stoop)
+  map yw = q |> move([0.0 - hc.x, 0.0 - hc.y, 0.0 - hc.z]) |> rot_y(look)
+  coords(yw.p)
+}
+
+# ---- Material channels. Every surface is a part with an id; each channel (base colour, roughness, metal, fuzz, mask) is its
+# own function of the part, and `shade` stacks them on the stdlib lobes: ggx for the base, sheen for the felt and feather
+# nap. view 1 and 2 return the roughness and the part mask as flat emitted colour, for the channel sheets.
+const FELT = 1.0
+const FEATHER = 2.0
+const LEG = 3.0
+const BEAK = 4.0
+const LEAD = 5.0
+const BRONZE = 6.0
+const STOLE = 7.0
+const IRIS = 8.0
+const PLUME = 9.0
+# 0 is the pale neck and face feathers.
+
+fn is(part: f, k: f) -> bool = abs(part - k) < 0.5
+
+# Base colour. tex 1 adds pilled and folded felt and slate-tile feathers; the pupil is black on the iris.
+fn albedo_of(part: f, f: rgb, hq: rgb, tex: f) -> rgb {
+  let hz = [hq.x, hq.y, abs(hq.z)]
+  var c = mix([0.24, 0.30, 0.34], [0.60, 0.62, 0.60], smoothstep(0.30, 0.40, f.y))
+  c = select(c, [0.11, 0.12, 0.13], is(part, FELT))
+  c = select(c, [0.20, 0.26, 0.31], is(part, FEATHER))
+  c = select(c, [0.30, 0.28, 0.11], is(part, LEG))
+  c = select(c, [0.62, 0.50, 0.24], is(part, BEAK))
+  c = select(c, [0.17, 0.17, 0.17], is(part, LEAD))
+  c = select(c, [0.52, 0.33, 0.14], is(part, BRONZE))
+  c = select(c, [0.34, 0.07, 0.06], is(part, STOLE))
+  c = select(c, [0.05, 0.06, 0.08], is(part, PLUME))
+  let pupil = length([hz.x - 0.011, hz.y - 0.004]) < 0.0046 && hz.z > 0.0200
+  c = select(c, [0.90, 0.74, 0.20], is(part, IRIS))
+  c = select(c, [0.02, 0.02, 0.02], is(part, IRIS) && pupil)
+  c = select(c, c * 0.55, is(part, BEAK) && hq.x > 0.17)
+  let pill = 0.86 + 0.28 * vnoise(f * 240.0)
+  let fold = 0.93 + 0.07 * sin(f.z * 85.0 + 2.5 * fbm2(f * 16.0))
+  let wear = smoothstep(0.125, 0.092, f.y)
+  let felt = c * (pill * fold) * mix(rgb(1.0), [1.8, 1.6, 1.3], wear)
+  let v = f.y * 58.0
+  let row = floor(v)
+  let u = f.z * 88.0 + select(0.0, 0.5, fract(row * 0.5) > 0.25) + f.x * 40.0
+  let tone = 0.80 + 0.40 * hash3(i32(floor(u)), i32(row), 3)
+  let lap = fract(v) + 0.10 * sin(fract(u) * 6.2832)
+  let edge = smoothstep(0.62, 0.95, lap)
+  let gap = smoothstep(0.0, 0.14, lap)
+  let tiles = c * tone * (0.55 + 0.45 * gap) + [0.30, 0.34, 0.36] * edge * 0.55
+  let t1 = select(c, felt, is(part, FELT))
+  let t2 = select(t1, tiles, is(part, FEATHER))
+  mix(c, t2, tex)
+}
+
+fn rough_of(part: f, hq: rgb) -> f {
+  var r = 0.60
+  r = select(r, 0.95, is(part, FELT))
+  r = select(r, 0.62, is(part, FEATHER))
+  r = select(r, 0.55, is(part, LEG))
+  r = select(r, 0.45, is(part, BEAK))
+  r = select(r, 0.70, is(part, LEAD))
+  r = select(r, 0.42, is(part, BRONZE))
+  r = select(r, 0.95, is(part, STOLE))
+  r = select(r, 0.50, is(part, PLUME))
+  r = select(r, 0.30, is(part, IRIS))
+  # the hairline of polished edge along the top of the beak
+  select(r, 0.30, is(part, BEAK) && hq.y > 0.0085 * (1.0 - smoothstep(0.0, 0.18, hq.x)))
+}
+fn metal_of(part: f) -> f = select(select(0.0, 0.85, is(part, LEAD)), 1.0, is(part, BRONZE))
+# How much soft nap (sheen) each part carries, as a fraction of its colour.
+fn fuzz_of(part: f) -> f {
+  var z = 0.10
+  z = select(z, 0.40, is(part, FELT))
+  z = select(z, 0.22, is(part, FEATHER))
+  z = select(z, 0.35, is(part, STOLE))
+  select(z, 0.0, is(part, BEAK) || is(part, IRIS) || is(part, LEAD) || is(part, BRONZE) || is(part, LEG))
+}
+# The mask view: one flat colour per part.
+fn mask_color(part: f) -> rgb {
+  var c = [0.90, 0.70, 0.90]
+  c = select(c, [0.50, 0.50, 0.50], is(part, FELT))
+  c = select(c, [0.20, 0.40, 1.00], is(part, FEATHER))
+  c = select(c, [0.20, 0.80, 0.20], is(part, LEG))
+  c = select(c, [1.00, 0.90, 0.20], is(part, BEAK))
+  c = select(c, [1.00, 1.00, 1.00], is(part, LEAD))
+  c = select(c, [1.00, 0.50, 0.00], is(part, BRONZE))
+  c = select(c, [1.00, 0.00, 0.00], is(part, STOLE))
+  c = select(c, [0.00, 1.00, 1.00], is(part, IRIS))
+  select(c, [0.50, 0.00, 0.80], is(part, PLUME))
+}
+
+# The one place the channels meet the lobes. mask 1 makes the figure black (silhouette test).
+fn shade(part: f, f: rgb, hq: rgb, tex: f, view: f, mask: f) -> Bsdf {
+  let base = albedo_of(part, f, hq, tex) * (1.0 - mask)
+  let rough = rough_of(part, hq)
+  let lit = ggx(base, rough, metal_of(part)) + sheen(base * fuzz_of(part), 0.6)
+  let flat = emit_lobe(select(mask_color(part), rgb(rough), view < 1.5))
+  select(lit, flat, view >= 0.5)
+}
+
+# ---- The figure's kinds. Every one carries the pose and the three material switches.
+pub kind HeronCloak @World (
+  pose: xf@Fig>World, sweep: f in 0.0..1.5, squeeze: f in 0.5..1.0, cowl: f in 0.0..2.0,
+  tex: f in 0.0..1.0, view: f in 0.0..2.0, mask: f in 0.0..1.0
+) {
+  trace(p) {
+    let f = coords(inv(pose) * p)
+    cloak_d(f, sweep, squeeze, cowl)
+  }
+  material(p, n) {
+    let f = coords(inv(pose) * p)
+    let dt = tabard_d(f, sweep, squeeze) - 0.003
+    let db = body_d(f, sweep, squeeze)
+    let part = select(select(FELT, FEATHER, db < dt && db < 0.004 && f.y < 0.285), FELT, cowl_d(f, cowl) < 0.003)
+    shade(part, f, rgb(0.0), tex, view, mask)
+  }
+}
+
+pub kind HeronHead @World (
+  pose: xf@Fig>World, look: rad, pitch: rad, rise: f in 0.0..0.15, stoop: f in 0.0..1.5, curl: f in 0.0..2.0, head: f in 0.0..2.0,
+  tex: f in 0.0..1.0, view: f in 0.0..2.0, mask: f in 0.0..1.0
+) {
+  trace(p) {
+    let f = coords(inv(pose) * p)
+    head_d(f, head_frame(pose, p, rise, stoop, look, pitch), head_yaw(pose, p, rise, stoop, look), rise, stoop, curl, head)
+  }
+  material(p, n) {
+    let f = coords(inv(pose) * p)
+    let hq = head_frame(pose, p, rise, stoop, look, pitch)
+    let yq = head_yaw(pose, p, rise, stoop, look)
+    let hz = [hq.x, hq.y, abs(hq.z)]
+    let on_axis = length([hq.y, hq.z]) < 0.030
+    var part = 0.0
+    part = select(part, PLUME, yq.x < -0.022 && !on_axis)
+    part = select(part, PLUME, hq.y > 0.008 && hq.x < 0.020)
+    part = select(part, PLUME, hq.x < 0.016 && hq.x > -0.030 && abs(hq.y - 0.009) < 0.0035 && hz.z > 0.012)
+    part = select(part, BEAK, hq.x > 0.040 && on_axis)
+    part = select(part, IRIS, length(hz - [0.011, 0.004, 0.0145]) < 0.0105 + 0.0012)
+    shade(part, f, hq, tex, view, mask)
+  }
+}
+
+pub kind HeronLeg @World (pose: xf@Fig>World, tex: f in 0.0..1.0, view: f in 0.0..2.0, mask: f in 0.0..1.0) {
+  trace(p) = leg(coords(inv(pose) * p))
+  material(p, n) = shade(LEG, coords(inv(pose) * p), rgb(0.0), tex, view, mask)
+}
+
+pub kind HeronStole @World (pose: xf@Fig>World, sweep: f in 0.0..1.5, tex: f in 0.0..1.0, view: f in 0.0..2.0, mask: f in 0.0..1.0) {
+  trace(p) = stole_d(coords(inv(pose) * p), sweep)
+  material(p, n) = shade(STOLE, coords(inv(pose) * p), rgb(0.0), tex, view, mask)
+}
+
+pub kind HeronBell @World (pose: xf@Fig>World, tex: f in 0.0..1.0, view: f in 0.0..2.0, mask: f in 0.0..1.0) {
+  trace(p) = bell_d(coords(inv(pose) * p))
+  material(p, n) = shade(BRONZE, coords(inv(pose) * p), rgb(0.0), tex, view, mask)
+}
+
+pub kind HeronTatter @World (a: p3@World, b: p3@World, tex: f in 0.0..1.0, view: f in 0.0..2.0, mask: f in 0.0..1.0) {
+  trace(p) = capsule(p, a, b, 0.0034)
+  material(p, n) = shade(FELT, coords(p), rgb(0.0), tex, view, mask)
+}
+
+pub kind HeronWeight @World (at: p3@World, tex: f in 0.0..1.0, view: f in 0.0..2.0, mask: f in 0.0..1.0) {
+  trace(p) = sphere(p - at, 0.0048)
+  material(p, n) = shade(LEAD, coords(p), rgb(0.0), tex, view, mask)
+}
+
+# What a scene writes: the whole figure in one call. Every part is a row of one of the kinds above.
+pub build fn heron(pose: xf@Fig>World, look: rad = 0.6rad, pitch: rad = 1.35rad, sweep: f = 0.2, squeeze: f = 0.7, rise: f = 0.15, cowl: f = 0.9, stoop: f = 0.3, curl: f = 1.3, head: f = 0.0, tex: f = 1.0, view: f = 0.0, mask: f = 0.0) {
+  emit HeronCloak(pose: pose, sweep: sweep, squeeze: squeeze, cowl: cowl, tex: tex, view: view, mask: mask)
+  emit HeronHead(pose: pose, look: look, pitch: pitch, rise: rise, stoop: stoop, curl: curl, head: head, tex: tex, view: view, mask: mask)
+  emit HeronLeg(pose: pose, tex: tex, view: view, mask: mask)
+  emit HeronStole(pose: pose, sweep: sweep, tex: tex, view: view, mask: mask)
+  emit HeronBell(pose: pose, tex: tex, view: view, mask: mask)
+  build for i in 0..10 {
+    let w = weight_at(sweep, squeeze, i)
+    emit HeronWeight(at: pose * [w.x, w.y, w.z]@Fig, tex: tex, view: view, mask: mask)
+  }
+  build for j in 0..16 {
+    let a = tatter_top(sweep, squeeze, j)
+    let b = tatter_tip(sweep, squeeze, j)
+    emit HeronTatter(a: pose * [a.x, a.y, a.z]@Fig, b: pose * [b.x, b.y, b.z]@Fig, tex: tex, view: view, mask: mask)
+  }
+}
+
+pub kind Post @World (at: p3@World, r: f = 0.034, seed: f = 0.0, tex: f in 0.0..1.0 = 0.0, mask: f = 0.0) {
+  trace(p) {
+    let q = (p - at).xyz
+    let rr = length([q.x, q.z])
+    # A trunk that widens toward the water, with a slightly leaning, rotted top and three splinters at the back.
+    let side = rr - (r - 0.05 * q.y)
+    var d = max(max(side, q.y - 0.0), -q.y - 0.35)
+    d = min(d, cap(q, [-0.030, -0.02, 0.020], [-0.034, 0.048, 0.016], 0.008))
+    d = min(d, cap(q, [-0.020, -0.02, -0.030], [-0.026, 0.026, -0.036], 0.007))
+    d = min(d, cap(q, [0.018, -0.02, -0.040], [0.012, 0.014, -0.044], 0.006))
+    d
+  }
+  material(p, n) {
+    let q = (p - at).xyz
+    let grain = 0.6 + 0.8 * vnoise([q.x * 90.0, q.y * 7.0, q.z * 90.0])
+    let crack = 0.5 + 0.5 * smoothstep(0.35, 0.55, vnoise([q.x * 40.0, q.y * 3.0, q.z * 40.0]))
+    let wet = 1.0 - 0.55 * smoothstep(-0.02, -0.12, q.y)
+    let wood = [0.135, 0.100, 0.070] * grain * crack * wet
+    lambert(mix(POST_CLAY, wood, tex) * (1.0 - mask))
+  }
+}
+
+pub kind Marsh @World (tex: f in 0.0..1.0 = 0.0) {
+  visible(ro, rd) = ray_ground(ro, rd, 40m)
+  trace(p) = box_sdf(p - [0, -0.5, 0]@World, [40, 0.5, 40])
+  material(p, n) {
+    let q = (p - [0.0, 0.0, 0.0]@World).xyz
+    let patch = fbm2([q.x * 6.0, 0.0, q.z * 6.0])
+    let black = mix([0.016, 0.030, 0.034], [0.030, 0.045, 0.040], patch)
+    ggx(mix(WATER_CLAY, black, tex), 0.78, 0.0)
+  }
+}
+
+# A distant broken post. fog (0 near, 1 far) pulls it toward the mist so it recedes without a volume.
+pub kind Snag @World (at: p3@World, r: f = 0.045, h: f in 0.05..1.0 = 0.30, lean: f = 0.0, fog: f in 0.0..1.0 = 0.5) {
+  trace(p) {
+    let q = (p - at).xyz
+    let rr = length([q.x - lean * q.y, q.z])
+    max(max(rr - r * (1.0 - 0.35 * clamp(q.y / h, 0.0, 1.0)), min(q.y - h + 0.5 * q.x, q.y - h - 0.35 * q.x + 0.02)), -q.y - 0.3)
+  }
+  material(p, n) {
+    let q = (p - at).xyz
+    let wood = [0.10, 0.08, 0.065] * (0.7 + 0.6 * vnoise([q.x * 60.0, q.y * 6.0, q.z * 60.0]))
+    lambert(wood * (1.0 - fog)) + emit_lobe(MIST * (0.30 * fog))
+  }
+}
+
+pub fn haze(rd: rgb, sun: rgb) -> rgb {
+  let up = clamp(rd.y, -1.0, 1.0)
+  mix([0.80, 0.82, 0.84], [0.66, 0.72, 0.78], sqrt(max(up, 0.0)))
+}
+
+# White ground for the silhouette test: a figure with mask: 1 is black against it.
+pub fn bleach(rd: rgb, sun: rgb) -> rgb = [3.0, 3.0, 3.0]
+
+# Mist sky with the low sun's glow behind the figure: the background the rim light comes from.
+pub fn dusk(rd: rgb, sun: rgb) -> rgb {
+  let up = clamp(rd.y, -1.0, 1.0)
+  let base = mix([0.44, 0.50, 0.51], [0.26, 0.34, 0.38], sqrt(max(up, 0.0)))
+  let s = max(dot(rd, sun), 0.0)
+  base + [1.0, 0.72, 0.42] * (pow(s, 5.0) * 0.45 + pow(s, 60.0) * 1.2)
+}
+
+pub world MarshScene { things: [HeronCloak, HeronHead, HeronLeg, HeronStole, HeronBell, HeronWeight, HeronTatter, Post, Marsh, Snag] }
+pub world HeronShadow { things: [HeronCloak, HeronHead, HeronStole, HeronWeight, HeronTatter, Post] }
