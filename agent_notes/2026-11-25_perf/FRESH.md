@@ -1,5 +1,23 @@
 # Visibility on a moving camera
 
+## What the owner can count on
+
+**One of the three characters meets the 16.7 ms fresh-frame p95 and exact-RGBA requirements at each delivery size: heron.** The ordinary renderer recomputed primary visibility on every frame. Each timing window had 30 warmups and 120 moving frames. The table spans all attempts whose before and after controls both passed 1.10 ms, including the ordinary CLI, its immediate/ring comparison, and the contiguous warm-device block. RGBA is compared to the unmodified ordinary moving renderer at the same 120 times.
+
+| Character | 960×720 quiet p95, ms | Exact / 120 | 1280×800 quiet p95, ms | Exact / 120 |
+|---|---:|---:|---:|---:|
+| Heron | **2.10–4.81** | **120** | **3.93–7.16** | **120** |
+| Final otter | 17.46–29.71 | 120 | 34.15–36.90 | 120 |
+| Walrus, independently drawn ordinary frames | 13.30–16.40 | 80 | 21.05–30.25 | 76 |
+
+The implementation spends most of the original frame testing rays against empty space in oversized field boxes and thin-row proxies. The compiler now automatically bounds hittable samples of eligible static fields, and native visibility bins eligible analytic rows while preserving their original per-pixel ordering. At the original 960 camera, 1.67–3.93 ms is the idealized five-scene work target assuming eight useful field evaluations per winning pixel and ideal hit selection; the measured moving-camera times above include the real search, submission and shading costs.
+
+The guard is checkpointed at `04682f69`. The order-preserving tile build is `affc82f8`, with moving-image and timing scores at `3118c4cc`. The cutoff draft supplied the guard table, outward evaluator and exit-only march; this continuation corrected translation and float enclosure, changed the subdivision traversal and added six certified face trims. Operand pruning was deferred after counting the remaining field work. The fixed-order control yields 240/240 exact walrus frames; its quiet ring p95 is 12.90 / 16.93 ms at the two sizes.
+
+[Stage-by-stage speed and RGBA](#stable-screen-tiles-on-the-moving-camera) · [All quiet controls and gaps](#final-native-controls-and-field-work) · [Operand-pruning decision](#change-3-decision) · [Motion, shadows and material hit indices](README.md#whiskers-and-fur) · [Original model and rate calibration](MEASUREMENTS.md#paired-same-size-camera-holdout)
+
+## Measurement method and original forecasts
+
 Each native profile warms 30 frames, then times 120 frames on the Apple M4 with Metal at 60 Hz. All 120 must have a positive Vis timestamp. The five source fixtures preserve the pose, target, FOV, camera height and horizontal viewing distance. The camera starts on +Z and moves through 29.75 degrees. This changes which parts of the character fill the screen. The interval between timed frames is 1/60 second.
 
 The selection rule takes the first run with both load-control brackets at or below 1.10 ms. If both attempts exceed the threshold, the table shows the first attempt and marks it C. Q marks a quiet run. Times are nearest-rank GPU frame p50 / p95 in milliseconds. The unmodified renderer in this comparison is the fixed-view-retention build at the start of this lane. [Orbit fixtures and native commands](fresh.py) · [Predictions recorded before timing](fresh_predictions.md)

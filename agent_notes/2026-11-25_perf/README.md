@@ -1,6 +1,6 @@
 # Why the character views are slow
 
-The moving-camera continuation measures newly rendered visibility at both delivery sizes and compares every frame with the original. [Fresh-frame results and certified bounds](FRESH.md)
+The moving-camera continuation landed compiler-derived primary guards and order-preserving screen tiles. Heron reached 2.10–4.81 ms quiet p95 at 960×720 and 3.93–7.16 ms at 1280×800, matching all 240 original frames. Final otter matched every frame but exceeded budget. The ordinary walrus reference itself varies at depth ties. [Fresh-frame results and certified bounds](FRESH.md)
 
 Apple M4, Metal, macOS 15.5. The original fixtures are pinned beside this report. Baseline revision `2afc5e55`. The two CLI builds used the checkout's lab profile. All normal profiles use authored source, 30 warmup frames and 120 timed frames with immediate GPU timestamps. The image test hashes the decoded RGBA8 bytes of frames 0 through 119 at 60 Hz, including the first draw. The GPU pass numbers exclude CPU scene compilation, GPU queue waiting on the host, PNG encoding and display synchronization.
 
