@@ -35,6 +35,29 @@ fn expect(code: Code, src: &str) {
 }
 
 #[test]
+fn select_finished_surfaces_with_shared_and_different_lobes() {
+    use loft_passes::eval::{Eval, Layer, Truth, Val};
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let scene = format!("{}\n{}", kind("", OK_TRACE, "finish(q.x > 0.0, q.y > 0.0)"), "
+        use stdlib::materials::bsdf::{lambert, emit_lobe}
+        use stdlib::sdf::solid::{sphere}
+        fn finish(bright: bool, lit: bool) -> Bsdf {
+            let paint = select(lambert(rgb(0.25)), lambert(rgb(0.75)), bright)
+            select(paint, emit_lobe(rgb(1.0)), lit)
+        }");
+    let graph = loft_passes::source::Graph::text(&root, Path::new("finish.loft"), &scene);
+    let (_, _, compiled) = loft_passes::compile(&graph, &[]).unwrap_or_else(|e| panic!("{}", e.render(&graph)));
+    let p = compiled.prog();
+    let mut cpu = Eval::<f32>::new(&p, &compiled.types, vec![], &[]);
+    let finish = p.fns["finish"];
+    for (bright, lit, lobe, level) in [(false, false, "lambert", 0.25), (true, false, "lambert", 0.75), (true, true, "emit_lobe", 1.0)] {
+        let args = [bright, lit].map(|c| Val::B(Truth::Known(c))).to_vec();
+        let Val::Bsdf(layers) = cpu.call_fn(finish, args, finish.name.span).unwrap() else { panic!("expected Bsdf") };
+        assert!(matches!(&layers[..], [Layer::Lobe(name, args)] if name == lobe && matches!(&args[..], [Val::V(v, _)] if v == &[level; 3])));
+    }
+}
+
+#[test]
 fn the_baseline_compiles() {
     if let Err((_, text)) = compile(&kind("", OK_TRACE, OK_MATERIAL)) {
         panic!("{text}");
@@ -345,4 +368,28 @@ fn set_reaches_a_sibling_modules_param_and_refuses_an_ambiguous_name() {
     let src = loft_passes::source::Graph::file(&dir.join("dup.loft"), "").unwrap();
     let Err(d) = loft_passes::compile(&src, &set) else { panic!("two params named `size` must not both answer --set size") };
     assert_eq!(d.code, Code::E011, "{}", d.render(&src));
+}
+
+#[test]
+fn empty_scheduled_part_costs_no_program_resources() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let source = "
+        use stdlib::materials::bsdf::{lambert}
+        use stdlib::sdf::solid::{sphere}
+        kind Empty @World (phase: f) { trace(p) = sphere(p - [0,0,0]@World, 1.0); material(p,n) = lambert(rgb(1.0)) }
+        law advance(h: Empty, dt: s) writes h.{phase} { h.phase = h.phase + dt }
+        schedule Main {
+          orbit(at: [0,0,0]@World, radius: 2m, fov: 40deg)
+          run_laws(advance)
+          cull_indirect(Empty)
+          render_bundle(Vis64) { draw_indirect(Empty) }
+          find_shadow_map(Empty, size: 512)
+          tile_classify(Vis64)
+          shade_tiles(Vis64, light: sun_sky, sun: [0,1,0])
+          tonemap_aces(ColorHdr, sky: sky_color)
+        }";
+    let src = loft_passes::source::Graph::text(&root, Path::new("empty.loft"), source);
+    let (program, _, _) = loft_passes::compile(&src, &[]).unwrap_or_else(|e| panic!("{}", e.render(&src)));
+    assert!(program.kinds.is_empty() && program.instances.is_empty() && program.dispatches.is_empty());
+    assert_eq!(program.shadow_size, 0);
 }

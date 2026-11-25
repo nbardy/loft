@@ -23,6 +23,13 @@
 | `check` | Target `h: Kind`, read tables `[Other]`, verdict unit `-> rad` / `-> m` | `held` / `missed` / `unknown` typing |
 | Expressions | `@S` only on space change; unit suffix only when ambiguous | Numeric promotion (`0`, `1` unify with `f`/`m`/`rad`/`s`); `[x, y, z]` affine type (`p3`/`v3`/`d3`/`rgb`); block tail return |
 
+### Build function arguments
+
+A build call accepts leading positional arguments followed by `name: value` arguments in any order.
+Each position or label binds one distinct parameter. A missing argument takes its parameter's
+`= expression` default. The compiler checks defaults in the declaring module at stage zero.
+Supplied expressions evaluate once in source order, then omitted defaults evaluate in declaration order.
+
 ### 2.2 Spaces, Affine Geometry & Domain Maps
 
 * `p3@S - p3@S -> v3@S`; `p3@S + v3@S -> p3@S`; `p3@S + p3@S -> E101`; `S1 != S2 -> E104`.
@@ -65,6 +72,12 @@
 * **Stage 1 (`kind`):** `kind K[flag: bool]` or `kind K[n: u in lo..hi]` (upper bound excluded) allows discrete variants only (cardinality ≤ 8; `E401`/`E402`). `emit` supplies a parameter like a column and the row stores it, so CPU evaluation reads it unchanged; every GPU module of the kind folds it to a literal, so a loop over it unrolls exactly. The current compiler builds one variant per kind: rows that disagree are `E402`, a law cannot write a parameter (`E501`), and a host that upserts rows must keep the emitted value.
 * **Stage 2 (`runtime`):** `for` inside `kind`/`law`/`solver` stays a GPU loop.
 * **Law ownership & fusion:** Every `a.f = e` checks `f ∈ writes` (`E501`). Across a schedule, two laws on the same kind must have disjoint `writes` sets (`E502`). Consecutive row-local laws on the same kind with disjoint `writes` **automatically fuse inside one per-tick `advance(from, to)` loop** in schedule order—preserving 1 dispatch/frame and bit-exact multi-tick catch-up.
+
+### Empty kinds
+
+After build evaluation and before assigning drawable IDs, remove every zero-row kind from cull,
+primary draw and shadow lists. The remaining kinds retain their order. An empty caster set omits
+the shadow pass. A law or check on an empty target dispatches no work.
 
 ## 3. Diagnostic Codes & Worked Messages
 
@@ -127,6 +140,13 @@ error[E211]: unclamped divisor can reach zero (`L = Unbounded`)
 
 ---
 
+### Worlds in schedule kind lists
+
+A module can export `pub world Figure { things: [Head, Coat] }`. In frame-pass reads,
+`draw_indirect`, `find_shadow_map`, and the shadow step's `on dirty` list, a world name expands
+in place to its declared kinds in order. This also applies to `cull_indirect`, whose schedule
+reads its arguments. Members resolve in the declaring module, including its private kinds.
+
 # FILE 3: `docs/spec/loft.lark` (Lark CFG + `logos` Lexer Spec)
 
 Drop `loft.lark` directly into `llguidance` / XGrammar for 100% syntactically valid LLM rollouts.
@@ -187,7 +207,9 @@ check_decl:  "check" LIDENT "(" params ")" "->" type_expr block
 retarget_decl: "retarget" UIDENT "from" UIDENT "to" UIDENT "{" field_inits "}"
 
 world_decl:  "world" UIDENT "{" field_inits "}"
-build_fn:    "build" "fn" LIDENT "(" params? ")" fn_body
+build_fn:    "build" "fn" LIDENT "(" build_params? ")" ("->" type_expr)? fn_body
+build_params: build_param ("," build_param)* ","?
+build_param: param ("=" expr)?
 build_blk:   "build" block
 sched_decl:  "schedule" UIDENT "{" (_NL? sched_stmt (_SEP sched_stmt)* _SEP?)? "}"
 sched_stmt:  expr block?
@@ -208,7 +230,7 @@ field_inits: (_NL? field_init (("," | _SEP) field_init)* ("," | _SEP)?)?
 field_init:  LIDENT ":" expr
 
 // --- Statements & Blocks ---
-block:       "{" (_NL? stmt (_SEP stmt)* _SEP?)? "}"
+block:       "{" _NL* (stmt (_SEP stmt)* _SEP?)? "}"
 stmt:        "let" LIDENT (":" type_expr)? "=" expr
            | "var" LIDENT (":" type_expr)? "=" expr
            | "map" LIDENT "=" expr

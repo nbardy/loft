@@ -204,6 +204,9 @@ pub struct FnDecl {
 #[derive(serde::Serialize, Clone, Debug)]
 pub struct Param {
     pub name: Ident,
+    // Keep the serialized form of existing functions (including geometry certificates) stable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default: Option<Expr>,
     /// `None` for a query's `self`, and for an unannotated parameter until elaboration infers it.
     pub ty: Option<TyExpr>,
 }

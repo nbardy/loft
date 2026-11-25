@@ -15,7 +15,7 @@ mod surface;
 mod lighting;
 pub mod shade_tiles;
 mod column;
-use material_shape::{Shape, fn_shape, is_lobe, shape_of};
+use material_shape::{Combine, Shape, fn_shape, is_bsdf_select, is_lobe, shape_of};
 use loft_parse::ast::*;
 use loft_check::program::{abi, Draw};
 use loft_ir::{Code, Diag, Res};
@@ -358,7 +358,27 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 let ((sa, mut la, mut wa), (sb, lb, wb)) = (self.bsdf_fields(a), self.bsdf_fields(b));
                 la.extend(lb);
                 wa.extend(wb);
-                (Shape::join(sa, sb, false), la, wa)
+                (Shape::join(sa, sb, Combine::Layer), la, wa)
+            }
+            ExprKind::Call { callee, args } if is_bsdf_select(self.p, &callee.name) => {
+                let [a, b, cond] = args.as_slice() else { unreachable!("checked select arity") };
+                let ((sa, mut la, mut wa), (sb, lb, wb)) = (self.bsdf_fields(&a.value), self.bsdf_fields(&b.value));
+                let cond = self.expr(&cond.value);
+                if sa.same_as(&sb) {
+                    // WGSL select takes scalar/vector operands. A typed struct assignment also handles matrix lobe arguments.
+                    let name = format!("loft_choice_{}", self.temp);
+                    self.temp += 1;
+                    let ty = self.bsdf_struct(&sa);
+                    la.extend(wa);
+                    let b = lb.into_iter().chain(wb).collect::<Vec<_>>().join(", ");
+                    self.line(1, &format!("var {name} = {ty}({});", la.join(", ")));
+                    self.line(1, &format!("if ({cond}) {{ {name} = {ty}({b}); }}"));
+                    return Self::fields_of(sa, &name);
+                }
+                la.extend(lb);
+                wa.extend(wb);
+                wa.push(format!("select(0.0, 1.0, {cond})"));
+                (Shape::join(sa, sb, Combine::Select), la, wa)
             }
             ExprKind::Call { callee, args } if callee.name == "mix_bsdf" => {
                 let [a, b, w] = args.as_slice() else { unreachable!("checked mix_bsdf arity") };
@@ -366,7 +386,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 la.extend(lb);
                 wa.extend(wb);
                 wa.push(self.expr(&w.value));
-                (Shape::join(sa, sb, true), la, wa)
+                (Shape::join(sa, sb, Combine::Mix), la, wa)
             }
             ExprKind::Call { callee, args } if is_lobe(self.p, &callee.name) => {
                 (Shape::lobe(&callee.name, args.len()), args.iter().map(|a| self.expr(&a.value)).collect(), vec![])
@@ -381,13 +401,17 @@ impl<'p, 'a> Emitter<'p, 'a> {
                     self.line(1, &format!("let {name}: {ty} = {value};"));
                     value = name;
                 }
-                let lobes = shape.lobes.iter().enumerate()
-                    .flat_map(|(i, (_, arity))| (0..*arity).map(move |j| (i, j)))
-                    .map(|(i, j)| format!("{value}.l{i}_{j}")).collect();
-                let weights = (0..shape.weights).map(|k| format!("{value}.mix{k}")).collect();
-                (shape, lobes, weights)
+                Self::fields_of(shape, &value)
             }
         }
+    }
+
+    fn fields_of(shape: Shape, value: &str) -> (Shape, Vec<String>, Vec<String>) {
+        let lobes = shape.lobes.iter().enumerate()
+            .flat_map(|(i, (_, arity))| (0..*arity).map(move |j| (i, j)))
+            .map(|(i, j)| format!("{value}.l{i}_{j}")).collect();
+        let weights = (0..shape.weights).map(|k| format!("{value}.mix{k}")).collect();
+        (shape, lobes, weights)
     }
 
     fn map_apply(&self, name: &str, inverse: bool, x: String, point: bool) -> String {
@@ -413,7 +437,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
         }
         // A built Bsdf value is the struct of its lobes' bound arguments, then its mix weights (material_shape).
         if *self.ty_of(e) == Ty::Bsdf && (matches!(&e.kind, ExprKind::Binary(BinOp::Add, ..))
-            || matches!(&e.kind, ExprKind::Call { callee, .. } if callee.name == "mix_bsdf" || is_lobe(self.p, &callee.name))) {
+            || matches!(&e.kind, ExprKind::Call { callee, .. } if callee.name == "mix_bsdf" || is_bsdf_select(self.p, &callee.name) || is_lobe(self.p, &callee.name))) {
             let (shape, mut fields, weights) = self.bsdf_fields(e);
             fields.extend(weights);
             return format!("{}({})", self.bsdf_struct(&shape), fields.join(", "));
@@ -1004,11 +1028,11 @@ pub fn emit_kind_module(
             // The tiled World module replaces this entry before validation.
             None => "vec3<f32>(0.0)".into(),
         },
-        Aov::Albedo => layout.lobes.iter().enumerate().find_map(|(i, (name, _))| {
-            let f = p.fns[name.as_str()];
+        Aov::Albedo => layout.first_field(|i, name| {
+            let f = p.fns[name];
             f.params.iter().take(f.params.len().saturating_sub(3))
                 .position(|p| p.name.name == "albedo").map(|j| format!("b.l{i}_{j}"))
-        }).unwrap_or_else(|| "vec3<f32>(0.0)".into()),
+        }, "vec3<f32>(0.0)").unwrap_or_else(|| "vec3<f32>(0.0)".into()),
         Aov::Normal => "n * 0.5 + 0.5".into(),
         Aov::Depth => "vec3<f32>(min(log2(1.0 + distance(p, frame.eye.xyz)) / 10.0, 254.0 / 255.0))".into(),
         Aov::Id => {

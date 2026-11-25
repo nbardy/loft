@@ -111,7 +111,7 @@ pub(super) fn resolve<'a>(
                 }
                 rows_fns.push(p.fns[v]);
             }
-            _ => draft.lower_pass(p, modules, types, overrides, sched, pd)?,
+            _ => draft.lower_pass(p, modules, types, overrides, pd)?,
         }
         let (reads, writes) = renderer_effects(verb, has_shadow_pass);
         if let Some(read) = reads.iter().find(|r| !available.contains(**r)) {
@@ -152,7 +152,7 @@ pub(super) fn resolve<'a>(
 impl<'a> Draft<'a> {
     fn lower_pass(
         &mut self, p: &Prog<'a>, modules: &'a [Module], types: &mut Vec<Ty>,
-        overrides: &[(String, f64)], sched: &ScheduleDecl, pd: &'a PassDecl,
+        overrides: &[(String, f64)], pd: &'a PassDecl,
     ) -> Res<()> {
         let verb = pd.verb.name.as_str();
         match verb {
@@ -178,8 +178,8 @@ impl<'a> Draft<'a> {
                 self.casters = kind_args(p, pd)?;
                 let e = arg(pd, "size")?;
                 self.shadow_size = as_f32(stage0(p, types, e, overrides)?, e.span)? as u32;
-                if !(64..=8192).contains(&self.shadow_size) || (!sched.implicit && self.casters.is_empty()) {
-                    return Err(Diag::new(Code::E520, pd.verb.span, "a shadow map needs casters and a size of 64 to 8192 texels", "write `find_shadow_map(Kind, ..., size: 1024u)`"));
+                if !(64..=8192).contains(&self.shadow_size) {
+                    return Err(Diag::new(Code::E520, pd.verb.span, "a shadow map needs a size of 64 to 8192 texels", "write `find_shadow_map(Kind, ..., size: 1024u)`"));
                 }
                 self.shadow_clock = shadow_clock(pd, &self.casters)?;
                 self.steps.push(Step::Stock(Pass::Shadow(vec![])));
@@ -334,13 +334,12 @@ impl Schedule<'_> {
         let sched = self.decl;
         let Self { drawn, casters, shadow_size, steps, path, tiled_world, .. } = self;
         let populated = |k: &&str| !tables[p.kind_index(k)].is_empty();
-        if sched.implicit {
-            drawn.retain(populated);
-            casters.retain(populated);
-            if casters.is_empty() {
-                *shadow_size = 0;
-                steps.retain(|step| !matches!(step, Step::Stock(Pass::Shadow(_))));
-            }
+        // Compact all three lists before assigning GPU kind IDs. An omitted part has no slot.
+        drawn.retain(populated);
+        casters.retain(populated);
+        if casters.is_empty() {
+            *shadow_size = 0;
+            steps.retain(|step| !matches!(step, Step::Stock(Pass::Shadow(_))));
         }
         let mut b = drawn.clone();
         b.sort_unstable();
@@ -351,7 +350,7 @@ impl Schedule<'_> {
         for step in steps.iter_mut() {
             let Step::Frame(frame) = step else { continue };
             if !frame.reads_kinds { continue; }
-            if sched.implicit { frame.kinds.retain(populated); }
+            frame.kinds.retain(populated);
             let mut a = frame.kinds.clone();
             a.sort_unstable();
             if a != b {
