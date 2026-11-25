@@ -1,0 +1,14 @@
+pins: wgpu 30.0.1, naga 30.0.1, equal to Keel
+295 distinct Phase 5 identities in 20 batches
+Warning: Parser Error: token "\n" doesn't satisfy the grammar; byte '\n' fails parse; stopping
+Warning: Parser Error: token "u" doesn't satisfy the grammar; byte 'u' fails parse; stopping
+Warning: Parser Error: token "\n" doesn't satisfy the grammar; byte '\n' fails parse; stopping
+Warning: Parser Error: token "\n" doesn't satisfy the grammar; byte '\n' fails parse; stopping
+Warning: Parser Error: token "u" doesn't satisfy the grammar; byte 'u' fails parse; stopping
+Warning: Parser Error: token "\"" doesn't satisfy the grammar; byte '"' fails parse; stopping
+/Users/nicholasbardy/git/_wt/loft-perf/agent_notes/2026-11-25_perf/fixtures/heron/heron.loft: wanted True, Earley=False, llguidance=False (failing chunk starts at byte 4096)
+/Users/nicholasbardy/git/_wt/loft-perf/agent_notes/2026-11-25_perf/fixtures/otter/forms.loft: wanted True, Earley=False, llguidance=False (failing chunk starts at byte 4096)
+/Users/nicholasbardy/git/_wt/loft-perf/agent_notes/2026-11-25_perf/fixtures/otter/hero_q3.loft: wanted True, Earley=False, llguidance=False (failing chunk starts at byte 0)
+/Users/nicholasbardy/git/_wt/loft-perf/agent_notes/2026-11-25_perf/fixtures/otter/mat.loft: wanted True, Earley=False, llguidance=False (failing chunk starts at byte 8192)
+/Users/nicholasbardy/git/_wt/loft-perf/agent_notes/2026-11-25_perf/fixtures/otter/otter.loft: wanted True, Earley=False, llguidance=False (failing chunk starts at byte 12288)
+360/365 files gave their expected result in Earley and llguidance

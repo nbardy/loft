@@ -1,0 +1,5 @@
+agent-build: waiting for pid 80559, which is ahead in the queue for gpu (python in /Users/nicholasbardy/git/_wt/boss-walrus/scenes/characters/walrus/rounds).
+agent-build: it gives up after 240 minutes (--max-wait MIN). See the queue with `agent-build --status`.
+agent-build: gpu acquired after 11m49s.
+edit live in 238.535 ms: compile 20.131 ms, pipelines 217.110 ms, upload 1.293 ms; dirtied rows [0], caster bound changed false
+changed pixels 256034, pixels over 1/255 against a fresh load 0/1024000
