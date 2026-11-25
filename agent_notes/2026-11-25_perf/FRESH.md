@@ -60,3 +60,13 @@ The initial traversal uses a 31.25 mm leaf width and approximately 24,000 evalua
 All 5,042 original serialized instance and kind records match the guarded program byte-for-byte. A second compile had zero bound evaluations in all five scenes. The shifted-sphere live edit changed 256,034 pixels and had zero pixels over 1/255 against a fresh load at 1280×800. Twelve focused tests passed, including a case where real arithmetic places a surface inside 5 mm while f32 cancellation makes the original raster boundary hittable. The static check matched 360/365 grammar expectations. Both recognizers rejected five pinned source fixtures also present before this change. The grammar, its checker and those five inputs have identical Git contents at the original and revised revisions. Corpus and dependency-pin checks passed. [Compiler and executable hashes](orbit/compiler-parity.json) · [Focused tests](orbit/focused-tests.txt) · [Live edit](orbit/live-edit.txt) · [Static check](orbit/static.txt)
 
 The outward check encloses individual f32 operations in the evaluator's expression order and both common interpolation forms. WGSL also permits implementations to reassociate expressions. The mathematical interval therefore describes the evaluated expression, and the matching-frame count separately tests the shipped Metal program. General equivalence under arbitrary driver reassociation remains unverified. [WGSL floating-point evaluation](https://www.w3.org/TR/WGSL/#floating-point-evaluation)
+
+At orbit frames 0, 60 and 119 each giant outer box admits all 691,200 ideal pixel-centre rays. HeronHead's guard admits 80,961–94,072 and Cap admits 84,137–94,796, both below the predicted quarter-screen ceiling. Hide still admits 493,664–539,498 rays because the body fills the forward view. Shortening a surviving miss's exit can still save work. At the midpoint Head4 admits 63,631 rays, Torso 159,436 and the starter head 200,089. These CPU counts use the original camera and mathematical box intersections. GPU pass times include rasterization, interpolation and divergence. [Projection counts at the three poses](orbit/projected-counts.json)
+
+### Authoring a moving character
+
+- Use the stock exact visibility query for a primitive when its geometry matches.
+- Group smooth parts that blend together. Give spatially separate parts independent bounds.
+- Put surface detail that does not affect the silhouette in material.
+- Read the derived L in `loft check`. Inspect expensive kinds with `sdf_steps` and `overdraw`.
+- Compare fresh GPU pass times with a moving camera at the delivery resolution. Read both load-control brackets and compare corresponding beauty frames when changing geometry.
