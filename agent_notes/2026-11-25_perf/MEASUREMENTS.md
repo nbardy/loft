@@ -16,15 +16,15 @@ All timing pairs are nearest-rank GPU p50 / p95 milliseconds from 120 timed fram
 
 ## Fresh visibility predictions and work targets
 
-The original column uses the isolated calibration. The family column normalizes on one independently timed, rotated calibration view. The shared-rate column fits two multipliers to the independent calibration views. The target view contributes counts to each forecast and no fit coefficients. The reported error is for family normalization. The last two columns add the measured non-Vis cost to one analytic query per visible analytic pixel and one or eight field evaluations per visible traced pixel. These are optimistic work targets for a new view.
+The original column uses the isolated calibration. The family column normalizes on one independently timed, rotated calibration view. The shared-rate column fits two multipliers to the independent calibration views. The target view contributes counts to each forecast and no fit coefficients. The reported error is for family normalization. The last two columns use the equal-raster calibration when available. They add the measured non-Vis cost to one analytic query per visible analytic pixel and one or eight field evaluations per visible traced pixel. These are optimistic work targets for a new view.
 
 | View | Cal Vis | Original | Family | Shared rates | Measured Vis | Family error | 1 query/frame ms | 8 queries/frame ms |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Ball, sky | 0.96 | 1.24 | 2.24 | 1.50 | 1.19 | +87.8% | 3.05 | 3.43 |
-| Starter otter | 10.71 | 23.52 | 22.47 | 24.75 | 14.23 | +57.9% | 1.73 | 1.86 |
-| Walrus | 21.22 | 47.74 | 47.86 | 50.35 | 24.41 | +96.1% | 2.46 | 4.36 |
-| Heron | 26.17 | 31.72 | 53.87 | 41.94 | 35.69 | +50.9% | 1.54 | 2.00 |
-| Final otter | 64.27 | 158.20 | 140.12 | 153.15 | 96.54 | +45.1% | 3.64 | 4.20 |
+| Ball, sky | 0.96 | 1.24 | 2.24 | 1.50 | 1.19 | +87.8% | 2.99 | 3.19 |
+| Starter otter | 10.71 | 23.52 | 22.47 | 24.75 | 14.23 | +57.9% | 1.70 | 1.78 |
+| Walrus | 21.22 | 47.74 | 47.86 | 50.35 | 24.41 | +96.1% | 2.32 | 3.31 |
+| Heron | 26.17 | 31.72 | 53.87 | 41.94 | 35.69 | +50.9% | 1.44 | 1.67 |
+| Final otter | 64.27 | 158.20 | 140.12 | 153.15 | 96.54 | +45.1% | 3.59 | 3.93 |
 
 ## Paired same-size camera holdout
 
@@ -32,6 +32,11 @@ A second calibration uses a rotated camera and a full 960×720 raster. Each fore
 
 | View | Rotated Vis | Frozen forecast | Shared-rate forecast | Original Vis | Error | Cal control | Original control |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+| Ball, sky | 1.08 | 1.25 | 0.87 | 1.11 | +12.9% | C | C |
+| Starter otter | 13.39 | 13.80 | 14.03 | 13.12 | +5.1% | C | C |
+| Walrus | 22.68 | 25.09 | 28.52 | 19.65 | +27.7% | Q | C |
+| Heron | 26.19 | 26.44 | 23.76 | 32.75 | -19.3% | Q | C |
+| Final otter | 79.42 | 84.87 | 86.71 | 73.18 | +16.0% | C | Q |
 
 ## Counted work at 960×720
 
@@ -46,7 +51,7 @@ A second calibration uses a rotated camera and a full 960×720 raster. Each fore
 
 ## Additive frame budgets
 
-Each row is one actual frame at the native median rank. Visibility is allocated using the relative calibration rates and normalized once to that frame’s Vis timestamp. The clear/store estimate comes from pooled equal-size calibration targets. The remaining passes are GPU timestamps on that frame. The source counters measure work directly. The allocated shares of milliseconds are estimates. Rounding can change a displayed sum by 0.02 ms.
+Each row is one actual frame at the median rank in the first original profile. Later quiet retries and the camera holdout are reported separately. Visibility is allocated using the relative calibration rates and normalized once to that frame’s Vis timestamp. The clear/store estimate comes from pooled equal-size calibration targets. The remaining passes are GPU timestamps on that frame. The source counters measure work directly. The allocated shares of milliseconds are estimates. Rounding can change a displayed sum by 0.02 ms.
 
 | View | March miss | March hit | Analytic miss | Analytic hit | Vis clear | Cull | Shadow | Classify | Shade | Present | Frame |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -60,12 +65,27 @@ Each row is one actual frame at the native median rank. Visibility is allocated 
 
 These runs use the original executable and recompute visibility on every frame. The analytic guard and field guard are distinct source forks. Bounds2 combines the head guard with a torso guard. Image evidence for each fork is in the last two columns.
 
-| View | Fork | Original frame | Fork frame | Vis ms saved | Matching frames, max difference |
+| View | Fork | Initial original frame | Same-slot original frame | Fork frame | Vis saved vs initial | Vis saved vs same slot | Matching frames, max difference |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Starter otter | Analytic sphere | 15.84 / 33.66 C | — | 14.56 / 24.15 C | 1.20 | — | 3/3, max 0 |
+| Starter otter | Field box | 15.84 / 33.66 C | 16.05 / 27.34 C | 8.04 / 14.21 C | 8.72 | 9.09 | 120/120, max 0 |
+| Walrus | Analytic sphere | 26.53 / 99.26 C | — | 26.05 / 31.13 C | 0.52 | — | 3/3, max 0 |
+| Walrus | Field box | 26.53 / 99.26 C | 27.18 / 43.68 C | 20.64 / 23.70 C | 6.44 | 7.17 | 120/120, max 0 |
+| Heron | Field box | 37.01 / 41.19 C | 44.46 / 48.84 C | 8.71 / 10.33 C | 30.73 | 37.84 | 120/120, max 0 |
+| Final otter | Analytic sphere | 100.02 / 148.47 C | — | 97.77 / 116.42 C | 1.56 | — | 3/3, max 0 |
+| Final otter | Field box | 100.02 / 148.47 C | 124.64 / 151.24 C | 54.11 / 61.15 C | 44.36 | 69.15 | 120/120, max 0 |
+| Final otter | Head + torso | 100.02 / 148.47 C | — | 81.67 / 94.54 C | 20.99 | — | 120/120, max 0 |
+
+The all-ray counter also replayed the original march with the exact guard intervals at the original camera. Its work estimate applies the original kind throughput to the measured reduction in evaluations.
+
+| View | Field | Original steps M | Guarded steps M | Geometric hit delta | Estimated Vis saved ms |
 | --- | --- | --- | --- | --- | --- |
-| Starter otter | Analytic sphere | 15.84 / 33.66 C | 14.56 / 24.15 C | 1.20 | 3/3, max 0 |
-| Starter otter | Field box | 15.84 / 33.66 C | 8.04 / 14.21 C | 8.72 | 3/3, max 0 |
-| Walrus | Analytic sphere | 26.53 / 99.26 C | 26.05 / 31.13 C | 0.52 | 3/3, max 0 |
-| Final otter | Analytic sphere | 100.02 / 148.47 C | 97.77 / 116.42 C | 1.56 | 3/3, max 0 |
+| Starter otter | Otter | 52.80 | 20.72 | 0 | 6.83 |
+| Walrus | Cap | 21.31 | 5.46 | 0 | 2.41 |
+| Walrus | Hide | 33.81 | 15.89 | 0 | 5.58 |
+| Heron | HeronHead | 59.29 | 1.38 | 0 | 32.36 |
+| Final otter | Head4 | 71.40 | 9.32 | 0 | 21.65 |
+| Final otter | Torso | 51.32 | 11.04 | 0 | 30.80 |
 
 ## Ball lighting control
 

@@ -137,7 +137,7 @@ for name in scenes.keys() - {'sun'}:
         rates[short] = dict(ns_per_work=rate*1e6, roots_per_field=root_count,
                             hidden_ratio=median(data['calibration_occluded_four_ms'])/ms)
     target_work = sum(work.values())
-    orig = selected['baseline/960x720/'+name]
+    orig = attempts['baseline/960x720/'+name][0]  # Historical budget used to price the preregistered changes.
     observed = orig['pass_in_median_frame']
     cal = selected.get('cal/672x504/'+name)
     correction = (cal['vis'] - empty)/calwork if cal else None
