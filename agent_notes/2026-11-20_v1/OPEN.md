@@ -552,6 +552,51 @@ The X2f size audit and four proposed cuts are recorded in [the lean-down plan](d
 - Deferred: the native MetalBackend (predicted 0.09–0.19 ms for 2.3–3.8k lines), HDR+Present fusion, f16 shading, ground fBM bake, and consumer Wasm passes until check.rs (86.5 KB) is split.
 - Superseded briefs: s1_exec, s1_motion_fma, s1_web, is1 and sci_chain.sh, which are covered by x2a, x2b and x2e.
 
+## Engine gaps found by the otter, fur and character work (25 Nov)
+
+Each was worked around in authored Loft and none is fixed in the engine. Figures are measured in renders unless marked derived.
+
+- **No environment reflection.** `stdlib/integrators/direct.loft` `sun_sky` integrates the sky as 12 point samples
+  of 1.05 sr. A lobe narrower than one sample returns many times the sky it stands for (derived from GGX: at roughness 0.10
+  about 1,170x at a sample's centre and nothing between samples). A crop of the old otter's crown shows the
+  samples as a row of separate dots. Flat water at roughness 0.12 measured (32, 40, 35) of 255 where a mirrored sky gives
+  (66, 81, 94). Workaround: a lobe returns the mirrored `sky_dome` at the emission query (`l = 0`) and gates its
+  glossy term to the sun. A light function cannot do this for a `Bsdf` it did not write, because `eval_bsdf` does
+  not expose roughness or F0.
+- **No roughness or material view.** `--aov` gives albedo, normal, depth and id, and the normal is the one handed
+  to `material`: a tilt applied inside a lobe does not show. Roughness, coat, sheen, that tilt and the material
+  mask have to be rendered by copying the material and returning a flat colour.
+- **No noise in a traced field.** `vnoise` (any `floor`) derives `Unbounded` (E211), and a field with it has no
+  finite bound (E212). Displacement is limited to sums of sines: a 3 mm two-set ridge field raised the otter head's
+  derived L from 3.41 to 5.53; its frame was 71 ms at 960x720 where the other variants of the same batch took
+  22 to 50 ms.
+- **Primary visibility is 90 to 97% of a character frame.** Warmed `loft profile`, Apple M4, 960x720, 120 frames,
+  run flagged contended (load control 1.95 ms against 0.08 quiet), median ms for Vis / Shade / frame: plain ball
+  1.2 / 2.4 / 4.2; the same with the sun only 1.2 / 0.7 / 2.4; base otter head 12.7 / 1.2 / 14.2; walrus (about
+  1,100 rods) 30.9 / 2.3 / 33.4; heron 46.5 / 1.3 / 48.8; otter with strands 105.7 / 2.6 / 108.4. Every row is
+  drawn as its world-aligned box and each covered pixel traces; depth is written by the fragment shader, so
+  nothing is rejected early. The heron's surface needs few steps per hit and still costs 46 ms, so the time is
+  in rays that miss inside boxes (`out/meta/perf/steps_and_overdraw.png`). Lane `loft/perf` owns the fix.
+- **The sky term is most of shading.** `sun_sky`'s twelve samples are 1.7 of the ball's 2.4 ms of shade.
+- **Derived bounds are loose for common shapes** (three workers, from `loft check`): stdlib `round_cone` about 2.2,
+  an ellipsoid written as `(q - c) / r` 2 to 2.9, a rotation by dot rows 1.7, a sheared coordinate about 2.
+  Capsules, spheres and `round_box` stay at 1. The heron went from 345 ms to about 50 by using only those.
+- **A field cannot skip far parts.** Branching on the point in `trace` is E701, so a head of 15 blended parts
+  evaluates all 15 at every step everywhere. The march discards a ray after 192 steps, which tears holes when
+  the bound is above about 5.
+- **Stdlib lobes take no normal tilt and cannot be called from a lobe.** Normal detail means copying `ggx`,
+  `sheen` and `coat` into the scene with `n + tilt`. Two workers did.
+- **A build function takes no named or default arguments** (E405): characters are posed by 6 to 16 positional
+  numbers. Lane `loft/lang`.
+- **A kind with no rows cannot be listed in a schedule** (E602), and a module cannot export a schedule or a
+  group of kinds (E505 on a parameterised schedule call), so every scene lists a character's kinds three times.
+  Lane `loft/lang`.
+- **A material cannot `select` between `Bsdf` values.** Lane `loft/lang`.
+- **The light callback gets no position**, so a lantern is a second directional light; `PointLamp` is not read
+  by `sun_sky`.
+- **The built binary reads the primary checkout's `stdlib/` live.** A worktree cannot add or change a stdlib module
+  and see it; a worker's library has to be a sibling module (`use self::name`) until it is merged.
+
 ## Std library rule and anti-patterns (owner, 20 Nov)
 - A std function earns its place when it replaces a recurring, sufficiently complicated block costing ≥3× the tokens of its call (PHILOSOPHY §4).
 - **Anti-pattern (seen in Buddies expeditions):** re-implementing standard functional patterns (`map`, `await`, filter, fold) as tiny renamed wrappers that cover one or two calls under a new name. That adds names and saves nothing. Std functions are LARGE, real blocks: a leg family, a shell generator, a layered material, a gait law, a camera rig. Never a renamed one-liner.

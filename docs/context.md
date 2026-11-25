@@ -50,15 +50,16 @@ schedule Print {
 
 ## Verify the picture and the cost
 
-Run `loft check scene.loft` for types, bounds and scheduled checks. Run `loft lint scene.loft` for authoring diagnostics and `loft show scene.loft --plan` to inspect lowering. Capture `loft still scene.loft shot.png --t 0` and `loft clip scene.loft --out frames --size 512x512 --frames 16 --fps 16`. Run `loft profile scene.loft --size 512x512 --frames 60`. Compare stills, motion and p95 at the same camera, times and resolution. Fork or replace the failing layer, then repeat.
+Run `loft check scene.loft` for types, bounds and scheduled checks. Run `loft lint scene.loft` for authoring diagnostics and `loft show scene.loft --plan` to inspect lowering. Capture `loft still scene.loft shot.png --t 0` and `loft clip scene.loft --out frames --size 512x512 --frames 16 --fps 16`. Run `loft profile scene.loft --size 512x512 --frames 60`: frame time means its warmed median and p95, never the one cold frame a `still` or `clip` reports. Its `--json` output gives the time per pass and a `contended` flag; repeat a contended run. Compare stills, motion and p95 at the same camera, times and resolution. When a surface looks wrong, add `--aov albedo` or `--aov normal` to `loft still` or `loft clip`: they show the base colour and the surface normal of the same frame without light, so you can name the channel that is wrong. The normal view is the normal the renderer hands to `material`; a tilt applied inside a lobe does not appear in it. That tilt, roughness and material masks have no view yet; return them as a flat `lambert` colour from a copy of the material to see them. Fork or replace the failing layer, then repeat.
 
 Exit codes (§17) are 0 success, 1 compile, 2 truth, 3 picture/twin parity, 4 load, 5 usage/missing file, 6 device/environment and 7 budget.
 
-## Four silent picture mistakes
+## Five silent picture mistakes
 
 - **Misplaced geometry.** Verify axes, pose direction and metre scale in a still. A map's mirror creates a fresh space. Use its point constructor and map back before mixing spaces.
 - **Mismatched coverage.** Keep analytic `visible`, distance `trace` and shadow proxies in agreement. A negative analytic hit means a miss.
 - **Wrong light space.** Keep the surface normal, view and light in the same frame. Keep RGB lighting linear until the display pass. Zero light direction requests emission from a lobe stack.
+- **Plastic or clay surfaces.** `sun_sky` integrates the sky as twelve point samples and has no environment reflection. A glossy lobe narrower than about 0.6 rad shows each sample as its own highlight, which reads as moulded plastic, and flat water under it is nearly black. Keep lobes that answer the sky broad and let a sharp one answer the sun only. Removing every highlight is the opposite mistake: fur, cloth and skin read as matte clay unless their structure is in the shape and the normal.
 - **Frozen motion.** Schedule each law and read its updated columns in the pose or material. Compare multiple times. Authored checks can measure pin drift or missed contacts.
 
 Catalog headings give import paths. Schedule signatures show pass order.
