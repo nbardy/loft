@@ -15,6 +15,7 @@ pub(super) enum Op {
     Lobe(usize),
     Layer,
     Mix(usize),
+    Select(usize),
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -25,22 +26,27 @@ pub(super) struct Shape {
     ops: Vec<Op>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Combine { Layer, Mix, Select }
+
 impl Shape {
     pub fn lobe(name: &str, arity: usize) -> Self {
         Shape { lobes: vec![(name.to_owned(), arity)], weights: 0, ops: vec![Op::Lobe(0)] }
     }
 
     /// `a + b` (layer) or `mix_bsdf(a, b, t)`: b's lobes and weights follow a's, and the mix weight comes last.
-    pub fn join(a: Shape, b: Shape, mix: bool) -> Self {
+    pub fn join(a: Shape, b: Shape, combine: Combine) -> Self {
+        if combine == Combine::Select && a.same_as(&b) { return a; }
         let (lobes, weights) = (a.lobes.len(), a.weights);
         let mut ops = a.ops;
         ops.extend(b.ops.into_iter().map(|op| match op {
             Op::Lobe(i) => Op::Lobe(i + lobes),
             Op::Mix(k) => Op::Mix(k + weights),
+            Op::Select(k) => Op::Select(k + weights),
             Op::Layer => Op::Layer,
         }));
-        let weights = a.weights + b.weights + usize::from(mix);
-        ops.push(if mix { Op::Mix(weights - 1) } else { Op::Layer });
+        let weights = a.weights + b.weights + usize::from(combine != Combine::Layer);
+        ops.push(match combine { Combine::Layer => Op::Layer, Combine::Mix => Op::Mix(weights - 1), Combine::Select => Op::Select(weights - 1) });
         let mut all = a.lobes;
         all.extend(b.lobes);
         Shape { lobes: all, weights, ops }
@@ -56,6 +62,30 @@ impl Shape {
         format!("{:?}/{}", self.lobes, self.weights)
     }
 
+    /// The first lobe supplying a diagnostic or optics field, along the selected material path.
+    pub fn first_field(&self, field: impl Fn(usize, &str) -> Option<String>, zero: &str) -> Option<String> {
+        // Walk the postfix tree backwards. A branch lacking the field can still inherit it
+        // from a later lobe in the enclosing stack.
+        fn first(ops: &mut std::slice::Iter<'_, Op>, lobes: &[(String, usize)],
+            field: &impl Fn(usize, &str) -> Option<String>, fallback: Option<String>, zero: &str) -> Option<String> {
+            match ops.next_back() {
+                None => fallback,
+                Some(Op::Lobe(i)) => field(*i, &lobes[*i].0).or(fallback),
+                Some(Op::Layer | Op::Mix(_)) => {
+                    let upper = first(ops, lobes, field, fallback, zero);
+                    first(ops, lobes, field, upper, zero)
+                }
+                Some(Op::Select(slot)) => {
+                    let yes = first(ops, lobes, field, fallback.clone(), zero);
+                    let no = first(ops, lobes, field, fallback, zero);
+                    if yes == no { return yes; }
+                    Some(format!("select({}, {}, b.mix{slot} != 0.0)", no.as_deref().unwrap_or(zero), yes.as_deref().unwrap_or(zero)))
+                }
+            }
+        }
+        first(&mut self.ops.iter(), &self.lobes, &field, None, zero)
+    }
+
     pub fn eval(&self, shader: &mut String) -> String {
         let mut stack = Vec::new();
         for (i, op) in self.ops.iter().enumerate() {
@@ -69,7 +99,7 @@ impl Shape {
                         let _ = writeln!(shader, "  let {result} = LoftMaterial({r}.xyz, {r}.w, vec3<f32>(0.0));");
                     }
                 }
-                Op::Layer | Op::Mix(_) => {
+                Op::Layer | Op::Mix(_) | Op::Select(_) => {
                     let b = stack.pop().expect("upper material");
                     let a = stack.pop().expect("base material");
                     let value = match *op {
@@ -77,6 +107,10 @@ impl Shape {
                         Op::Mix(weight) => {
                             let t = format!("clamp(b.mix{weight},0.0,1.0)");
                             format!("LoftMaterial(mix({a}.c,{b}.c,{t}), mix({a}.t,{b}.t,{t}), mix({a}.e,{b}.e,{t}))")
+                        }
+                        Op::Select(slot) => {
+                            let c = format!("b.mix{slot} != 0.0");
+                            format!("LoftMaterial(select({a}.c,{b}.c,{c}), select({a}.t,{b}.t,{c}), select({a}.e,{b}.e,{c}))")
                         }
                         Op::Lobe(_) => unreachable!("a lobe is a leaf"),
                     };
@@ -90,6 +124,10 @@ impl Shape {
     }
 }
 
+pub(super) fn is_bsdf_select(p: &Prog, name: &str) -> bool {
+    matches!(name, "select" | "loft_conditional") && !p.fns.contains_key(name)
+}
+
 pub(super) fn is_lobe(p: &Prog, name: &str) -> bool {
     p.fns.get(name).is_some_and(|f| f.attrs.iter().any(|a| a.name.name == "lobe"))
 }
@@ -100,16 +138,17 @@ pub(super) fn returns_bsdf(f: &FnDecl) -> bool {
 
 fn no_layout(e: &Expr) -> Diag {
     Diag::new(Code::E405, e.span, "material has no static lobe layout",
-        "build it from lobes, `+`, `mix_bsdf`, Bsdf lets and helpers that return a Bsdf")
+        "build it from lobes, `+`, `mix_bsdf`, `select`, Bsdf lets and helpers that return a Bsdf")
 }
 
 /// The shape of a Bsdf expression. `local` gives the shape of a Bsdf let or parameter in scope.
 pub(super) fn shape_of(p: &Prog, e: &Expr, local: &dyn Fn(&str) -> Option<Shape>, stack: &mut BTreeSet<String>) -> Res<Shape> {
     match &e.kind {
-        ExprKind::Binary(BinOp::Add, a, b) => Ok(Shape::join(shape_of(p, a, local, stack)?, shape_of(p, b, local, stack)?, false)),
-        ExprKind::Call { callee, args } if callee.name == "mix_bsdf" => {
+        ExprKind::Binary(BinOp::Add, a, b) => Ok(Shape::join(shape_of(p, a, local, stack)?, shape_of(p, b, local, stack)?, Combine::Layer)),
+        ExprKind::Call { callee, args } if callee.name == "mix_bsdf" || is_bsdf_select(p, &callee.name) => {
             let [a, b, _] = args.as_slice() else { return Err(no_layout(e)) };
-            Ok(Shape::join(shape_of(p, &a.value, local, stack)?, shape_of(p, &b.value, local, stack)?, true))
+            Ok(Shape::join(shape_of(p, &a.value, local, stack)?, shape_of(p, &b.value, local, stack)?,
+                if callee.name == "mix_bsdf" { Combine::Mix } else { Combine::Select }))
         }
         ExprKind::Call { callee, args } if is_lobe(p, &callee.name) => Ok(Shape::lobe(&callee.name, args.len())),
         ExprKind::Call { callee, .. } => match p.fns.get(callee.name.as_str()) {
@@ -157,7 +196,7 @@ fn walk(p: &Prog, b: &Block, env: &mut Vec<(String, Option<Shape>)>, stack: &mut
             Stmt::Assign { target, value, .. } => {
                 let ExprKind::Name(n) = &target.kind else { continue };
                 let Some(Some(was)) = env.iter().rev().find(|(name, _)| name == n).map(|(_, s)| s.clone()) else { continue };
-                if !let_shape(p, value, env, stack)?.is_some_and(|now| now.key() == was.key()) {
+                if !let_shape(p, value, env, stack)?.is_some_and(|now| now.same_as(&was)) {
                     return Err(Diag::new(Code::E405, value.span, "a Bsdf var keeps the lobes it was declared with",
                         "bind the new stack with its own `let`"));
                 }

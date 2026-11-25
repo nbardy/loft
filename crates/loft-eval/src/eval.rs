@@ -1254,6 +1254,10 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
             Select | Conditional => match &v[2] {
                 Val::B(Truth::Known(true)) => v[1].clone(),
                 Val::B(Truth::Known(false)) => v[0].clone(),
+                Val::B(_) if matches!(self.ty(e), Ty::Bsdf) => {
+                    let [Val::Bsdf(a), Val::Bsdf(b), _] = v.as_slice() else { unreachable!("checked Bsdf select") };
+                    Val::Bsdf(vec![Layer::Mix(a.clone(), b.clone(), S::c(0.0).join(&S::c(1.0)))])
+                }
                 // F2: one arm everywhere at each frame, so the larger arm's L.
                 Val::B(Truth::PerFrame) => join_val(v[0].clone(), v[1].clone(), e.span)?,
                 Val::Void | Val::S(_) | Val::V(..) | Val::B(_) | Val::U(_) | Val::I(_) | Val::X(_) | Val::Row(..) | Val::MapRef(..) | Val::Bsdf(_) => match (&v[0], &v[1]) {

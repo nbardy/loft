@@ -118,3 +118,10 @@ None of them is built during Phases 1.5–5.
     stack, for any glass, water, gem or prism study.
   - `engines::realtime`: fast interactive schedule.
   - `engines::woodblock`: stylised schedule.
+
+### Selecting finished surfaces
+
+`select(a, b, condition)` takes two `Bsdf` values and a `bool`. False chooses the
+entire surface `a` and true chooses `b`, including its emission. Identical lobe layouts
+share their parameter slots. Different layouts compose into a statically known pair with a
+selector, preserving staged monomorphization (§02). The CPU twin selects the same arm.

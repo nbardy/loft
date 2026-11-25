@@ -35,6 +35,29 @@ fn expect(code: Code, src: &str) {
 }
 
 #[test]
+fn select_finished_surfaces_with_shared_and_different_lobes() {
+    use loft_passes::eval::{Eval, Layer, Truth, Val};
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let scene = format!("{}\n{}", kind("", OK_TRACE, "finish(q.x > 0.0, q.y > 0.0)"), "
+        use stdlib::materials::bsdf::{lambert, emit_lobe}
+        use stdlib::sdf::solid::{sphere}
+        fn finish(bright: bool, lit: bool) -> Bsdf {
+            let paint = select(lambert(rgb(0.25)), lambert(rgb(0.75)), bright)
+            select(paint, emit_lobe(rgb(1.0)), lit)
+        }");
+    let graph = loft_passes::source::Graph::text(&root, Path::new("finish.loft"), &scene);
+    let (_, _, compiled) = loft_passes::compile(&graph, &[]).unwrap_or_else(|e| panic!("{}", e.render(&graph)));
+    let p = compiled.prog();
+    let mut cpu = Eval::<f32>::new(&p, &compiled.types, vec![], &[]);
+    let finish = p.fns["finish"];
+    for (bright, lit, lobe, level) in [(false, false, "lambert", 0.25), (true, false, "lambert", 0.75), (true, true, "emit_lobe", 1.0)] {
+        let args = [bright, lit].map(|c| Val::B(Truth::Known(c))).to_vec();
+        let Val::Bsdf(layers) = cpu.call_fn(finish, args, finish.name.span).unwrap() else { panic!("expected Bsdf") };
+        assert!(matches!(&layers[..], [Layer::Lobe(name, args)] if name == lobe && matches!(&args[..], [Val::V(v, _)] if v == &[level; 3])));
+    }
+}
+
+#[test]
 fn the_baseline_compiles() {
     if let Err((_, text)) = compile(&kind("", OK_TRACE, OK_MATERIAL)) {
         panic!("{text}");
