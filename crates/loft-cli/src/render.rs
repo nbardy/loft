@@ -119,7 +119,7 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
 }
 
 fn frame(g: &Gpu, loaded: &Loaded, opts: &Options, t: f32) -> Result<(Vec<u8>, Option<f64>), Failure> {
-    loaded.frame_samples(g, t, opts.samples);
+    loaded.try_frame_samples(g, t, opts.samples).map_err(Failure::Device)?;
     let time = if opts.max_frame.is_some() {
         Some(loaded.gpu_ms(g).map_err(Failure::Device)?.ok_or_else(|| Failure::Device("GPU timestamps are unavailable".into()))?.0)
     } else { None };

@@ -518,10 +518,16 @@ impl Loaded {
     pub fn frame(&self, g: &Gpu, t: f32) -> u32 { self.frame_samples(g, t, 1) }
 
     pub fn frame_samples(&self, g: &Gpu, t: f32, samples: u32) -> u32 {
-        self.submit_frame(g, t, samples, self.clock.as_ref()).0
+        self.try_frame_samples(g, t, samples).expect("prepared frame")
     }
 
-    fn submit_frame(&self, g: &Gpu, t: f32, samples: u32, clock: Option<&Clock>) -> (u32, wgpu::SubmissionIndex) {
+    /// `frame_samples` for hosts that report a recording error (a raster pass that cannot be recorded) instead of
+    /// panicking. On `Err` nothing was submitted and retained-draw state was forgotten, so the next call redraws.
+    pub fn try_frame_samples(&self, g: &Gpu, t: f32, samples: u32) -> Result<u32, String> {
+        self.submit_frame(g, t, samples, self.clock.as_ref()).map(|submitted| submitted.0)
+    }
+
+    fn submit_frame(&self, g: &Gpu, t: f32, samples: u32, clock: Option<&Clock>) -> Result<(u32, wgpu::SubmissionIndex), String> {
         // Hold the state and runner locks until submission. A caller-owned encoder
         // records all waves because this host cannot observe when it is submitted.
         let mut params = self.params.lock().unwrap();
@@ -540,8 +546,16 @@ impl Loaded {
             timestamps: clock.map(|c| &c.set), omit_wave: skip.map(|x| x.0),
             omit_waves: if reuse_vis { &[1] } else { &[] }, ..Default::default()
         };
-        let report = self.record_report(&mut runner, &mut enc, &self.color_view, t, samples, options)
-            .expect("prepared frame");
+        let report = match self.record_report(&mut runner, &mut enc, &self.color_view, t, samples, options) {
+            Ok(report) => report,
+            Err(error) => {
+                // The encoder holds the passes recorded before the failure: drop it unsubmitted. `needs_draw` above
+                // already marked the retained visibility and shadow maps as drawn, so mark them stale again.
+                self.visibility.lock().unwrap().forget();
+                if let Some((_, _, reuse)) = &self.shadow { reuse.lock().unwrap().forget(); }
+                return Err(error);
+            }
+        };
         let commands = report.commands;
         if let Some(clock) = clock {
             let mut skipped = Vec::new();
@@ -550,7 +564,7 @@ impl Loaded {
             *clock.coverage.lock().unwrap() = (report.timestamp_required, skipped);
         }
         params.1 = false;
-        (commands, g.queue.submit([enc.finish()]))
+        Ok((commands, g.queue.submit([enc.finish()])))
     }
 
     pub fn record_frame(&self, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView,
@@ -625,7 +639,7 @@ impl Loaded {
                 }
                 collect_oldest(&mut resolving, &mut timings)?;
             }
-            let (commands, submission) = self.submit_frame(g, t, 1, Some(&clocks[serial % depth]));
+            let (commands, submission) = self.submit_frame(g, t, 1, Some(&clocks[serial % depth]))?;
             let complete = Arc::new(AtomicBool::new(false));
             let flag = Arc::clone(&complete);
             g.queue.on_submitted_work_done(move || flag.store(true, Ordering::Release));

@@ -104,6 +104,15 @@ impl Reuse {
         }
     }
 
+    /// A frame that was not recorded did not draw what `needs_draw` just retained.
+    pub(super) fn forget(&mut self) {
+        match self {
+            Self::EveryFrame => {}
+            Self::Once { drawn } => *drawn = false,
+            Self::Static { last, .. } => *last = None,
+        }
+    }
+
     pub(super) fn needs_draw(&mut self, uniform: &[u8], params_changed: bool) -> bool {
         match self {
             Self::EveryFrame => true,

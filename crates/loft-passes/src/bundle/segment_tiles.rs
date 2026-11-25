@@ -20,6 +20,8 @@ pub(super) fn prepare(
     let mut remaining = 32 * 1024 * 1024u64;
     let mut module = None;
     for (&id, balls) in &p.segments {
+        // Only an analytic module is emitted in tile form (`emit::tile_form`); `Program.segments` already follows it.
+        if p.kinds[id as usize].draw != Draw::Analytic { continue; }
         let n = p.kinds[id as usize].n_rows;
         if balls.len() != n as usize { return Err("segment endpoint count differs from the row table".into()); }
         let words = tiles.saturating_mul(u64::from(n));

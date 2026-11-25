@@ -846,6 +846,13 @@ pub fn kind_reads(p: &Prog, k: &KindDecl) -> Vec<String> {
     reads
 }
 
+/// Whether `emit_kind_module` writes this kind's vertex entry in tile form (a draw starting at vertex 36 * (tile + 1)
+/// reads that tile's row list). This is the only definition: the module text and `Program.segments` both follow it,
+/// so a tile draw can never meet a shader that does not know tiles.
+pub fn tile_form(p: &Prog, k: &KindDecl, draw: Draw, aov: Aov, sources: &loft_ir::Sources) -> bool {
+    draw == Draw::Analytic && aov == Aov::Beauty && segment_arguments(p, k, sources).is_some()
+}
+
 fn traced_march(count_steps: bool, guard: Option<(u32, f32)>) -> String {
     let prefix = guard.map_or_else(String::new, |(base, reach)| {
         render_template(include_str!("../../../stdlib/core/march_guard.wgsl"), &[
@@ -981,7 +988,9 @@ pub fn emit_kind_module(
             let primary_direction = if uses_world_hit { "loft_ray(v.pos.xy)" } else { "normalize(v.wp - ro)" };
             // Each disjoint native scissor retains the original compacted row order.
             // first_vertex selects its list. Other hosts and shadows draw vertices 0..36.
-            let direct = draw == Draw::Analytic && aov == Aov::Beauty && segment_arguments(p, k, sources).is_some();
+            // DX12: `vertex_index` there may not include `first_vertex` (it is relative to the draw), which would put
+            // every tile on list 0 and break this scheme; the native host runs on Metal.
+            let direct = tile_form(p, k, draw, aov, sources);
             let (row_id, corner_id) = if direct {
                 ("var slot = kp.base + ii; if vi >= 36u { slot = (vi / 36u - 1u) * kp.n_rows + ii; } let r = visible[slot];", "vi % 36u")
             } else { ("let r = visible[kp.base + ii];", "vi") };

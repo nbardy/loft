@@ -68,6 +68,9 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
             return Err(Failure::Usage("--set requires an authored scene".into()));
         }
         let data = std::fs::read_to_string(path).map_err(|e| Failure::Usage(e.to_string()))?;
+        // `Program.segments` is not serialised: a `.sexp` program never takes the per-tile row lists of thin capsule
+        // kinds, so it times the untiled draw path.
+        eprintln!("note: {scene} is a serialised program; segment tiling does not apply, timing the untiled draw path");
         loft_passes::sexp::read(&data).map_err(Failure::Compile)?
     } else {
         let src = sources(path).map_err(Failure::Usage)?;
