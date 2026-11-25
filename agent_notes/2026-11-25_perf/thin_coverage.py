@@ -59,5 +59,6 @@ def score(name,width,height):
                 totals.append(round(np.prod(np.maximum(0,y),axis=1).sum()))
             counts.setdefault(kind,[]).append(totals)
     return {k:{str(g):int(n) for g,n in zip(groups,np.median(frames,axis=0))} for k,frames in counts.items()}
-for n in ['walrus','base','otter']:
-    print(n,score(n,960,720))
+if __name__ == '__main__':
+    for n in ['walrus','base','otter']:
+        print(n,score(n,960,720))

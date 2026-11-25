@@ -16,6 +16,8 @@ summary = {}
 for name, path in scenes.items():
     modules = shaders(out/"source/fixtures"/(path+".loft"))
     got = {k for k,v in modules.items() if "fn loft_thin_position(" in v}
+    for k in got:
+        (folder / f"{name}-{k}.wgsl").write_text(modules[k])
     summary[name] = sorted(got)
     print(name, sorted(got), flush=True)
     assert got == expected[name], (name, got, expected[name])
