@@ -40,7 +40,7 @@ impl Reuse {
         Self::geometry(p, drawn, indexed, editable)
     }
 
-    /// The native host can bypass row compaction only when the stock culler owns the list.
+    /// Native retention and segment tiling both require the stock culler to own these row lists.
     pub(super) fn stock_visibility(p: &Program) -> Option<&[u32]> {
         use loft_passes::program::{AuthoredRun, Extent, FrameView, Pass};
         let [Pass::Authored(cull), Pass::Vis(drawn), tail @ ..] = p.passes.as_slice() else {

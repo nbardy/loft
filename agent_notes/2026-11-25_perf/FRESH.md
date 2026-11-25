@@ -136,7 +136,7 @@ At 960 the second original-only walrus capture differed from the first original 
 
 Timing and picture comparisons use the stock CLI’s two time generators. The profile multiplies an f32 frame index by an f32 interval; the clip rounds a double-precision frame time once. On this orbit 76/120 profile timestamps are one f32 ULP above the corresponding clip timestamp. Every profile pair uses the same profile times, and every image pair uses the same clip times.
 
-At 1280×800, frame 60 of the walrus differs between the screen-strip and guard builds at 1,140 pixels, with a largest channel error of 133. The strip already fails the picture requirement on this frame. It is an experimental timing result. The hardware-scissor build uses the old clip coordinates throughout. [Strip shader](strip.wgsl) · [Native scissor projection](../../crates/loft-native/src/scissor.rs)
+At 1280×800, frame 60 of the walrus differs between the screen-strip and guard builds at 1,140 pixels, with a largest channel error of 133. The strip already fails the picture requirement on this frame. It is an experimental timing result. The hardware-scissor build uses the old clip coordinates throughout. [Strip shader](strip.wgsl) · Eight-row CPU projection in `5ad3bfc7:crates/loft-native/src/scissor.rs`.
 
 ### Raster-strip timing and image differences
 
@@ -166,7 +166,7 @@ At frame 60 of the 960×720 orbit, the instrument clears the same textures and d
 | [Strand](orbit/thin/otter-Strand-vis-replay.json.gz) | 96,849,778 | 4,230,331 | 2,503,784 | 10,819 | 22.86 / 3.68 / 2.72 | 8,514 | 0 |
 All twelve fixed-order scissor replays, covering four kinds at frames 0, 60 and 119, preserved every visibility word. At the middle pose, the coverage model predicted 2.508 million scissored Strand fragments and measured 2.504 million. It predicted 4.244 million for the strip and measured 4.230 million. A correct launch-count model can still miss native p95. Full-frame timing includes the other kinds, pass scheduling and the cost of hundreds of draws.
 
-### Hardware scissors on the moving camera
+### Eight-row hardware scissors on the moving camera
 
 Each entry is GPU p50 / p95 in ms. In the left comparison original and guard ran consecutively. In the right comparison the same guard binary ran immediately before the combined build. The forecast column was frozen before the scissor build and applies to the combined build. Original and guard forecasts are in the first table.
 
@@ -208,3 +208,13 @@ The picture columns give identical frames out of 120 / largest RGBA8 channel err
 | otter-1280x800 | 120 / 0 / 0 / 0 | [117 / 59 / 1 / 3](orbit/scissor/scissor-otter-1280x800.png) |
 
 [All adjacent guard profiles](orbit/pre-scissor) · [Combined profiles, per-frame hashes and diffs](orbit/scissor)
+
+The grouped 960 frame p95 forecast missed by −1.17 ms on walrus, −0.65 ms on heron and −2.04 ms on final otter. At 1280 the corresponding errors were −0.22, −2.66 and −4.04 ms. Only the larger walrus and final otter passed both load brackets in the selected immediate character runs. On that quiet final otter pair the guard measured 36.57 / 44.79 ms and the eight-row candidate 14.36 / 16.96 ms. The candidate changed one pixel on each of three frames. The stock walrus changed 349 and 439 pixels in total across the two captures. With original and modified programs using the same deterministic cull, all 480 walrus frame pairs (guard and grouped scissors, both resolutions) were byte-identical, including PNG encoding. [Fixed-order image comparisons](orbit/ordered-original/byte-identical-pngs.json.gz)
+
+At the replay’s midpoint the screen-space box estimate used double-precision projection of the endpoint balls’ enclosing axis-aligned boxes. The native grouped implementation instead used a perspective denominator bound on each endpoint ball plus a two-pixel margin. Their targets and geometric containment agree; their exact launched-fragment counts can differ. The production frame times and RGBA comparisons above use the native projection.
+
+### Preserving the culler's order
+
+At `affc82f8` the native moving-camera path bins rows into disjoint 32×32-pixel hardware scissors. One GPU dispatch projects endpoint hulls in compacted slot order. A second dispatch counts and copies the intersecting rows into each tile. Its 64 lanes own contiguous slices of the original list; a prefix sum assigns each lane's output start. This preserves the exact original draw order in each tile, including holes from the ordered culler. Every draw uses the original triangles, ray interpolation and analytic solver. The indirect first vertex selects a tile's list. The first instance is zero on every adapter. The stock cull and binning share the Cull timestamp. The native profiler reports elapsed time from the previous pass end, so the pass budget adds to the reported frame. [GPU projection and stable gathering](../../crates/loft-passes/src/bundle/segment_tiles.wgsl) · [Native draw preparation and memory limit](../../crates/loft-passes/src/bundle/segment_tiles.rs)
+
+For final otter the tile row lists occupy 10.49 MB at 960×720 and 15.20 MB at 1280×800 (decimal MB across Bit and Strand). There are 690 or 1,000 tiles per kind. Two kinds issue 1,380 or 2,000 indirect draws, including tiles with zero instances. The allocator limits each list to 64 MiB and all lists together to 128 MiB. Larger inputs use the original indirect draw for each kind that does not fit. Fixed-eye, editable, custom-culler and serialized programs retain their existing draw paths. The grouped prototype’s host projection and direct-draw path live in its recorded commit. The current native path fits the conservative screen rectangles entirely on the GPU.
