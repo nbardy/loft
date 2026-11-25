@@ -2,11 +2,11 @@
 mod motion;
 #[cfg(not(target_arch = "wasm32"))]
 mod edit;
-mod shadow;
+mod reuse;
 #[cfg(not(target_arch = "wasm32"))]
 pub use edit::{EditReceipt, EditSession};
 use loft_passes::emit::Aov;
-use std::sync::{Mutex, atomic::{AtomicU32, Ordering}};
+use std::sync::Mutex;
 pub mod ray_query;
 pub use motion::{motion_layout, sample_motion, sample_motion_timed};
 
@@ -87,9 +87,13 @@ pub struct Loaded {
     kind_tables: Vec<TableId>,
     twin_sources: Vec<naga::Module>,
     luts: Vec<f32>,
+    #[cfg(not(target_arch = "wasm32"))]
+    lut_table: TableId,
     kind_words: Vec<[u32; 4]>,
     params: Mutex<(Vec<f32>, bool)>,
-    shadow: Option<(u16, u32, Mutex<shadow::Reuse>)>,
+    visibility: Mutex<reuse::Reuse>,
+    tiled_modules: std::collections::BTreeSet<ModuleId>,
+    shadow: Option<(u16, u32, Mutex<reuse::Reuse>)>,
     #[cfg(not(target_arch = "wasm32"))]
     instance_bounds: wgpu::Buffer,
     color: wgpu::Texture,
@@ -108,8 +112,7 @@ struct Clock {
     read: wgpu::Buffer,
     n: u32,
     period_ns: f64,
-    skipped_pass: AtomicU32,
-    required: Mutex<Vec<bool>>,
+    coverage: Mutex<(Vec<bool>, Vec<usize>)>,
 }
 
 /// One submitted frame's GPU timestamps in pass order.
@@ -119,7 +122,7 @@ pub struct FrameTiming {
     pub commands: u32,
     pub gpu_ms: f64,
     pub pass_ms: Vec<f64>,
-    /// Encoded-pass order. Known empty work and reused Shadow pairs are explicitly optional.
+    /// Encoded-pass order. Known empty work and reused raster pairs are explicitly optional.
     pub ticks: Vec<u64>,
     pub timestamp_required: Vec<bool>,
 }
@@ -147,7 +150,7 @@ impl Block {
 struct ClockRead {
     submission: wgpu::SubmissionIndex,
     mapped: std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>,
-    skipped_pass: u32,
+    skipped: Vec<usize>,
     bytes: u64,
     required: Vec<bool>,
 }
@@ -194,18 +197,16 @@ impl Clock {
             resolve: buffer(&g.device, "ts resolve", u64::from(n) * 8, U::QUERY_RESOLVE | U::COPY_SRC),
             read: buffer(&g.device, "ts read", u64::from(n) * 8, U::COPY_DST | U::MAP_READ),
             n, period_ns: f64::from(g.queue.get_timestamp_period()),
-            skipped_pass: AtomicU32::new(u32::MAX),
-            required: Mutex::new(vec![true; n as usize / 2]),
+            coverage: Mutex::new((vec![true; n as usize / 2], vec![])),
         }
     }
 
     // Metal exposes stale end samples if the resolve is encoded before the render
     // submission completes. Each slot keeps its own query set until after unmap.
     fn resolve_completed(&self, g: &Gpu) -> ClockRead {
-        let skipped_pass = self.skipped_pass.load(Ordering::Relaxed);
         // Source passes can lower to no commands. Resolve only encoded pairs,
         // retaining explicit coverage for zero-work passes rather than accepting zeros.
-        let required = self.required.lock().unwrap().clone();
+        let (required, skipped) = self.coverage.lock().unwrap().clone();
         let n = required.len() as u32 * 2;
         let bytes = u64::from(n) * 8;
         let mut enc = g.device.create_command_encoder(&Default::default());
@@ -214,7 +215,7 @@ impl Clock {
         let submission = g.queue.submit([enc.finish()]);
         let (tx, mapped) = std::sync::mpsc::channel();
         self.read.map_async(wgpu::MapMode::Read, ..bytes, move |result| { let _ = tx.send(result); });
-        ClockRead { submission, mapped, skipped_pass, bytes, required }
+        ClockRead { submission, mapped, skipped, bytes, required }
     }
 
     fn collect(&self, g: &Gpu, read: ClockRead) -> Result<(Vec<u64>, Vec<bool>), String> {
@@ -228,11 +229,11 @@ impl Clock {
         self.read.unmap();
         let mut required = read.required;
         validate_ticks(&ticks, &required)?;
-        if read.skipped_pass != u32::MAX {
+        for pass in read.skipped {
             // Restore reporting in source pass order after resolving only the executed passes.
-            let at = 2 * read.skipped_pass as usize;
+            let at = 2 * pass;
             ticks.splice(at..at, [0, 0]);
-            required.insert(read.skipped_pass as usize, false);
+            required.insert(pass, false);
         }
         Ok((ticks, required))
     }
@@ -397,6 +398,8 @@ impl Loaded {
             p.camera, p.sun, size, 0., sun, alternate.map(|(lo, hi, side)| sun_camera(p.sun, lo, hi, side)));
         let plan = loft_passes::bundle::lower_program(p, params, size, loft_passes::bundle::Options {
             nonce, overdraw: aov == Aov::Overdraw, picture_only: true,
+            segment_tiles: p.camera.fixed_eye.is_none() && editable.is_none() && aov == Aov::Beauty
+                && reuse::Reuse::stock_visibility(p).is_some(),
             // An edit swaps the editable kind's module, so its load keeps the software world.
             hardware_ray_query: editable.is_none() && loft_runner::ray_query::has_aabb_capacity(d, p.instances.len()),
             precision: precision(), features: device_features(d),
@@ -460,6 +463,9 @@ impl Loaded {
             }
         }
         let photons = p.path.as_ref().is_some_and(|p| matches!(p.integrator, loft_passes::emit::paths::Integrator::Spectral));
+        let indexed = |kind: &loft_passes::program::KindTable| aov != Aov::Overdraw
+            && p.modules[kind.module].naga.entry_points.iter().any(|e| e.name == "vs_grid");
+        let visibility = Mutex::new(reuse::Reuse::visibility(p, indexed, editable));
         let shadow = plan.shadow_wave.and_then(|wave| {
             let [(i, casters)] = p.passes.iter().enumerate().filter_map(|(i, pass)| match pass {
                 Pass::Shadow(casters) => Some((i, casters)),
@@ -467,9 +473,7 @@ impl Loaded {
             }).collect::<Vec<_>>()[..] else { return None };
             (i > 0 && i + 1 < p.passes.len() && !p.passes[..i].iter().any(|pass| matches!(pass, Pass::Shade(_))))
                 .then(|| {
-                    let indexed = |kind: &loft_passes::program::KindTable| aov != Aov::Overdraw
-                        && p.modules[kind.module].naga.entry_points.iter().any(|e| e.name == "vs_grid");
-                    (wave, i as u32 + u32::from(photons), Mutex::new(shadow::Reuse::prepare(p, casters, indexed, editable)))
+                    (wave, i as u32 + u32::from(photons), Mutex::new(reuse::Reuse::shadow(p, casters, indexed, editable)))
                 })
         });
         let clock = g.timestamps.then(|| Clock::new(g, 2 * (p.passes.len() as u32 + u32::from(photons))));
@@ -490,8 +494,9 @@ impl Loaded {
             kind_tables,
             twin_sources: p.kinds.iter().map(|k| p.modules[k.module].naga.clone()).collect(),
             luts: p.luts.clone(), kind_words, params: Mutex::new((p.params.clone(), false)),
+            #[cfg(not(target_arch = "wasm32"))] lut_table: plan.luts,
             #[cfg(not(target_arch = "wasm32"))] instance_bounds,
-            shadow,
+            visibility, tiled_modules: plan.tiled_modules, shadow,
             color, planes: [plan.visibility, plan.depth], color_view, clock, stats, precision: plan.precision })
     }
 
@@ -521,19 +526,28 @@ impl Loaded {
         // records all waves because this host cannot observe when it is submitted.
         let mut params = self.params.lock().unwrap();
         let mut runner = self.runner.lock().unwrap();
+        // Only the canonical cull -> Vis prefix is eligible, with no initializer or motion waves.
+        // Continue culling: later diagnostics can consume the visible row list even on a Vis cache hit.
+        let reuse_vis = match &mut *self.visibility.lock().unwrap() {
+            reuse::Reuse::EveryFrame => false,
+            reuse => !reuse.needs_draw(&self.uniform(t, samples, false), params.1),
+        };
         let skip = self.shadow.as_ref().filter(|(_, _, reuse)| {
             !reuse.lock().unwrap().needs_draw(&self.uniform(t, samples, true), params.1)
         });
         let mut enc = g.device.create_command_encoder(&Default::default());
         let options = FrameOptions {
-            timestamps: clock.map(|c| &c.set), omit_wave: skip.map(|x| x.0), ..Default::default()
+            timestamps: clock.map(|c| &c.set), omit_wave: skip.map(|x| x.0),
+            omit_waves: if reuse_vis { &[1] } else { &[] }, ..Default::default()
         };
         let report = self.record_report(&mut runner, &mut enc, &self.color_view, t, samples, options)
             .expect("prepared frame");
         let commands = report.commands;
         if let Some(clock) = clock {
-            *clock.required.lock().unwrap() = report.timestamp_required;
-            clock.skipped_pass.store(skip.map_or(u32::MAX, |x| x.1), Ordering::Relaxed);
+            let mut skipped = Vec::new();
+            if reuse_vis { skipped.push(1); }
+            skipped.extend(skip.map(|x| x.1 as usize));
+            *clock.coverage.lock().unwrap() = (report.timestamp_required, skipped);
         }
         params.1 = false;
         (commands, g.queue.submit([enc.finish()]))
@@ -543,6 +557,8 @@ impl Loaded {
         t: f32, samples: u32, timestamps: Option<&wgpu::QuerySet>, timestamp_start: u32) -> Result<u32, String> {
         let mut params = self.params.lock().unwrap();
         params.1 = true;
+        // A host-owned encoder may be submitted later, overwriting the internal attachments.
+        *self.visibility.lock().unwrap() = reuse::Reuse::EveryFrame;
         self.record(&mut self.runner.lock().unwrap(), encoder, target, t, samples,
             FrameOptions { timestamps, timestamp_start, ..Default::default() })
     }
@@ -561,7 +577,11 @@ impl Loaded {
     fn record_report(&self, runner: &mut Runner, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView,
         t: f32, samples: u32, options: FrameOptions<'_>) -> Result<loft_runner::frame::FrameRecord, String> {
         let uniform = |table| self.uniform(t, samples, table != self.frame_table);
-        runner.encode_frame(self.id, encoder, target, t.into(), FrameOptions { uniform: Some(&uniform), ..options })
+        let scissors = |wave, module: ModuleId| (wave == 1 && self.tiled_modules.contains(&module))
+            .then_some(([self.size.0, self.size.1], loft_passes::bundle::SEGMENT_TILE_SIDE));
+        runner.encode_frame(self.id, encoder, target, t.into(), FrameOptions {
+            uniform: Some(&uniform), scissors: Some(&scissors), ..options
+        })
             .map_err(runner_error)
     }
 

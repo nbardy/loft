@@ -1,0 +1,82 @@
+# Shared helpers for Sly Marrow: shapes, the head turn, two-bone limbs, the clay look.
+use stdlib::sdf::solid::{smin}
+use stdlib::materials::bsdf::{lambert}
+
+pub const Clay = [0.46, 0.40, 0.33]
+pub const Pale = [0.62, 0.6, 0.54]
+
+# An ellipsoid: exact distance scaled by its smallest radius.
+pub fn el(q: rgb, c: rgb, r: rgb) -> f {
+  (length((q - c) / r) - 1.0) * min(r.x, min(r.y, r.z))
+}
+
+pub fn ell(p: p3@World, c: p3@World, r: rgb) -> f {
+  (length((p - c).xyz / r) - 1.0) * min(r.x, min(r.y, r.z))
+}
+
+pub fn rbox(q: rgb, c: rgb, h: rgb, r: f) -> f {
+  let d = abs(q - c) - h + rgb(r)
+  length(max(d, rgb(0.0))) + min(max(d.x, max(d.y, d.z)), 0.0) - r
+}
+
+pub fn smax(a: f, b: f, k: f) -> f {
+  0.0 - smin(0.0 - a, 0.0 - b, k)
+}
+
+pub fn at_v(at: p3@World, v: rgb) -> p3@World {
+  at + [v.x, v.y, v.z]
+}
+
+# Head-local vector to body axes: roll about forward, pitch about right (chin up is +), yaw about up (toward +z).
+pub fn hturn(v: rgb, nod: f, turn: f, tilt: f) -> rgb {
+  let ct = cos(tilt)
+  let st = sin(tilt)
+  let a = [v.x, ct * v.y - st * v.z, st * v.y + ct * v.z]
+  let cn = cos(nod)
+  let sn = sin(nod)
+  let b = [cn * a.x - sn * a.y, sn * a.x + cn * a.y, a.z]
+  let cu = cos(turn)
+  let su = sin(turn)
+  [cu * b.x - su * b.z, b.y, su * b.x + cu * b.z]
+}
+
+# A body-frame offset from the head centre, in the head's own axes.
+pub fn head_frame(d: rgb, nod: f, turn: f, tilt: f) -> rgb {
+  [dot(d, hturn([1.0, 0.0, 0.0], nod, turn, tilt)), dot(d, hturn([0.0, 1.0, 0.0], nod, turn, tilt)), dot(d, hturn([0.0, 0.0, 1.0], nod, turn, tilt))]
+}
+
+# A point given in the skull's q-frame (base units: the frame the owner-liked skull is described in) to the body
+# frame: undo the skull's 5 degree droop, scale by (sx, sy, sz), turn the head, add its centre.
+pub fn q_to_body(q: rgb, c: rgb, nod: f, turn: f, tilt: f, s: rgb) -> rgb {
+  let h = [0.9962 * q.x - 0.0872 * q.y, 0.0872 * q.x + 0.9962 * q.y, q.z]
+  c + hturn(h * s, nod, turn, tilt)
+}
+
+# Elbow or knee of a two-bone limb, bending toward `pole`.
+pub fn bend(root: rgb, end: rgb, l1: f, l2: f, pole: rgb) -> rgb {
+  let dv = end - root
+  let d0 = max(length(dv), 0.0001)
+  let d = clamp(d0, abs(l1 - l2) + 0.001, l1 + l2 - 0.001)
+  let along = dv / d0
+  let side = normalize(pole - along * dot(pole, along) + rgb(0.00001))
+  let span = (d * d + l1 * l1 - l2 * l2) / (2.0 * d)
+  root + along * span + side * sqrt(max(l1 * l1 - span * span, 0.0))
+}
+
+# The head in clay: dark nose pad, a dark mouth line whose ends follow the corner lifts (kl left, kr right), and the
+# open mouth's dark red interior. `h` is the head-frame offset divided by the form's scale, i.e. base units.
+pub fn head_clay(h: rgb, kl: f, kr: f, jw: f) -> Bsdf {
+  let q = [0.9962 * h.x + 0.0872 * h.y, -0.0872 * h.x + 0.9962 * h.y, h.z]
+  let nose = 1.0 - smoothstep(0.0, 0.0025, smin(el([q.x, q.y, abs(q.z)], [0.153, -0.0062, 0.011], [0.008, 0.01, 0.013]), el(q, [0.151, -0.0172, 0.0], [0.007, 0.008, 0.009]), 0.006))
+  let right = smoothstep(-0.004, 0.004, q.z)
+  let lift = mix(kl, kr, right)
+  let y_m = -0.030 + 0.013 * lift * smoothstep(0.125, 0.085, q.x)
+  let line = (1.0 - smoothstep(0.0009, 0.0021, abs(q.y - y_m))) * smoothstep(0.075, 0.095, q.x) * smoothstep(0.012, 0.022, abs(q.z))
+  let philtrum = (1.0 - smoothstep(0.0008, 0.0018, abs(q.z))) * smoothstep(0.138, 0.146, q.x) * (1.0 - smoothstep(-0.0215, -0.0165, q.y)) * smoothstep(-0.034, -0.030, q.y)
+  let dark = max(line, philtrum)
+  let cavity = el(q, [0.098, -0.034 - 0.011 * jw, 0.0], [0.032, 0.010, 0.030])
+  let inside = (1.0 - smoothstep(0.0003, 0.0016, abs(cavity))) * smoothstep(0.05, 0.2, jw)
+  let tongue = smoothstep(-0.003, 0.003, (-0.034 - 0.011 * jw) - q.y)
+  let mouth = mix([0.030, 0.006, 0.006], [0.26, 0.07, 0.07], tongue * 0.8)
+  lambert(mix(mix(mix(Clay, [0.05, 0.04, 0.035], dark), mouth, inside), [0.012, 0.01, 0.009], nose))
+}

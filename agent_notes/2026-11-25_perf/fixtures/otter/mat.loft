@@ -1,0 +1,345 @@
+# Materials for Sly Marrow, as channels. Every surface is described by the same six functions of the point on it:
+#   base colour (linear albedo), roughness, normal detail (a tilt added to the normal), fuzz (the soft rim),
+#   wetness (0 dry to 1 soaked), and a mask saying which material the point is.
+# `surface(mode, ..., 1.0)` turns the channels into a Bsdf. mode 0 is the beauty; modes 1 to 6 draw one channel alone as
+# flat colour (emitted, no light), which is this engine's equivalent of handing over the maps:
+#   1 base colour, 2 roughness (grey), 3 normal detail (RGB), 4 wetness (grey), 5 material mask (palette), 6 fuzz.
+# mode -1 is a value study: clay lit by the surface's own tone.
+# Pair mode 1 to 6 with `flat_film` (identity) and `flat_light` so the picture is the channel, not a lit render.
+#
+# The beauty is one layered lobe whose maths is copied from stdlib/materials/bsdf.loft (`ggx` with height-correlated
+# Smith masking and Kulla-Conty multiple scattering, `sheen`, `coat`, and a wrapped `sss` diffuse for skin): a lobe
+# cannot be called from another lobe, nor given a perturbed normal, and normal detail has to perturb the normal. The
+# only change from the stdlib code is `n + tilt`. No lobe here is narrower than roughness 0.42 so that none breaks into
+# the sky's twelve samples.
+use stdlib::materials::bsdf::{emit_lobe, lambert}
+use stdlib::noise::value::{vnoise}
+use stdlib::sky::environment::{sky_patch}
+
+pub const Choc = [0.085, 0.053, 0.032]
+pub const Cheek = [0.150, 0.108, 0.074]
+pub const Cream = [0.46, 0.41, 0.33]
+pub const Face = [0.150, 0.115, 0.082]
+pub const Black = [0.012, 0.010, 0.009]
+pub const Tar = [0.080, 0.058, 0.040]
+pub const Patch = [0.150, 0.105, 0.062]
+pub const Mustard = [0.62, 0.40, 0.045]
+pub const Stitch = [0.020, 0.016, 0.012]
+pub const RopeA = [0.34, 0.26, 0.14]
+pub const RopeB = [0.16, 0.115, 0.06]
+pub const Ash = [0.30, 0.20, 0.105]
+pub const Bark = [0.095, 0.070, 0.040]
+pub const Moss = [0.045, 0.060, 0.030]
+pub const Iron = [0.045, 0.045, 0.050]
+pub const Brass = [0.62, 0.42, 0.14]
+pub const Tin = [0.42, 0.42, 0.43]
+pub const Bone = [0.62, 0.57, 0.45]
+pub const Pale = [0.66, 0.64, 0.58]
+
+# ---- the layered lobe (stdlib maths, see above)
+fn pow5(x: f) -> f {
+  let x2 = x * x
+  x2 * x2 * x
+}
+
+fn ggx_dv(nh: f, nv: f, nl: f, rough: f) -> f {
+  let a = max(rough * rough, 0.002)
+  let a2 = a * a
+  let q = (1.0 - nh * nh) + nh * nh * a2
+  let gv = nl * sqrt(a2 + (1.0 - a2) * nv * nv)
+  let gl = nv * sqrt(a2 + (1.0 - a2) * nl * nl)
+  a2 / (6.283185307 * q * q * max(gv + gl, 1e-8))
+}
+
+fn fresnel(f0: rgb, mu: f) -> rgb {
+  f0 + (rgb(1.0) - f0) * pow5(1.0 - clamp(mu, 0.0, 1.0))
+}
+
+fn ggx_ms(eo: v2, ei: f, favg: rgb) -> rgb {
+  let ea = eo.y
+  let lost = 1.0 - ea
+  let tint = favg * favg * ea / max(rgb(1.0) - favg * lost, rgb(1e-6))
+  tint * ((1.0 - eo.x) * (1.0 - ei) * 0.318309886 / max(lost, 1e-6))
+}
+
+fn lum(c: rgb) -> f {
+  dot(c, [0.2126, 0.7152, 0.0722])
+}
+
+lobe layered(base: rgb, rough: f, metal: f, fuzz: f, wet: f, skin: f, spec: f, tilt: rgb, n: rgb, v: rgb, l: rgb) {
+  let m = normalize(n + tilt)
+  let nl = max(dot(m, l), 0.0)
+  let nv = max(dot(m, v), 0.0)
+  let r = max(mix(rough, 0.45, wet), 0.42)
+  let alb = base * (1.0 - 0.35 * wet)
+  let f0 = mix(rgb(0.04), alb, metal)
+  let fv = fresnel(f0, nv)
+  let eo = ggx_energy(r, nv)
+  var spec_out = rgb(0.0)
+  var sheen_out = rgb(0.0)
+  var coat_spec = 0.0
+  var coat_t = 1.0
+  if nl > 0.0 && nv > 0.0 {
+    let h = normalize(v + l)
+    let f = fresnel(f0, dot(v, h))
+    let nh = clamp(dot(m, h), 0.0, 1.0)
+    let ei = ggx_energy(r, nl).x
+    spec_out = (f * ggx_dv(nh, nv, nl, r) + ggx_ms(eo, ei, (rgb(1.0) + 20.0 * f0) / 21.0)) * (nl * spec)
+    # sheen: Charlie distribution with the bounded Neubelt visibility term
+    let inv_r = 1.0 / 0.5
+    let d = (2.0 + inv_r) * pow(max(1.0 - nh * nh, 0.0), 0.5 * inv_r) * 0.159154943
+    let vis = 0.25 / max(nl + nv - nl * nv, 1e-6)
+    sheen_out = (alb * 0.9 + rgb(0.05)) * fuzz * (d * vis * nl)
+    # coat: a clear wet film, roughness 0.5
+    let cr = 0.5
+    let ceo = ggx_energy(cr, nv)
+    let cf = fresnel(rgb(0.04), dot(v, h))
+    let cw = wet * 0.55
+    coat_spec = cw * (cf.x * ggx_dv(nh, nv, nl, cr) + 0.0) * nl
+    coat_t = 1.0 - cw * ceo.x * fresnel(rgb(0.04), nv).x
+  }
+  let w = skin * 0.5
+  let wrap = max(dot(m, l) + w, 0.0) / ((1.0 + w) * (1.0 + w))
+  let diffuse = alb * (1.0 - metal) * (rgb(1.0) - fv) * (0.318309886 * mix(nl, wrap, skin))
+  let base_out = diffuse + spec_out
+  v4(rgb(coat_spec) + coat_t * (sheen_out + base_out), coat_t * (1.0 - eo.x * lum(fv)))
+}
+
+fn pal(id: f) -> rgb {
+  var c = [0.55, 0.32, 0.12]
+  if id > 0.5 { c = [0.90, 0.45, 0.55] }
+  if id > 1.5 { c = [0.20, 0.35, 0.80] }
+  if id > 2.5 { c = [0.90, 0.80, 0.20] }
+  if id > 3.5 { c = [0.45, 0.50, 0.55] }
+  if id > 4.5 { c = [1.00, 0.60, 0.10] }
+  if id > 5.5 { c = [0.50, 0.80, 0.30] }
+  if id > 6.5 { c = [0.95, 0.95, 0.85] }
+  if id > 7.5 { c = [0.10, 0.20, 0.30] }
+  if id > 8.5 { c = [1.00, 0.00, 1.00] }
+  c
+}
+
+fn grey(g: f) -> rgb {
+  rgb(pow(clamp(g, 0.0, 1.0), 2.2))
+}
+
+# mask ids: 0 fur, 1 skin, 2 oilskin, 3 rope, 4 iron, 5 brass, 6 wood, 7 bone, 8 water, 9 eye
+pub fn surface(mode: f, base: rgb, rough: f, metal: f, tilt: rgb, fuzz: f, wet: f, mask: f, skin: f, spec: f) -> Bsdf {
+  var flat = base
+  if mode > 1.5 { flat = grey(rough) }
+  if mode > 2.5 {
+    let enc = clamp(rgb(0.5) + tilt * 8.0, rgb(0.0), rgb(1.0))
+    flat = [pow(enc.x, 2.2), pow(enc.y, 2.2), pow(enc.z, 2.2)]
+  }
+  if mode > 3.5 { flat = grey(wet) }
+  if mode > 4.5 { let c = pal(mask); flat = [pow(c.x, 2.2), pow(c.y, 2.2), pow(c.z, 2.2)] }
+  if mode > 5.5 { flat = grey(fuzz) }
+  let lit = mix_bsdf(layered(base, rough, metal, fuzz, wet, skin, spec, tilt), emit_lobe(flat), step(0.5, mode))
+  # mode -1: a value study, clay lit by the surface's own tone (so nose, mouth, eyes and patches still read)
+  let tone = clamp(sqrt(lum(base)) * 2.2, 0.08, 1.0)
+  mix_bsdf(lit, lambert([0.46, 0.40, 0.33] * tone), step(mode, -0.5))
+}
+
+# ---- noise helpers: one lattice stretched along `flow`
+fn streak(q: rgb, flow: rgb, fa: f, fc: f) -> f {
+  let b1 = normalize(cross(flow, [0.31, 0.83, 0.47]))
+  let b2 = cross(flow, b1)
+  vnoise([dot(q, flow) * fa, dot(q, b1) * fc, dot(q, b2) * fc])
+}
+
+fn clump_tilt(q: rgb, flow: rgb, fa: f, fc: f) -> rgb {
+  let b1 = normalize(cross(flow, [0.31, 0.83, 0.47]))
+  let b2 = cross(flow, b1)
+  let e = 0.003
+  let g1 = streak(q + b1 * e, flow, fa, fc) - streak(q - b1 * e, flow, fa, fc)
+  let g2 = streak(q + b2 * e, flow, fa, fc) - streak(q - b2 * e, flow, fa, fc)
+  b1 * g1 + b2 * g2
+}
+
+# Fur colour broken into clumps; the fibre pattern is in the normal detail channel.
+fn clump_tint(c: rgb, q: rgb, flow: rgb, wet: f) -> rgb {
+  let s1 = streak(q, flow, 7.0, 190.0)
+  let s2 = streak(q + [3.1, 1.7, 0.4], flow, 14.7, 342.0)
+  let tuft = pow(streak(q + [0.7, 5.3, 2.2], flow, 21.0, 171.0), 3.0) * (0.1 + 0.5 * wet)
+  c * (0.7 + 0.6 * (s1 * 0.6 + s2 * 0.25 + tuft)) * (1.0 - 0.35 * wet)
+}
+
+fn fur_tilt(q: rgb, flow: rgb, wet: f) -> rgb {
+  let s3 = pow(streak(q + [0.7, 5.3, 2.2], flow, 21.0, 171.0), 3.0)
+  clump_tilt(q, flow, 7.0, 190.0) * ((0.45 + 0.35 * wet) * (1.0 + 2.0 * s3 * (0.1 + 0.5 * wet)))
+}
+
+# ---- the head. h: head-frame offset over the form scale (base units), qw: metre-scale offset for the fibre noise.
+# The head's fur colour before the mouth, nose and eye overrides: chocolate crown, warmer cheeks, cream muzzle pads and
+# jaw. h: head-frame offset over the form scale (base units); qw: metre-scale offset; flow: the fibre direction.
+pub fn head_dye(h0: rgb, qw: rgb, flow: rgb, ml: f) -> rgb {
+  let h = [select(h0.x, 0.05 + (h0.x - 0.05) / ml, h0.x > 0.05), h0.y, h0.z]
+  let q = [0.9962 * h.x + 0.0872 * h.y, -0.0872 * h.x + 0.9962 * h.y, h.z]
+  let qa = [q.x, q.y, abs(q.z)]
+  let jaw = 1.0 - smoothstep(0.0, 0.025, q.y - (-0.034 + 0.12 * max(q.x - 0.03, 0.0)))
+  let pad = 1.0 - smoothstep(-0.004, 0.012, el_m(qa, [0.127, -0.0201, 0.0374], [0.036, 0.0203, 0.0264]))
+  let cheek = smoothstep(0.0425, 0.0723, qa.z) * (1.0 - smoothstep(-0.015, 0.02, q.y)) * 0.5
+  let face = smoothstep(-0.06, 0.08, q.x) * 0.8
+  let crown = smoothstep(0.0, 0.02, q.y + 0.01)
+  let cream = smoothstep(0.25, 0.75, max(jaw, pad) + 0.25 * (streak(qw, flow, 14.7, 342.0) - 0.5))
+  var c = mix(Choc, Cheek, cheek)
+  c = mix(c, Face, face * (1.0 - 0.7 * crown))
+  mix(c, Cream * 0.72, cream)
+}
+
+# The head's channels. h: head-frame offset over the form scale (base units); qw: metre-scale offset for the fibres.
+pub fn head_surface(mode: f, h0: rgb, qw: rgb, flow: rgb, kl: f, kr: f, jw: f, ml: f) -> Bsdf {
+  # undo the muzzle shortening (x about 0.05 compressed by ml) so the masks below can use base positions
+  let h = [select(h0.x, 0.05 + (h0.x - 0.05) / ml, h0.x > 0.05), h0.y, h0.z]
+  let q = [0.9962 * h.x + 0.0872 * h.y, -0.0872 * h.x + 0.9962 * h.y, h.z]
+  let qa = [q.x, q.y, abs(q.z)]
+  let nose = 1.0 - smoothstep(0.0, 0.0025, smin_m(el_m(qa, [0.153, -0.0062, 0.011], [0.008, 0.01, 0.013]), el_m(q, [0.151, -0.0172, 0.0], [0.007, 0.008, 0.009]), 0.006))
+  let c = head_dye(h0, qw, flow, ml)
+  let right = smoothstep(-0.004, 0.004, q.z)
+  let lift = mix(kl, kr, right)
+  let y_m = -0.030 + 0.013 * lift * smoothstep(0.125, 0.085, q.x)
+  let line = (1.0 - smoothstep(0.0009, 0.0021, abs(q.y - y_m))) * smoothstep(0.075, 0.095, q.x) * smoothstep(0.012, 0.022, abs(q.z))
+  let philtrum = (1.0 - smoothstep(0.0008, 0.0018, abs(q.z))) * smoothstep(0.138, 0.146, q.x) * (1.0 - smoothstep(-0.0215, -0.0165, q.y)) * smoothstep(-0.034, -0.030, q.y)
+  let dark = max(line, philtrum)
+  let cavity = el_m(q, [0.098, -0.034 - 0.017 * jw, 0.0], [0.032, 0.010, 0.030])
+  let inside = (1.0 - smoothstep(0.0003, 0.0016, abs(cavity))) * smoothstep(0.05, 0.2, jw)
+  let tongue = smoothstep(-0.003, 0.003, (-0.034 - 0.017 * jw) - q.y)
+  let mouth = mix([0.030, 0.006, 0.006], [0.26, 0.07, 0.07], tongue * 0.8)
+  var base = clump_tint(c, qw, flow, 0.0)
+  base = mix(base, Stitch, dark * 0.85)
+  base = mix(base, mouth, inside)
+  base = mix(base, Black, nose)
+  let skin = max(nose, inside)
+  let rough = mix(0.72, 0.45, skin)
+  let wet = max(nose * 0.7, inside * 0.9)
+  let fuzz = 0.9 * (1.0 - skin)
+  surface(mode, base, rough, 0.0, fur_tilt(qw, flow, 0.0) * (1.0 - skin), fuzz, wet, select(0.0, 1.0, skin > 0.5), skin, 1.0)
+}
+
+fn el_m(q: rgb, c: rgb, r: rgb) -> f {
+  (length((q - c) / r) - 1.0) * min(r.x, min(r.y, r.z))
+}
+
+fn smin_m(a: f, b: f, k: f) -> f {
+  let h = max(k - abs(a - b), 0.0) / k
+  min(a, b) - h * h * k * 0.25
+}
+
+# ---- torso fur: chocolate; cream on the front of the chest and belly; wet dark points at wrists, ankles, hem.
+pub fn torso_surface(mode: f, p: rgb, n: rgb, front: f, wet: f, hand: f) -> Bsdf {
+  let flow = normalize([-0.15, -1.0, 0.0])
+  let bib = smoothstep(0.1, 0.5, n.x) * front
+  let c = mix(Choc * 1.15, Cream * 0.72, bib)
+  let base = clump_tint(mix(c, Face * 0.6, wet), p, flow, wet)
+  let skin = hand
+  surface(mode, mix(base, Black * 3.0, hand * 0.6), mix(0.74, 0.5, hand), 0.0, fur_tilt(p, flow, wet) * (1.0 - hand * 0.7), 0.85 * (1.0 - hand), wet, select(0.0, 1.0, hand > 0.5), skin * 0.5, 1.0)
+}
+
+pub fn tail_surface(mode: f, p: rgb, flow: rgb, wet: f) -> Bsdf {
+  let base = clump_tint(mix(Choc * 1.1, Face * 0.55, wet), p, flow, wet)
+  surface(mode, base, 0.74, 0.0, fur_tilt(p, flow, wet), 0.85, wet, 0.0, 0.0, 1.0)
+}
+
+# ---- oilskin: tar-brown, patched; `patch` a lighter patch, `mustard` the accent patch, `stitch` its seam, `fold` the
+# folds where the wax shows (the wetness channel carries the wax).
+pub fn coat_surface(mode: f, p: rgb, patch: f, mustard: f, stitch: f, fold: f, tilt: rgb) -> Bsdf {
+  var c = mix(Tar, Patch, patch)
+  c = mix(c, Mustard, mustard)
+  c = mix(c, Stitch, stitch)
+  surface(mode, c, 0.75, 0.0, tilt, 0.15, 0.04 + 0.16 * fold, 2.0, 0.0, 0.7)
+}
+
+pub fn rope_surface(mode: f, strand: f, tilt: rgb) -> Bsdf {
+  surface(mode, mix(RopeB, RopeA, smoothstep(0.25, 0.75, strand)), 0.9, 0.0, tilt, 0.5, 0.0, 3.0, 0.0, 1.0)
+}
+
+# Small things: 0 ash pole, 1 iron, 2 rope, 3 bone, 4 brass, 5 tin, 6 whisker, 7 lantern glass (emits).
+pub fn bit_surface(mode: f, mat: f, q: rgb, along: f) -> Bsdf {
+  var c = Ash * (0.7 + 0.6 * vnoise([along * 18.0, q.y * 220.0, q.z * 220.0]))
+  var metal = 0.0
+  var r = 0.85
+  var id = 6.0
+  var fuzz = 0.0
+  var wet = 0.0
+  if mat > 0.5 { c = Iron; metal = 1.0; r = 0.5; id = 4.0 }
+  if mat > 1.5 { c = RopeA * (0.6 + 0.6 * vnoise([along * 120.0, q.y * 300.0, q.z * 300.0])); metal = 0.0; r = 0.9; id = 3.0; fuzz = 0.5 }
+  if mat > 2.5 { c = Bone; metal = 0.0; r = 0.7; id = 7.0 }
+  if mat > 3.5 { c = Brass; metal = 1.0; r = 0.5; id = 5.0 }
+  if mat > 4.5 { c = Tin; metal = 1.0; r = 0.55; id = 4.0 }
+  if mat > 5.5 { c = Pale; metal = 0.0; r = 0.8; id = 0.0; fuzz = 0.3 }
+  if mat > 6.5 { c = [1.0, 0.62, 0.22]; metal = 0.0; r = 0.9; id = 5.0 }
+  surface(mode, c, r, metal, [0.0, 0.0, 0.0], fuzz, wet, id, 0.0, 1.0) + emit_lobe([1.9, 1.0, 0.32] * step(6.5, mat) * step(-0.5, mode) * step(mode, 0.5))
+}
+
+# Bark and cut wood for the logs. `end` is 1 on the flat cut faces (growth rings), `low` the waterlogged underside.
+pub fn log_surface(mode: f, p: rgb, centre: rgb, end: f, low: f, tilt: rgb) -> Bsdf {
+  let ring = 0.5 + 0.5 * sin(length([p.y - centre.y, p.z - centre.z]) * 210.0 + 3.0 * vnoise([p.y * 40.0, p.z * 40.0, 0.0]))
+  let wood = mix(Ash * 0.55, Ash * 1.05, ring)
+  let bark = Bark * (0.6 + 0.9 * vnoise([p.x * 7.0, p.y * 160.0, p.z * 160.0]))
+  let moss = low * smoothstep(0.35, 0.8, vnoise([p.x * 12.0, p.y * 60.0, p.z * 60.0]))
+  let c = mix(mix(bark, Moss, moss), wood, end)
+  surface(mode, c, 0.85, 0.0, tilt * (1.0 - end), 0.2, low * 0.7, 6.0, 0.0, 1.0)
+}
+
+pub fn water_surface(mode: f, tint: rgb, tilt: rgb) -> Bsdf {
+  surface(mode, tint, 0.92, 0.0, tilt, 0.0, 0.0, 8.0, 0.0, 0.06)
+}
+
+# ---- the light: a low warm key from behind and to one side (the edge of fur and cloth lights up), a cool dim sky for
+# fill, and a soft kicker from the camera side so the front reads. The sun is shadow-mapped; the sky is the stdlib's
+# twelve-patch quadrature, tinted river-green and dimmed.
+fn river_dome(d: rgb) -> rgb {
+  let up = clamp(d.y, -1.0, 1.0)
+  let sky = mix([0.060, 0.085, 0.085], [0.045, 0.085, 0.140], sqrt(max(up, 0.0)))
+  mix(sky, [0.030, 0.040, 0.032], sqrt(max(-up, 0.0)))
+}
+
+pub fn maq_light(b: Bsdf, n: rgb, v: rgb, sun: rgb, shadow: f, ao: f) -> rgb {
+  var c = rgb(0.0)
+  for i in 0..15 {
+    var l = rgb(0.0)
+    var e = rgb(1.0)
+    if i == 1 {
+      l = sun
+      e = [3.4, 2.1, 1.15] * shadow
+    }
+    if i >= 2 && i < 14 {
+      l = sky_patch(u32(i - 2))
+      e = river_dome(l) * (1.4 * 1.0471976 * ao)
+    }
+    if i == 14 {
+      l = normalize(v * 0.8 + [0.0, 0.55, 0.0])
+      e = [1.5, 1.55, 1.7] * (0.5 * ao)
+    }
+    c = c + eval_bsdf(b, n, v, l) * e
+  }
+  c
+}
+
+# Background: dusk river haze, with the low sun's glow behind the figure.
+pub fn river_sky(rd: rgb, sun: rgb) -> rgb {
+  let s = max(dot(rd, sun), 0.0)
+  river_dome(rd) * 0.9 + [1.0, 0.62, 0.28] * (pow(s, 12.0) * 0.18 + pow(s, 300.0) * 4.0)
+}
+
+# Channel look: only what the surface emits (the flat channel colour), and an identity film so the picture is the map.
+pub fn flat_light(b: Bsdf, n: rgb, v: rgb, sun: rgb, shadow: f, ao: f) -> rgb {
+  eval_bsdf(b, n, v, rgb(0.0))
+}
+
+pub fn flat_film(c: rgb) -> rgb {
+  c
+}
+
+pub fn flat_bg(rd: rgb, sun: rgb) -> rgb {
+  rgb(0.02)
+}
+
+# Mask look: black figure on white, for the 200 px silhouette test.
+pub fn mask_light(b: Bsdf, n: rgb, v: rgb, sun: rgb, shadow: f, ao: f) -> rgb {
+  rgb(0.0)
+}
+
+pub fn mask_sky(rd: rgb, sun: rgb) -> rgb {
+  rgb(3.0)
+}

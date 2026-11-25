@@ -2,6 +2,7 @@
 pub mod ad;
 pub mod bvh;
 pub mod eval;
+pub mod guard;
 mod import_table;
 mod kernel;
 pub mod lip;

@@ -1,0 +1,24 @@
+# hero three quarter
+# parent: r08/z02_hero_q3
+use self::heron::{heron, HeronCloak, HeronHead, HeronLeg, HeronStole, HeronBell, HeronWeight, HeronTatter, Post, Marsh, Snag, dusk, bleach}
+use stdlib::integrators::direct::{sun_sky}
+
+camera View { eye: [0.651, 0.474, 0.651]@World, at: [0.000, 0.370, 0.0]@World, fov: 40.0deg }
+build {
+  heron(place([0.0, 0.16, 0.0]@World), 0.6rad, 1.35rad, 0.2, 0.7, 0.15, 0.9, 0.3, 1.3, 0.0, 1.0, 0.0, 0.0)
+  emit Post(at: [0.0, 0.16, 0.0]@World, tex: 1.0)
+  emit Marsh(tex: 1.0)
+  emit Snag(at: [-0.45, 0.0, -0.75]@World, r: 0.05, h: 0.34, lean: 0.06, fog: 0.35)
+  emit Snag(at: [0.35, 0.0, -1.35]@World, r: 0.06, h: 0.42, lean: -0.05, fog: 0.6)
+  emit Sun(dir: dir([-0.986, 0.146, -0.086]@World), color: [3.2, 2.5, 1.7])
+  emit Sky(zenith: [0.30, 0.40, 0.48], horizon: [0.52, 0.58, 0.58])
+}
+schedule Main {
+  use_camera(View)
+  cull_indirect(HeronCloak, HeronHead, HeronLeg, HeronStole, HeronBell, HeronWeight, HeronTatter, Post, Marsh, Snag)
+  render_bundle(Vis64) { draw_indirect(HeronCloak, HeronHead, HeronLeg, HeronStole, HeronBell, HeronWeight, HeronTatter, Post, Marsh, Snag) }
+  find_shadow_map(HeronCloak, HeronHead, HeronStole, HeronWeight, HeronTatter, Post, size: 512)
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: sun_sky, sun: [-0.986, 0.146, -0.086])
+  tonemap_aces(ColorHdr, sky: dusk)
+}

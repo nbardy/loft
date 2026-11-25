@@ -7,6 +7,10 @@ use loft_ir::{*, execution::{self, Execution, Initializer, Image}, precision::{P
 use naga::{AddressSpace, ShaderStage, StorageAccess, TypeInner, valid};
 use std::collections::BTreeMap;
 
+#[path = "bundle/segment_tiles.rs"]
+mod segment_tiles;
+pub use segment_tiles::SIDE as SEGMENT_TILE_SIDE;
+
 type Result<T> = std::result::Result<T, String>;
 type Resources = BTreeMap<Address, TableId>;
 type Address = (u32, u32);
@@ -423,6 +427,8 @@ pub struct Options {
     /// Native motion sampling has its own absolute tick and readback API.
     pub picture_only: bool,
     pub hardware_ray_query: bool,
+    /// The native host supplies a hardware scissor for each prepared tile draw.
+    pub segment_tiles: bool,
     /// The author's opt-out (`--precision f32`); the default decides each role's width.
     pub precision: Precision,
     /// The device's features, which decide whether a decided precision gets half arithmetic or half storage only.
@@ -432,11 +438,13 @@ pub struct Options {
 pub struct Prepared {
     pub bundle: Bundle,
     pub instances: TableId,
+    pub luts: TableId,
     pub visibility: TableId,
     pub depth: TableId,
     pub modules: Vec<ModuleId>,
     pub shadow: Option<([f32; 3], [f32; 3], u32)>,
     pub shadow_wave: Option<u16>,
+    pub tiled_modules: std::collections::BTreeSet<ModuleId>,
     /// What the build ran with, including the recorded fallback when the adapter lacks `SHADER_F16`.
     pub precision: Resolved,
 }
@@ -661,6 +669,7 @@ pub fn lower_program(
     }
     b.bundle.resources.resets.extend([draw_args, shade_args]);
 
+    let mut tile_lists: BTreeMap<usize, segment_tiles::TileList> = BTreeMap::new();
     for pass in &program.passes {
         match pass {
             // The template's own (group, binding) addresses carry the frame views it bound by name.
@@ -711,11 +720,13 @@ pub fn lower_program(
                     let offset = id * arg_words * 4;
                     match pass {
                         Pass::Vis(_) => {
-                            resources.insert((1, 1), visible);
+                            let (list, args, offset) = tile_lists.get(&k).map_or((visible, draw_args, offset),
+                                |tile| (tile.rows, tile.args, 0));
+                            resources.insert((1, 1), list);
                             b.draw(
                                 program.kinds[k].module,
                                 (vs, "fs"),
-                                (draw_args, offset, index),
+                                (args, offset, index),
                                 (vis, Some(depth)),
                                 &resources,
                             )?;
@@ -771,6 +782,10 @@ pub fn lower_program(
                 &present,
             )?,
         }
+        // Binning reads the completed native cull and shares its compute-pass timestamp.
+        if opts.segment_tiles && b.wave == 0 {
+            tile_lists = segment_tiles::prepare(&mut b, program, size, &kinds, visible, draw_args, arg_words, hdr_format)?;
+        }
         b.wave += 1;
     }
     let shadow_wave = variants.first().map(|(id, _)| b.bundle.passes[id.0 as usize].wave);
@@ -790,7 +805,8 @@ pub fn lower_program(
             size: (u64::from(table.capacity) * u64::from(table.stride_bytes)).max(4) }
     }).collect();
     b.bundle.tables.extend(execution.table());
-    Ok(Prepared { bundle: b.bundle, instances, visibility: vis, depth, shadow: shadow_bounds, shadow_wave,
+    let tiled_modules = tile_lists.keys().map(|&k| ModuleId(program.kinds[k].module as u32)).collect();
+    Ok(Prepared { bundle: b.bundle, instances, luts, visibility: vis, depth, shadow: shadow_bounds, shadow_wave, tiled_modules,
         modules: program.kinds.iter().map(|k| ModuleId(k.module as u32)).collect(), precision })
 }
 

@@ -1,0 +1,96 @@
+use stdlib::noise::value::{vnoise}
+use stdlib::geometry::analytic::{ray_round_cone}
+use stdlib::sdf::solid::{round_cone}
+
+lobe hair(tint: rgb, axis: rgb, wet: f, end: f, n: rgb, v: rgb, l: rgb) {
+  if dot(l,l) < 0.5 { return v4(rgb(0.0), 1.0) }
+  let h = normalize(l + v)
+  let ht = dot(axis,h)
+  let wrap = max(dot(n,l) + 0.32, 0.0) / 1.32
+  let glint = pow(max(1.0 - ht*ht, 0.0), 45.0) * step(0.995, dot(l,[0.55,0.62,0.56]))
+  let scatter = end * max(-dot(n,l),0.0) * 0.16
+  v4(tint * (0.29 * wrap + scatter) + rgb(glint * wet * 0.047 * end * wrap), 1.0)
+}
+
+space HairSpace
+pub kind Strand @HairSpace (pose: xf@HairSpace>World, b: p3@HairSpace, ra: m, rb: m, dye: rgb, wet: f, flow_axis: rgb) {
+  visible(ro,rd) = ray_round_cone(ro,rd,[0,0,0]@HairSpace,b,ra,rb)
+  trace(p) = round_cone(p,[0,0,0]@HairSpace,b,ra,rb)
+  material(p,n) {
+    let axis = normalize(b.xyz)
+    let end = clamp(dot(p.xyz,axis) / length(b.xyz),0.0,1.0)
+    hair(dye * (0.7 + 0.65*end),flow_axis,wet,end)
+  }
+}
+
+# A reflected sun stripe follows the tangent. The smaller side fibres meet
+# the middle tip in a wet lock and splay apart in a dry tuft.
+build fn plant(site: p3@World, n: rgb, flow: rgb, dye: rgb, wet: f, span: f, gauge: f, bundle: u, seed: f) {
+  let v = fract(sin(seed*12.68)*871.3)
+  let w = fract(sin(seed*62.87)*871.3)
+  let bend = sin(site.x*59.0+site.y*74.0+sin(site.z*92.0))
+  let comb = flow - n*dot(n,flow) + cross(n,flow)*(0.29*bend+0.30*(v-0.5))
+  let dir0 = normalize(comb + n*(0.18+0.20*w+0.20*(1.0-wet)))
+  let across = normalize(cross(n,dir0)+rgb(0.00001))
+  build for j in 0..bundle {
+    let side = f32(j) - 0.5*(f32(bundle)-1.0)
+    let shift = across * (gauge*1.40*side) - n*(gauge*0.65)
+    let root = site + [shift.x,shift.y,shift.z]
+    let t = normalize(dir0 + across*(gauge/span*side*(1.4-3.4*wet)))
+    let sy = floor(t.y*16.0+0.5)/16.0
+    let sx = sqrt(max(0.0,1.0-sy*sy))
+    let len = span * (0.72 + 0.14*floor(4.0*w))
+    emit Strand(pose: place(root,atan2(0.0-t.z,t.x)), b: [sx*len,sy*len,0]@HairSpace, ra: gauge, rb: gauge*0.10, dye: dye*mix(1.48,0.8,wet)*(0.50+1.07*v), wet: wet*(0.18+0.82*smoothstep(0.64,0.86,v)), flow_axis: t)
+  }
+}
+
+# dx and dv span one chart cell; their cross product is the physical area.
+pub build fn groom(site: frame@World, flow: rgb, density: f, wet: f, dye: rgb) {
+  let root = site.origin
+  let dx = site.tangent.xyz
+  let dv = site.binormal.xyz
+  let seed = 1.0+fract(dot(root.xyz,[17.23,97.11,39.16]))*1487.0
+  let span = mix(0.0078,0.011,wet)
+  let gauge = mix(0.00034,0.0007,wet)
+  let bundle = u32(mix(1.0,1.0,wet)+0.5)
+  let surface = cross(dv,dx)
+  let n = site.normal.xyz
+  let total = u32(floor(density*length(surface)+fract(sin(seed*7.71)*953.123)))
+  build for k in 0..total {
+    let z = f32(k) + seed*1.728
+    let a = fract(sin(z*23.43)*8723.2)-0.5
+    let b = fract(sin(z*15.29)*6381.1)-0.5
+    let shift = dx*a+dv*b
+    let site = root+[shift.x,shift.y,shift.z]
+    if site.y > 0.0002 {
+      plant(site,n,flow,dye,wet,span,gauge,bundle,z)
+    }
+  }
+}
+
+# Wind the coat across the long axis at two spatial scales. Adjacent fibres
+# share a bend, but their shaded faces taper off at different positions.
+pub fn undercoat(q: rgb, flow: rgb, tint: rgb, wet: f) -> rgb {
+  let axis = normalize(0.0-flow)
+  let helper = select([0,1,0],[0,0,1],abs(axis.y)>0.9)
+  let side_axis = normalize(helper-axis*dot(helper,axis))
+  let p = [dot(q,axis),dot(q,side_axis),dot(q,cross(axis,side_axis))]
+  let strength = mix(0.85,0.88,wet)
+  let bend = 0.52*sin(67.0*p.x+43.0*p.y) + 0.32*sin(41.0*p.x-53.0*p.z)
+  let family = vnoise([p.x*66.0,p.y*270.0+bend,p.z*270.0-bend])
+  let cross_pitch = mix(1540.0,920.0,wet)
+  let fine = vnoise([p.x*mix(325.0,135.0,wet),p.y*cross_pitch+1.6*family+bend,p.z*cross_pitch-1.6*family+bend])
+  let ridge = smoothstep(0.34,0.75,fine)
+  let shade = (0.38+1.70*ridge)*(1.0+wet*0.38*(family-0.5))
+  let pigment = mix(tint,rgb(dot(tint,[0.2126,0.7152,0.0722])),0.16)
+  return pigment*mix(1.42,0.75,wet)*mix(1.0,shade,strength)
+}
+
+# The round-2 dry undercoat (the early soft strands won 5 of 5 on the ball): a stretched fibre pattern for the skin
+# under the strands. Kept beside the round-4 one above; `wet` 0 is the dry coat.
+pub fn undercoat_dry(p: rgb, tint: rgb, wet: f) -> rgb {
+  let bend = 0.75*sin(65.0*p.x+37.0*p.z) + 0.6*sin(53.0*p.y-39.0*p.x)
+  let broad = vnoise([p.x*80.0,p.y*350.0+bend,p.z*350.0+bend])
+  let fine = vnoise([p.x*170.0,p.y*1300.0+1.8*broad,p.z*1300.0+bend])
+  return tint * mix(1.38,0.77,wet) * (0.35+0.72*broad+0.70*fine)
+}

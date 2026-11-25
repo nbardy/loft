@@ -12,6 +12,8 @@ pub mod paths;
 #[path="material_shape.rs"]
 mod material_shape;
 mod surface;
+mod thin;
+pub use thin::segment_arguments;
 mod lighting;
 pub mod shade_tiles;
 mod column;
@@ -844,8 +846,14 @@ pub fn kind_reads(p: &Prog, k: &KindDecl) -> Vec<String> {
     reads
 }
 
-fn traced_march(count_steps: bool) -> String {
+fn traced_march(count_steps: bool, guard: Option<(u32, f32)>) -> String {
+    let prefix = guard.map_or_else(String::new, |(base, reach)| {
+        render_template(include_str!("../../../stdlib/core/march_guard.wgsl"), &[
+            ("HEADER", &base.to_string()), ("EYE_REACH", &format!("{reach:?}")),
+        ])
+    });
     render_template(include_str!("../../../stdlib/core/march.wgsl"), &[
+        ("GUARD", &prefix),
         ("STEPS_INIT", if count_steps { "  var steps = 0u;\n" } else { "" }),
         ("STEPS_4", if count_steps { "    steps += 1u;\n" } else { "" }),
         ("STEPS_8", if count_steps { "        steps += 1u;\n" } else { "" }),
@@ -856,7 +864,7 @@ fn traced_march(count_steps: bool) -> String {
 /// `fixed` holds kind parameters as literals; the others are read from the row.
 pub fn emit_kind_module(
     p: &Prog, types: &[Ty], k: &KindDecl, light: Option<&str>, luts: &[LutRef],
-    draw: Draw, aov: Aov, fixed: &BTreeMap<(String, String), String>,
+    draw: Draw, aov: Aov, fixed: &BTreeMap<(String, String), String>, guard: Option<(u32, f32)>, sources: &loft_ir::Sources,
 ) -> Res<String> {
     let mut em = Emitter::new(p, types);
     em.luts = luts;
@@ -971,6 +979,12 @@ pub fn emit_kind_module(
             // near offset as traversal. Proxy interpolation rounds that ray
             // differently, which can move a secondary origin across a surface.
             let primary_direction = if uses_world_hit { "loft_ray(v.pos.xy)" } else { "normalize(v.wp - ro)" };
+            // Each disjoint native scissor retains the original compacted row order.
+            // first_vertex selects its list. Other hosts and shadows draw vertices 0..36.
+            let direct = draw == Draw::Analytic && aov == Aov::Beauty && segment_arguments(p, k, sources).is_some();
+            let (row_id, corner_id) = if direct {
+                ("var slot = kp.base + ii; if vi >= 36u { slot = (vi / 36u - 1u) * kp.n_rows + ii; } let r = visible[slot];", "vi % 36u")
+            } else { ("let r = visible[kp.base + ii];", "vi") };
             let (hit, split_ao) = match draw {
                 Draw::Analytic if uses_world_hit => (r"  let near = select(0.0001, 0.0, frame.cold.y == 1u);
   let local_t = q_visible(row, loft_xf_pt(xf, ro + near * rd), lrd);
@@ -979,14 +993,14 @@ pub fn emit_kind_module(
 ".to_owned(), false),
                 Draw::Analytic => ("  // Closed form: the author's `visible` query, in the kind's space (a rigid pose keeps t).\n  let t = q_visible(row, lro, lrd);\n  if t < 0.0 { discard; }\n".to_owned(),
                     light == Some("woodblock_pigment") && aov == Aov::Beauty),
-                Draw::Traced => (traced_march(count_steps), false),
+                Draw::Traced => (traced_march(count_steps, guard), false),
                 Draw::Surface { .. } | Draw::Mesh { .. } => unreachable!("ray draw"),
             };
             // Diagnostic-only Vis word: 24 high distance bits and the 8-bit step count.
             let distance = if count_steps { "((bitcast<u32>(t) & 0xffffff00u) | steps)" } else { "bitcast<u32>(t)" };
             let visible_twin = if q(QueryKind::Visible) { "q_visible(row, pl, dl)" } else { "0.0" };
             (
-                render_template(include_str!("../../../stdlib/core/ray_vis.wgsl"), &[("PRIMARY_DIRECTION", primary_direction), ("HIT", &hit), ("DISTANCE", distance)]),
+                render_template(include_str!("../../../stdlib/core/ray_vis.wgsl"), &[("ROW_ID", row_id), ("CORNER_ID", corner_id), ("PRIMARY_DIRECTION", primary_direction), ("HIT", &hit), ("DISTANCE", distance)]),
                 if split_ao {
                     // The tetrahedral sum and the five AO taps keep their original
                     // order. Separate the loops to compute only the active sample.

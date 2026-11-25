@@ -181,8 +181,14 @@ pub struct MotionSample {
     pub checks:Vec<(String,Vec<[f32;2]>)>,
 }
 
+/// Compiler-owned endpoint balls in world space, indexed by the native kind module.
+pub type SegmentRows = std::collections::BTreeMap<u32, Vec<[[f32; 4]; 2]>>;
+
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct Program {
+    /// Recompiled for authored scenes. A serialized program has only its ordinary indirect draws.
+    #[serde(skip)]
+    pub segments: SegmentRows,
     #[serde(default)]
     pub bakes: Vec<crate::bake_tex::Bake>,
     #[serde(default)]

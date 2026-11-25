@@ -10,6 +10,9 @@ use loft_ir::{Code, Diag, Res, Span};
 
 /// A scalar domain. `lip` is the scalar's Lipschitz bound in the traced point (always 0 for `f32`).
 pub trait Scalar: Clone + std::fmt::Debug {
+    /// A GPU enclosure covers both permitted evaluation orders of linear interpolation.
+    const ENCLOSE_MIX_FORMS: bool = false;
+
     fn c(x: f64) -> Self;
     fn frame_time()->Self;
     fn add(&self, o: &Self) -> Self;
@@ -1247,9 +1250,15 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
             Mix => {
                 // a + (b - a) * t, through the same rules.
                 let (a, b, t) = (v[0].clone(), v[1].clone(), v[2].clone());
-                let d = self.arith(BinOp::Sub, b, a.clone());
-                let dt = self.arith(BinOp::Mul, d, t);
-                self.arith(BinOp::Add, a, dt)
+                let d = self.arith(BinOp::Sub, b.clone(), a.clone());
+                let dt = self.arith(BinOp::Mul, d, t.clone());
+                let result = self.arith(BinOp::Add, a.clone(), dt);
+                if S::ENCLOSE_MIX_FORMS {
+                    let u = self.arith(BinOp::Sub, Val::S(S::c(1.0)), t.clone());
+                    let left = self.arith(BinOp::Mul, a, u);
+                    let right = self.arith(BinOp::Mul, b, t);
+                    join_val(result, self.arith(BinOp::Add, left, right), e.span)?
+                } else { result }
             }
             Select | Conditional => match &v[2] {
                 Val::B(Truth::Known(true)) => v[1].clone(),

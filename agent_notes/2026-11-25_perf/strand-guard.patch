@@ -1,0 +1,24 @@
+--- a/stdlib/geometry/analytic.loft
++++ b/stdlib/geometry/analytic.loft
+@@ -20,6 +20,11 @@
+   let ba = b - a
+   let oa = ro - a
+   let baba = dot(ba, ba)
++  # The rebased origin is the nearest point on the ray line to the midpoint.
++  # Keep a rounding margin, then solve every surviving ray with the original quadratic.
++  let off = oa - ba * 0.5
++  let radius = 0.5 * length(ba) + abs(r) + 0.000004 * (1.0 + abs(t0))
++  if dot(off, off) > radius * radius { return -1.0 }
+   var h = -1.0
+   var t = 0.0
+   var y = 0.0
+@@ -131,6 +136,9 @@
+   let axis = ba / len
+   let shift = dot(mix(a, b, 0.5) - ro, rd)
+   let v = ro - a + rd * shift
++  let off = v - ba * 0.5
++  let bound = 0.5 * len + max(ra, rb) + 0.000004 * (1.0 + abs(shift))
++  if dot(off, off) > bound * bound { return -1.0 }
+   let y = dot(v, axis)
+   let dy = dot(rd, axis)
+   let radial = v - axis * y
