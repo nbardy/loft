@@ -292,6 +292,8 @@ pub struct FrameOptions<'a> {
     pub timestamp_start: u32,
     /// Omit a prepared wave whose output the submitting host has kept valid.
     pub omit_wave: Option<u16>,
+    /// Additional waves with retained outputs. Each omitted wave leaves its attachments intact.
+    pub omit_waves: &'a [u16],
 }
 
 #[derive(Default)]
@@ -446,7 +448,8 @@ impl Instance {
         }).collect();
         // `lockstep`: the tick this call advances to, and whether it is the group's first and last dispatch.
         let mut record = |id, lockstep: Option<(u32, bool, bool)>| {
-            if initializers.contains(&id) || options.omit_wave == Some(c.waves[&id]) { return; }
+            let wave = c.waves[&id];
+            if initializers.contains(&id) || options.omit_wave == Some(wave) || options.omit_waves.contains(&wave) { return; }
             if let Some(bytes) = c.templates.change(id, &mut template, clock.time as f32) {
                 batch.flush();
                 let bytes = options.uniform.map_or(bytes, |f| f(template.expect("selected frame table")));

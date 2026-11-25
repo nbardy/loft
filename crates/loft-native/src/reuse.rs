@@ -18,7 +18,7 @@ pub(super) enum Reuse {
 }
 
 impl Reuse {
-    pub(super) fn prepare(
+    pub(super) fn shadow(
         p: &Program,
         casters: &[u32],
         indexed: impl Fn(&loft_passes::program::KindTable) -> bool,
@@ -27,6 +27,54 @@ impl Reuse {
         if p.shadow_clock == loft_passes::program::StepClock::Load {
             return Self::Once { drawn: false };
         }
+        Self::geometry(p, casters, indexed, editable)
+    }
+
+    pub(super) fn visibility(
+        p: &Program, indexed: impl Fn(&loft_passes::program::KindTable) -> bool, editable: Option<usize>,
+    ) -> Self {
+        use loft_passes::program::{AuthoredRun, Extent, FrameView, Pass};
+        let [Pass::Authored(cull), Pass::Vis(drawn), tail @ ..] = p.passes.as_slice() else {
+            return Self::EveryFrame;
+        };
+        if p.camera.fixed_eye.is_none() || editable.is_some() || !p.bakes.is_empty()
+            || !p.dispatches.is_empty() || p.path.is_some() || tail.iter().any(|pass| match pass {
+                Pass::Vis(_) | Pass::Path(_) => true,
+                Pass::Shadow(_) | Pass::Shade(_) => false,
+                Pass::Authored(a) => a.bindings.iter().any(|(group, slot, view)| match view {
+                    FrameView::DrawArgs | FrameView::Visible | FrameView::Instances | FrameView::KindBases => true,
+                    FrameView::Visibility => !p.modules[a.module].naga.global_variables.iter().any(|(_, global)| {
+                        global.binding.as_ref().is_some_and(|b| (b.group, b.binding) == (*group, *slot))
+                            && matches!(p.modules[a.module].naga.types[global.ty].inner,
+                                naga::TypeInner::Image { class: naga::ImageClass::Sampled { .. }, .. })
+                    }),
+                    FrameView::ShadeArgs | FrameView::Tiles | FrameView::HdrSample | FrameView::HdrStore => false,
+                }),
+            })
+        {
+            return Self::EveryFrame;
+        }
+        // An authored culler can use the clock, live data or previous outputs. Recognize the
+        // stock kernel and its actual bindings, not a pass label or the template's filename.
+        if !matches!(&cull.run, AuthoredRun::Compute { entry, extent: Extent::Instances { width: 64 } } if entry == "cull")
+            || cull.bindings != [(1, 0, FrameView::Instances), (1, 1, FrameView::DrawArgs),
+                (1, 2, FrameView::Visible), (1, 3, FrameView::KindBases)]
+        {
+            return Self::EveryFrame;
+        }
+        let prelude = include_str!("../../../stdlib/core/prelude.wgsl").replace("{{NONCE}}", loft_passes::program::abi::NONCE_PLACEHOLDER);
+        let source = &p.modules[cull.module].wgsl;
+        let Some(body) = source.strip_prefix(&prelude) else { return Self::EveryFrame; };
+        let template = include_str!("../../../stdlib/core/cull.wgsl");
+        let stock = [include_str!("../../../stdlib/core/cull_single.wgsl"), include_str!("../../../stdlib/core/cull_multi.wgsl")];
+        if !stock.iter().any(|draw| body == template.replace("{{DRAW}}", draw)) {
+            return Self::EveryFrame;
+        }
+        Self::geometry(p, drawn, indexed, editable)
+    }
+
+    fn geometry(p: &Program, casters: &[u32], indexed: impl Fn(&loft_passes::program::KindTable) -> bool,
+        editable: Option<usize>) -> Self {
         let mut reads_params = false;
         let editable_module = editable.map(|id| p.kinds[id].module);
         for &id in casters {
@@ -84,6 +132,10 @@ fn static_caster(module: &Module, vertex: &str) -> Option<bool> {
     let mut frame = None;
     let mut reads_params = false;
     for (id, global) in module.global_variables.iter() {
+        // A skipped draw must not suppress writes to a storage table.
+        if matches!(global.space, naga::AddressSpace::Storage { access } if access.intersects(naga::StorageAccess::STORE | naga::StorageAccess::ATOMIC)) {
+            return None;
+        }
         let slot = global.binding.as_ref().map(|b| (b.group, b.binding));
         match slot {
             Some((0, 0)) => {
@@ -190,7 +242,20 @@ fn static_frame(f: &Function, info: &FunctionInfo, frame: Handle<naga::GlobalVar
 
 #[cfg(test)]
 mod tests {
-    use super::static_caster;
+    use super::{Reuse, static_caster};
+
+    #[test]
+    fn changed_geometry_inputs_invalidate_retained_depth() {
+        let mut reuse = Reuse::Static { reads_params: true, last: None };
+        let mut frame = [0; 256];
+        assert!(reuse.needs_draw(&frame, false));
+        frame[140] = 1;
+        frame[188] = 4;
+        assert!(!reuse.needs_draw(&frame, false));
+        assert!(reuse.needs_draw(&frame, true));
+        frame[64] = 1;
+        assert!(reuse.needs_draw(&frame, false));
+    }
 
     #[test]
     fn only_caster_stages_must_ignore_frame_time_and_samples() {
