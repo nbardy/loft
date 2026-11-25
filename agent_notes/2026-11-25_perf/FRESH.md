@@ -24,3 +24,20 @@ The primary guard retains the triangles that generate each interpolated ray, the
 The shader checks that the local eye lies within 32 metres of the proof centre, that the direction has sufficient length, and that the original march segment stays inside the proof cube. Rays outside this domain use the original interval. Shadow rays keep their original sampling and projection. The compiler groups rows by the same geometric inputs as the original prover. Each retained cell contributes all six faces to the hull. Cells left at the work limit stay in the enclosure.
 
 The direct-proxy experiment changes both the raster box and march entry. It records the old and new bounds, its own immediate timestamps and lossless frames at the same times as the original clips. Picture comparisons use corresponding decoded RGBA8 bytes. The per-frame counts include any difference in alpha. Diff images amplify the absolute channel error by 16. [Proxy instrument](../../crates/loft-cli/examples/fresh_proxy.rs) · [Timing and pixel scorer](fresh_score.py)
+
+### Moving-camera pass budget before changes
+
+Each row is the selected actual median-ranked frame, in GPU milliseconds. Across all 960×720 character scenes the original shadow map was retained. The camera changes on every timed frame and primary visibility runs on all 120.
+
+| Scene | Raster | Cull | Vis | Shadow | Classify | Shade | Present | Frame |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| Ball | 960×720 | 0.01 | 0.73 | 0.00 | 0.09 | 1.33 | 0.13 | 2.29 |
+| Starter otter | 960×720 | 0.01 | 13.08 | 0.00 | 0.06 | 1.56 | 0.50 | 15.20 |
+| Walrus | 960×720 | 0.01 | 41.20 | 0.00 | 0.42 | 8.64 | 0.35 | 50.62 |
+| Heron | 960×720 | 0.01 | 41.07 | 0.00 | 0.06 | 1.44 | 0.19 | 42.76 |
+| Final otter | 960×720 | 0.02 | 112.20 | 0.00 | 0.06 | 2.97 | 0.18 | 115.43 |
+| Walrus | 1280×800 | 0.01 | 65.89 | 0.00 | 0.32 | 9.00 | 2.72 | 77.95 |
+| Heron | 1280×800 | 0.05 | 94.00 | 0.00 | 0.33 | 3.42 | 0.59 | 98.40 |
+| Final otter | 1280×800 | 0.03 | 198.71 | 0.00 | 0.29 | 4.93 | 2.78 | 206.75 |
+
+The rate model's 7° held-out camera and the measured performance of hand guards supply the prewritten predictions. The actual orbit starts on +Z, bringing the walrus shade bill alone to 8.64 ms at the median. At 960×720, 16.7 ms minus the observed non-Vis work leaves 7.28 ms for walrus visibility, 15.01 ms for heron and 13.47 ms for final otter on these median frames. Each p95 comparison uses its own actual frame.
