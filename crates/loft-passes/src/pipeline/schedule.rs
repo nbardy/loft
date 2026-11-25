@@ -334,13 +334,12 @@ impl Schedule<'_> {
         let sched = self.decl;
         let Self { drawn, casters, shadow_size, steps, path, tiled_world, .. } = self;
         let populated = |k: &&str| !tables[p.kind_index(k)].is_empty();
-        if sched.implicit {
-            drawn.retain(populated);
-            casters.retain(populated);
-            if casters.is_empty() {
-                *shadow_size = 0;
-                steps.retain(|step| !matches!(step, Step::Stock(Pass::Shadow(_))));
-            }
+        // Compact all three lists before assigning GPU kind IDs. An omitted part has no slot.
+        drawn.retain(populated);
+        casters.retain(populated);
+        if casters.is_empty() {
+            *shadow_size = 0;
+            steps.retain(|step| !matches!(step, Step::Stock(Pass::Shadow(_))));
         }
         let mut b = drawn.clone();
         b.sort_unstable();
@@ -351,7 +350,7 @@ impl Schedule<'_> {
         for step in steps.iter_mut() {
             let Step::Frame(frame) = step else { continue };
             if !frame.reads_kinds { continue; }
-            if sched.implicit { frame.kinds.retain(populated); }
+            frame.kinds.retain(populated);
             let mut a = frame.kinds.clone();
             a.sort_unstable();
             if a != b {

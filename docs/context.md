@@ -9,6 +9,8 @@ Loft is a meta-engine. Edit the .loft source in `stdlib/engines/`, `stdlib/integ
 
 Catalog names resolve without an import; `use stdlib::folder::module::{name}` or a qualified call states the module. `use self::module` loads a sibling. Comments start with `#`. Loop with `for i in 0..n { ... }`; there are no C-style loops and no loops over arrays. Loop indices are `u`; convert with `f32(i)` or `i32(i)`. Choose with `if c { a } else { b }` or `select(b, a, c)`; there is no `?:`. Separate two statements on one line with `;`. `let` binds once; declare `var` to reassign. The entry's `build` emits rows at load. A complete local schedule owns the frame.
 
+A schedule may always list an optional part. If its build emits zero rows, it consumes no draw slot, shader or motion dispatch.
+
 This engine keeps raster visibility, skips the shadow map and writes stepped lighting. `cull_indirect` and `draw_indirect` take every drawn kind in one call, as in `cull_indirect(Shell, Claw)`. A fixed-tick law changes the beacon's tint.
 
 ```loft

@@ -346,3 +346,27 @@ fn set_reaches_a_sibling_modules_param_and_refuses_an_ambiguous_name() {
     let Err(d) = loft_passes::compile(&src, &set) else { panic!("two params named `size` must not both answer --set size") };
     assert_eq!(d.code, Code::E011, "{}", d.render(&src));
 }
+
+#[test]
+fn empty_scheduled_part_costs_no_program_resources() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let source = "
+        use stdlib::materials::bsdf::{lambert}
+        use stdlib::sdf::solid::{sphere}
+        kind Empty @World (phase: f) { trace(p) = sphere(p - [0,0,0]@World, 1.0); material(p,n) = lambert(rgb(1.0)) }
+        law advance(h: Empty, dt: s) writes h.{phase} { h.phase = h.phase + dt }
+        schedule Main {
+          orbit(at: [0,0,0]@World, radius: 2m, fov: 40deg)
+          run_laws(advance)
+          cull_indirect(Empty)
+          render_bundle(Vis64) { draw_indirect(Empty) }
+          find_shadow_map(Empty, size: 512)
+          tile_classify(Vis64)
+          shade_tiles(Vis64, light: sun_sky, sun: [0,1,0])
+          tonemap_aces(ColorHdr, sky: sky_color)
+        }";
+    let src = loft_passes::source::Graph::text(&root, Path::new("empty.loft"), source);
+    let (program, _, _) = loft_passes::compile(&src, &[]).unwrap_or_else(|e| panic!("{}", e.render(&src)));
+    assert!(program.kinds.is_empty() && program.instances.is_empty() && program.dispatches.is_empty());
+    assert_eq!(program.shadow_size, 0);
+}

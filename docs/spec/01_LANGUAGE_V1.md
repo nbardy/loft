@@ -73,6 +73,12 @@ Supplied expressions evaluate once in source order, then omitted defaults evalua
 * **Stage 2 (`runtime`):** `for` inside `kind`/`law`/`solver` stays a GPU loop.
 * **Law ownership & fusion:** Every `a.f = e` checks `f ∈ writes` (`E501`). Across a schedule, two laws on the same kind must have disjoint `writes` sets (`E502`). Consecutive row-local laws on the same kind with disjoint `writes` **automatically fuse inside one per-tick `advance(from, to)` loop** in schedule order—preserving 1 dispatch/frame and bit-exact multi-tick catch-up.
 
+### Empty kinds
+
+After build evaluation and before assigning drawable IDs, remove every zero-row kind from cull,
+primary draw and shadow lists. The remaining kinds retain their order. An empty caster set omits
+the shadow pass. A law or check on an empty target dispatches no work.
+
 ## 3. Diagnostic Codes & Worked Messages
 
 | Code | Trigger |
