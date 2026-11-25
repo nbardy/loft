@@ -70,3 +70,20 @@ At orbit frames 0, 60 and 119 each giant outer box admits all 691,200 ideal pixe
 - Put surface detail that does not affect the silhouette in material.
 - Read the derived L in `loft check`. Inspect expensive kinds with `sdf_steps` and `overdraw`.
 - Compare fresh GPU pass times with a moving camera at the delivery resolution. Read both load-control brackets and compare corresponding beauty frames when changing geometry.
+
+### Adjacent moving-camera results for change 1
+
+The two builds ran consecutively for each input. All 120 measured primary visibility passes executed in every run. Each entry is GPU p50 / p95 in ms. The table above preserves the earlier operating window. The paired character baselines were up to 2.6 times faster than the earlier medians even though the binary and input were identical.
+
+| Scene | Raster | Paired original | With guard | Guard median frame, Cull / Vis / Shadow / Classify / Shade / Present |
+|---|---|---:|---:|---|
+| Ball | 960×720 | 4.36 / 6.13 C | 2.49 / 4.45 Q | 0.01 / 0.88 / 0 / 0.08 / 1.35 / 0.19 |
+| Starter otter | 960×720 | 9.90 / 10.76 C | 7.14 / 9.61 Q | 0.01 / 5.18 / 0 / 0.06 / 1.56 / 0.33 |
+| Walrus | 960×720 | 21.59 / 23.32 C | 11.48 / 13.16 C | 0.01 / 9.80 / 0 / 0.04 / 1.57 / 0.06 |
+| Heron | 960×720 | 25.95 / 31.20 C | 7.98 / 9.30 C | 0.02 / 4.00 / 0 / 0.13 / 3.42 / 0.42 |
+| Final otter | 960×720 | 57.82 / 62.82 C | 26.14 / 33.85 C | 0.01 / 24.41 / 0 / 0.03 / 1.62 / 0.06 |
+| Walrus | 1280×800 | 26.12 / 26.97 C | 13.13 / 14.52 C | 0.01 / 11.09 / 0 / 0.05 / 1.89 / 0.10 |
+| Heron | 1280×800 | 38.42 / 40.90 C | 10.23 / 12.40 C | 0.02 / 4.82 / 0 / 0.19 / 4.70 / 0.50 |
+| Final otter | 1280×800 | 78.36 / 85.80 C | 31.64 / 35.85 C | 0.01 / 29.27 / 0 / 0.05 / 2.21 / 0.10 |
+
+The observed 960 guard p95 was 4.3 ms above forecast on heron and 10.6 / 19.0 ms below forecast on walrus / final otter. Operating-window differences affect even the ball control. On the larger final otter the guarded p95 still needs 19.15 ms removed to reach budget. The actual p95-ranked pass costs and the large run-to-run control shifts belong in the final budget. [Original timings](orbit/paired-original) · [Guard timings](orbit/revised)

@@ -1,7 +1,5 @@
 """Hold projected geometry and the draw order fixed across the two native builds."""
-from pathlib import Path
 import argparse
-import shutil
 import subprocess
 
 from fresh import checkpoint, notes, out

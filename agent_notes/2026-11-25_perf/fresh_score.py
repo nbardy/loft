@@ -71,6 +71,7 @@ def compare(before, after, size, diff_path):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("phase")
+    parser.add_argument("--reference", default="original", help="phase containing reference clips")
     parser.add_argument("--record", action="store_true")
     args = parser.parse_args()
     phase = args.phase
@@ -81,12 +82,13 @@ if __name__ == "__main__":
         for name in scenes:
             stem = f"{name}-{res}"
             result = profile(folder, stem, probe)
-            before = out / "original" / (stem + "-clip")
+            before = out / args.reference / (stem + "-clip")
             after = folder / (stem if probe else stem + "-clip")
             if phase != "original" and before.exists() and (after / "frame_119.png").exists():
                 result = result or {}
                 diff = (notes / "orbit" / phase if args.record else out / "diffs") / f"{phase}-{stem}.png"
                 result["pixels"] = compare(before, after, tuple(map(int, res.split("x"))), diff)
+                result["reference"] = args.reference
                 if args.record:
                     if result["pixels"]["diff"]:
                         subprocess.run(["git", "add", "--", diff], cwd=root, check=True)
