@@ -82,3 +82,30 @@ impl Projection {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn near_plane_group_and_partial_last_group_keep_their_original_rows() {
+        let camera = Orbit {
+            at: [0.0; 3],
+            radius: 2.0,
+            height: 0.0,
+            period: 24.0,
+            fov: 0.8,
+            fixed_eye: Some([0.0, 0.0, 2.0]),
+        };
+        let projection = Projection::new(camera, 0.0, (960, 720));
+        let mut rows = vec![[[0.0, 0.0, 0.0, 0.001]; 2]; 17];
+        rows[3][1] = [0.0, 0.0, 1.98, 0.1];
+        rows[8..16].fill([[-20.0, 0.0, 0.0, 0.01]; 2]);
+        let draw = projection.draw(&rows);
+        assert_eq!(draw.instances[0], (0..8, [0, 0, 960, 720]));
+        assert_eq!(draw.instances.len(), 2);
+        let (last, [x, y, w, h]) = &draw.instances[1];
+        assert_eq!(last, &(16..17));
+        assert!(*x < 480 && *x + *w > 480 && *y < 360 && *y + *h > 360);
+    }
+}
