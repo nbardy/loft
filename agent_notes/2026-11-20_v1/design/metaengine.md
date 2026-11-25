@@ -685,7 +685,7 @@ Scored against §6. §1–§8 are unchanged above. Counts are `tools/lines.py` o
 
 | # | Prediction | Verdict |
 |---|---|---|
-| P2 | S1 deletes ≥ 300 and adds ≤ 200 | **missed before any code.** The S1 worker counted the arms in today's code: the emitter's call and name arms go from about 129 lines to about 100, the evaluator's by about 10, and the checker gains about 45 for recording. Net about −5 ± 30. The −250 was the spike's four-dispatcher figure; the fourth dispatcher was the tape VM, which `cut-tape` had already deleted. K2 applies: only step 4 is kept (`9bcc02f4`: the motion-math class comes from the builtin catalog, −10 lines) |
+| P2 | S1 deletes ≥ 300 and adds ≤ 200 | **missed before any code.** The S1 worker counted the arms in today's code: the emitter's call and name arms go from about 129 lines to about 100, the evaluator's by about 10, and the checker gains about 45 for recording. Net about −5 ± 30. The −250 was the spike's four-dispatcher figure; the fourth dispatcher was the tape VM, which `cut-tape` had already deleted. K2 applies: only step 4 is kept (`9bcc02f4` on `loft/wave1`, compiled, its tests not run, **not on main**: the motion-math class comes from the builtin catalog, −10 lines) |
 | S3 lines | −120 ± 60 | **missed: −30.** `distinct_passes` and `children` go, but `passes` stays (three other walkers use it), the runner links twice (an initializer can rewrite a bake pass), and the plan printer, the web projection and the error mapping add back most of what the structural checks removed |
 | P9 | S0–S3 together −350 ± 250 | **missed: +422** with `typed.rs`, +234 without it. K6 applies: not merged |
 | P1, P8, P10 | byte-identical modules; gates hold; every corpus bundle links | not run: S1 was not written, and S3 was compiled (workspace and wasm32) but never tested |
@@ -754,3 +754,15 @@ A scene schedules it by calling it, between shading and the tonemap: `hatch(spac
 | H4 | GPU cost of the pass at 1280×800: **0.27 ms** (24 B per pixel × 1.024 M pixels ÷ 90 GB/s; the bandwidth figure is DESIGN P4's and unmeasured) | above 0.46 ms, the no-cache-hit figure |
 | H5 | A scene that calls one image law gains exactly one module and one pipeline; other scenes gain none | any other count moves |
 | H6 | No CPU twin exists for image passes, so the law's verdict is Unknown, not Held | — |
+
+**Status, 25 Nov evening: written, never compiled, parked.** The implementation is on `loft/image-laws`
+(`git log c4f080b6..loft/image-laws`): +243 and −38 counted Rust by its author's count, inside H2's band, with
+`stdlib/styles/hatch.loft`, a `hatch_capsules` scene and two tests. Nothing in it has been compiled, so H1 and H3–H5
+are unscored. Its author's deviations: defaults are type-checked when the schedule lowers, arguments must be named,
+only `ColorHdr` can be written and only `Vis64` read.
+
+It is parked because nobody has asked for it. The reason to build it came from this design (every stock behaviour
+writable in the language), not from a user. The two sources of real demand point elsewhere: 43 of the trainer's 44
+seeds use the stock schedule unchanged and none writes a post pass, and the four Auncel authors' findings are about
+physics and geometry. An image law is 2D post-processing in checked Loft; a WGSL template pass can already do the
+same work. Pick it up when someone wants to write a post effect without WGSL.
