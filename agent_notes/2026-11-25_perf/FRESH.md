@@ -118,3 +118,16 @@ Sigg, Weyrich, Botsch and Gross projected quadrics to bounded screen primitives 
 Knoll and colleagues used interval and affine arithmetic to exclude empty ray intervals. The first change here applies an outward interval check during compilation to the Loft marcher's distance-dependent acceptance band. Zanni’s tile lists and sparse traversal address a different remaining expense, evaluating a whole composite field where only a few operands can matter. [Knoll et al.](https://www.sci.utah.edu/~knolla/cgrtia.pdf) · [Zanni, 2023](https://arxiv.org/abs/2304.09673)
 
 The strip build is recorded at `8188ae85`. A second build at `5ad3bfc7` draws up to eight original rows at a time under a hardware scissor enclosing their projected endpoint balls. It keeps the original clip position and interpolants. Primary rows in these direct draws use authored row order. The ordinary compacted order can choose different rows at a depth tie. The stock visibility schedule and immutable row data are required; a host that loads serialized IR uses the ordinary indirect draw. The scissor projection runs on the native CPU each frame, and every visible eight-row group adds a GPU draw. The shader recognizes the checked direct call and the complete stock solver module by content. [Before-run coverage predictions](orbit/thin-projection.txt) · [Fixed-order replay](thin_replay.py) · [Color and timing protocol](fresh_score.py)
+
+### Native ring timing for change 1
+
+The native AB command times an immediate pass and then another 30 warmups and 120 timed frames using the device’s timestamp ring. Each half has its own pair of load-control brackets. The table uses the first quiet ring attempt, or the first flagged one after retry. Absolute engine time changes materially between these measurement windows.
+
+| Character and size | Original ring p50 / p95 ms | Guard ring p50 / p95 ms | Guard brackets before / after ms |
+|---|---:|---:|---:|
+| walrus-960x720 | 26.20 / 33.11 Q | 16.30 / 24.27 Q | 0.49 / 0.72 |
+| heron-960x720 | 46.59 / 55.70 C | 2.02 / 3.04 C | 1.94 / 0.46 |
+| otter-960x720 | 93.31 / 111.30 Q | 46.38 / 57.60 Q | 0.57 / 0.63 |
+| walrus-1280x800 | 38.73 / 44.24 Q | 21.77 / 29.74 Q | 0.91 / 0.90 |
+| heron-1280x800 | 46.11 / 49.27 Q | 2.66 / 3.77 C | 2.39 / 0.75 |
+| otter-1280x800 | 155.69 / 166.07 Q | 68.27 / 87.01 C | 2.81 / 1.02 |
