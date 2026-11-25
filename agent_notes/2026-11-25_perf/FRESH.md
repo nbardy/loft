@@ -259,3 +259,23 @@ The native AB ring uses a separate measurement protocol: an immediate 120-frame 
 The grouped host-cost forecast held: its median increment was 0.12–0.22 ms on walrus and 0.58–0.69 ms on final otter. The GPU-speed forecast did not transfer between quiet windows. For example, at 1280×800 the grouped final otter took 15.58 ms p95 in the AB ring and 76.15 ms p95 in the fully bracketed contiguous block. Both passed the same 1.10 ms control threshold, and the latter issued the expected 497 native commands. On walrus at 960 the corresponding quiet p95 values were 12.16 and 24.27 ms. A bracket measures its own time window. These runs do not establish sustained 60 fps across operating conditions. The separate timings remain in the report.
 
 The grid-occupancy prediction held at all five sampled 960 poses. Rod occupied 100–109 of the 690 screen tiles and Strand 73–85. At the midpoint, the lists contained 5,085 Rod references and 6,081 Strand references. A load-time union over the full 360° orbit is much looser. Conservatively enclosing each endpoint's rotated path around the camera target kept 428/690 tiles for Rod and 508/690 for Strand, or 578/1,000 and 718/1,000 at 1280. The latter two Strand fractions met the predicted 75% ceiling at both sizes. All 240 sampled camera angles per kind fit the analytic all-angle bounds. A per-frame or short-angle active set has more room to cut empty indirect submissions. [Per-pose occupancy](orbit/tiles/occupancy.json.gz) · [All-angle occupancy](orbit/tiles/orbit-occupancy.json.gz)
+
+### Field work remaining at the grouped build’s native p95 pose
+
+Each measurement replays one guarded field at the camera time of the selected full-frame p95. The hit and miss columns count field evaluations in millions. The GPU draw column is the median of seven isolated single-kind draws in ms; the last column halves that duration after subtracting the measured empty pass. It is an optimistic scenario for cutting composite evaluation, since each draw also includes mandatory raster and march work. These isolated times came from a separate reservation.
+
+| Scene and size | Field | Frame | Hit steps M | Miss steps M | Draw ms | Half variable draw ms |
+|---|---|---:|---:|---:|---:|---:|
+| [base-960x720](orbit/residual/base-960x720.json.gz) | Otter | 0 | 3.851 | 6.221 | 3.44 | 1.70 |
+| [walrus-960x720](orbit/residual/walrus-960x720.json.gz) | Hide | 85 | 3.571 | 6.182 | 7.43 | 3.70 |
+| [walrus-960x720](orbit/residual/walrus-960x720.json.gz) | Cap | 85 | 0.336 | 1.204 | 1.17 | 0.56 |
+| [heron-960x720](orbit/residual/heron-960x720.json.gz) | HeronHead | 51 | 0.130 | 0.485 | 1.24 | 0.60 |
+| [otter-960x720](orbit/residual/otter-960x720.json.gz) | Head4 | 63 | 1.471 | 3.004 | 4.57 | 2.26 |
+| [otter-960x720](orbit/residual/otter-960x720.json.gz) | Torso | 63 | 2.304 | 4.326 | 8.00 | 3.98 |
+| [walrus-1280x800](orbit/residual/walrus-1280x800.json.gz) | Hide | 42 | 4.182 | 7.374 | 9.18 | 4.56 |
+| [walrus-1280x800](orbit/residual/walrus-1280x800.json.gz) | Cap | 42 | 0.412 | 1.385 | 1.05 | 0.50 |
+| [heron-1280x800](orbit/residual/heron-1280x800.json.gz) | HeronHead | 76 | 0.172 | 0.630 | 1.19 | 0.57 |
+| [otter-1280x800](orbit/residual/otter-1280x800.json.gz) | Head4 | 82 | 1.868 | 3.881 | 5.25 | 2.61 |
+| [otter-1280x800](orbit/residual/otter-1280x800.json.gz) | Torso | 82 | 2.938 | 5.520 | 12.78 | 6.37 |
+
+The predicted 960 limits were under 10 million surviving evaluations on HeronHead and under 60 million on the final head and torso together. The counts were 0.614 million and 11.105 million. Halving all variable work in these measured fields would save approximately 4.26 / 5.06 ms on walrus, 0.60 / 0.57 ms on heron and 6.24 / 8.97 ms on final otter at 960 / 1280. Pruning a subset of operands saves less, and transferring a draw rate across operating windows has already produced large errors.
