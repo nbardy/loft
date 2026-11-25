@@ -1,5 +1,6 @@
 """Hash the actual RGBA bytes of every frame, including the first unretained frame."""
 from hashlib import sha256
+from io import BytesIO
 import json
 from pathlib import Path
 import shutil
@@ -23,10 +24,17 @@ for scene in scenes:
         clip = Path(temp)/'clip'
         subprocess.run([exe,'clip',fixtures/scene,'--frames','120','--fps','60','--size',size,'--out',clip],check=True)
         hashes = []
+        decoded = {}
         for i in range(120):
             frame = clip/f'frame_{i:03}.png'
-            with Image.open(frame) as img:
-                hashes.append(sha256(img.convert('RGBA').tobytes()).hexdigest())
+            encoded = frame.read_bytes()
+            png_digest = sha256(encoded).digest()
+            # Identical PNG bytes decode identically. Preserve the RGBA hash convention
+            # and only expand a distinct compressed frame once per clip.
+            if png_digest not in decoded:
+                with Image.open(BytesIO(encoded)) as img:
+                    decoded[png_digest] = sha256(img.convert('RGBA').tobytes()).hexdigest()
+            hashes.append(decoded[png_digest])
             # Keep one lossless representative of each distinct result for pixel diffs.
             sample = folder/f'{hashes[-1]}.png'
             if not sample.exists():
