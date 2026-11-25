@@ -62,9 +62,22 @@ impl Render {
         Ok(())
     }
 
-    pub fn pass(&self, target: &Target<'_>, tables: &BTreeMap<TableId, Table>, written: &mut std::collections::BTreeSet<TableId>) -> command::Pass {
+    pub fn pass(&self, target: &Target<'_>, tables: &BTreeMap<TableId, Table>, written: &mut std::collections::BTreeSet<TableId>,
+                fixed: &BindGroup, groups: &[Group], scissors: impl FnOnce(ModuleId) -> Option<command::ScissoredDraw>) -> command::Pass {
         let (colors, depth) = self.spec.targets.views(target, |id| tables.get(&id)?.attachment(), written);
-        self.cached.as_ref().expect("prepared raster pass").3.attach(colors, depth)
+        let (_, pipelines, _, bundle) = self.cached.as_ref().expect("prepared raster pass");
+        if let [draw] = self.spec.draws.as_slice()
+            && draw.index.is_none()
+            && let Some(geometry) = scissors(draw.decl.module)
+        {
+            let raster = command::Raster::Scissored {
+                pipeline: pipelines[0].clone(),
+                groups: std::iter::once(fixed).chain(groups.iter().map(Group::bound)).cloned().collect(),
+                draw: geometry,
+            };
+            return command::Pass::Render { colors, depth, rasters: vec![raster] };
+        }
+        bundle.attach(colors, depth)
     }
 }
 

@@ -33,9 +33,16 @@ pub struct Draw<'a> {
 }
 
 #[derive(Clone)]
-pub struct Raster {
-    bundle: RenderBundle,
-    draws: u32,
+pub struct ScissoredDraw {
+    pub size: [u32; 2],
+    pub vertices: Range<u32>,
+    pub instances: Vec<(Range<u32>, [u32; 4])>,
+}
+
+#[derive(Clone)]
+pub enum Raster {
+    Bundle { bundle: RenderBundle, draws: u32 },
+    Scissored { pipeline: RenderPipeline, groups: Vec<BindGroup>, draw: ScissoredDraw },
 }
 
 impl Raster {
@@ -64,7 +71,7 @@ impl Raster {
             count += 1;
         }
         let bundle = enc.finish(&RenderBundleDescriptor { label: desc.label });
-        Self { bundle, draws: count }
+        Self::Bundle { bundle, draws: count }
     }
 
     pub fn attach(&self, colors: Vec<Color>, depth: Option<Depth>) -> Pass {
@@ -107,7 +114,8 @@ impl Pass {
             Self::Compute(kernels) => record_compute(encoder, kernels, stamps),
             Self::Render { colors, depth, rasters } => {
                 record_render(encoder, colors, depth.as_ref(), rasters, stamps);
-                rasters.iter().map(|r| r.draws).sum()
+                rasters.iter().map(|r| match r { Raster::Bundle { draws, .. } => *draws,
+                    Raster::Scissored { draw, .. } => draw.instances.len() as u32 }).sum()
             }
         }
     }
@@ -145,7 +153,26 @@ fn record_render(enc: &mut CommandEncoder, colors: &[Color], depth: Option<&Dept
     let mut pass = enc.begin_render_pass(&RenderPassDescriptor {
         color_attachments: &colors, depth_stencil_attachment, timestamp_writes, ..Default::default()
     });
-    pass.execute_bundles(rasters.iter().map(|r| &r.bundle));
+    for run in rasters.chunk_by(|a,b| matches!((a,b), (Raster::Bundle { .. }, Raster::Bundle { .. }))) {
+        match &run[0] {
+            Raster::Bundle { .. } => pass.execute_bundles(run.iter().filter_map(|r| match r {
+                Raster::Bundle { bundle, .. } => Some(bundle),
+                Raster::Scissored { .. } => None,
+            })),
+            Raster::Scissored { pipeline, groups, draw } => {
+                pass.set_pipeline(pipeline);
+                for (slot, group) in groups.iter().enumerate() {
+                    pass.set_bind_group(slot as u32, group, &[]);
+                }
+                for (instances, [x,y,w,h]) in &draw.instances {
+                    pass.set_scissor_rect(*x,*y,*w,*h);
+                    pass.draw(draw.vertices.clone(), instances.clone());
+                }
+                // The following cached bundle inherits the pass scissor.
+                pass.set_scissor_rect(0, 0, draw.size[0], draw.size[1]);
+            }
+        }
+    }
 }
 
 use crate::attachments::Canvas;

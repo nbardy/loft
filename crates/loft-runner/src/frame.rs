@@ -1,5 +1,6 @@
 //! Frame entry points for hosts that also own presentation and timestamp readback.
 use super::*;
+pub use loft_wgpu::command::ScissoredDraw;
 pub use encode::{FrameOptions, FrameRecord, ModulePipelines, ModuleRecipe, PipelineCreates};
 
 impl Runner {

@@ -13,6 +13,7 @@ pub mod paths;
 mod material_shape;
 mod surface;
 mod thin;
+pub use thin::segment_arguments;
 mod lighting;
 pub mod shade_tiles;
 mod column;
@@ -954,11 +955,12 @@ pub fn emit_kind_module(
             // near offset as traversal. Proxy interpolation rounds that ray
             // differently, which can move a secondary origin across a surface.
             let primary_direction = if uses_world_hit { "loft_ray(v.pos.xy)" } else { "normalize(v.wp - ro)" };
-            let thin = if draw == Draw::Analytic && aov == Aov::Beauty {
-                thin::position(&mut em, k, sources)
-            } else { None };
-            let position = if thin.is_some() { "loft_thin_position(row, frame.view_proj * vec4<f32>(wp, 1.0))" }
-                else { "frame.view_proj * vec4<f32>(wp, 1.0)" };
+            // A scissored native draw uses vertices 36..72 and authored row order.
+            // Other hosts and the shadow pass draw the original vertices 0..36.
+            let direct = draw == Draw::Analytic && aov == Aov::Beauty && segment_arguments(p, k, sources).is_some();
+            let (row_id, corner_id) = if direct {
+                ("var r = ii; if vi < 36u { r = visible[kp.base + ii]; }", "vi % 36u")
+            } else { ("let r = visible[kp.base + ii];", "vi") };
             let (hit, split_ao) = match draw {
                 Draw::Analytic if uses_world_hit => (r"  let near = select(0.0001, 0.0, frame.cold.y == 1u);
   let local_t = q_visible(row, loft_xf_pt(xf, ro + near * rd), lrd);
@@ -974,7 +976,7 @@ pub fn emit_kind_module(
             let distance = if count_steps { "((bitcast<u32>(t) & 0xffffff00u) | steps)" } else { "bitcast<u32>(t)" };
             let visible_twin = if q(QueryKind::Visible) { "q_visible(row, pl, dl)" } else { "0.0" };
             (
-                render_template(include_str!("../../../stdlib/core/ray_vis.wgsl"), &[("THIN", thin.as_deref().unwrap_or("")), ("POSITION", position), ("PRIMARY_DIRECTION", primary_direction), ("HIT", &hit), ("DISTANCE", distance)]),
+                render_template(include_str!("../../../stdlib/core/ray_vis.wgsl"), &[("ROW_ID", row_id), ("CORNER_ID", corner_id), ("PRIMARY_DIRECTION", primary_direction), ("HIT", &hit), ("DISTANCE", distance)]),
                 if split_ao {
                     // The tetrahedral sum and the five AO taps keep their original
                     // order. Separate the loops to compute only the active sample.

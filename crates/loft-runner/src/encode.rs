@@ -294,6 +294,7 @@ pub struct FrameOptions<'a> {
     pub omit_wave: Option<u16>,
     /// Additional waves with retained outputs. Each omitted wave leaves its attachments intact.
     pub omit_waves: &'a [u16],
+    pub scissors: Option<&'a dyn Fn(u16, ModuleId) -> Option<command::ScissoredDraw>>,
 }
 
 #[derive(Default)]
@@ -462,7 +463,8 @@ impl Instance {
                     batch.push(c.waves[&id], cmd.dispatch(&c.fixed,k,work));
                 }
                 Operation::Draw(draw) => {
-                    let pass = draw.pass(target.expect("validated targets"),tables,&mut written);
+                    let pass = draw.pass(target.expect("validated targets"), tables, &mut written,
+                        &c.fixed, &cmd.groups, |module| options.scissors.and_then(|f| f(wave, module)));
                     batch.push(c.waves[&id], pass);
                 }
                 Operation::Mips(_, chain) => {

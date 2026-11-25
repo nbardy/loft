@@ -1,5 +1,5 @@
 //! Clip an original proxy to the screen projection of a stock exact segment.
-use super::{Emitter, render_template, wgsl_name};
+use loft_check::Prog;
 use loft_ir::Sources;
 use loft_parse::ast::{Expr, ExprKind, KindDecl, QueryKind, Stmt};
 
@@ -16,12 +16,22 @@ fn row_value(e: &Expr, row: &str) -> bool {
     }
 }
 
-pub(super) fn position(em: &mut Emitter<'_, '_>, k: &KindDecl, sources: &Sources) -> Option<String> {
+pub fn segment_arguments<'a>(
+    p: &Prog<'_>,
+    k: &'a KindDecl,
+    sources: &Sources,
+) -> Option<[&'a Expr; 4]> {
     let query = k.query(QueryKind::Visible)?;
-    let [row, ro, rd] = query.params.as_slice() else { return None };
-    let [Stmt::Return(Some(result), _)] = query.body.stmts.as_slice() else { return None };
-    let ExprKind::Call { callee, args } = &result.kind else { return None };
-    let solver = em.p.fns.get(callee.name.as_str())?;
+    let [row, ro, rd] = query.params.as_slice() else {
+        return None;
+    };
+    let [Stmt::Return(Some(result), _)] = query.body.stmts.as_slice() else {
+        return None;
+    };
+    let ExprKind::Call { callee, args } = &result.kind else {
+        return None;
+    };
+    let solver = p.fns.get(callee.name.as_str())?;
     let span = solver.name.span;
     let source = &sources.files.get(usize::from(span.file))?.1;
     let name = source.get(span.lo as usize..span.hi as usize)?;
@@ -33,12 +43,11 @@ pub(super) fn position(em: &mut Emitter<'_, '_>, k: &KindDecl, sources: &Sources
     if blake3::hash(source.as_bytes()).to_hex().as_str() != ANALYTIC
         || !matches!(&args[0].value.kind, ExprKind::Name(n) if n == &ro.name.name)
         || !matches!(&args[1].value.kind, ExprKind::Name(n) if n == &rd.name.name)
-        || ![a, b, ra, rb].into_iter().all(|arg| row_value(&arg.value, &row.name.name))
+        || ![a, b, ra, rb]
+            .into_iter()
+            .all(|arg| row_value(&arg.value, &row.name.name))
     {
         return None;
     }
-    let [a, b, ra, rb] = [a, b, ra, rb].map(|arg| em.expr(&arg.value));
-    Some(render_template(include_str!("../../../../stdlib/core/thin_clip.wgsl"), &[
-        ("ROW", &wgsl_name(&row.name.name)), ("A", &a), ("B", &b), ("RA", &ra), ("RB", &rb),
-    ]))
+    Some([a, b, ra, rb].map(|arg| &arg.value))
 }

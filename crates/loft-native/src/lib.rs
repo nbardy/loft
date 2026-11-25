@@ -3,6 +3,7 @@ mod motion;
 #[cfg(not(target_arch = "wasm32"))]
 mod edit;
 mod reuse;
+mod scissor;
 #[cfg(not(target_arch = "wasm32"))]
 pub use edit::{EditReceipt, EditSession};
 use loft_passes::emit::Aov;
@@ -92,6 +93,7 @@ pub struct Loaded {
     kind_words: Vec<[u32; 4]>,
     params: Mutex<(Vec<f32>, bool)>,
     visibility: Mutex<reuse::Reuse>,
+    segments: loft_passes::program::SegmentRows,
     shadow: Option<(u16, u32, Mutex<reuse::Reuse>)>,
     #[cfg(not(target_arch = "wasm32"))]
     instance_bounds: wgpu::Buffer,
@@ -463,6 +465,9 @@ impl Loaded {
         let indexed = |kind: &loft_passes::program::KindTable| aov != Aov::Overdraw
             && p.modules[kind.module].naga.entry_points.iter().any(|e| e.name == "vs_grid");
         let visibility = Mutex::new(reuse::Reuse::visibility(p, indexed, editable));
+        let segments = if editable.is_none() && aov == Aov::Beauty && reuse::Reuse::stock_visibility(p).is_some() {
+            p.segments.clone()
+        } else { Default::default() };
         let shadow = plan.shadow_wave.and_then(|wave| {
             let [(i, casters)] = p.passes.iter().enumerate().filter_map(|(i, pass)| match pass {
                 Pass::Shadow(casters) => Some((i, casters)),
@@ -493,7 +498,7 @@ impl Loaded {
             luts: p.luts.clone(), kind_words, params: Mutex::new((p.params.clone(), false)),
             #[cfg(not(target_arch = "wasm32"))] lut_table: plan.luts,
             #[cfg(not(target_arch = "wasm32"))] instance_bounds,
-            visibility, shadow,
+            visibility, segments, shadow,
             color, planes: [plan.visibility, plan.depth], color_view, clock, stats, precision: plan.precision })
     }
 
@@ -574,7 +579,14 @@ impl Loaded {
     fn record_report(&self, runner: &mut Runner, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView,
         t: f32, samples: u32, options: FrameOptions<'_>) -> Result<loft_runner::frame::FrameRecord, String> {
         let uniform = |table| self.uniform(t, samples, table != self.frame_table);
-        runner.encode_frame(self.id, encoder, target, t.into(), FrameOptions { uniform: Some(&uniform), ..options })
+        let projection = (!self.segments.is_empty()).then(|| scissor::Projection::new(self.camera,t,self.size));
+        let scissors = |wave, module: ModuleId| {
+            if wave != 1 { return None; }
+            Some(projection.as_ref()?.draw(self.segments.get(&module.0)?))
+        };
+        runner.encode_frame(self.id, encoder, target, t.into(), FrameOptions {
+            uniform: Some(&uniform), scissors: Some(&scissors), ..options
+        })
             .map_err(runner_error)
     }
 

@@ -35,11 +35,18 @@ impl Reuse {
     pub(super) fn visibility(
         p: &Program, indexed: impl Fn(&loft_passes::program::KindTable) -> bool, editable: Option<usize>,
     ) -> Self {
+        if p.camera.fixed_eye.is_none() || editable.is_some() { return Self::EveryFrame; }
+        let Some(drawn) = Self::stock_visibility(p) else { return Self::EveryFrame; };
+        Self::geometry(p, drawn, indexed, editable)
+    }
+
+    /// The native host can bypass row compaction only when the stock culler owns the list.
+    pub(super) fn stock_visibility(p: &Program) -> Option<&[u32]> {
         use loft_passes::program::{AuthoredRun, Extent, FrameView, Pass};
         let [Pass::Authored(cull), Pass::Vis(drawn), tail @ ..] = p.passes.as_slice() else {
-            return Self::EveryFrame;
+            return None;
         };
-        if p.camera.fixed_eye.is_none() || editable.is_some() || !p.bakes.is_empty()
+        if !p.bakes.is_empty()
             || !p.dispatches.is_empty() || p.path.is_some() || tail.iter().any(|pass| match pass {
                 Pass::Vis(_) | Pass::Path(_) => true,
                 Pass::Shadow(_) | Pass::Shade(_) => false,
@@ -54,7 +61,7 @@ impl Reuse {
                 }),
             })
         {
-            return Self::EveryFrame;
+            return None;
         }
         // An authored culler can use the clock, live data or previous outputs. Recognize the
         // stock kernel and its actual bindings, not a pass label or the template's filename.
@@ -62,17 +69,17 @@ impl Reuse {
             || cull.bindings != [(1, 0, FrameView::Instances), (1, 1, FrameView::DrawArgs),
                 (1, 2, FrameView::Visible), (1, 3, FrameView::KindBases)]
         {
-            return Self::EveryFrame;
+            return None;
         }
         let prelude = include_str!("../../../stdlib/core/prelude.wgsl").replace("{{NONCE}}", loft_passes::program::abi::NONCE_PLACEHOLDER);
         let source = &p.modules[cull.module].wgsl;
-        let Some(body) = source.strip_prefix(&prelude) else { return Self::EveryFrame; };
+        let Some(body) = source.strip_prefix(&prelude) else { return None; };
         let template = include_str!("../../../stdlib/core/cull.wgsl");
         let stock = [include_str!("../../../stdlib/core/cull_single.wgsl"), include_str!("../../../stdlib/core/cull_multi.wgsl")];
         if !stock.iter().any(|draw| body == template.replace("{{DRAW}}", draw)) {
-            return Self::EveryFrame;
+            return None;
         }
-        Self::geometry(p, drawn, indexed, editable)
+        Some(drawn)
     }
 
     fn geometry(p: &Program, casters: &[u32], indexed: impl Fn(&loft_passes::program::KindTable) -> bool,
