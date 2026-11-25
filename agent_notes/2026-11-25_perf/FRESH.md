@@ -218,3 +218,40 @@ At the replay’s midpoint the screen-space box estimate used double-precision p
 At `affc82f8` the native moving-camera path bins rows into disjoint 32×32-pixel hardware scissors. One GPU dispatch projects endpoint hulls in compacted slot order. A second dispatch counts and copies the intersecting rows into each tile. Its 64 lanes own contiguous slices of the original list; a prefix sum assigns each lane's output start. This preserves the exact original draw order in each tile, including holes from the ordered culler. Every draw uses the original triangles, ray interpolation and analytic solver. The indirect first vertex selects a tile's list. The first instance is zero on every adapter. The stock cull and binning share the Cull timestamp. The native profiler reports elapsed time from the previous pass end, so the pass budget adds to the reported frame. [GPU projection and stable gathering](../../crates/loft-passes/src/bundle/segment_tiles.wgsl) · [Native draw preparation and memory limit](../../crates/loft-passes/src/bundle/segment_tiles.rs)
 
 For final otter the tile row lists occupy 10.49 MB at 960×720 and 15.20 MB at 1280×800 (decimal MB across Bit and Strand). There are 690 or 1,000 tiles per kind. Two kinds issue 1,380 or 2,000 indirect draws, including tiles with zero instances. The allocator limits each list to 64 MiB and all lists together to 128 MiB. Larger inputs use the original indirect draw for each kind that does not fit. Fixed-eye, editable, custom-culler and serialized programs retain their existing draw paths. The grouped prototype’s host projection and direct-draw path live in its recorded commit. The current native path fits the conservative screen rectangles entirely on the GPU.
+
+### Contiguous warm-device control
+
+The native host warmed each device with 30 scene frames before the first load control. It then measured a single block covering the full orbit with a deferred timestamp ring, repeating up to twice at the same camera times if either bracket failed. The original and guard programs came from the preserved compiled IR. The combined program was compiled from its source with the endpoint metadata available to the native host. All 120 Vis timestamps in every attempt were positive. Each cell gives the first quiet attempt or the first flagged attempt, in GPU p50 / p95 ms.
+
+| Character and resolution | Original | Guard | Guard + scissors | Combined before / after control ms | Commands per frame, guard → combined |
+|---|---:|---:|---:|---:|---|
+| walrus-960x720 | 34.53 / 37.18 Q | 23.82 / 28.58 C | 19.82 / 24.27 Q | 0.89 / 0.72 | 21 → 160 |
+| heron-960x720 | 40.56 / 48.06 Q | 5.31 / 7.27 Q | 5.05 / 7.14 Q | 0.73 / 1.08 | 23 → 23 |
+| otter-960x720 | 127.36 / 138.44 Q | 64.25 / 71.26 Q | 26.51 / 30.77 C | 1.24 / 1.19 | 23 → 497 |
+| walrus-1280x800 | 58.63 / 65.79 C | 33.85 / 39.21 C | 26.63 / 34.38 C | 1.20 / 2.81 | 21 → 160 |
+| heron-1280x800 | 70.44 / 75.18 C | 3.99 / 8.91 C | 7.00 / 11.56 C | 2.92 / 3.38 | 23 → 23 |
+| otter-1280x800 | 163.85 / 176.89 C | 72.91 / 82.50 C | 31.13 / 76.15 Q | 1.03 / 1.03 | 23 → 497 |
+
+The following ordinary host submissions were measured after all GPU timing, with the previous frame drained before starting the CPU clock. Each sample includes native frame preparation, command encoding and queue submission. Values are median / p95 in ms across 30 calls.
+
+| Scene | Guard CPU | Combined CPU | Difference in medians |
+|---|---:|---:|---:|
+| walrus-960x720 | 0.92 / 1.61 | 1.04 / 1.39 | +0.12 |
+| heron-960x720 | 0.87 / 1.64 | 0.83 / 2.35 | -0.04 |
+| otter-960x720 | 0.89 / 1.23 | 1.58 / 6.72 | +0.69 |
+| walrus-1280x800 | 0.87 / 1.67 | 1.08 / 1.31 | +0.22 |
+| heron-1280x800 | 0.89 / 2.49 | 0.93 / 2.34 | +0.04 |
+| otter-1280x800 | 0.92 / 1.21 | 1.51 / 1.92 | +0.58 |
+
+The native AB ring uses a separate measurement protocol: an immediate 120-frame pass followed by 30 warmups and a further ring-timed 120-frame pass. Its brackets and its original/guard comparisons are retained independently.
+
+| Character and resolution | Original AB ring | Guard AB ring | Combined AB ring | Combined before / after control ms |
+|---|---:|---:|---:|---|
+| walrus-960x720 | 26.20 / 33.11 Q | 16.30 / 24.27 Q | 10.15 / 12.16 Q | 0.46 / 0.46 |
+| heron-960x720 | 46.59 / 55.70 C | 2.02 / 3.04 C | 1.98 / 2.98 Q | 0.84 / 0.46 |
+| otter-960x720 | 93.31 / 111.30 Q | 46.38 / 57.60 Q | 12.15 / 14.70 Q | 0.45 / 0.46 |
+| walrus-1280x800 | 38.73 / 44.24 Q | 21.77 / 29.74 Q | 11.10 / 13.22 Q | 0.65 / 0.65 |
+| heron-1280x800 | 46.11 / 49.27 Q | 2.66 / 3.77 C | 2.46 / 3.52 C | 1.23 / 0.66 |
+| otter-1280x800 | 155.69 / 166.07 Q | 68.27 / 87.01 C | 12.80 / 15.58 Q | 0.66 / 0.65 |
+
+[Every warm-device attempt](orbit/warm-device) · [Combined AB measurements](orbit/scissor-ab) · [Host instrument](../../crates/loft-cli/examples/fresh_blocks.rs)
