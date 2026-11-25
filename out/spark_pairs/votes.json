@@ -1,0 +1,1707 @@
+{
+  "pairs": [
+    {
+      "id": "loft3d-abyss-lure-adjacent-00v01",
+      "a": {
+        "render": "out/spark_pairs/loft3d/abyss-lure/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 0/10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/abyss-lure/step_01.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 1/10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=1)."
+      },
+      "criteria": "Which lure reads better at thumbnail size? Judge stalk silhouette only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-abyss-lure-adjacent-01v02",
+      "a": {
+        "render": "out/spark_pairs/loft3d/abyss-lure/step_01.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 1/10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=1)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/abyss-lure/step_02.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 2/10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=2)."
+      },
+      "criteria": "Which lure reads better at thumbnail size? Judge stalk silhouette only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-abyss-lure-adjacent-02v03",
+      "a": {
+        "render": "out/spark_pairs/loft3d/abyss-lure/step_02.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 2/10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=2)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/abyss-lure/step_03.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 3/10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=3)."
+      },
+      "criteria": "Which lure reads better at thumbnail size? Judge stalk silhouette only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-abyss-lure-adjacent-03v04",
+      "a": {
+        "render": "out/spark_pairs/loft3d/abyss-lure/step_03.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 3/10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=3)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/abyss-lure/step_04.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 4/10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=4)."
+      },
+      "criteria": "Which lure reads better at thumbnail size? Judge stalk silhouette only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-abyss-lure-adjacent-04v05",
+      "a": {
+        "render": "out/spark_pairs/loft3d/abyss-lure/step_04.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 4/10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=4)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/abyss-lure/step_05.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 5/10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=5)."
+      },
+      "criteria": "Which lure reads better at thumbnail size? Judge stalk silhouette only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-abyss-lure-adjacent-05v06",
+      "a": {
+        "render": "out/spark_pairs/loft3d/abyss-lure/step_05.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 5/10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=5)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/abyss-lure/step_06.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 6/10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=6)."
+      },
+      "criteria": "Which lure reads better at thumbnail size? Judge stalk silhouette only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-abyss-lure-adjacent-06v07",
+      "a": {
+        "render": "out/spark_pairs/loft3d/abyss-lure/step_06.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 6/10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=6)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/abyss-lure/step_07.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 7/10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=7)."
+      },
+      "criteria": "Which lure reads better at thumbnail size? Judge stalk silhouette only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-abyss-lure-adjacent-07v08",
+      "a": {
+        "render": "out/spark_pairs/loft3d/abyss-lure/step_07.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 7/10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=7)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/abyss-lure/step_08.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 8/10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=8)."
+      },
+      "criteria": "Which lure reads better at thumbnail size? Judge stalk silhouette only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-abyss-lure-adjacent-08v09",
+      "a": {
+        "render": "out/spark_pairs/loft3d/abyss-lure/step_08.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 8/10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=8)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/abyss-lure/step_09.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 9/10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=9)."
+      },
+      "criteria": "Which lure reads better at thumbnail size? Judge stalk silhouette only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-abyss-lure-adjacent-09v10",
+      "a": {
+        "render": "out/spark_pairs/loft3d/abyss-lure/step_09.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 9/10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=9)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/abyss-lure/step_10.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 10/10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=10)."
+      },
+      "criteria": "Which lure reads better at thumbnail size? Judge stalk silhouette only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-abyss-lure-baseline-00v02",
+      "a": {
+        "render": "out/spark_pairs/loft3d/abyss-lure/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 0/10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/abyss-lure/step_02.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 2/10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=2)."
+      },
+      "criteria": "Which lure reads better at thumbnail size? Judge stalk silhouette only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-abyss-lure-baseline-00v03",
+      "a": {
+        "render": "out/spark_pairs/loft3d/abyss-lure/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 0/10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/abyss-lure/step_03.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 3/10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=3)."
+      },
+      "criteria": "Which lure reads better at thumbnail size? Judge stalk silhouette only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-abyss-lure-baseline-00v04",
+      "a": {
+        "render": "out/spark_pairs/loft3d/abyss-lure/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 0/10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/abyss-lure/step_04.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 4/10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=4)."
+      },
+      "criteria": "Which lure reads better at thumbnail size? Judge stalk silhouette only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-abyss-lure-baseline-00v05",
+      "a": {
+        "render": "out/spark_pairs/loft3d/abyss-lure/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 0/10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/abyss-lure/step_05.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 5/10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=5)."
+      },
+      "criteria": "Which lure reads better at thumbnail size? Judge stalk silhouette only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-abyss-lure-baseline-00v06",
+      "a": {
+        "render": "out/spark_pairs/loft3d/abyss-lure/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 0/10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/abyss-lure/step_06.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 6/10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=6)."
+      },
+      "criteria": "Which lure reads better at thumbnail size? Judge stalk silhouette only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-abyss-lure-baseline-00v07",
+      "a": {
+        "render": "out/spark_pairs/loft3d/abyss-lure/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 0/10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/abyss-lure/step_07.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 7/10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=7)."
+      },
+      "criteria": "Which lure reads better at thumbnail size? Judge stalk silhouette only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-abyss-lure-baseline-00v08",
+      "a": {
+        "render": "out/spark_pairs/loft3d/abyss-lure/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 0/10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/abyss-lure/step_08.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 8/10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=8)."
+      },
+      "criteria": "Which lure reads better at thumbnail size? Judge stalk silhouette only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-abyss-lure-baseline-00v09",
+      "a": {
+        "render": "out/spark_pairs/loft3d/abyss-lure/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 0/10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/abyss-lure/step_09.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 9/10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=9)."
+      },
+      "criteria": "Which lure reads better at thumbnail size? Judge stalk silhouette only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-abyss-lure-baseline-00v10",
+      "a": {
+        "render": "out/spark_pairs/loft3d/abyss-lure/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 0/10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/abyss-lure/step_10.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 10/10 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=10)."
+      },
+      "criteria": "Which lure reads better at thumbnail size? Judge stalk silhouette only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-expression-adjacent-00v01",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-expression/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian face, orbit camera, 1280x800 still; chain golem-expression iteration step 0/10 (scene out/spark_pairs/chains/golem-expression/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-expression/step_01.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian face, orbit camera, 1280x800 still; chain golem-expression iteration step 1/10 (scene out/spark_pairs/chains/golem-expression/chain.loft, param step=1)."
+      },
+      "criteria": "Which golem looks friendlier? Judge face and smile only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-expression-adjacent-01v02",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-expression/step_01.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian face, orbit camera, 1280x800 still; chain golem-expression iteration step 1/10 (scene out/spark_pairs/chains/golem-expression/chain.loft, param step=1)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-expression/step_02.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian face, orbit camera, 1280x800 still; chain golem-expression iteration step 2/10 (scene out/spark_pairs/chains/golem-expression/chain.loft, param step=2)."
+      },
+      "criteria": "Which golem looks friendlier? Judge face and smile only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-expression-adjacent-02v03",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-expression/step_02.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian face, orbit camera, 1280x800 still; chain golem-expression iteration step 2/10 (scene out/spark_pairs/chains/golem-expression/chain.loft, param step=2)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-expression/step_03.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian face, orbit camera, 1280x800 still; chain golem-expression iteration step 3/10 (scene out/spark_pairs/chains/golem-expression/chain.loft, param step=3)."
+      },
+      "criteria": "Which golem looks friendlier? Judge face and smile only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-expression-adjacent-03v04",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-expression/step_03.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian face, orbit camera, 1280x800 still; chain golem-expression iteration step 3/10 (scene out/spark_pairs/chains/golem-expression/chain.loft, param step=3)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-expression/step_04.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian face, orbit camera, 1280x800 still; chain golem-expression iteration step 4/10 (scene out/spark_pairs/chains/golem-expression/chain.loft, param step=4)."
+      },
+      "criteria": "Which golem looks friendlier? Judge face and smile only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-expression-adjacent-04v05",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-expression/step_04.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian face, orbit camera, 1280x800 still; chain golem-expression iteration step 4/10 (scene out/spark_pairs/chains/golem-expression/chain.loft, param step=4)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-expression/step_05.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian face, orbit camera, 1280x800 still; chain golem-expression iteration step 5/10 (scene out/spark_pairs/chains/golem-expression/chain.loft, param step=5)."
+      },
+      "criteria": "Which golem looks friendlier? Judge face and smile only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-expression-adjacent-05v06",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-expression/step_05.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian face, orbit camera, 1280x800 still; chain golem-expression iteration step 5/10 (scene out/spark_pairs/chains/golem-expression/chain.loft, param step=5)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-expression/step_06.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian face, orbit camera, 1280x800 still; chain golem-expression iteration step 6/10 (scene out/spark_pairs/chains/golem-expression/chain.loft, param step=6)."
+      },
+      "criteria": "Which golem looks friendlier? Judge face and smile only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-expression-adjacent-06v07",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-expression/step_06.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian face, orbit camera, 1280x800 still; chain golem-expression iteration step 6/10 (scene out/spark_pairs/chains/golem-expression/chain.loft, param step=6)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-expression/step_07.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian face, orbit camera, 1280x800 still; chain golem-expression iteration step 7/10 (scene out/spark_pairs/chains/golem-expression/chain.loft, param step=7)."
+      },
+      "criteria": "Which golem looks friendlier? Judge face and smile only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-expression-adjacent-07v08",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-expression/step_07.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian face, orbit camera, 1280x800 still; chain golem-expression iteration step 7/10 (scene out/spark_pairs/chains/golem-expression/chain.loft, param step=7)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-expression/step_08.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian face, orbit camera, 1280x800 still; chain golem-expression iteration step 8/10 (scene out/spark_pairs/chains/golem-expression/chain.loft, param step=8)."
+      },
+      "criteria": "Which golem looks friendlier? Judge face and smile only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-expression-adjacent-08v09",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-expression/step_08.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian face, orbit camera, 1280x800 still; chain golem-expression iteration step 8/10 (scene out/spark_pairs/chains/golem-expression/chain.loft, param step=8)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-expression/step_09.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian face, orbit camera, 1280x800 still; chain golem-expression iteration step 9/10 (scene out/spark_pairs/chains/golem-expression/chain.loft, param step=9)."
+      },
+      "criteria": "Which golem looks friendlier? Judge face and smile only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-expression-adjacent-09v10",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-expression/step_09.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian face, orbit camera, 1280x800 still; chain golem-expression iteration step 9/10 (scene out/spark_pairs/chains/golem-expression/chain.loft, param step=9)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-expression/step_10.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian face, orbit camera, 1280x800 still; chain golem-expression iteration step 10/10 (scene out/spark_pairs/chains/golem-expression/chain.loft, param step=10)."
+      },
+      "criteria": "Which golem looks friendlier? Judge face and smile only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-expression-baseline-00v02",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-expression/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian face, orbit camera, 1280x800 still; chain golem-expression iteration step 0/10 (scene out/spark_pairs/chains/golem-expression/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-expression/step_02.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian face, orbit camera, 1280x800 still; chain golem-expression iteration step 2/10 (scene out/spark_pairs/chains/golem-expression/chain.loft, param step=2)."
+      },
+      "criteria": "Which golem looks friendlier? Judge face and smile only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-expression-baseline-00v03",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-expression/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian face, orbit camera, 1280x800 still; chain golem-expression iteration step 0/10 (scene out/spark_pairs/chains/golem-expression/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-expression/step_03.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian face, orbit camera, 1280x800 still; chain golem-expression iteration step 3/10 (scene out/spark_pairs/chains/golem-expression/chain.loft, param step=3)."
+      },
+      "criteria": "Which golem looks friendlier? Judge face and smile only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-expression-baseline-00v04",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-expression/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian face, orbit camera, 1280x800 still; chain golem-expression iteration step 0/10 (scene out/spark_pairs/chains/golem-expression/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-expression/step_04.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian face, orbit camera, 1280x800 still; chain golem-expression iteration step 4/10 (scene out/spark_pairs/chains/golem-expression/chain.loft, param step=4)."
+      },
+      "criteria": "Which golem looks friendlier? Judge face and smile only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-expression-baseline-00v05",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-expression/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian face, orbit camera, 1280x800 still; chain golem-expression iteration step 0/10 (scene out/spark_pairs/chains/golem-expression/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-expression/step_05.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian face, orbit camera, 1280x800 still; chain golem-expression iteration step 5/10 (scene out/spark_pairs/chains/golem-expression/chain.loft, param step=5)."
+      },
+      "criteria": "Which golem looks friendlier? Judge face and smile only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-expression-baseline-00v06",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-expression/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian face, orbit camera, 1280x800 still; chain golem-expression iteration step 0/10 (scene out/spark_pairs/chains/golem-expression/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-expression/step_06.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian face, orbit camera, 1280x800 still; chain golem-expression iteration step 6/10 (scene out/spark_pairs/chains/golem-expression/chain.loft, param step=6)."
+      },
+      "criteria": "Which golem looks friendlier? Judge face and smile only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-expression-baseline-00v07",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-expression/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian face, orbit camera, 1280x800 still; chain golem-expression iteration step 0/10 (scene out/spark_pairs/chains/golem-expression/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-expression/step_07.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian face, orbit camera, 1280x800 still; chain golem-expression iteration step 7/10 (scene out/spark_pairs/chains/golem-expression/chain.loft, param step=7)."
+      },
+      "criteria": "Which golem looks friendlier? Judge face and smile only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-expression-baseline-00v08",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-expression/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian face, orbit camera, 1280x800 still; chain golem-expression iteration step 0/10 (scene out/spark_pairs/chains/golem-expression/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-expression/step_08.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian face, orbit camera, 1280x800 still; chain golem-expression iteration step 8/10 (scene out/spark_pairs/chains/golem-expression/chain.loft, param step=8)."
+      },
+      "criteria": "Which golem looks friendlier? Judge face and smile only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-expression-baseline-00v09",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-expression/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian face, orbit camera, 1280x800 still; chain golem-expression iteration step 0/10 (scene out/spark_pairs/chains/golem-expression/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-expression/step_09.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian face, orbit camera, 1280x800 still; chain golem-expression iteration step 9/10 (scene out/spark_pairs/chains/golem-expression/chain.loft, param step=9)."
+      },
+      "criteria": "Which golem looks friendlier? Judge face and smile only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-expression-baseline-00v10",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-expression/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian face, orbit camera, 1280x800 still; chain golem-expression iteration step 0/10 (scene out/spark_pairs/chains/golem-expression/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-expression/step_10.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian face, orbit camera, 1280x800 still; chain golem-expression iteration step 10/10 (scene out/spark_pairs/chains/golem-expression/chain.loft, param step=10)."
+      },
+      "criteria": "Which golem looks friendlier? Judge face and smile only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-shape-adjacent-00v01",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-shape/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 0/10 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-shape/step_01.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 1/10 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=1)."
+      },
+      "criteria": "Which golem reads as the friendlier forest guardian? Judge silhouette only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-shape-adjacent-01v02",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-shape/step_01.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 1/10 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=1)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-shape/step_02.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 2/10 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=2)."
+      },
+      "criteria": "Which golem reads as the friendlier forest guardian? Judge silhouette only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-shape-adjacent-02v03",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-shape/step_02.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 2/10 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=2)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-shape/step_03.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 3/10 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=3)."
+      },
+      "criteria": "Which golem reads as the friendlier forest guardian? Judge silhouette only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-shape-adjacent-03v04",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-shape/step_03.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 3/10 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=3)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-shape/step_04.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 4/10 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=4)."
+      },
+      "criteria": "Which golem reads as the friendlier forest guardian? Judge silhouette only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-shape-adjacent-04v05",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-shape/step_04.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 4/10 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=4)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-shape/step_05.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 5/10 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=5)."
+      },
+      "criteria": "Which golem reads as the friendlier forest guardian? Judge silhouette only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-shape-adjacent-05v06",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-shape/step_05.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 5/10 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=5)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-shape/step_06.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 6/10 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=6)."
+      },
+      "criteria": "Which golem reads as the friendlier forest guardian? Judge silhouette only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-shape-adjacent-06v07",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-shape/step_06.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 6/10 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=6)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-shape/step_07.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 7/10 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=7)."
+      },
+      "criteria": "Which golem reads as the friendlier forest guardian? Judge silhouette only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-shape-adjacent-07v08",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-shape/step_07.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 7/10 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=7)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-shape/step_08.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 8/10 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=8)."
+      },
+      "criteria": "Which golem reads as the friendlier forest guardian? Judge silhouette only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-shape-adjacent-08v09",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-shape/step_08.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 8/10 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=8)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-shape/step_09.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 9/10 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=9)."
+      },
+      "criteria": "Which golem reads as the friendlier forest guardian? Judge silhouette only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-shape-adjacent-09v10",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-shape/step_09.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 9/10 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=9)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-shape/step_10.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 10/10 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=10)."
+      },
+      "criteria": "Which golem reads as the friendlier forest guardian? Judge silhouette only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-shape-baseline-00v02",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-shape/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 0/10 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-shape/step_02.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 2/10 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=2)."
+      },
+      "criteria": "Which golem reads as the friendlier forest guardian? Judge silhouette only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-shape-baseline-00v03",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-shape/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 0/10 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-shape/step_03.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 3/10 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=3)."
+      },
+      "criteria": "Which golem reads as the friendlier forest guardian? Judge silhouette only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-shape-baseline-00v04",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-shape/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 0/10 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-shape/step_04.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 4/10 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=4)."
+      },
+      "criteria": "Which golem reads as the friendlier forest guardian? Judge silhouette only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-shape-baseline-00v05",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-shape/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 0/10 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-shape/step_05.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 5/10 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=5)."
+      },
+      "criteria": "Which golem reads as the friendlier forest guardian? Judge silhouette only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-shape-baseline-00v06",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-shape/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 0/10 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-shape/step_06.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 6/10 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=6)."
+      },
+      "criteria": "Which golem reads as the friendlier forest guardian? Judge silhouette only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-shape-baseline-00v07",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-shape/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 0/10 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-shape/step_07.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 7/10 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=7)."
+      },
+      "criteria": "Which golem reads as the friendlier forest guardian? Judge silhouette only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-shape-baseline-00v08",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-shape/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 0/10 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-shape/step_08.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 8/10 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=8)."
+      },
+      "criteria": "Which golem reads as the friendlier forest guardian? Judge silhouette only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-shape-baseline-00v09",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-shape/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 0/10 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-shape/step_09.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 9/10 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=9)."
+      },
+      "criteria": "Which golem reads as the friendlier forest guardian? Judge silhouette only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-shape-baseline-00v10",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-shape/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 0/10 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-shape/step_10.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 10/10 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=10)."
+      },
+      "criteria": "Which golem reads as the friendlier forest guardian? Judge silhouette only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-texture-adjacent-00v01",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-texture/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 0/10 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-texture/step_01.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 1/10 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=1)."
+      },
+      "criteria": "Which golem has better moss integration? Judge moss coverage only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-texture-adjacent-01v02",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-texture/step_01.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 1/10 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=1)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-texture/step_02.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 2/10 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=2)."
+      },
+      "criteria": "Which golem has better moss integration? Judge moss coverage only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-texture-adjacent-02v03",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-texture/step_02.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 2/10 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=2)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-texture/step_03.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 3/10 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=3)."
+      },
+      "criteria": "Which golem has better moss integration? Judge moss coverage only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-texture-adjacent-03v04",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-texture/step_03.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 3/10 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=3)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-texture/step_04.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 4/10 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=4)."
+      },
+      "criteria": "Which golem has better moss integration? Judge moss coverage only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-texture-adjacent-04v05",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-texture/step_04.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 4/10 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=4)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-texture/step_05.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 5/10 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=5)."
+      },
+      "criteria": "Which golem has better moss integration? Judge moss coverage only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-texture-adjacent-05v06",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-texture/step_05.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 5/10 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=5)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-texture/step_06.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 6/10 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=6)."
+      },
+      "criteria": "Which golem has better moss integration? Judge moss coverage only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-texture-adjacent-06v07",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-texture/step_06.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 6/10 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=6)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-texture/step_07.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 7/10 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=7)."
+      },
+      "criteria": "Which golem has better moss integration? Judge moss coverage only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-texture-adjacent-07v08",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-texture/step_07.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 7/10 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=7)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-texture/step_08.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 8/10 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=8)."
+      },
+      "criteria": "Which golem has better moss integration? Judge moss coverage only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-texture-adjacent-08v09",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-texture/step_08.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 8/10 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=8)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-texture/step_09.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 9/10 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=9)."
+      },
+      "criteria": "Which golem has better moss integration? Judge moss coverage only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-texture-adjacent-09v10",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-texture/step_09.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 9/10 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=9)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-texture/step_10.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 10/10 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=10)."
+      },
+      "criteria": "Which golem has better moss integration? Judge moss coverage only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-texture-baseline-00v02",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-texture/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 0/10 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-texture/step_02.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 2/10 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=2)."
+      },
+      "criteria": "Which golem has better moss integration? Judge moss coverage only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-texture-baseline-00v03",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-texture/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 0/10 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-texture/step_03.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 3/10 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=3)."
+      },
+      "criteria": "Which golem has better moss integration? Judge moss coverage only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-texture-baseline-00v04",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-texture/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 0/10 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-texture/step_04.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 4/10 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=4)."
+      },
+      "criteria": "Which golem has better moss integration? Judge moss coverage only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-texture-baseline-00v05",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-texture/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 0/10 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-texture/step_05.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 5/10 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=5)."
+      },
+      "criteria": "Which golem has better moss integration? Judge moss coverage only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-texture-baseline-00v06",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-texture/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 0/10 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-texture/step_06.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 6/10 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=6)."
+      },
+      "criteria": "Which golem has better moss integration? Judge moss coverage only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-texture-baseline-00v07",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-texture/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 0/10 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-texture/step_07.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 7/10 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=7)."
+      },
+      "criteria": "Which golem has better moss integration? Judge moss coverage only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-texture-baseline-00v08",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-texture/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 0/10 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-texture/step_08.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 8/10 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=8)."
+      },
+      "criteria": "Which golem has better moss integration? Judge moss coverage only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-texture-baseline-00v09",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-texture/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 0/10 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-texture/step_09.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 9/10 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=9)."
+      },
+      "criteria": "Which golem has better moss integration? Judge moss coverage only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-golem-texture-baseline-00v10",
+      "a": {
+        "render": "out/spark_pairs/loft3d/golem-texture/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 0/10 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/golem-texture/step_10.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 10/10 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=10)."
+      },
+      "criteria": "Which golem has better moss integration? Judge moss coverage only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-lantern-color-adjacent-00v01",
+      "a": {
+        "render": "out/spark_pairs/loft3d/lantern-color/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): paper lantern with glow core, orbit camera, 1280x800 still; chain lantern-color iteration step 0/10 (scene out/spark_pairs/chains/lantern-color/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/lantern-color/step_01.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): paper lantern with glow core, orbit camera, 1280x800 still; chain lantern-color iteration step 1/10 (scene out/spark_pairs/chains/lantern-color/chain.loft, param step=1)."
+      },
+      "criteria": "Which lantern feels cozier? Judge glow color and warmth only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-lantern-color-adjacent-01v02",
+      "a": {
+        "render": "out/spark_pairs/loft3d/lantern-color/step_01.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): paper lantern with glow core, orbit camera, 1280x800 still; chain lantern-color iteration step 1/10 (scene out/spark_pairs/chains/lantern-color/chain.loft, param step=1)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/lantern-color/step_02.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): paper lantern with glow core, orbit camera, 1280x800 still; chain lantern-color iteration step 2/10 (scene out/spark_pairs/chains/lantern-color/chain.loft, param step=2)."
+      },
+      "criteria": "Which lantern feels cozier? Judge glow color and warmth only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-lantern-color-adjacent-02v03",
+      "a": {
+        "render": "out/spark_pairs/loft3d/lantern-color/step_02.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): paper lantern with glow core, orbit camera, 1280x800 still; chain lantern-color iteration step 2/10 (scene out/spark_pairs/chains/lantern-color/chain.loft, param step=2)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/lantern-color/step_03.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): paper lantern with glow core, orbit camera, 1280x800 still; chain lantern-color iteration step 3/10 (scene out/spark_pairs/chains/lantern-color/chain.loft, param step=3)."
+      },
+      "criteria": "Which lantern feels cozier? Judge glow color and warmth only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-lantern-color-adjacent-03v04",
+      "a": {
+        "render": "out/spark_pairs/loft3d/lantern-color/step_03.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): paper lantern with glow core, orbit camera, 1280x800 still; chain lantern-color iteration step 3/10 (scene out/spark_pairs/chains/lantern-color/chain.loft, param step=3)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/lantern-color/step_04.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): paper lantern with glow core, orbit camera, 1280x800 still; chain lantern-color iteration step 4/10 (scene out/spark_pairs/chains/lantern-color/chain.loft, param step=4)."
+      },
+      "criteria": "Which lantern feels cozier? Judge glow color and warmth only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-lantern-color-adjacent-04v05",
+      "a": {
+        "render": "out/spark_pairs/loft3d/lantern-color/step_04.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): paper lantern with glow core, orbit camera, 1280x800 still; chain lantern-color iteration step 4/10 (scene out/spark_pairs/chains/lantern-color/chain.loft, param step=4)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/lantern-color/step_05.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): paper lantern with glow core, orbit camera, 1280x800 still; chain lantern-color iteration step 5/10 (scene out/spark_pairs/chains/lantern-color/chain.loft, param step=5)."
+      },
+      "criteria": "Which lantern feels cozier? Judge glow color and warmth only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-lantern-color-adjacent-05v06",
+      "a": {
+        "render": "out/spark_pairs/loft3d/lantern-color/step_05.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): paper lantern with glow core, orbit camera, 1280x800 still; chain lantern-color iteration step 5/10 (scene out/spark_pairs/chains/lantern-color/chain.loft, param step=5)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/lantern-color/step_06.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): paper lantern with glow core, orbit camera, 1280x800 still; chain lantern-color iteration step 6/10 (scene out/spark_pairs/chains/lantern-color/chain.loft, param step=6)."
+      },
+      "criteria": "Which lantern feels cozier? Judge glow color and warmth only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-lantern-color-adjacent-06v07",
+      "a": {
+        "render": "out/spark_pairs/loft3d/lantern-color/step_06.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): paper lantern with glow core, orbit camera, 1280x800 still; chain lantern-color iteration step 6/10 (scene out/spark_pairs/chains/lantern-color/chain.loft, param step=6)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/lantern-color/step_07.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): paper lantern with glow core, orbit camera, 1280x800 still; chain lantern-color iteration step 7/10 (scene out/spark_pairs/chains/lantern-color/chain.loft, param step=7)."
+      },
+      "criteria": "Which lantern feels cozier? Judge glow color and warmth only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-lantern-color-baseline-00v02",
+      "a": {
+        "render": "out/spark_pairs/loft3d/lantern-color/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): paper lantern with glow core, orbit camera, 1280x800 still; chain lantern-color iteration step 0/10 (scene out/spark_pairs/chains/lantern-color/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/lantern-color/step_02.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): paper lantern with glow core, orbit camera, 1280x800 still; chain lantern-color iteration step 2/10 (scene out/spark_pairs/chains/lantern-color/chain.loft, param step=2)."
+      },
+      "criteria": "Which lantern feels cozier? Judge glow color and warmth only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-lantern-color-baseline-00v03",
+      "a": {
+        "render": "out/spark_pairs/loft3d/lantern-color/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): paper lantern with glow core, orbit camera, 1280x800 still; chain lantern-color iteration step 0/10 (scene out/spark_pairs/chains/lantern-color/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/lantern-color/step_03.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): paper lantern with glow core, orbit camera, 1280x800 still; chain lantern-color iteration step 3/10 (scene out/spark_pairs/chains/lantern-color/chain.loft, param step=3)."
+      },
+      "criteria": "Which lantern feels cozier? Judge glow color and warmth only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-lantern-color-baseline-00v04",
+      "a": {
+        "render": "out/spark_pairs/loft3d/lantern-color/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): paper lantern with glow core, orbit camera, 1280x800 still; chain lantern-color iteration step 0/10 (scene out/spark_pairs/chains/lantern-color/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/lantern-color/step_04.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): paper lantern with glow core, orbit camera, 1280x800 still; chain lantern-color iteration step 4/10 (scene out/spark_pairs/chains/lantern-color/chain.loft, param step=4)."
+      },
+      "criteria": "Which lantern feels cozier? Judge glow color and warmth only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-lantern-color-baseline-00v05",
+      "a": {
+        "render": "out/spark_pairs/loft3d/lantern-color/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): paper lantern with glow core, orbit camera, 1280x800 still; chain lantern-color iteration step 0/10 (scene out/spark_pairs/chains/lantern-color/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/lantern-color/step_05.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): paper lantern with glow core, orbit camera, 1280x800 still; chain lantern-color iteration step 5/10 (scene out/spark_pairs/chains/lantern-color/chain.loft, param step=5)."
+      },
+      "criteria": "Which lantern feels cozier? Judge glow color and warmth only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-lantern-color-baseline-00v06",
+      "a": {
+        "render": "out/spark_pairs/loft3d/lantern-color/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): paper lantern with glow core, orbit camera, 1280x800 still; chain lantern-color iteration step 0/10 (scene out/spark_pairs/chains/lantern-color/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/lantern-color/step_06.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): paper lantern with glow core, orbit camera, 1280x800 still; chain lantern-color iteration step 6/10 (scene out/spark_pairs/chains/lantern-color/chain.loft, param step=6)."
+      },
+      "criteria": "Which lantern feels cozier? Judge glow color and warmth only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-lantern-color-baseline-00v07",
+      "a": {
+        "render": "out/spark_pairs/loft3d/lantern-color/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): paper lantern with glow core, orbit camera, 1280x800 still; chain lantern-color iteration step 0/10 (scene out/spark_pairs/chains/lantern-color/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/lantern-color/step_07.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): paper lantern with glow core, orbit camera, 1280x800 still; chain lantern-color iteration step 7/10 (scene out/spark_pairs/chains/lantern-color/chain.loft, param step=7)."
+      },
+      "criteria": "Which lantern feels cozier? Judge glow color and warmth only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-rune-legibility-adjacent-00v01",
+      "a": {
+        "render": "out/spark_pairs/loft3d/rune-legibility/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 0/10 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/rune-legibility/step_01.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 1/10 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=1)."
+      },
+      "criteria": "Which tablet is more legible? Judge glyph clarity vs ornament only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-rune-legibility-adjacent-01v02",
+      "a": {
+        "render": "out/spark_pairs/loft3d/rune-legibility/step_01.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 1/10 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=1)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/rune-legibility/step_02.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 2/10 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=2)."
+      },
+      "criteria": "Which tablet is more legible? Judge glyph clarity vs ornament only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-rune-legibility-adjacent-02v03",
+      "a": {
+        "render": "out/spark_pairs/loft3d/rune-legibility/step_02.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 2/10 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=2)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/rune-legibility/step_03.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 3/10 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=3)."
+      },
+      "criteria": "Which tablet is more legible? Judge glyph clarity vs ornament only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-rune-legibility-adjacent-03v04",
+      "a": {
+        "render": "out/spark_pairs/loft3d/rune-legibility/step_03.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 3/10 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=3)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/rune-legibility/step_04.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 4/10 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=4)."
+      },
+      "criteria": "Which tablet is more legible? Judge glyph clarity vs ornament only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-rune-legibility-adjacent-04v05",
+      "a": {
+        "render": "out/spark_pairs/loft3d/rune-legibility/step_04.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 4/10 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=4)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/rune-legibility/step_05.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 5/10 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=5)."
+      },
+      "criteria": "Which tablet is more legible? Judge glyph clarity vs ornament only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-rune-legibility-adjacent-05v06",
+      "a": {
+        "render": "out/spark_pairs/loft3d/rune-legibility/step_05.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 5/10 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=5)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/rune-legibility/step_06.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 6/10 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=6)."
+      },
+      "criteria": "Which tablet is more legible? Judge glyph clarity vs ornament only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-rune-legibility-adjacent-06v07",
+      "a": {
+        "render": "out/spark_pairs/loft3d/rune-legibility/step_06.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 6/10 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=6)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/rune-legibility/step_07.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 7/10 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=7)."
+      },
+      "criteria": "Which tablet is more legible? Judge glyph clarity vs ornament only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-rune-legibility-adjacent-07v08",
+      "a": {
+        "render": "out/spark_pairs/loft3d/rune-legibility/step_07.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 7/10 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=7)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/rune-legibility/step_08.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 8/10 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=8)."
+      },
+      "criteria": "Which tablet is more legible? Judge glyph clarity vs ornament only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-rune-legibility-adjacent-08v09",
+      "a": {
+        "render": "out/spark_pairs/loft3d/rune-legibility/step_08.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 8/10 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=8)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/rune-legibility/step_09.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 9/10 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=9)."
+      },
+      "criteria": "Which tablet is more legible? Judge glyph clarity vs ornament only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-rune-legibility-adjacent-09v10",
+      "a": {
+        "render": "out/spark_pairs/loft3d/rune-legibility/step_09.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 9/10 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=9)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/rune-legibility/step_10.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 10/10 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=10)."
+      },
+      "criteria": "Which tablet is more legible? Judge glyph clarity vs ornament only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-rune-legibility-baseline-00v02",
+      "a": {
+        "render": "out/spark_pairs/loft3d/rune-legibility/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 0/10 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/rune-legibility/step_02.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 2/10 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=2)."
+      },
+      "criteria": "Which tablet is more legible? Judge glyph clarity vs ornament only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-rune-legibility-baseline-00v03",
+      "a": {
+        "render": "out/spark_pairs/loft3d/rune-legibility/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 0/10 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/rune-legibility/step_03.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 3/10 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=3)."
+      },
+      "criteria": "Which tablet is more legible? Judge glyph clarity vs ornament only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-rune-legibility-baseline-00v04",
+      "a": {
+        "render": "out/spark_pairs/loft3d/rune-legibility/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 0/10 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/rune-legibility/step_04.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 4/10 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=4)."
+      },
+      "criteria": "Which tablet is more legible? Judge glyph clarity vs ornament only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-rune-legibility-baseline-00v05",
+      "a": {
+        "render": "out/spark_pairs/loft3d/rune-legibility/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 0/10 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/rune-legibility/step_05.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 5/10 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=5)."
+      },
+      "criteria": "Which tablet is more legible? Judge glyph clarity vs ornament only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-rune-legibility-baseline-00v06",
+      "a": {
+        "render": "out/spark_pairs/loft3d/rune-legibility/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 0/10 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/rune-legibility/step_06.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 6/10 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=6)."
+      },
+      "criteria": "Which tablet is more legible? Judge glyph clarity vs ornament only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-rune-legibility-baseline-00v07",
+      "a": {
+        "render": "out/spark_pairs/loft3d/rune-legibility/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 0/10 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/rune-legibility/step_07.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 7/10 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=7)."
+      },
+      "criteria": "Which tablet is more legible? Judge glyph clarity vs ornament only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-rune-legibility-baseline-00v08",
+      "a": {
+        "render": "out/spark_pairs/loft3d/rune-legibility/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 0/10 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/rune-legibility/step_08.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 8/10 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=8)."
+      },
+      "criteria": "Which tablet is more legible? Judge glyph clarity vs ornament only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-rune-legibility-baseline-00v09",
+      "a": {
+        "render": "out/spark_pairs/loft3d/rune-legibility/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 0/10 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/rune-legibility/step_09.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 9/10 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=9)."
+      },
+      "criteria": "Which tablet is more legible? Judge glyph clarity vs ornament only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-rune-legibility-baseline-00v10",
+      "a": {
+        "render": "out/spark_pairs/loft3d/rune-legibility/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 0/10 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/rune-legibility/step_10.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 10/10 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=10)."
+      },
+      "criteria": "Which tablet is more legible? Judge glyph clarity vs ornament only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-solar-material-adjacent-00v01",
+      "a": {
+        "render": "out/spark_pairs/loft3d/solar-material/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 0/10 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/solar-material/step_01.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 1/10 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=1)."
+      },
+      "criteria": "Which robot reads more solar-scavenger? Judge rust vs mirror only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-solar-material-adjacent-01v02",
+      "a": {
+        "render": "out/spark_pairs/loft3d/solar-material/step_01.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 1/10 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=1)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/solar-material/step_02.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 2/10 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=2)."
+      },
+      "criteria": "Which robot reads more solar-scavenger? Judge rust vs mirror only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-solar-material-adjacent-02v03",
+      "a": {
+        "render": "out/spark_pairs/loft3d/solar-material/step_02.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 2/10 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=2)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/solar-material/step_03.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 3/10 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=3)."
+      },
+      "criteria": "Which robot reads more solar-scavenger? Judge rust vs mirror only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-solar-material-adjacent-03v04",
+      "a": {
+        "render": "out/spark_pairs/loft3d/solar-material/step_03.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 3/10 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=3)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/solar-material/step_04.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 4/10 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=4)."
+      },
+      "criteria": "Which robot reads more solar-scavenger? Judge rust vs mirror only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-solar-material-adjacent-04v05",
+      "a": {
+        "render": "out/spark_pairs/loft3d/solar-material/step_04.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 4/10 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=4)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/solar-material/step_05.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 5/10 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=5)."
+      },
+      "criteria": "Which robot reads more solar-scavenger? Judge rust vs mirror only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-solar-material-adjacent-05v06",
+      "a": {
+        "render": "out/spark_pairs/loft3d/solar-material/step_05.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 5/10 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=5)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/solar-material/step_06.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 6/10 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=6)."
+      },
+      "criteria": "Which robot reads more solar-scavenger? Judge rust vs mirror only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-solar-material-adjacent-06v07",
+      "a": {
+        "render": "out/spark_pairs/loft3d/solar-material/step_06.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 6/10 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=6)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/solar-material/step_07.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 7/10 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=7)."
+      },
+      "criteria": "Which robot reads more solar-scavenger? Judge rust vs mirror only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-solar-material-adjacent-07v08",
+      "a": {
+        "render": "out/spark_pairs/loft3d/solar-material/step_07.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 7/10 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=7)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/solar-material/step_08.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 8/10 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=8)."
+      },
+      "criteria": "Which robot reads more solar-scavenger? Judge rust vs mirror only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-solar-material-adjacent-08v09",
+      "a": {
+        "render": "out/spark_pairs/loft3d/solar-material/step_08.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 8/10 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=8)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/solar-material/step_09.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 9/10 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=9)."
+      },
+      "criteria": "Which robot reads more solar-scavenger? Judge rust vs mirror only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-solar-material-adjacent-09v10",
+      "a": {
+        "render": "out/spark_pairs/loft3d/solar-material/step_09.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 9/10 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=9)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/solar-material/step_10.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 10/10 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=10)."
+      },
+      "criteria": "Which robot reads more solar-scavenger? Judge rust vs mirror only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-solar-material-baseline-00v02",
+      "a": {
+        "render": "out/spark_pairs/loft3d/solar-material/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 0/10 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/solar-material/step_02.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 2/10 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=2)."
+      },
+      "criteria": "Which robot reads more solar-scavenger? Judge rust vs mirror only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-solar-material-baseline-00v03",
+      "a": {
+        "render": "out/spark_pairs/loft3d/solar-material/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 0/10 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/solar-material/step_03.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 3/10 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=3)."
+      },
+      "criteria": "Which robot reads more solar-scavenger? Judge rust vs mirror only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-solar-material-baseline-00v04",
+      "a": {
+        "render": "out/spark_pairs/loft3d/solar-material/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 0/10 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/solar-material/step_04.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 4/10 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=4)."
+      },
+      "criteria": "Which robot reads more solar-scavenger? Judge rust vs mirror only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-solar-material-baseline-00v05",
+      "a": {
+        "render": "out/spark_pairs/loft3d/solar-material/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 0/10 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/solar-material/step_05.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 5/10 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=5)."
+      },
+      "criteria": "Which robot reads more solar-scavenger? Judge rust vs mirror only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-solar-material-baseline-00v06",
+      "a": {
+        "render": "out/spark_pairs/loft3d/solar-material/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 0/10 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/solar-material/step_06.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 6/10 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=6)."
+      },
+      "criteria": "Which robot reads more solar-scavenger? Judge rust vs mirror only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-solar-material-baseline-00v07",
+      "a": {
+        "render": "out/spark_pairs/loft3d/solar-material/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 0/10 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/solar-material/step_07.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 7/10 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=7)."
+      },
+      "criteria": "Which robot reads more solar-scavenger? Judge rust vs mirror only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-solar-material-baseline-00v08",
+      "a": {
+        "render": "out/spark_pairs/loft3d/solar-material/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 0/10 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/solar-material/step_08.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 8/10 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=8)."
+      },
+      "criteria": "Which robot reads more solar-scavenger? Judge rust vs mirror only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-solar-material-baseline-00v09",
+      "a": {
+        "render": "out/spark_pairs/loft3d/solar-material/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 0/10 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/solar-material/step_09.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 9/10 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=9)."
+      },
+      "criteria": "Which robot reads more solar-scavenger? Judge rust vs mirror only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "loft3d-solar-material-baseline-00v10",
+      "a": {
+        "render": "out/spark_pairs/loft3d/solar-material/step_00.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 0/10 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=0)."
+      },
+      "b": {
+        "render": "out/spark_pairs/loft3d/solar-material/step_10.png",
+        "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 10/10 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=10)."
+      },
+      "criteria": "Which robot reads more solar-scavenger? Judge rust vs mirror only.",
+      "created_by": "loft-still-01"
+    },
+    {
+      "id": "pair-01",
+      "a": {
+        "render": "out/spark_pairs/pair-01/a.png",
+        "prompt": "Concept render, centered three-quarter view on plain background: a mossy stone golem creature, rounded boulders, glowing green moss seams, variant A bulky round body"
+      },
+      "b": {
+        "render": "out/spark_pairs/pair-01/b.png",
+        "prompt": "Concept render, centered three-quarter view on plain background: a mossy stone golem creature, tall angular slabs, glowing green moss seams, variant B tall angular body"
+      },
+      "criteria": "Which golem reads as a friendlier forest guardian? Judge silhouette appeal and moss integration only.",
+      "created_by": "pair-aligner demo seed (muse image_generation)"
+    },
+    {
+      "id": "pair-02",
+      "a": {
+        "render": "out/spark_pairs/pair-02/a.png",
+        "prompt": "Concept render, centered three-quarter view on plain background: a floating paper lantern prop with warm glow, variant A round paper lantern with tassel"
+      },
+      "b": {
+        "render": "out/spark_pairs/pair-02/b.png",
+        "prompt": "Concept render, centered three-quarter view on plain background: a floating paper lantern prop with warm glow, variant B hexagonal metal-frame lantern"
+      },
+      "criteria": "Which lantern prop fits a cozy night market? Judge warmth and readability at thumbnail size only.",
+      "created_by": "pair-aligner demo seed (muse image_generation)"
+    },
+    {
+      "id": "pair-03",
+      "a": {
+        "render": "out/spark_pairs/pair-03/a.jpg",
+        "prompt": "Concept render, centered three-quarter view on plain background: a misty canyon environment diorama, variant A dawn light with river"
+      },
+      "b": {
+        "render": "out/spark_pairs/pair-03/b.jpg",
+        "prompt": "Concept render, centered three-quarter view on plain background: a misty canyon environment diorama, variant B dusk light with waterfall"
+      },
+      "criteria": "Which canyon diorama has the stronger mood? Judge lighting and depth only.",
+      "created_by": "pair-aligner demo seed (muse image_generation)"
+    },
+    {
+      "id": "pair-04",
+      "a": {
+        "render": "out/spark_pairs/pair-04/a.jpg",
+        "prompt": "Concept render, centered three-quarter view on plain background: a sky pirate character with goggles and coat, variant A young woman with braided hair"
+      },
+      "b": {
+        "render": "out/spark_pairs/pair-04/b.jpg",
+        "prompt": "Concept render, centered three-quarter view on plain background: a sky pirate character with goggles and coat, variant B older man with beard and hat"
+      },
+      "criteria": "Which sky pirate has more character? Judge face and costume storytelling only.",
+      "created_by": "pair-aligner demo seed (muse image_generation)"
+    }
+  ]
+}

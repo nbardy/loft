@@ -1,0 +1,66 @@
+use stdlib::geometry::analytic::{ray_capsule}
+use stdlib::integrators::direct::{sun_sky}
+use stdlib::materials::bsdf::{ggx}
+use stdlib::math::sampling::{sample_key}
+use stdlib::sdf::solid::{capsule}
+use stdlib::sky::environment::{sky_color}
+
+# solar-material chain: rust-dominant -> mirror-dominant scavenger torso.
+# Warm core + visor fixed; mirror pauldron ribs take over with f via seeded
+# keep rolls. Mirrors the solar-material step renders (same t index).
+
+space World
+
+kind Capsule @World (a: p3@World, b: p3@World, r: m, albedo: rgb) {
+
+  visible(ro, rd) {
+    ray_capsule(ro, rd, a, b, r)
+  }
+  trace(p) {
+    capsule(p, a, b, r)
+  }
+  material(p, n) {
+    ggx(albedo, 0.55, 0)
+  }
+}
+
+param step: u = 3 in 0..10
+
+build fn axis_f(step: u) -> f {
+  f32(step) / 10.0
+}
+
+build fn rib_roll(slot: u) -> u {
+  u32(sample_key(77, slot, 2, 0, 7) * 100.0)
+}
+
+build {
+  let f = axis_f(step)
+  let c = [0.0, 0.0, 0.0]@World
+  let rust = [0.60, 0.34, 0.17]
+  emit Capsule(a: c + [0.0, 0.55, 0], b: c + [0.0, 1.55, 0], r: 0.46m, albedo: rust)
+  let hw = 0.30 + 0.28 * f
+  emit Capsule(a: c + [-hw, 1.62, 0], b: c + [hw, 1.62, 0], r: 0.24m, albedo: rust * 1.1)
+  emit Capsule(a: c + [-0.30, 1.98, 0], b: c + [0.30, 1.98, 0], r: 0.26m, albedo: rust * 1.1)
+  # visor slit, fixed teal (identity anchor)
+  emit Capsule(a: c + [-0.10, 2.00, 0.24], b: c + [0.10, 2.00, 0.24], r: 0.05m, albedo: [0.47, 0.86, 0.90])
+  # mirror pauldrons: shell ribs accrete on the shoulder ends with f
+  let keep = u32(100.0 * f)
+  build for slot in 0..8 {
+    if rib_roll(slot) < keep {
+      let s = select(-1.0, 1.0, slot % 2 == 0)
+      let y = 1.60 + f32(slot / 2) * 0.09
+      let x0 = s * (hw - 0.05)
+      emit Capsule(a: c + [x0 - s * 0.12, y, 0.0], b: c + [x0 + s * 0.12, y + 0.03, 0.05], r: 0.05m, albedo: [0.77, 0.84, 0.89])
+    }
+  }
+}
+
+schedule Main {
+  orbit(at: [0, 1.0, 0]@World, radius: 4.4m, height: 2.2m, period: 24.0s, fov: 40deg)
+  cull_indirect(Capsule)
+  render_bundle(Vis64) { draw_indirect(Capsule) }
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: sun_sky, sun: [0.45, 0.8, 0.35])
+  tonemap_aces(ColorHdr, sky: sky_color)
+}

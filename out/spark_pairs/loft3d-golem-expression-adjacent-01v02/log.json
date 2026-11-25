@@ -1,0 +1,53 @@
+{
+  "alignment": {
+    "format": "png",
+    "framing": "orbit still, subject centred, 1280x800 PNG",
+    "size": [
+      1280,
+      800
+    ]
+  },
+  "created_by": "loft-still-01",
+  "criteria": "Which golem looks friendlier? Judge face and smile only.",
+  "pair_id": "loft3d-golem-expression-adjacent-01v02",
+  "renders": [
+    {
+      "params": {
+        "chain": "golem-expression",
+        "kind": "adjacent",
+        "t": 1
+      },
+      "path": "out/spark_pairs/loft3d/golem-expression/step_01.png",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian face, orbit camera, 1280x800 still; chain golem-expression iteration step 1/10 (scene out/spark_pairs/chains/golem-expression/chain.loft, param step=1).",
+      "sha256": "71f78d2dd377998157782d45aaf4aaef3b92bced9ee0878e1bd0ba5abb704750",
+      "side": "a",
+      "size": [
+        1280,
+        800
+      ]
+    },
+    {
+      "params": {
+        "chain": "golem-expression",
+        "kind": "adjacent",
+        "t": 2
+      },
+      "path": "out/spark_pairs/loft3d/golem-expression/step_02.png",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian face, orbit camera, 1280x800 still; chain golem-expression iteration step 2/10 (scene out/spark_pairs/chains/golem-expression/chain.loft, param step=2).",
+      "sha256": "3c98e58a79c3d152379d7802a2f6e85dbaf8f4cb8e6c9d8b1591ec5382fc41e7",
+      "side": "b",
+      "size": [
+        1280,
+        800
+      ]
+    }
+  ],
+  "scene_check": {
+    "exit": 0,
+    "scene": "out/spark_pairs/chains/golem-expression/chain.loft",
+    "summary": [
+      "kind Capsule      Analytic  rows   10  shapes  10  derived L 1.0000..1.0000  bound evals 0  derive 0.00 s",
+      "modules 4  passes [cull, Vis([0]), classify, Shade([0]), present]"
+    ]
+  }
+}

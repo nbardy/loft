@@ -1,0 +1,93 @@
+use stdlib::geometry::analytic::{ray_capsule}
+use stdlib::geometry::layout::{palette}
+use stdlib::integrators::direct::{sun_sky}
+use stdlib::materials::bsdf::{ggx}
+use stdlib::math::sampling::{sample_key}
+use stdlib::sdf::solid::{capsule}
+use stdlib::sky::environment::{sky_color}
+
+# Architectural lattice: a seeded strut pattern on a 4x3x4 node grid,
+# built from capsule struts like stdlib/engines/capsules.loft.
+# seed picks the keep/drop pattern; airy switches dense <-> airy variants.
+
+space World
+
+kind Strut @World (a: p3@World, b: p3@World, r: m, albedo: rgb) {
+
+  visible(ro, rd) {
+    ray_capsule(ro, rd, a, b, r)
+  }
+  trace(p) {
+    capsule(p, a, b, r)
+  }
+  material(p, n) {
+    ggx(albedo, 0.55, 0)
+  }
+}
+
+param seed: u = 7
+param airy: u = 0 in 0..1
+
+# Node `cell` of 48 on a 4x3x4 grid in the xz plane, centred on the origin.
+build fn lattice_node(cell: u, pitch: f) -> rgb {
+  let ix = cell % 4
+  let iy = (cell / 4) % 3
+  let iz = cell / 12
+  [(f32(ix) - 1.5) * pitch, (f32(iy) - 1.0) * pitch + 1.15, (f32(iz) - 1.5) * pitch]
+}
+
+# Seeded keep roll in 0..100 for one strut channel of one cell.
+build fn strut_roll(seed: u, cell: u, channel: u) -> u {
+  u32(sample_key(seed, cell, channel, 0, 7) * 100.0)
+}
+
+# One grid cell: joint ball plus up to four seeded struts
+# (+x, +y, +z, and the +x+y+z body diagonal).
+build fn lattice_cell(cell: u, seed: u, airy: u, pitch: f, skin: rgb) {
+  let keep = select(95, 50, airy == 1)
+  let r = select(0.055m, 0.034m, airy == 1)
+  let ix = cell % 4
+  let iy = (cell / 4) % 3
+  let iz = cell / 12
+  let o = [lattice_node(cell, pitch)]@World
+  emit Strut(a: o, b: o, r: r * 1.35, albedo: skin)
+  if ix < 3 {
+    if strut_roll(seed, cell, 0) < keep {
+      emit Strut(a: o, b: [lattice_node(cell + 1, pitch)]@World, r: r, albedo: skin)
+    }
+  }
+  if iy < 2 {
+    if strut_roll(seed, cell, 1) < keep {
+      emit Strut(a: o, b: [lattice_node(cell + 4, pitch)]@World, r: r, albedo: skin)
+    }
+  }
+  if iz < 3 {
+    if strut_roll(seed, cell, 2) < keep {
+      emit Strut(a: o, b: [lattice_node(cell + 12, pitch)]@World, r: r, albedo: skin)
+    }
+  }
+  if ix < 3 {
+    if iy < 2 {
+      if iz < 3 {
+        if strut_roll(seed, cell, 3) < keep {
+          emit Strut(a: o, b: [lattice_node(cell + 17, pitch)]@World, r: r * 0.8, albedo: skin * 1.1)
+        }
+      }
+    }
+  }
+}
+
+build {
+  build for cell in 0..48 {
+    lattice_cell(cell, seed, airy, 0.55, palette(cell))
+  }
+}
+
+schedule Main {
+  orbit(at: [0, 1.0, 0]@World, radius: 4.4m, height: 2.2m, period: 24.0s, fov: 40deg)
+  cull_indirect(Strut)
+  render_bundle(Vis64) { draw_indirect(Strut) }
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: sun_sky, sun: [0.45, 0.8, 0.35])
+  tonemap_aces(ColorHdr, sky: sky_color)
+}

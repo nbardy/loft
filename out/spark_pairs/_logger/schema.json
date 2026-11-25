@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://loft/spark_pairs/_logger/schema.json",
+  "title": "spark intermediate-render log row (JSONL, one object per line)",
+  "type": "object",
+  "required": ["ts", "agent", "prompt", "render_path"],
+  "additionalProperties": false,
+  "properties": {
+    "ts": {
+      "type": "string",
+      "description": "UTC timestamp of the render, ISO-8601 (e.g. 2026-11-25T12:56:00Z)."
+    },
+    "agent": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Agent/lane id that produced the render (e.g. spark-logger)."
+    },
+    "prompt": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Full text prompt sent to the image/model generator."
+    },
+    "seed": {
+      "type": ["integer", "null"],
+      "description": "Generator seed, or null when the backend assigns one."
+    },
+    "params": {
+      "type": "object",
+      "description": "Free-form generation params (backend, size, steps, guidance, etc.)."
+    },
+    "render_path": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Repo-relative path to the rendered image (PNG/WebP), relative to repo root."
+    },
+    "model_path": {
+      "type": ["string", "null"],
+      "description": "Repo-relative path to the 3D model file (GLB/FBX/USDZ), or null when image-only."
+    },
+    "note": {
+      "type": "string",
+      "description": "Short human note: what this render is for / what to look at."
+    }
+  }
+}
