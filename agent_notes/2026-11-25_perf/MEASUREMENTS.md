@@ -9,10 +9,10 @@ All timing pairs are nearest-rank GPU p50 / p95 milliseconds from 120 timed fram
 | Starter otter | 960x720 | 15.84 / 33.66 C | 3.92 / 4.79 C | 120/120, max 0 |
 | Walrus | 960x720 | 26.53 / 99.26 C | 1.86 / 2.15 C | 120/120, max 0 |
 | Heron | 960x720 | 37.01 / 41.19 C | 1.00 / 1.25 C | 120/120, max 0 |
-| Final otter | 960x720 | 100.02 / 148.47 C | 1.99 / 2.09 C | — |
-| Walrus | 1280x800 | 38.40 / 55.66 C | 2.50 / 2.67 C | — |
-| Heron | 1280x800 | 94.81 / 114.52 C | 5.00 / 5.87 C | — |
-| Final otter | 1280x800 | 189.83 / 221.20 C | 2.84 / 10.83 C | — |
+| Final otter | 960x720 | 100.02 / 148.47 C | 1.99 / 2.09 C | 120/120, max 0 |
+| Walrus | 1280x800 | 38.40 / 55.66 C | 2.50 / 2.67 C | 119/120, max 24 |
+| Heron | 1280x800 | 94.81 / 114.52 C | 5.00 / 5.87 C | 120/120, max 0 |
+| Final otter | 1280x800 | 189.83 / 221.20 C | 2.84 / 10.83 C | 120/120, max 0 |
 
 ## Fresh visibility predictions and work targets
 
@@ -66,6 +66,17 @@ These runs use the original executable and recompute visibility on every frame. 
 | Starter otter | Field box | 15.84 / 33.66 C | 8.04 / 14.21 C | 8.72 | 3/3, max 0 |
 | Walrus | Analytic sphere | 26.53 / 99.26 C | 26.05 / 31.13 C | 0.52 | 3/3, max 0 |
 | Final otter | Analytic sphere | 100.02 / 148.47 C | 97.77 / 116.42 C | 1.56 | 3/3, max 0 |
+
+## Ball lighting control
+
+Two integrations retain ambient occlusion and two make it dead. The sun-only AO control multiplies the direct term by AO to keep its five field samples live. These controls change lighting by design. They are excluded from all picture-preserving speedups.
+
+| Integrator | Median shade ms | Attempts | Selected control |
+| --- | --- | --- | --- |
+| sky | 2.38 | 3 | C |
+| sky_no_ao | 2.16 | 3 | C |
+| sun_ao | 0.99 | 3 | C |
+| sun | 0.65 | 3 | C |
 
 ## Work available for further engine changes
 
