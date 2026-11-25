@@ -66,9 +66,11 @@ for name in ('walrus', 'otter', 'base'):
             if mask is not None:
                 # The two emit roots have different path prefixes in their mangled names.
                 # Match the identical fixture-relative module path and the declared kind.
-                old_path, old_kind = original[index]['name'].removeprefix('loft_m_').split('_', 1)
-                new_path, new_kind = modules[index]['name'].removeprefix('loft_m_').split('_', 1)
-                assert bytes.fromhex(new_path).endswith(bytes.fromhex(old_path)) and new_kind == old_kind
+                old_name, new_name = original[index]['name'], modules[index]['name']
+                if old_name != new_name:
+                    old_path, old_kind = old_name.removeprefix('loft_m_').split('_', 1)
+                    new_path, new_kind = new_name.removeprefix('loft_m_').split('_', 1)
+                    assert bytes.fromhex(new_path).endswith(bytes.fromhex(old_path)) and new_kind == old_kind
                 assert 'vi / 36u' in src
             body = src[:src.index('\n}',src.index('@fragment fn fs('))+2]
             row_group = group(row_layout, [(0,fields), (1,ids), (2,kp), (3,luts)])
