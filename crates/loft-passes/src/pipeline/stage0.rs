@@ -15,6 +15,7 @@ pub(super) struct Stage0Scene {
     pub(super) luts: Vec<Lut>,
     pub(super) lut_words: Vec<f32>,
     pub(super) lut_refs: Vec<emit::LutRef>,
+    pub(super) guard_table: Vec<Option<u32>>,
     pub(super) params: Vec<f32>,
     pub(super) kinds: Vec<KindTable>,
     pub(super) instances: Vec<Instance>,
@@ -40,16 +41,43 @@ pub(super) fn evaluate<'a>(
     // Every (kind, shape) derivation of the scene runs in one pool. A per-kind pool left cores idle on scenes of
     // several kinds with few shapes each (Hermit: five kinds, eleven shapes).
     let derived = derive_all(p, types, opts, &tables, &luts, &mut plans)?;
+    let (mut lut_words, lut_refs) = pack_luts(meshes, &luts, schedule.tiled_world.is_some())?;
+    let mut guard_table = vec![None; plans.len()];
+    let guard_header = lut_words.len();
+    let traced = |plan: &KindPlan<'_, '_>| plan.trace.is_some() && plan.surface.is_none()
+        && plan.k.query(QueryKind::Visible).is_none();
+    if plans.iter().any(traced) {
+        lut_words.resize(guard_header + plans.len(), 0.0);
+    }
     for (plan, (derived, derive_s)) in plans.iter().zip(&derived) {
+        let first = lut_words.len();
+        // A hot edit can change whether this kind admits a guard. Give each
+        // traced row its own record so no other kind's LUT addresses move.
+        if traced(plan) {
+            let address = |n: usize| u32::try_from(n).map_err(|_| Diag::new(
+                Code::E602, plan.k.name.span, "visibility intervals exceed the LUT address range", "reduce the number of rows"));
+            lut_words[guard_header + plan.id] = f32::from_bits(address(lut_words.len())?);
+            if derived.iter().any(|s| s.guard.is_some()) {
+                guard_table[plan.id] = Some(address(guard_header)?);
+            }
+            for &shape in &plan.shape_of {
+                let s = &derived[shape];
+                let words = match &s.guard {
+                    Some(g) => loft_eval::guard::words(&s.proxy, g, pose_field(plan.k).is_some()),
+                    None => [0.0; 10],
+                };
+                lut_words.extend(words);
+            }
+            address(lut_words.len())?;
+        }
         let mesh_asset = |row: &[RowVal]| mesh_asset_of(plan.k, meshes, row);
         let (kind, report) = pack_kind(plan.k, plan.id, &tables[plan.t], plan.mesh_kind, mesh_asset, &plan.shapes,
-            &plan.shape_of, derived, plan.step_scale, *derive_s, &mut instances)?;
+            &plan.shape_of, derived, plan.step_scale, *derive_s, first..lut_words.len(), &mut instances)?;
         kinds.push(kind);
         reports.push(report);
     }
     timings.lap("derive");
-    let (lut_words, lut_refs) = pack_luts(meshes, &luts, schedule.tiled_world.is_some())?;
-    Ok(Stage0Scene { tables, luts, lut_words, lut_refs, params, kinds, instances, reports })
+    Ok(Stage0Scene { tables, luts, lut_words, lut_refs, guard_table, params, kinds, instances, reports })
 }
 
 fn scans<'a>(p: &Prog<'a>, modules: &'a [Module], types: &[Ty], overrides: &[(String, f64)]) -> Res<Vec<Lut>> {
@@ -200,6 +228,7 @@ struct KindPlan<'a, 't> {
     domain: blake3::Hasher,
     /// Mesh kinds read their bounds from the asset and derive nothing.
     fixed: Option<Vec<lip::Derived>>,
+    guard_key: Option<blake3::Hasher>,
 }
 
 fn mesh_asset_of<'m>(k: &KindDecl, meshes: &'m [gltf::Mesh], row: &[RowVal]) -> Res<&'m gltf::Mesh> {
@@ -280,12 +309,46 @@ fn plan_kind<'a, 't>(
                 hi: mesh.hi.map(|x| x.next_up().into()), l: 0., evals: 0 })
         }).collect::<Res<_>>()?)
     } else { None };
-    Ok(KindPlan { id, t, k, mesh_kind, shapes, shape_of, keys, surface, trace, step_scale, domain, fixed })
+    // An immutable certificate may depend on this row and pure library functions.
+    // Foreign rows, live params, sampled bakes and scheduled writers can change independently.
+    let guard_key = trace.filter(|_| surface.is_none() && k.query(QueryKind::Visible).is_none()
+        && k.proof == GeometryProof::Required).and_then(|f| {
+        let (helpers, constants) = emit::reachable(p, &[f], &[]);
+        let mutable = p.schedule.is_some_and(|s| s.passes.iter().any(|pass| pass.verb.name == "run_laws"))
+            || constants.iter().any(|n| p.param_slot(n).is_some() || p.runtime_constant(n)
+                || !loft_eval::guard::supports_expr(types, &p.consts[n.as_str()].value))
+            || std::iter::once(f).chain(helpers).any(|f| {
+                let refs = emit::References::function(f);
+                f.raw.is_some() || !loft_eval::guard::supports_block(types, &f.body)
+                    || !refs.texture_names.is_empty() || !refs.scans.is_empty()
+                    || refs.names.iter().any(|&(n,_)| p.kinds.contains_key(n) || n == "time")
+                    || refs.calls.iter().any(|c| !p.fns.contains_key(c.name.as_str()) && !matches!(c.name.as_str(),
+                        "abs" | "clamp" | "cos" | "sin" | "sqrt" | "min" | "max" | "length" | "distance" | "dist"
+                        | "dot" | "cross" | "f32" | "select" | "mix" | "step" | "smoothstep" | "coords" | "inv"
+                        | "vec2" | "vec3" | "vec4" | "vec2f" | "vec3f" | "vec4f" | "rgb" | "saturate" | "normalize"))
+            });
+        if mutable { return None; }
+        let mut key = domain.clone();
+        key.update(include_bytes!("../../../loft-eval/src/guard.rs"));
+        key.update(include_bytes!("../../../loft-eval/src/guard_range.rs"));
+        for (name, value) in overrides {
+            key.update(&(name.len() as u64).to_le_bytes());
+            key.update(name.as_bytes());
+            key.update(&value.to_le_bytes());
+        }
+        Some(key)
+    });
+    Ok(KindPlan { id, t, k, mesh_kind, shapes, shape_of, keys, surface, trace, step_scale, domain, fixed, guard_key })
+}
+
+struct ShapeBounds {
+    proxy: lip::Derived,
+    guard: Option<lip::Derived>,
 }
 
 fn derive_all(
     p: &Prog<'_>, types: &[Ty], opts: &CompileOptions<'_>, tables: &Tables, luts: &[Lut], plans: &mut [KindPlan<'_, '_>],
-) -> Res<Vec<(Vec<lip::Derived>, f64)>> {
+) -> Res<Vec<(Vec<ShapeBounds>, f64)>> {
     let shared: &[KindPlan<'_, '_>] = plans;
     let CompileOptions { overrides, cache, .. } = *opts;
     let jobs: Vec<(usize, usize)> = shared.iter().enumerate().filter(|(_, plan)| plan.fixed.is_none())
@@ -293,7 +356,7 @@ fn derive_all(
     let next = std::sync::atomic::AtomicUsize::new(0);
     let workers = std::thread::available_parallelism().map_or(1, |n| n.get()).min(jobs.len());
     // Workers claim jobs one at a time: derivation cost varies several-fold between shapes.
-    let done: Vec<Vec<(usize, Res<lip::Derived>, f64)>> = std::thread::scope(|sc| {
+    let done: Vec<Vec<(usize, Res<ShapeBounds>, f64)>> = std::thread::scope(|sc| {
         let handles: Vec<_> = (0..workers).map(|_| {
             let (jobs, next) = (&jobs, &next);
             sc.spawn(move || {
@@ -312,24 +375,32 @@ fn derive_all(
                         (None, Some(f)) => lip::derive(&mut iv, f, plan.t, r, plan.k.name.span),
                         (None, None) => unreachable!("checked: trace or surface"),
                     });
-                    out.push((j, derived, began.elapsed().as_secs_f64()));
+                    let result = derived.and_then(|proxy| {
+                        let guard = match (&plan.guard_key, plan.trace) {
+                            (Some(key), Some(f)) if loft_eval::guard::stored_transforms_exact(&plan.keys[s]) => Some(cache::derive(cache, key, &plan.keys[s], plan.k.name.span, ||
+                                loft_eval::guard::derive(&mut iv, f, plan.t, r, plan.k.name.span, &proxy, pose_field(plan.k).is_some()))?),
+                            _ => None,
+                        };
+                        Ok(ShapeBounds { proxy, guard })
+                    });
+                    out.push((j, result, began.elapsed().as_secs_f64()));
                 }
                 out
             })
         }).collect();
         handles.into_iter().map(|h| h.join().expect("derive thread")).collect()
     });
-    let mut results: Vec<Option<(Res<lip::Derived>, f64)>> = (0..jobs.len()).map(|_| None).collect();
+    let mut results: Vec<Option<(Res<ShapeBounds>, f64)>> = (0..jobs.len()).map(|_| None).collect();
     for (j, r, seconds) in done.into_iter().flatten() { results[j] = Some((r, seconds)); }
     let mut results = results.into_iter();
     // The first failing job in kind and shape order reports, whatever order the workers finished in.
     // F4: one pool derives every kind's shapes, so no kind has a wall time of its own. Each job is timed, and a
     // kind's figure is its share of the wait: its jobs' seconds over the worker count. Cached shapes cost near 0.
     plans.iter_mut().map(|plan| match plan.fixed.take() {
-        Some(fixed) => Ok((fixed, 0.)),
+        Some(fixed) => Ok((fixed.into_iter().map(|proxy| ShapeBounds { proxy, guard: None }).collect(), 0.)),
         None => {
             let mut seconds = 0.;
-            let derived: Res<Vec<lip::Derived>> = (0..plan.shapes.len()).map(|_| {
+            let derived: Res<Vec<ShapeBounds>> = (0..plan.shapes.len()).map(|_| {
                 let (r, s) = results.next().expect("one result per job").expect("job ran");
                 seconds += s;
                 r
@@ -342,17 +413,18 @@ fn derive_all(
 fn pack_kind<'a>(
     k: &KindDecl, id: usize, rows: &[Vec<RowVal>], mesh_kind: bool,
     mesh_asset: impl Fn(&[RowVal]) -> Res<&'a gltf::Mesh>, shapes: &[usize], shape_of: &[usize],
-    derived: &[lip::Derived], step_scale: Option<f32>, derive_s: f64, instances: &mut Vec<Instance>,
+    derived: &[ShapeBounds], step_scale: Option<f32>, derive_s: f64, guard_words: std::ops::Range<usize>,
+    instances: &mut Vec<Instance>,
 ) -> Res<(KindTable, KindReport)> {
     let name = &k.name.name;
     let surface = k.query(QueryKind::Surface);
     let pose = pose_field(k);
     let (mut words, mut lips, mut evals) = (vec![], vec![], 0u64);
     for d in derived {
-        evals += u64::from(d.evals);
+        evals += u64::from(d.proxy.evals) + d.guard.as_ref().map_or(0, |g| u64::from(g.evals));
     }
     for (r, row) in rows.iter().enumerate() {
-        let d = &derived[shape_of[r]];
+        let d = &derived[shape_of[r]].proxy;
         // World bound: the local bound's eight corners through the row's rigid pose.
         let (mut lo, mut hi) = ([f32::INFINITY; 3], [f32::NEG_INFINITY; 3]);
         let x = match pose.map(|i| &row[i]) {
@@ -403,7 +475,8 @@ fn pack_kind<'a>(
         l_min: lips.iter().copied().fold(f32::INFINITY, f32::min).into(),
         l_max: lips.iter().copied().fold(0.0, f32::max).into(),
         evals,
-        cache_hits: derived.iter().filter(|d| d.evals == 0).count(),
+        cache_hits: derived.iter().filter(|d| d.proxy.evals == 0 && d.guard.as_ref().is_none_or(|g| g.evals == 0)).count(),
+        guard_words,
         derive_s,
         draw,
     };

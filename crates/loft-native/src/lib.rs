@@ -87,6 +87,8 @@ pub struct Loaded {
     kind_tables: Vec<TableId>,
     twin_sources: Vec<naga::Module>,
     luts: Vec<f32>,
+    #[cfg(not(target_arch = "wasm32"))]
+    lut_table: TableId,
     kind_words: Vec<[u32; 4]>,
     params: Mutex<(Vec<f32>, bool)>,
     visibility: Mutex<reuse::Reuse>,
@@ -489,6 +491,7 @@ impl Loaded {
             kind_tables,
             twin_sources: p.kinds.iter().map(|k| p.modules[k.module].naga.clone()).collect(),
             luts: p.luts.clone(), kind_words, params: Mutex::new((p.params.clone(), false)),
+            #[cfg(not(target_arch = "wasm32"))] lut_table: plan.luts,
             #[cfg(not(target_arch = "wasm32"))] instance_bounds,
             visibility, shadow,
             color, planes: [plan.visibility, plan.depth], color_view, clock, stats, precision: plan.precision })

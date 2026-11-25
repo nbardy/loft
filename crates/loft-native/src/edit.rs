@@ -28,7 +28,7 @@ fn same(a: &[f32], b: &[f32]) -> bool {
 }
 
 /// What the edit changed outside kind `k`, if anything; the session swaps only that kind.
-fn outside_kind(old: &Program, new: &Program, k: usize) -> Option<&'static str> {
+fn outside_kind(old: &Program, new: &Program, k: usize, guard: &std::ops::Range<usize>) -> Option<&'static str> {
     let m = old.kinds[k].module;
     let modules = old.modules.len() == new.modules.len()
         && old.modules.iter().zip(&new.modules).enumerate().all(|(i, (a, b))| i == m || a.wgsl == b.wgsl);
@@ -49,7 +49,8 @@ fn outside_kind(old: &Program, new: &Program, k: usize) -> Option<&'static str> 
         // Merge (cut-tape + cut-unused + probe-door): `priors` went with plan, and `cull`/`classify`/`present` became
         // `Pass::Authored` entries of `passes` whose modules the module check above already compares.
         // probe-door's `shadow_clock` joins the pass check.
-        (same(&old.luts, &new.luts), "the LUTs"),
+        (old.luts.len() == new.luts.len() && same(&old.luts[..guard.start], &new.luts[..guard.start])
+            && same(&old.luts[guard.end..], &new.luts[guard.end..]), "the LUTs"),
         (old.passes == new.passes && old.shadow_size == new.shadow_size && old.shadow_clock == new.shadow_clock,
             "the passes"),
         (format!("{:?} {:?}", old.camera, old.sun) == format!("{:?} {:?}", new.camera, new.sun), "the camera or sun"),
@@ -72,11 +73,12 @@ impl EditSession {
     /// Either the whole edit is live when this returns, or nothing changed.
     pub fn edit(&mut self, g: &Gpu, src: &loft_passes::source::Graph, overrides: &[(String, f64)], start: Instant)
         -> Result<EditReceipt, String> {
-        let (next, _, _) = loft_passes::compile(src, overrides).map_err(|d| d.render(src))?;
+        let (next, report, _) = loft_passes::compile(src, overrides).map_err(|d| d.render(src))?;
         let compiled = Instant::now();
         let k = self.kind;
-        if let Some(what) = outside_kind(&self.program, &next, k) {
-            return Err(format!("the edit changes {what} outside kind {}; reload the scene", next.kinds[k].name));
+        let guard = report.kinds.get(k).map(|r| r.guard_words.clone()).unwrap_or(0..0);
+        if let Some(what) = outside_kind(&self.program, &next, k, &guard) {
+            return Err(format!("the edit changes {what} outside kind {}; reload the scene", self.program.kinds[k].name));
         }
         let module = next.kinds[k].module;
         // The same lowering the load gave this module, for the radiance format the load resolved.
@@ -103,6 +105,11 @@ impl EditSession {
         let caster_changed = !moved.is_empty() && casters.contains(&(k as u32));
         let l = &mut self.loaded;
         let rows = l.rows(k)?;
+        if !same(&self.program.luts[guard.clone()], &next.luts[guard.clone()]) {
+            let table = l.runner.get_mut().unwrap().export_buffer(l.id, l.lut_table).ok_or("missing LUT table")?;
+            g.queue.write_buffer(&table, guard.start as u64 * 4, &f32_bytes(&next.luts[guard.clone()]));
+            l.luts[guard.clone()].copy_from_slice(&next.luts[guard]);
+        }
         for &r in &dirtied_rows {
             let at = r as usize * stride;
             g.queue.write_buffer(&rows, (at * 4) as u64, &f32_bytes(&new.rows[at..at + stride]));

@@ -820,8 +820,14 @@ pub fn kind_reads(p: &Prog, k: &KindDecl) -> Vec<String> {
     reads
 }
 
-fn traced_march(count_steps: bool) -> String {
+fn traced_march(count_steps: bool, guard: Option<(u32, f32)>) -> String {
+    let prefix = guard.map_or_else(String::new, |(base, reach)| {
+        render_template(include_str!("../../../stdlib/core/march_guard.wgsl"), &[
+            ("HEADER", &base.to_string()), ("EYE_REACH", &format!("{reach:?}")),
+        ])
+    });
     render_template(include_str!("../../../stdlib/core/march.wgsl"), &[
+        ("GUARD", &prefix),
         ("STEPS_INIT", if count_steps { "  var steps = 0u;\n" } else { "" }),
         ("STEPS_4", if count_steps { "    steps += 1u;\n" } else { "" }),
         ("STEPS_8", if count_steps { "        steps += 1u;\n" } else { "" }),
@@ -832,7 +838,7 @@ fn traced_march(count_steps: bool) -> String {
 /// `fixed` holds kind parameters as literals; the others are read from the row.
 pub fn emit_kind_module(
     p: &Prog, types: &[Ty], k: &KindDecl, light: Option<&str>, luts: &[LutRef],
-    draw: Draw, aov: Aov, fixed: &BTreeMap<(String, String), String>,
+    draw: Draw, aov: Aov, fixed: &BTreeMap<(String, String), String>, guard: Option<(u32, f32)>,
 ) -> Res<String> {
     let mut em = Emitter::new(p, types);
     em.luts = luts;
@@ -955,7 +961,7 @@ pub fn emit_kind_module(
 ".to_owned(), false),
                 Draw::Analytic => ("  // Closed form: the author's `visible` query, in the kind's space (a rigid pose keeps t).\n  let t = q_visible(row, lro, lrd);\n  if t < 0.0 { discard; }\n".to_owned(),
                     light == Some("woodblock_pigment") && aov == Aov::Beauty),
-                Draw::Traced => (traced_march(count_steps), false),
+                Draw::Traced => (traced_march(count_steps, guard), false),
                 Draw::Surface { .. } | Draw::Mesh { .. } => unreachable!("ray draw"),
             };
             // Diagnostic-only Vis word: 24 high distance bits and the 8-bit step count.

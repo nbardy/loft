@@ -16,7 +16,7 @@ folder.mkdir(exist_ok=True)
 scenes = dict(ball='start/ball',base='start/otter',walrus='walrus/tq',heron='heron/h02_hero_q3',otter='otter/hero_q3')
 
 
-def calculate_counts(name, guards=None):
+def calculate_counts(name, guards=None, orbit_frame=None):
     text = (root/'model'/f'{name}.ir').read_text().rsplit(' (kinds ',1)[1]
     modules = json.loads((root/'model'/f'{name}.show').read_text())['modules']
     def vec(key):
@@ -28,6 +28,10 @@ def calculate_counts(name, guards=None):
     params=buffer(np.fromstring(re.search(r'\(params ([^)]+)',text)[1],sep=' ',dtype=np.uint32),U.STORAGE)
     luts=buffer(np.fromstring(re.search(r'\(luts ([^)]+)',text)[1],sep=' ',dtype=np.float32),U.STORAGE)
     origin = eye if guards is not None else at+1.1*rot@(eye-at)
+    if orbit_frame is not None:
+        phi = 2 * np.pi * orbit_frame / (60 * 24)
+        radius = np.linalg.norm((eye - at)[[0, 2]])
+        origin = at + [radius * np.sin(phi), eye[1] - at[1], radius * np.cos(phi)]
     view=Raster(origin,at,fov,960,720,params)
     out = {}
     for m in re.finditer(r'\(\(name \. "([^"]+)"\) \(module \. (\d+)\) \(stride \. \d+\) \(rows ([^)]+)\) \(n_rows \. (\d+)\)',text.split(' (instances')[0]):
@@ -74,6 +78,15 @@ def native(name, phase, tag):
 def vis(d):
     return sorted(r[1] for r in d['gpu_pass_ms'])[59]
 
+
+if sys.argv[2:3] == ["--orbit-counts"]:
+    directory = pathlib.Path(sys.argv[3])
+    for name in sys.argv[4:]:
+        for frame in [0, 60, 119]:
+            target = directory / f"{name}-counts-{frame}.json"
+            if not target.exists():
+                target.write_text(json.dumps(calculate_counts(name, orbit_frame=frame)))
+    sys.exit(0)
 
 for name in sys.argv[2:]:
     guard_output=folder/f'{name}-guard-counts.json'

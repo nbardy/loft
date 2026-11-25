@@ -432,6 +432,7 @@ pub struct Options {
 pub struct Prepared {
     pub bundle: Bundle,
     pub instances: TableId,
+    pub luts: TableId,
     pub visibility: TableId,
     pub depth: TableId,
     pub modules: Vec<ModuleId>,
@@ -790,7 +791,7 @@ pub fn lower_program(
             size: (u64::from(table.capacity) * u64::from(table.stride_bytes)).max(4) }
     }).collect();
     b.bundle.tables.extend(execution.table());
-    Ok(Prepared { bundle: b.bundle, instances, visibility: vis, depth, shadow: shadow_bounds, shadow_wave,
+    Ok(Prepared { bundle: b.bundle, instances, luts, visibility: vis, depth, shadow: shadow_bounds, shadow_wave,
         modules: program.kinds.iter().map(|k| ModuleId(k.module as u32)).collect(), precision })
 }
 

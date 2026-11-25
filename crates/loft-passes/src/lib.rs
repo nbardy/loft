@@ -115,6 +115,8 @@ pub struct KindReport {
     pub l_max: f64,
     pub evals: u64,
     pub cache_hits: usize,
+    /// Packed LUT words owned by this kind's primary visibility certificates.
+    pub guard_words: std::ops::Range<usize>,
     /// This kind's share of the wall seconds spent deriving bounds: its shapes' seconds over the worker count
     /// (near 0 when every shape was cached).
     pub derive_s: f64,
