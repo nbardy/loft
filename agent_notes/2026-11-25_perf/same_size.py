@@ -70,16 +70,22 @@ for name in sys.argv[2:]:
         inputs=json.loads((root/'model'/f'{name}.counts.json').read_text())
         empty=median(json.loads(f.read_text())['cal_empty_ms'] for f in (root/'model').glob('*.counts.json'))
         wtest=wcal=0.
+        class_test=[0.,0.]
+        class_cal=[0.,0.]
         for kind,r in inputs['kinds'].items():
             def units(c):
                 return c[0] if r['draw']=='Analytic' else c[2]+c[3]
             rate=max(0.,median(r['calibration_four_draw_ms'])-empty)/(4*units(r['calibration']))
             wtest+=rate*units(r['target'])
             wcal+=rate*units(counts[kind])
+            index = int(r['draw']=='Analytic')
+            class_test[index]+=rate*units(r['target'])
+            class_cal[index]+=rate*units(counts[kind])
         cal=native(name,'cal','rotated')
         pred=empty+(vis(cal)-empty)*wtest/wcal
         dest.write_text(json.dumps(dict(ms=pred,cal_vis=vis(cal),cal_contended=cal['contended'],
                                         target_weight=wtest,rotated_weight=wcal,
+                                        class_target=class_test,class_rotated=class_cal,
                                         frozen=datetime.now(timezone.utc).isoformat()),indent=2))
         print(name,'frozen',pred,flush=True)
     target=native(name,'baseline','original')

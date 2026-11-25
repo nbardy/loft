@@ -60,3 +60,11 @@ These are the first native runs, with zero of 120 nonzero Vis intervals after th
 | Final otter | 100.02 / 148.47 | 1.99 / 2.09 | 2.84 / 10.83 |
 
 The highest candidate p95 across the first three runs, covering all three characters, was 2.64 ms at 960×720 and 13.72 ms at 1280×800. The first control bracket was consistently about 1.94 ms at the smaller size and 2.81 ms at the larger size. The native contention threshold is 1.10 ms on **each** bracket. The one-triangle control of roughly 0.08 ms is a separate instrument.
+
+## Reproducing a number
+
+The scene paths below are relative to the copied `fixtures/` directory. The two ball controls are `start/ball.loft` and `start/ball_sunonly.loft`. The four other views are `start/otter.loft`, `walrus/tq.loft`, `heron/h02_hero_q3.loft` and `otter/hero_q3.loft`. Both native binaries used the same resolved fixture tree for the main image comparison. The ablations used independent copies of that tree.
+
+Use the baseline binary from `2afc5e55` and the candidate from `12c91988` or its comment-only follow-up. Each was built with `tools/dev.sh build loft-cli --fast`. For timing, run `loft profile SCENE --size 960x720 --frames 120 --json FILE` with the declared GPU slot. For a counter replay, save `loft ir SCENE` as `NAME.ir` and `loft show SCENE --json` as `NAME.show` in the model directory. The counter uses wgpu-py 0.33.0, NumPy 2.5.5 and Metal timestamps. [Counter](count_rays.py) · [Held-out camera calibration](same_size.py) · [Frame hashing](hash_frames.py) · [Pixel comparison](compare_pixels.py) · [Scoring](score.py).
+
+The sphere guard can be applied to an isolated standard library with [the Loft source patch](strand-guard.patch). [The field guard generator](guard_study.py) creates the four pose-specific authored queries from the original IR bounds and field bodies. Its optional `torso` argument adds the torso guard to a copy of the head-guarded otter.
