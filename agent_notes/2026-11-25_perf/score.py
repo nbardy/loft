@@ -71,7 +71,7 @@ def roots_per_field(wgsl):
 
 attempts = {}
 selected = {}
-for phase in ('baseline', 'candidate', 'cal', 'guard', 'bounds', 'bounds2'):
+for phase in ('baseline', 'candidate', 'fresh_ref', 'cal', 'guard', 'bounds', 'bounds2'):
     for size in ('960x720', '1280x800', '672x504'):
         for scene in scenes:
             paths = sorted((root/phase).glob(f'{scene}-{size}-[0-9]*.json'))
@@ -181,6 +181,19 @@ if len(held_out) == 5:
     shared['same_size_multipliers'] = fit
     for name,v in held_out.items():
         models[name]['same_size_shared'] = pooled_empty + sum(a*b for a,b in zip(fit,v['class_target']))
+for name,model in models.items():
+    path=root/'paired'/f'{name}-guard-counts.json'
+    if not path.exists():
+        continue
+    original=read(root/'model'/f'{name}.counts.json')['kinds']
+    saved={}
+    for kind,new in read(path).items():
+        old=original[kind]['target']
+        short=kind.split('_')[-1]
+        before,after=sum(old[2:4]),sum(new[2:4])
+        saved[short]=dict(steps_before=before,steps_after=after,hit_change=new[1]-old[1],
+                          model_saved_ms=model['kinds'][short]*(1.-after/before))
+    model['guard_work']=saved
 paired_ring = {}
 for path in sorted(root.glob('*/*-ab.json')):
     phase = path.parent.name

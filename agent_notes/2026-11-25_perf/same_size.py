@@ -16,7 +16,7 @@ folder.mkdir(exist_ok=True)
 scenes = dict(ball='start/ball',base='start/otter',walrus='walrus/tq',heron='heron/h02_hero_q3',otter='otter/hero_q3')
 
 
-def calculate_counts(name):
+def calculate_counts(name, guards=None):
     text = (root/'model'/f'{name}.ir').read_text().rsplit(' (kinds ',1)[1]
     modules = json.loads((root/'model'/f'{name}.show').read_text())['modules']
     def vec(key):
@@ -27,12 +27,27 @@ def calculate_counts(name):
     fov=float(re.search(r'\(fov \. ([^)]+)',text)[1])
     params=buffer(np.fromstring(re.search(r'\(params ([^)]+)',text)[1],sep=' ',dtype=np.uint32),U.STORAGE)
     luts=buffer(np.fromstring(re.search(r'\(luts ([^)]+)',text)[1],sep=' ',dtype=np.float32),U.STORAGE)
-    view=Raster(at+1.1*rot@(eye-at),at,fov,960,720,params)
+    origin = eye if guards is not None else at+1.1*rot@(eye-at)
+    view=Raster(origin,at,fov,960,720,params)
     out = {}
     for m in re.finditer(r'\(\(name \. "([^"]+)"\) \(module \. (\d+)\) \(stride \. \d+\) \(rows ([^)]+)\) \(n_rows \. (\d+)\)',text.split(' (instances')[0]):
         kind,module,data,n=m.groups()
         n=int(n)
-        probe=raster(instrument(modules[int(module)]['wgsl']),True)
+        source=modules[int(module)]['wgsl']
+        if guards is not None:
+            bound=guards.get(kind.split('_')[-1])
+            if bound is None:
+                continue
+            def vector(v):
+                return 'vec3f('+', '.join(format(x,'.12f') for x in v)+')'
+            marker='let span = loft_box(ro, rd, row.loft_lo, row.loft_hi);'
+            assert source.count(marker) >= 1
+            guard=(marker.replace('let span','var span') + '\n'
+                   + f"  let tight = loft_box(ro, rd, {vector(bound['lo'])}, {vector(bound['hi'])});\n"
+                   + "  span.y = min(span.y,tight.y);\n"
+                   + "  if max(max(span.x,0.0),tight.x) > span.y { discard; }")
+            source=source.replace(marker,guard,1)
+        probe=raster(instrument(source),True)
         rows=group(row_layout,[(0,buffer(np.fromstring(data,sep=' ',dtype=np.uint32),U.STORAGE)),
                                (1,buffer(np.arange(n,dtype=np.uint32),U.STORAGE)),
                                (2,buffer(np.array([len(out),0,n,0],np.uint32),U.UNIFORM)),(3,luts)])
@@ -61,6 +76,10 @@ def vis(d):
 
 
 for name in sys.argv[2:]:
+    guard_output=folder/f'{name}-guard-counts.json'
+    if name != 'ball' and not guard_output.exists():
+        guards=json.loads((root/'coverage.json').read_text())
+        guard_output.write_text(json.dumps(calculate_counts(name, guards)))
     dest=folder/f'{name}-prediction.json'
     if not dest.exists():
         cf=folder/f'{name}-rotated-counts.json'
