@@ -24,6 +24,7 @@ for variant, executable, path in [
     ("repeat-original", "original", source),
     ("ordered-original", "original", fixed),
     ("ordered-guard", "revised", fixed),
+    ("ordered-scissor", "scissor", fixed),
 ]:
     dest = out / variant / f"walrus-{args.size}-clip"
     if not (dest / "meta.json").exists():
