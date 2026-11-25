@@ -71,7 +71,7 @@ def roots_per_field(wgsl):
 
 attempts = {}
 selected = {}
-for phase in ('baseline', 'candidate', 'cal', 'guard', 'bounds'):
+for phase in ('baseline', 'candidate', 'cal', 'guard', 'bounds', 'bounds2'):
     for size in ('960x720', '1280x800', '672x504'):
         for scene in scenes:
             paths = sorted((root/phase).glob(f'{scene}-{size}-[0-9]*.json'))
@@ -83,13 +83,15 @@ for phase in ('baseline', 'candidate', 'cal', 'guard', 'bounds'):
             selected[key] = next((x for x in options if not x['contended']), options[0])
 
 models = {}
+pooled_empty = median(read(p)['cal_empty_ms'] for p in (root/'model').glob('*.counts.json'))
 for name in scenes.keys() - {'sun'}:
     path = root/'model'/f'{name}.counts.json'
     if not path.exists():
         continue
     counts = read(path)
     modules = {m['name']: m['wgsl'] for m in read(root/'model'/f'{name}.show')['modules']}
-    empty = counts['cal_empty_ms']
+    empty = pooled_empty
+    raw_first = counts['cal_empty_ms']
     calwork = 0.
     caltraced = 0.
     ideal = 0.
@@ -107,7 +109,9 @@ for name in scenes.keys() - {'sun'}:
         traced = data['draw'] == 'Traced'
         ms = median(data['calibration_four_draw_ms'])
         cost = (ms - empty)/4
-        rate = cost / (shc + smc if traced else pc)
+        scale_to_target = (sh + sm)/(shc + smc) if traced else p/pc
+        raw_first += (ms-counts['cal_empty_ms'])*scale_to_target/4
+        rate = max(0., cost) / (shc + smc if traced else pc)
         if traced:
             caltraced += cost
             ideal_field += rate * data['shaded']
@@ -137,7 +141,7 @@ for name in scenes.keys() - {'sun'}:
     observed = orig['pass_in_median_frame']
     cal = selected.get('cal/672x504/'+name)
     correction = (cal['vis'] - empty)/calwork if cal else None
-    models[name] = dict(raw=empty+target_work, normalized=empty+correction*target_work if cal else None,
+    models[name] = dict(raw=raw_first, pooled_raw=empty+target_work, normalized=empty+correction*target_work if cal else None,
                         cal_ms=cal['vis'] if cal else None, scale=correction,
                         work_cal=[caltraced, calwork-caltraced],
                         work_target=[work['trace_hit']+work['trace_miss'],work['analytic_hit']+work['analytic_miss']],

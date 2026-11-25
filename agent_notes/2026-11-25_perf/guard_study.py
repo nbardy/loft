@@ -16,6 +16,19 @@ settings = {
     'otter': ('otter/forms', {'Head4':('c.xyz - rgb(0.16)','c.xyz + rgb(0.16)')}),
 }
 
+phase = 'bounds'
+if sys.argv[2:] == ['torso']:
+    phase = 'bounds2'
+    joints = ['pelvis', 'chest', 'foot_l', 'foot_r', 'knee_l', 'knee_r',
+              'elbow_l', 'elbow_r', 'hand_l', 'hand_r']
+    def extent(op):
+        value = joints[0]+'.xyz'
+        for joint in joints[1:]:
+            value = f'{op}({value}, {joint}.xyz)'
+        return value
+    settings = {'otter': ('otter/otter', {'Torso': (extent('min')+' - rgb(0.13)',
+                                                  extent('max')+' + rgb(0.16)')})}
+
 
 def literal(val):
     if isinstance(val,str): return val
@@ -68,5 +81,5 @@ for name,(module,targets) in settings.items():
   '''
         at=source.index('trace(p)',where.start())
         source=source[:at]+query+source[at:]
-    dest=root/'bounds/source/fixtures'/(module+'.loft')
+    dest=root/phase/'source/fixtures'/(module+'.loft')
     dest.write_text(source)
