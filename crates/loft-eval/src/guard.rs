@@ -49,7 +49,7 @@ pub fn supports_block(types: &[Ty], block: &Block) -> bool {
         Stmt::Map { head, stages, .. } => {
             visit(head)
                 && stages.iter().all(|(op, args)| {
-                    matches!(op.name.as_str(), "move" | "rot_x" | "rot_y" | "rot_z")
+                    matches!(op.name.as_str(), "translate" | "rot_x" | "rot_y" | "rot_z")
                         && args.iter().all(visit)
                 })
         }
@@ -131,8 +131,8 @@ pub fn derive<'a>(
     let mut gpu = Eval::<Floats>::new(ev.p, ev.types, table, ev.overrides);
     let mut evals = 0;
     let mut hull = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
-    let mut pending = vec![root];
-    while let Some(cell) = pending.pop() {
+    let mut pending = std::collections::VecDeque::from([root]);
+    while let Some(cell) = pending.pop_front() {
         if AXES
             .iter()
             .all(|&i| hull.0[i] <= cell.0[i] && hull.1[i] >= cell.1[i])
@@ -206,15 +206,12 @@ pub fn derive<'a>(
             include(&mut hull, cell);
             continue;
         }
-        // Visit the octants nearest the proxy centre first. Once any retained
-        // cells establish the six extrema, the box interior needs no more work.
-        let mut children = [root; 8];
-        for (k, child) in children.iter_mut().enumerate() {
-            child.0 = AXES.map(|i| if k >> i & 1 == 0 { cell.0[i] } else { mid[i] });
-            child.1 = AXES.map(|i| if k >> i & 1 == 0 { mid[i] } else { cell.1[i] });
-        }
-        let dist = |c: Cell| norm(AXES.map(|i| centre(c)[i] - origin[i]));
-        children.sort_by(|a, b| dist(*b).total_cmp(&dist(*a)));
+        // Resolve distant empty space first. A depth-first search can exhaust
+        // its budget on one near octant and retain seven enormous siblings.
+        let children: [Cell; 8] = std::array::from_fn(|k| (
+            AXES.map(|i| if k >> i & 1 == 0 { cell.0[i] } else { mid[i] }),
+            AXES.map(|i| if k >> i & 1 == 0 { mid[i] } else { cell.1[i] }),
+        ));
         pending.extend(children);
     }
     // An empty proof can use the outer box; this keeps the row record finite.

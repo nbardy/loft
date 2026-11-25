@@ -17,13 +17,15 @@ impl Floats {
         })
     }
 
-    fn widen(v: Iv, error: f64) -> Self {
-        if !error.is_finite() || v.lo < -f64::from(f32::MAX) || v.hi > f64::from(f32::MAX) {
+    fn widen(v: Iv, absolute: f64, relative: f64) -> Self {
+        if !v.mag().is_finite() || v.mag() > f64::from(f32::MAX) {
             return Self::full();
         }
         let floor = f64::from(f32::MIN_POSITIVE);
-        let low = ((v.lo - error) as f32).next_down();
-        let high = ((v.hi + error) as f32).next_up();
+        // Rounding is monotone. A large negative endpoint cannot amplify
+        // the error of the small positive endpoint of k - abs(a - b).
+        let low = ((v.lo - absolute - relative * v.lo.abs()) as f32).next_down();
+        let high = ((v.hi + absolute + relative * v.hi.abs()) as f32).next_up();
         if !low.is_finite() || !high.is_finite() {
             return Self::full();
         }
@@ -42,12 +44,13 @@ impl Floats {
         })
     }
 
-    fn rounded(v: Iv, scale: f64) -> Self {
-        Self::widen(v, 8.0 * f64::from(f32::EPSILON) * scale)
+    fn rounded(v: Iv) -> Self {
+        Self::widen(v, 0.0, 8.0 * f64::from(f32::EPSILON))
     }
 }
 
 impl Scalar for Floats {
+    const ENCLOSE_MIX_FORMS: bool = true;
     fn c(x: f64) -> Self {
         let x = x as f32;
         if !x.is_finite() {
@@ -64,32 +67,35 @@ impl Scalar for Floats {
         Self::full()
     }
     fn add(&self, o: &Self) -> Self {
-        let mut v = Self::rounded(self.0.add(&o.0), self.mag() + o.mag());
+        let mut v = Self::rounded(self.0.add(&o.0));
         if v.mag().is_finite() && self.0.lo >= 0.0 && o.0.lo >= 0.0 {
             v.0.lo = v.0.lo.max(0.0);
         }
         v
     }
     fn sub(&self, o: &Self) -> Self {
-        Self::rounded(self.0.sub(&o.0), self.mag() + o.mag())
+        Self::rounded(self.0.sub(&o.0))
     }
     fn mul(&self, o: &Self) -> Self {
+        if !self.mag().is_finite() || !o.mag().is_finite() {
+            return Self::full();
+        }
         if std::ptr::eq(self, o) {
             return self.sqr();
         }
         let v = self.0.mul(&o.0);
-        Self::rounded(v, v.mag())
+        Self::rounded(v)
     }
     fn div(&self, o: &Self) -> Self {
         if o.mig() < f64::from(f32::MIN_POSITIVE) || o.mag() > 2f64.powi(126) {
             return Self::full();
         }
         let v = self.0.div(&o.0);
-        Self::rounded(v, v.mag())
+        Self::rounded(v)
     }
     fn sqr(&self) -> Self {
         let v = self.0.sqr();
-        let mut result = Self::rounded(v, v.mag());
+        let mut result = Self::rounded(v);
         if result.mag().is_finite() {
             result.0.lo = result.0.lo.max(0.0);
         }
@@ -110,9 +116,9 @@ impl Scalar for Floats {
                 l: 0.0,
             }),
             Un::Abs | Un::Sign | Un::Floor => Self(v),
-            Un::Sqrt if self.0.lo >= 0.0 => Self::rounded(v, v.mag()),
-            Un::Sin | Un::Cos if self.mag() <= std::f64::consts::PI => Self::widen(v, 1.0 / 2048.0),
-            Un::Fract => Self::rounded(v, self.mag() + 1.0),
+            Un::Sqrt if self.0.lo >= 0.0 => Self::rounded(v),
+            Un::Sin | Un::Cos if self.mag() <= std::f64::consts::PI => Self::widen(v, 1.0 / 2048.0, 0.0),
+            Un::Fract => Self::rounded(v),
             _ => Self::full(),
         }
     }
