@@ -1,5 +1,6 @@
 """Reproduce moving-camera profiles and lossless comparison clips on the pinned fixtures."""
 import argparse
+import fcntl
 import gzip
 import hashlib
 import json
@@ -7,6 +8,7 @@ import math
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 notes = Path(__file__).resolve().parent
@@ -32,16 +34,34 @@ def setup():
             f'at: [{match[2]}]@World') + text[match.end():]
         path.write_text(text)
 
+def commit_path(path, message):
+    """A capture and a CPU scorer can finish simultaneously in this worktree."""
+    with (out / "measurement-commit.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        for attempt in range(20):
+            try:
+                subprocess.run(["git", "add", "--", path], cwd=root, check=True, stderr=subprocess.PIPE)
+                state = subprocess.run(["git", "diff", "--cached", "--quiet", "--", path], cwd=root)
+                if state.returncode == 0:
+                    return
+                if state.returncode != 1:
+                    state.check_returncode()
+                subprocess.run(["git", "commit", "-m", message, "--", path], cwd=root, check=True, stderr=subprocess.PIPE)
+                return
+            except subprocess.CalledProcessError as error:
+                if attempt == 19 or b"index.lock" not in (error.stderr or b""):
+                    raise
+                time.sleep(0.25)
+
+
 def checkpoint(phase, filename, data, message):
     """Preserve completed measurements even when a later capture is interrupted."""
     dest = notes / "orbit" / phase / (filename + ".gz")
     dest.parent.mkdir(parents=True, exist_ok=True)
     content = gzip.compress(data, mtime=0)
-    if dest.exists() and dest.read_bytes() == content:
-        return
-    dest.write_bytes(content)
-    subprocess.run(["git", "add", "--", dest], cwd=root, check=True)
-    subprocess.run(["git", "commit", "-m", message, "--", dest], cwd=root, check=True)
+    if not dest.exists() or dest.read_bytes() != content:
+        dest.write_bytes(content)
+    commit_path(dest, message)
 
 
 def run(phase, names, sizes, clip, record):

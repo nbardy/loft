@@ -6,12 +6,11 @@ import argparse
 from hashlib import sha256
 import json
 from pathlib import Path
-import subprocess
 
 import numpy as np
 from PIL import Image
 
-from fresh import checkpoint, notes, out, root, scenes
+from fresh import checkpoint, commit_path, notes, out, scenes
 
 
 def profile(folder, stem, probe):
@@ -91,9 +90,7 @@ if __name__ == "__main__":
                 result["reference"] = args.reference
                 if args.record:
                     if result["pixels"]["diff"]:
-                        subprocess.run(["git", "add", "--", diff], cwd=root, check=True)
-                        if subprocess.run(["git", "diff", "--cached", "--quiet", "--", diff], cwd=root).returncode:
-                            subprocess.run(["git", "commit", "-m", f"Save {phase} {stem} worst-frame difference", "--", diff], cwd=root, check=True)
+                        commit_path(diff, f"Save {phase} {stem} worst-frame difference")
                     checkpoint(phase, stem + "-score.json", json.dumps(result, sort_keys=True).encode(),
                                f"Score {phase} {stem}: {result['pixels']['exact']}/120 exact moving frames")
             if result:
