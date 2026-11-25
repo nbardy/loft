@@ -153,10 +153,8 @@ for name in scenes.keys() - {'sun'}:
                         eight_query_frame=orig['p50']-observed[1]+empty+(ideal+7*ideal_field)*(correction if cal else 1.),
                         opportunities_ms={k:(observed[1]-empty)*v/target_work for k,v in upper.items()},
                         kinds={k:(observed[1]-empty)*v/target_work for k,v in contribution.items()})
-# Two-column nonnegative least squares. Include both boundary solutions.
-shared = {}
-if len(models) == 5 and all(m['cal_ms'] is not None for m in models.values()):
-    rows = [[x/(m['cal_ms']-m['raster_clear_estimate']) for x in m['work_cal']] for m in models.values()]
+def class_fit(rows):
+    # Two-column nonnegative least squares, including both boundary solutions.
     aa = sum(a*a for a,b in rows)
     ab = sum(a*b for a,b in rows)
     bb = sum(b*b for a,b in rows)
@@ -165,11 +163,24 @@ if len(models) == 5 and all(m['cal_ms'] is not None for m in models.values()):
     candidates = [(ay/aa,0.), (0.,by/bb)]
     if det > 0:
         candidates.append(((ay*bb-by*ab)/det,(by*aa-ay*ab)/det))
-    fit = min((x for x in candidates if min(x)>=0),
+    return min((x for x in candidates if min(x)>=0),
               key=lambda x:sum((a*x[0]+b*x[1]-1.)**2 for a,b in rows))
+
+
+shared = {}
+if len(models) == 5 and all(m['cal_ms'] is not None for m in models.values()):
+    rows = [[x/(m['cal_ms']-m['raster_clear_estimate']) for x in m['work_cal']] for m in models.values()]
+    fit = class_fit(rows)
     shared['multipliers'] = fit
     for m in models.values():
         m['shared_prediction'] = m['raster_clear_estimate'] + sum(a*b for a,b in zip(fit,m['work_target']))
+held_out = {p.name.removesuffix('-prediction.json'): read(p) for p in (root/'paired').glob('*-prediction.json')}
+if len(held_out) == 5:
+    rows = [[x/(v['cal_vis']-pooled_empty) for x in v['class_rotated']] for v in held_out.values()]
+    fit = class_fit(rows)
+    shared['same_size_multipliers'] = fit
+    for name,v in held_out.items():
+        models[name]['same_size_shared'] = pooled_empty + sum(a*b for a,b in zip(fit,v['class_target']))
 paired_ring = {}
 for path in sorted(root.glob('*/*-ab.json')):
     phase = path.parent.name
