@@ -337,6 +337,13 @@ impl Schedule<'_> {
         // Compact all three lists before assigning GPU kind IDs. An omitted part has no slot.
         drawn.retain(populated);
         casters.retain(populated);
+        // A repeated caster is drawn into the shadow map twice for the same picture. With exported worlds it is
+        // easy to list a kind both directly and through a group, so refuse it as the draw list does.
+        let mut c = casters.clone();
+        c.sort_unstable();
+        if c.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Err(Diag::new(Code::E520, sched.name.span, format!("the shadow map lists {casters:?}"), "cast each kind's shadow once"));
+        }
         if casters.is_empty() {
             *shadow_size = 0;
             steps.retain(|step| !matches!(step, Step::Stock(Pass::Shadow(_))));
