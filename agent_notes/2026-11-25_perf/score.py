@@ -20,8 +20,10 @@ def read(path):
     return json.loads(path.read_text())
 
 
-def profile(path):
+def profile(path, mode=None):
     d = read(path)
+    if mode:
+        d = d[mode]
     times = d['gpu_frame_ms']
     mid = ranked(times, .5)
     passes = d['gpu_pass_ms']
@@ -94,6 +96,7 @@ for name in scenes.keys() - {'sun'}:
     ideal_field = 0.
     work = dict(trace_miss=0., trace_hit=0., analytic_miss=0., analytic_hit=0.)
     contribution = {}
+    upper = dict(bounds=0., thin=0., field_prune=0.)
     rates = {}
     totals = [0] * 5
     visible = 0
@@ -121,6 +124,12 @@ for name in scenes.keys() - {'sun'}:
         calwork += cost
         short = kind.split('_')[-1]
         contribution[short] = rate * (sh + sm if traced else p)
+        if short in {'Otter', 'Hide', 'Cap', 'HeronHead', 'Head4', 'Torso'}:
+            upper['bounds'] += .9 * sm * rate
+        if short in {'Rod', 'Strand', 'Whisker'}:
+            upper['thin'] += max(0., p - 4*h - 36*data['rows']) * rate
+        if traced and root_count >= 8:
+            upper['field_prune'] += .5 * (sh + sm) * rate
         rates[short] = dict(ns_per_work=rate*1e6, roots_per_field=root_count,
                             hidden_ratio=median(data['calibration_occluded_four_ms'])/ms)
     target_work = sum(work.values())
@@ -138,6 +147,7 @@ for name in scenes.keys() - {'sun'}:
                         raster_clear_estimate=empty, non_visibility=orig['p50']-observed[1],
                         one_query_frame=orig['p50']-observed[1]+empty+ideal*(correction if cal else 1.),
                         eight_query_frame=orig['p50']-observed[1]+empty+(ideal+7*ideal_field)*(correction if cal else 1.),
+                        opportunities_ms={k:(observed[1]-empty)*v/target_work for k,v in upper.items()},
                         kinds={k:(observed[1]-empty)*v/target_work for k,v in contribution.items()})
 # Two-column nonnegative least squares. Include both boundary solutions.
 shared = {}
@@ -156,6 +166,11 @@ if len(models) == 5 and all(m['cal_ms'] is not None for m in models.values()):
     shared['multipliers'] = fit
     for m in models.values():
         m['shared_prediction'] = m['raster_clear_estimate'] + sum(a*b for a,b in zip(fit,m['work_target']))
+paired_ring = {}
+for path in sorted(root.glob('*/*-ab.json')):
+    phase = path.parent.name
+    scene, size, _ = path.stem.split('-')
+    paired_ring['/'.join([phase,size,scene])] = profile(path, 'ring')
 hashes = {}
 for size in ('960x720', '1280x800'):
     for name, stem in scenes.items():
@@ -165,5 +180,5 @@ for size in ('960x720', '1280x800'):
             before, after = map(read,pair)
             hashes[size+'/'+name] = dict(frames=len(before), exact=sum(a==b for a,b in zip(before,after)),
                                          unique_before=len(set(before)), unique_after=len(set(after)))
-print(json.dumps(dict(selected=selected, attempts=attempts, models=models, shared=shared, hashes=hashes,
+print(json.dumps(dict(selected=selected, attempts=attempts, models=models, shared=shared, hashes=hashes, paired_ring=paired_ring,
                       diagnostics=read(root/'aov-summary.json')), indent=2, sort_keys=True))

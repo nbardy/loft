@@ -18,7 +18,7 @@ def pixels(path):
 
 
 results = {}
-for phase in ('candidate', 'guard', 'bounds'):
+for phase in ('candidate', 'guard', 'bounds', 'repeat'):
     for size in ('960x720', '1280x800'):
         for name, stem in scenes.items():
             hashes = f'{stem}-{size}-hashes.json'
@@ -57,6 +57,9 @@ for phase in ('candidate', 'guard', 'bounds'):
                 rgb = np.maximum(worst[1][:,:,:3],worst[1][:,:,3,None])
                 written = f'{phase}-{size}-{name}-diff.png'
                 Image.fromarray(np.minimum(255,rgb*16).astype('uint8')).save(destination/written)
-            results[key] = dict(frames=len(pairs), exact=sum(stats[pair][0]==0 for pair in pairs),
+            original_names = {b.name for b in before}
+            source_members = sum(p.name in original_names for p in after) if other.exists() else None
+            results[key] = dict(frames=len(pairs), source_member_frames=source_members,
+                                exact=sum(stats[pair][0]==0 for pair in pairs),
                                 max_rgba8=maxima[0], max_pixels_per_frame=maxima[1], diff=written)
 print(json.dumps(results,indent=2,sort_keys=True))

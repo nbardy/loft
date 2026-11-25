@@ -31,3 +31,15 @@ Two *fresh-view* experiments use the original executable. One adds a rejection s
 5. Move detail that changes only color or roughness into the material.
 6. Inspect overdraw and step views together. A low winning step count can coexist with millions of long misses.
 7. Profile the actual moving pose or camera when motion is the budget. Preserve the original lossless frames for comparison.
+
+## Direct evidence of waste
+
+The starter head's 128 m proof box covers all 691,200 pixels. Its 58,638 hits take 3.85 million field evaluations and its misses take 48.95 million. Sixty whiskers alone generate 8.25 million proxy fragments for 5,054 analytic hits. The head's derived L is 3.41. The final otter has 3,729 Strand rows and two more full-screen fields, Head4 and Torso, with 128 m wide boxes and L of 5.20 and 3.74.
+
+HeronHead's box is 128 m on each axis although the model is smaller than a metre. L is already 1.05. Only 13,788 rays hit this head. They take 143,246 field evaluations. Its 677,412 misses take 59,148,879. The *entire visible heron scene* averages just 7.21 steps on visible traced pixels. A tighter step multiplier cannot by itself explain or repair the empty-space cost.
+
+The walrus hide has a 512 m wide proof box and L of 1.00. The cap's box is 192 m wide. The two fields together use 50.16 million evaluations on misses. The 1,113 Rod rows run 32.19 million analytic queries and return 154,878 hits, roughly 208 invocations per geometrical hit. Costs multiply before shading sees a single rod.
+
+The evaluator starts its interval proof on a cube extending 1,024 m in each direction. Its breadth-first stopping condition uses the width of the surviving *candidate cells*. The six face searches choose a leaf size from that width divided by 64, with a 62.5 mm minimum. Interval dependency can leave cells far from the object alive. The resulting boxes can be valid and very loose. Even the minimum leaf is wide compared with millimetre fibres. The older artist ablations agree on direction. The heron fell from 340–370 ms to 53–73 ms across successive design iterations. Replacing the final otter's real head by a simplified three-part skull took a head-only tile from 51.3 to 13.4 ms. Those are changed assets and separate experiments.
+
+The all-occluded calibration clears depth to zero before drawing exactly the same geometry. Relative to its ordinary depth test, the median four-draw duration was 1.02× for ball Pelt, 0.93× for starter Otter, 1.04× for its whiskers, 1.04× for HeronHead, 1.26× for walrus Hide and 1.21× for Rod. Earlier opaque occupancy buys very little in this particular programmable-depth pass on Metal. The experiment measures elapsed execution. It does not expose the chip's internal early-depth decisions.
