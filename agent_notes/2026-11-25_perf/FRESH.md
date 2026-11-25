@@ -133,3 +133,5 @@ The native AB command times an immediate pass and then another 30 warmups and 12
 | otter-1280x800 | 155.69 / 166.07 Q | 68.27 / 87.01 C | 2.81 / 1.02 |
 
 At 960 the second original-only walrus capture differed from the first original on 42 of 120 PNGs. On 20 of those 42, the original repeat exactly reproduced the guarded PNG. This establishes intrinsic baseline variation at the moving camera. It does not assign the remaining pixels to the culler. The fixed-order test evaluates that explanation using the same cull kernel on both builds. [Original repeat metadata](orbit/repeat-original)
+
+Timing and picture comparisons use the stock CLI’s two time generators. The profile multiplies an f32 frame index by an f32 interval; the clip rounds a double-precision frame time once. On this orbit 76/120 profile timestamps are one f32 ULP above the corresponding clip timestamp. Every profile pair uses the same profile times, and every image pair uses the same clip times.
