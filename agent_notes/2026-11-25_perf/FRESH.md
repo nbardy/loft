@@ -91,3 +91,22 @@ The observed 960 guard p95 was 4.3 ms above forecast on heron and 10.6 / 19.0 ms
 The paired p95-ranked final otter frames spent 32.02 ms and 33.49 ms in Vis at the two sizes. Keeping the other passes at their observed costs leaves 14.87 ms and 14.34 ms for primary visibility. Even the small raster needs a further 54% reduction in that pass on the sampled tail frame. The guarded heron median still paid 3.42 / 4.70 ms in shade. The original calibrated model counted relatively little shading at the original camera and operating point.
 
 The proof attempts every eligible traced kind. A query with a clock dependency, live geometry parameter, scheduled law, foreign row access, bake, raw helper or an unsupported operation uses its original interval. Authored Lipschitz estimates and the rotation, ellipsoid and round-cone rules are unchanged. Traced guards are derived once per distinct eligible shape and loaded with its rows. The camera can still move independently.
+
+### Acceptance against the original moving clips
+
+The table covers 960 timed images per build. A differing pixel counts once per frame if any RGBA8 channel differs. Maximum channel error is measured on the 0–255 scale. The two pixel counts are the largest count on any frame and the sum over all 120 frames. The linked PNGs amplify channel differences by 16.
+
+| Scene and size | Guard exact / 120 | Guard max channel | Guard changed pixels, peak / total | Direct proxy p50 / p95 ms | Direct max channel | Direct changed pixels, peak / total |
+|---|---:|---:|---:|---:|---:|---:|
+| ball-960x720 | 120 | 0 | 0 / 0 | 4.31 / 4.47 C | 127 | [158 / 12,131](orbit/proxy/proxy-ball-960x720.png) |
+| base-960x720 | 120 | 0 | 0 / 0 | 8.20 / 15.01 Q | 203 | [6,854 / 729,501](orbit/proxy/proxy-base-960x720.png) |
+| walrus-960x720 | 84 | 107 | [4 / 48](orbit/revised/revised-walrus-960x720.png) | 9.56 / 10.68 Q | 229 | [46,225 / 5,273,955](orbit/proxy/proxy-walrus-960x720.png) |
+| heron-960x720 | 120 | 0 | 0 / 0 | 7.25 / 9.71 C | 252 | [18,224 / 1,840,609](orbit/proxy/proxy-heron-960x720.png) |
+| otter-960x720 | 120 | 0 | 0 / 0 | 23.69 / 35.70 Q | 238 | [21,641 / 2,375,389](orbit/proxy/proxy-otter-960x720.png) |
+| walrus-1280x800 | 78 | 106 | [3 / 52](orbit/revised/revised-walrus-1280x800.png) | 11.42 / 12.57 Q | 226 | [68,108 / 7,857,169](orbit/proxy/proxy-walrus-1280x800.png) |
+| heron-1280x800 | 120 | 0 | 0 / 0 | 8.99 / 9.99 C | 252 | [22,415 / 2,267,752](orbit/proxy/proxy-heron-1280x800.png) |
+| otter-1280x800 | 120 | 0 | 0 / 0 | 29.77 / 39.55 Q | 238 | [26,772 / 2,932,950](orbit/proxy/proxy-otter-1280x800.png) |
+
+The direct proxy changed every frame on every fixture. Its 960 median improvement relative to the guard in the other GPU window was 1.92 ms on walrus, 0.73 ms on heron and 2.45 ms on final otter, all below forecast. Its otter p95 increased at both sizes. Changing the raster and first sample gives a visible cost for little measured time on these views.
+
+The guarded heron, both otters and ball preserve the archived reference images. The default walrus comparison fails strict frame equality at both sizes. The row-order and repeated-original controls are reported separately. All timings, per-frame hashes and counts are stored alongside the diff images. [Guard scores](orbit/revised) · [Direct-proxy scores](orbit/proxy)
