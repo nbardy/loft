@@ -64,7 +64,12 @@ for name in ('walrus', 'otter', 'base'):
                                            ('sparse-oracle', compiled, resources[5], sparse)]:
             src = modules[index]['wgsl']
             if mask is not None:
-                assert 'vi / 36u' in src and modules[index]['name'] == original[index]['name']
+                # The two emit roots have different path prefixes in their mangled names.
+                # Match the identical fixture-relative module path and the declared kind.
+                old_path, old_kind = original[index]['name'].removeprefix('loft_m_').split('_', 1)
+                new_path, new_kind = modules[index]['name'].removeprefix('loft_m_').split('_', 1)
+                assert bytes.fromhex(new_path).endswith(bytes.fromhex(old_path)) and new_kind == old_kind
+                assert 'vi / 36u' in src
             body = src[:src.index('\n}',src.index('@fragment fn fs('))+2]
             row_group = group(row_layout, [(0,fields), (1,ids), (2,kp), (3,luts)])
             spec = [(raster(body,False), raster(instrument(src),True), row_group, n)]
