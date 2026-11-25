@@ -8,6 +8,7 @@ from fresh import checkpoint, notes, out, scenes
 parser = argparse.ArgumentParser()
 parser.add_argument("size")
 parser.add_argument("--scene", choices=("walrus", "otter"), default="walrus")
+parser.add_argument("--tiles", action="store_true", help="render the stable tile build against the ordered reference")
 args = parser.parse_args()
 source = out / "source/fixtures" / (scenes[args.scene] + ".loft")
 fixed = source.with_name("fixed_order.loft")
@@ -26,7 +27,12 @@ for variant, executable, path in [
     ("ordered-original", "original", fixed),
     ("ordered-guard", "revised", fixed),
     ("ordered-scissor", "scissor", fixed),
+    ("ordered-tiles", "tiles", fixed),
 ]:
+    if args.tiles and variant not in ("ordered-original", "ordered-tiles"):
+        continue
+    if not args.tiles and variant == "ordered-tiles":
+        continue
     if args.scene == "otter" and variant == "ordered-guard":
         continue
     dest = out / variant / f"{args.scene}-{args.size}-clip"
