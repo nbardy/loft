@@ -43,3 +43,18 @@ The walrus hide has a 512 m wide proof box and L of 1.00. The cap's box is 192 m
 The evaluator starts its interval proof on a cube extending 1,024 m in each direction. Its breadth-first stopping condition uses the width of the surviving *candidate cells*. The six face searches choose a leaf size from that width divided by 64, with a 62.5 mm minimum. Interval dependency can leave cells far from the object alive. The resulting boxes can be valid and very loose. Even the minimum leaf is wide compared with millimetre fibres. The older artist ablations agree on direction. The heron fell from 340–370 ms to 53–73 ms across successive design iterations. Replacing the final otter's real head by a simplified three-part skull took a head-only tile from 51.3 to 13.4 ms. Those are changed assets and separate experiments.
 
 The all-occluded calibration clears depth to zero before drawing exactly the same geometry. Relative to its ordinary depth test, the median four-draw duration was 1.02× for ball Pelt, 0.93× for starter Otter, 1.04× for its whiskers, 1.04× for HeronHead, 1.26× for walrus Hide and 1.21× for Rod. Earlier opaque occupancy buys very little in this particular programmable-depth pass on Metal. The experiment measures elapsed execution. It does not expose the chip's internal early-depth decisions.
+
+## Fixed-camera timings
+
+These are the first native runs, with zero of 120 nonzero Vis intervals after the change. Every first pair below was flagged contended. Later controls and eligibility are recorded in the measurement archive. Numbers are GPU milliseconds, p50 / p95.
+
+| View | Original 960×720 | Retained 960×720 | Retained 1280×800 |
+|---|---:|---:|---:|
+| Ball, sky | 4.08 / 5.66 | 2.68 / 3.55 | — |
+| Ball, sun only | 2.27 / 2.53 | 0.94 / 1.85 | — |
+| Starter otter | 15.84 / 33.66 | 3.92 / 4.79 | — |
+| Walrus | 26.53 / 99.26 | 1.86 / 2.15 | 2.50 / 2.67 |
+| Heron | 37.01 / 41.19 | 1.00 / 1.25 | 5.00 / 5.87 |
+| Final otter | 100.02 / 148.47 | 1.99 / 2.09 | 2.84 / 10.83 |
+
+The highest candidate p95 across the first three runs, covering all three characters, was 2.64 ms at 960×720 and 13.72 ms at 1280×800. The first control bracket was consistently about 1.94 ms at the smaller size and 2.81 ms at the larger size. The native contention threshold is 1.10 ms on **each** bracket. The one-triangle control of roughly 0.08 ms is a separate instrument.
