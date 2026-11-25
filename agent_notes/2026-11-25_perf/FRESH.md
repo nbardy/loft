@@ -41,3 +41,18 @@ Each row is the selected actual median-ranked frame, in GPU milliseconds. Across
 | Final otter | 1280×800 | 0.03 | 198.71 | 0.00 | 0.29 | 4.93 | 2.78 | 206.75 |
 
 The rate model's 7° held-out camera and the measured performance of hand guards supply the prewritten predictions. The actual orbit starts on +Z, bringing the walrus shade bill alone to 8.64 ms at the median. At 960×720, 16.7 ms minus the observed non-Vis work leaves 7.28 ms for walrus visibility, 15.01 ms for heron and 13.47 ms for final otter on these median frames. Each p95 comparison uses its own actual frame.
+
+### Compiler coverage and cost
+
+The recovered draft contributed the second LUT interval, the outward float evaluator, the exit-only WGSL change, hot-edit upload, orbit fixtures and direct-proxy probe. This continuation corrected translation recognition in checked maps, float endpoint widening, interpolation coverage and the work-limit traversal, then added six exterior slab searches for coarse survivors. The six largest character fields are now bounded automatically.
+
+| Field | Original longest side (m) | Certified longest side (m) | Extra range/point evaluations with the original certificate cached |
+|---|---:|---:|---:|
+| Starter Otter | 128.028 | 0.518 | 9,588 |
+| Walrus Hide | 512.104 | 0.918 | 26,847 |
+| Walrus Cap | 192.040 | 0.307 | 7,027 |
+| HeronHead | 128.028 | 0.283 | 3,965 |
+| Final Head4 | 128.028 | 0.268 | 6,884 |
+| Final Torso | 128.028 | 0.408 | 9,008 |
+
+The initial traversal uses a 31.25 mm leaf width and approximately 24,000 evaluations per distinct shape. On exhaustion each of six faces gets up to 2,048 extra outward interval evaluations. An inconclusive slab stays in the result. These limits bound compilation time and may leave a face farther than one cell from the surface. With the original proof cached and the guard cold, whole-scene check times were 10.49 s for walrus, 2.57 s for heron, 6.60 s for final otter, 1.50 s for starter otter and 0.065 s for ball. Repeated checks reuse the on-disk certificate. The guard uses 40 bytes per traced row plus one word per drawn kind. [Per-kind compiler readings](orbit/certified-derivation.txt) · [All interval coordinates](orbit/certified-bounds.json.gz)
