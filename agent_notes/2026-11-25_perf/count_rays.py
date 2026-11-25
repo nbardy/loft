@@ -102,7 +102,7 @@ class Raster:
         self.count = dev.create_buffer(size=256*5*4,usage=U.STORAGE|U.COPY_SRC|U.COPY_DST)
         self.cg = group(counter_layout,[(9,self.count)])
 
-    def draw(self, kinds, count=False, repetitions=1, timing=False, occluded=False, rects=None):
+    def draw(self, kinds, count=False, repetitions=1, timing=False, occluded=False, rects=None, tile_draws=None):
         enc=dev.create_command_encoder()
         if count: enc.clear_buffer(self.count)
         stamps=dict(query_set=self.query,beginning_of_pass_write_index=0,end_of_pass_write_index=1) if timing else None
@@ -114,7 +114,12 @@ class Raster:
             rp.set_bind_group(0,self.frame); rp.set_bind_group(1,rows)
             if count: rp.set_bind_group(2,self.cg)
             for _ in range(repetitions):
-                if rects is None:
+                if tile_draws is not None:
+                    indirect, rectangles = tile_draws
+                    for offset, rect in rectangles:
+                        rp.set_scissor_rect(*rect)
+                        rp.draw_indirect(indirect, offset)
+                elif rects is None:
                     rp.draw(36,n)
                 else:
                     for first, count_rows, (x,y,w,h) in rects:
