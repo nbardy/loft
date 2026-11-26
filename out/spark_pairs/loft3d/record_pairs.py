@@ -147,6 +147,9 @@ def main():
 
         for t in range(last):
             add(t, t + 1, "adjacent")
+        stride = 5 if last >= 10 else 1
+        for t in range(0, last - stride + 1):
+            add(t, t + stride, f"stride{stride:02d}")
         for t in range(1, last + 1):
             add(0, t, "baseline")
     with open(os.path.join(L3D, "steps.jsonl"), "w") as f:

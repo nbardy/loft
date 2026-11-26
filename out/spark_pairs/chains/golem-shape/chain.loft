@@ -33,15 +33,24 @@ build {
   let f = axis_f(step)
   let c = [0.0, 0.0, 0.0]@World
   let skin = [0.58, 0.54, 0.48]
-  # torso: upright; thick round column -> slim frame with wide shoulders
-  let r = 0.46m - 0.16m * f
+  # legs plant wider as the frame broadens
+  let lx = 0.20 + 0.15 * f
+  emit Capsule(a: c + [-lx, 0.55, 0], b: c + [-lx, 0.05, 0], r: 0.13m, albedo: skin * 0.8)
+  emit Capsule(a: c + [lx, 0.55, 0], b: c + [lx, 0.05, 0], r: 0.13m, albedo: skin * 0.8)
+  # torso: thick round column -> slim frame with wide slab shoulders
+  let r = 0.50m - 0.24m * f
   emit Capsule(a: c + [0.0, 0.55, 0], b: c + [0.0, 1.55, 0], r: r, albedo: skin)
-  let hw = 0.30 + 0.28 * f
-  emit Capsule(a: c + [-hw, 1.62, 0], b: c + [hw, 1.62, 0], r: 0.24m - 0.04m * f, albedo: skin * 1.05)
+  let hw = 0.28 + 0.38 * f
+  emit Capsule(a: c + [-hw, 1.62, 0], b: c + [hw, 1.62, 0], r: 0.24m - 0.06m * f, albedo: skin * 1.05)
   # stubby arms track the shoulder ends (identity anchor across steps)
   let ax = hw + 0.28
   emit Capsule(a: c + [-ax, 1.57, 0], b: c + [-ax - 0.10, 0.80, 0.08], r: 0.11m, albedo: skin * 0.9)
   emit Capsule(a: c + [ax, 1.57, 0], b: c + [ax + 0.10, 0.80, 0.08], r: 0.11m, albedo: skin * 0.9)
+  # book-shell backpack: slab + three leaning book spines
+  emit Capsule(a: c + [-0.30, 1.45, -0.42], b: c + [0.30, 1.45, -0.42], r: 0.20m, albedo: [0.42, 0.32, 0.24])
+  emit Capsule(a: c + [-0.16, 1.20, -0.50], b: c + [-0.20, 1.75, -0.50], r: 0.055m, albedo: [0.65, 0.25, 0.20])
+  emit Capsule(a: c + [0.02, 1.20, -0.50], b: c + [0.02, 1.78, -0.50], r: 0.055m, albedo: [0.25, 0.45, 0.60])
+  emit Capsule(a: c + [0.20, 1.20, -0.50], b: c + [0.24, 1.72, -0.50], r: 0.055m, albedo: [0.55, 0.55, 0.30])
   # head bar + kind amber eyes, fixed (only the silhouette votes here)
   emit Capsule(a: c + [-0.30, 1.98, 0], b: c + [0.30, 1.98, 0], r: 0.26m, albedo: skin * 1.08)
   emit Capsule(a: c + [-0.16, 2.00, 0.24], b: c + [-0.16, 2.00, 0.24], r: 0.055m, albedo: [1.0, 0.62, 0.15])

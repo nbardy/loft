@@ -28,7 +28,7 @@ background:#2a7;border-radius:4px}"""
 JS = """const PAIRS=__PAIRS__;const CHAINS=__CHAINS__;
 function rel(p){return p.replace("out/spark_pairs/loft3d/","");}
 function steps(pid){const m=pid.match(/(\\d{2})v(\\d{2})$/);return m?m.slice(1):["?","?"];}
-function kind(pid){return pid.includes("-adjacent-")?"adjacent":"baseline";}
+function kind(pid){const m=pid.match(/-(adjacent|baseline|stride\\d+)-/);return m?m[1]:"pair";}
 const V=JSON.parse(localStorage.getItem("loft3d_votes")||"{}");
 const sel=document.getElementById("f");
 CHAINS.forEach(c=>{const o=document.createElement("option");o.value=c;
