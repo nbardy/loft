@@ -36,7 +36,7 @@ o.textContent=c;sel.appendChild(o)});
 const st=document.getElementById("strips");
 CHAINS.forEach(ch=>{const d=document.createElement("div");d.className="card";
 d.innerHTML="<h3>"+ch+"</h3>";const s=document.createElement("div");
-s.className="strip";for(let t=0;t<=40;t++){const im=document.createElement("img");
+s.className="strip";for(let t=0;t<=8;t++){const im=document.createElement("img");
 im.src=ch+"/step_"+String(t).padStart(2,"0")+".png";im.loading="lazy";
 im.title=ch+" step "+t;s.appendChild(im)}d.appendChild(s);st.appendChild(d)});
 function draw(){const f=sel.value;

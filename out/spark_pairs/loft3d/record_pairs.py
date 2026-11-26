@@ -89,7 +89,7 @@ def main():
     want = []
     for entry in CHAINS:
         cid, axis, subject, criteria, reflect = entry[:5]
-        last = entry[5] if len(entry) > 5 else 40
+        last = entry[5] if len(entry) > 5 else 8
         paths = [os.path.join(L3D, cid, f"step_{t:02d}.png")
                  for t in range(last + 1)]
         missing = [p for p in paths if not os.path.exists(p)]
@@ -147,7 +147,7 @@ def main():
 
         for t in range(last):
             add(t, t + 1, "adjacent")
-        stride = 5 if last >= 10 else 1
+        stride = 3 if last >= 6 else 1
         for t in range(0, last - stride + 1):
             add(t, t + stride, f"stride{stride:02d}")
         for t in range(1, last + 1):
