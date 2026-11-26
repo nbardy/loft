@@ -42,10 +42,11 @@ build {
   emit Capsule(a: c + [0.0, 0.55, 0], b: c + [0.0, 1.55, 0], r: r, albedo: skin)
   let hw = 0.28 + 0.38 * f
   emit Capsule(a: c + [-hw, 1.62, 0], b: c + [hw, 1.62, 0], r: 0.24m - 0.06m * f, albedo: skin * 1.05)
-  # stubby arms track the shoulder ends (identity anchor across steps)
+  # arms track the shoulders, then flex upward as the slab widens
   let ax = hw + 0.28
-  emit Capsule(a: c + [-ax, 1.57, 0], b: c + [-ax - 0.10, 0.80, 0.08], r: 0.11m, albedo: skin * 0.9)
-  emit Capsule(a: c + [ax, 1.57, 0], b: c + [ax + 0.10, 0.80, 0.08], r: 0.11m, albedo: skin * 0.9)
+  let fist = 0.80 + 0.55 * f
+  emit Capsule(a: c + [-ax, 1.57, 0], b: c + [-ax - 0.10, fist, 0.08], r: 0.11m, albedo: skin * 0.9)
+  emit Capsule(a: c + [ax, 1.57, 0], b: c + [ax + 0.10, fist, 0.08], r: 0.11m, albedo: skin * 0.9)
   # book-shell backpack: slab + three leaning book spines
   emit Capsule(a: c + [-0.30, 1.45, -0.42], b: c + [0.30, 1.45, -0.42], r: 0.20m, albedo: [0.42, 0.32, 0.24])
   emit Capsule(a: c + [-0.16, 1.20, -0.50], b: c + [-0.20, 1.75, -0.50], r: 0.055m, albedo: [0.65, 0.25, 0.20])

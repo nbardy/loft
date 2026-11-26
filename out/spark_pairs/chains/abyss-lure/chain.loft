@@ -53,8 +53,8 @@ build {
   let m = [mx, my, 0.05]@World
   emit Capsule(a: c + [bx, by, 0], b: m, r: 0.04m, albedo: brass * 0.9)
   emit Capsule(a: m, b: c + [tx, ty, 0.05], r: 0.035m, albedo: brass * 0.9)
-  # lure bulb swells a little as it centres
-  let br = 0.09m + 0.04m * f
+  # lure bulb swells a lot as it centres: the readability payoff
+  let br = 0.08m + 0.09m * f
   emit Capsule(a: c + [tx, ty, 0.05], b: c + [tx, ty, 0.05], r: br, albedo: [0.59, 0.92, 0.94])
 }
 

@@ -33,29 +33,33 @@ build {
   let f = axis_f(step)
   let c = [0.0, 0.0, 0.0]@World
   let skin = [0.58, 0.54, 0.48]
+  # compact body below a huge head: the face is the subject here
   emit Capsule(a: c + [-0.20, 0.55, 0], b: c + [-0.20, 0.05, 0], r: 0.13m, albedo: skin * 0.8)
   emit Capsule(a: c + [0.20, 0.55, 0], b: c + [0.20, 0.05, 0], r: 0.13m, albedo: skin * 0.8)
-  emit Capsule(a: c + [0.0, 0.55, 0], b: c + [0.0, 1.55, 0], r: 0.50m, albedo: skin)
-  emit Capsule(a: c + [-0.30, 1.62, 0], b: c + [0.30, 1.62, 0], r: 0.24m, albedo: skin * 1.05)
-  emit Capsule(a: c + [-0.58, 1.57, 0], b: c + [-0.68, 0.80, 0.08], r: 0.11m, albedo: skin * 0.9)
-  emit Capsule(a: c + [0.58, 1.57, 0], b: c + [0.68, 0.80, 0.08], r: 0.11m, albedo: skin * 0.9)
-  emit Capsule(a: c + [-0.30, 1.98, 0], b: c + [0.30, 1.98, 0], r: 0.26m, albedo: skin * 1.08)
-  # eyes: pupils widen a lot with warmth, fixed amber hue (identity anchor)
-  let pr = 0.04m + 0.035m * f
-  emit Capsule(a: c + [-0.16, 2.00, 0.24], b: c + [-0.16, 2.00, 0.24], r: pr, albedo: [1.0, 0.62, 0.15])
-  emit Capsule(a: c + [0.16, 2.00, 0.24], b: c + [0.16, 2.00, 0.24], r: pr, albedo: [1.0, 0.62, 0.15])
-  # brow: heavy stern slab relaxes well upward with f
-  let brow = 2.30 - 0.18 * f
-  emit Capsule(a: c + [-0.32, brow, 0.24], b: c + [0.32, brow, 0.24], r: 0.04m, albedo: skin * 0.7)
-  # mouth: flat bar -> wide rising-corner grin (two capsules from centre)
-  let corner = 1.78 + 0.22 * f
-  let mid = 1.78 - 0.05 * f
-  emit Capsule(a: c + [0.0, mid, 0.26], b: c + [-0.24, corner, 0.26], r: 0.032m, albedo: [0.24, 0.19, 0.15])
-  emit Capsule(a: c + [0.0, mid, 0.26], b: c + [0.24, corner, 0.26], r: 0.032m, albedo: [0.24, 0.19, 0.15])
+  emit Capsule(a: c + [0.0, 0.55, 0], b: c + [0.0, 1.45, 0], r: 0.42m, albedo: skin)
+  # arms: slumped at hips -> thrown high in a cheer (the big motion)
+  let hx = 0.68 + 0.17 * f
+  let hy = 0.80 + 1.80 * f
+  emit Capsule(a: c + [-0.50, 1.35, 0], b: c + [-hx, hy, 0.10], r: 0.11m, albedo: skin * 0.9)
+  emit Capsule(a: c + [0.50, 1.35, 0], b: c + [hx, hy, 0.10], r: 0.11m, albedo: skin * 0.9)
+  # massive head bar fills the frame
+  emit Capsule(a: c + [-0.36, 2.00, 0], b: c + [0.36, 2.00, 0], r: 0.34m, albedo: skin * 1.08)
+  # eyes pop: shutters narrow -> wide amber headlamps
+  let pr = 0.05m + 0.06m * f
+  emit Capsule(a: c + [-0.19, 2.02, 0.30], b: c + [-0.19, 2.02, 0.30], r: pr, albedo: [1.0, 0.62, 0.15])
+  emit Capsule(a: c + [0.19, 2.02, 0.30], b: c + [0.19, 2.02, 0.30], r: pr, albedo: [1.0, 0.62, 0.15])
+  # brow: slammed low over the eyes -> flung high in delight
+  let brow = 2.06 + 0.30 * f
+  emit Capsule(a: c + [-0.38, brow, 0.30], b: c + [0.38, brow, 0.30], r: 0.05m, albedo: skin * 0.65)
+  # mouth: pressed flat line -> huge open grin
+  let corner = 1.72 + 0.30 * f
+  let mid = 1.72 - 0.10 * f
+  emit Capsule(a: c + [0.0, mid, 0.32], b: c + [-0.30, corner, 0.32], r: 0.04m, albedo: [0.24, 0.19, 0.15])
+  emit Capsule(a: c + [0.0, mid, 0.32], b: c + [0.30, corner, 0.32], r: 0.04m, albedo: [0.24, 0.19, 0.15])
 }
 
 schedule Main {
-  orbit(at: [0, 1.0, 0]@World, radius: 4.4m, height: 2.2m, period: 24.0s, fov: 40deg)
+  orbit(at: [0, 1.7, 0]@World, radius: 3.6m, height: 2.0m, period: 24.0s, fov: 40deg)
   cull_indirect(Capsule)
   render_bundle(Vis64) { draw_indirect(Capsule) }
   tile_classify(Vis64, tile: 8)
