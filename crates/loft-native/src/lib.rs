@@ -398,8 +398,14 @@ impl Loaded {
             p.camera, p.sun, size, 0., sun, alternate.map(|(lo, hi, side)| sun_camera(p.sun, lo, hi, side)));
         let plan = loft_passes::bundle::lower_program(p, params, size, loft_passes::bundle::Options {
             nonce, overdraw: aov == Aov::Overdraw, picture_only: true,
-            segment_tiles: p.camera.fixed_eye.is_none() && editable.is_none() && aov == Aov::Beauty
-                && reuse::Reuse::stock_visibility(p).is_some(),
+            // Off until thin kinds can be narrowed in a constant number of GPU commands. Per-tile row lists cut
+            // Strand fragment launches from 96.9M to 6.2M with every hit kept, but each eligible kind then issues
+            // one scissored draw per 32-pixel tile: the full gate measured capsules-20 at 1006 commands against
+            // the manifest's 5, one more module, two more pipelines and a paired p95 0.01 to 0.26 ms slower
+            // (26 Nov 2026, agent_notes/2026-11-20_v1/OPEN.md). The condition that selected tiles was
+            // `p.camera.fixed_eye.is_none() && editable.is_none() && aov == Aov::Beauty
+            //  && reuse::Reuse::stock_visibility(p).is_some()`.
+            segment_tiles: false,
             // An edit swaps the editable kind's module, so its load keeps the software world.
             hardware_ray_query: editable.is_none() && loft_runner::ray_query::has_aabb_capacity(d, p.instances.len()),
             precision: precision(), features: device_features(d),
