@@ -99,6 +99,7 @@ def scene_check(cid):
 def main():
     steps_rows = []
     want = []
+    done = {}
     for entry in CHAINS:
         cid, axis, subject, criteria, reflect = entry[:5]
         last = entry[5] if len(entry) > 5 else 8
@@ -164,6 +165,41 @@ def main():
             add(t, t + stride, f"stride{stride:02d}")
         for t in range(1, last + 1):
             add(0, t, "baseline")
+        done[cid] = {"meta": meta, "criteria": criteria}
+    # cross-character pairs: every recorded chain's peak (step 8) against
+    # every other's, judged on overall appeal across axes.
+    ids = sorted(done)
+    for i in range(len(ids)):
+        for j in range(i + 1, len(ids)):
+            a, b = ids[i], ids[j]
+            ma = done[a]["meta"][-1]
+            mb = done[b]["meta"][-1]
+            pid = f"loft3d-x-{a}-v-{b}-{ma['t']:02d}v{mb['t']:02d}"
+            log = {
+                "pair_id": pid,
+                "criteria": (f"Which character reads stronger, {a} or {b}? "
+                             f"Best foot each (step {ma['t']} vs step {mb['t']}). "
+                             f"Judge overall appeal only."),
+                "created_by": AGENT,
+                "alignment": {"format": "png", "size": [1280, 800],
+                              "framing": FRAMING},
+                "renders": [
+                    {"side": "a", "path": ma["render"],
+                     "prompt": ma["prompt"],
+                     "sha256": ma["sha256"], "size": ma["size"],
+                     "params": {"chain": a, "t": ma["t"], "kind": "cross"}},
+                    {"side": "b", "path": mb["render"],
+                     "prompt": mb["prompt"],
+                     "sha256": mb["sha256"], "size": mb["size"],
+                     "params": {"chain": b, "t": mb["t"], "kind": "cross"}},
+                ],
+            }
+            d = os.path.join(ROOT, pid)
+            os.makedirs(d, exist_ok=True)
+            with open(os.path.join(d, "log.json"), "w") as f:
+                json.dump(log, f, indent=2, sort_keys=True)
+                f.write("\n")
+            want.append(pid)
     with open(os.path.join(L3D, "steps.jsonl"), "w") as f:
         for r in steps_rows:
             f.write(json.dumps(r, sort_keys=True) + "\n")
