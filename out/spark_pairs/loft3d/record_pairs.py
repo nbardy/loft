@@ -52,6 +52,18 @@ CHAINS = [
      "paper lantern with glow core, orbit camera, 1280x800 still",
      "Which lantern feels cozier? Judge glow color and warmth only.",
      "Paper cools amber to moonlight while cool ribs accrete, step 0 to 10."),
+    ("golem-brute", "expression",
+     "scarred horned ogre, orbit camera, 1280x800 still",
+     "Which brute looks angrier? Judge face and fists only.",
+     "Brow crushes, jaw juts with teeth bared, fists climb overhead."),
+    ("golem-librarian", "shape",
+     "robed scholar with book, orbit camera, 1280x800 still",
+     "Which scholar looks more absorbed? Judge lean and book only.",
+     "Book rises and head lowers to meet it: peering closer."),
+    ("golem-titan", "texture",
+     "monumental guardian with lantern post, orbit camera, 1280x800 still",
+     "Which titan looks more ancient? Judge cracks only.",
+     "Weathering cracks multiply across the torso; scale lantern fixed."),
 ]
 
 FRAMING = "orbit still, subject centred, 1280x800 PNG"

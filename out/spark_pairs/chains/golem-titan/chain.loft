@@ -1,0 +1,100 @@
+use stdlib::geometry::analytic::{ray_capsule}
+use stdlib::integrators::direct::{sun_sky}
+use stdlib::materials::bsdf::{ggx}
+use stdlib::math::sampling::{sample_key}
+use stdlib::sdf::solid::{capsule}
+use stdlib::sky::environment::{sky_color}
+
+# golem-titan chain: a monument weathering. Cracks multiply across its torso
+# with f while a tiny lantern post at its feet sells the scale. Steps 0..8.
+
+space World
+
+kind Capsule @World (a: p3@World, b: p3@World, r: m, albedo: rgb) {
+
+  visible(ro, rd) {
+    ray_capsule(ro, rd, a, b, r)
+  }
+  trace(p) {
+    capsule(p, a, b, r)
+  }
+  material(p, n) {
+    ggx(albedo, 0.55, 0)
+  }
+}
+
+kind GlossBead @World (c: p3@World, r: m, albedo: rgb) {
+
+  visible(ro, rd) {
+    ray_capsule(ro, rd, c, c, r)
+  }
+  trace(p) {
+    capsule(p, c, c, r)
+  }
+  material(p, n) {
+    ggx(albedo, 0.12, 0)
+  }
+}
+
+param step: u = 0 in 0..8
+
+build fn axis_f(step: u) -> f {
+  f32(step) / 8.0
+}
+
+build fn crack_roll(slot: u) -> u {
+  u32(sample_key(2011, slot, 4, 0, 7) * 100.0)
+}
+
+# One weathering crack on the torso front, kept by roll.
+build fn crack(slot: u, keep: u, stone: rgb) {
+  let x = (f32(slot % 2) - 0.5) * 0.25
+  let y = 1.45 + f32(slot / 2) * 0.30
+  let o = [x, y, 0.70]@World
+  if crack_roll(slot) < keep {
+    emit Capsule(a: o + [0.0, -0.14, 0], b: o + [0.03, 0.14, 0], r: 0.035m, albedo: stone * 0.35)
+  }
+}
+
+build {
+  let f = axis_f(step)
+  let c = [0.0, 0.0, 0.0]@World
+  let stone = [0.55, 0.52, 0.47]
+  # pillar legs + monumental torso
+  emit Capsule(a: c + [-0.35, 1.20, 0], b: c + [-0.35, 0.05, 0], r: 0.25m, albedo: stone * 0.85)
+  emit Capsule(a: c + [0.35, 1.20, 0], b: c + [0.35, 0.05, 0], r: 0.25m, albedo: stone * 0.85)
+  emit Capsule(a: c + [0.0, 1.20, 0], b: c + [0.0, 2.80, 0], r: 0.72m, albedo: stone)
+  # long arms hanging to the ground, finger nubs
+  emit Capsule(a: c + [-0.85, 2.80, 0], b: c + [-1.00, 0.60, 0.05], r: 0.20m, albedo: stone * 0.9)
+  emit Capsule(a: c + [0.85, 2.80, 0], b: c + [1.00, 0.60, 0.05], r: 0.20m, albedo: stone * 0.9)
+  emit GlossBead(c: c + [-1.00, 0.45, 0.05], r: 0.09m, albedo: stone * 0.9)
+  emit GlossBead(c: c + [-1.00, 0.28, 0.05], r: 0.09m, albedo: stone * 0.9)
+  emit GlossBead(c: c + [1.00, 0.45, 0.05], r: 0.09m, albedo: stone * 0.9)
+  emit GlossBead(c: c + [1.00, 0.28, 0.05], r: 0.09m, albedo: stone * 0.9)
+  # tiny head, single cyclops eye slit glowing through the dark
+  emit Capsule(a: c + [-0.18, 3.35, 0], b: c + [0.18, 3.35, 0], r: 0.20m, albedo: stone * 1.05)
+  emit GlossBead(c: c + [0.0, 3.35, 0.19], r: 0.06m, albedo: [0.70, 0.90, 0.90])
+  # weathering cracks accrete with f
+  let keep = u32(100.0 * f)
+  build for slot in 0..16 {
+    crack(slot, keep, stone)
+  }
+  # lantern post at its feet: the scale cue
+  emit Capsule(a: c + [1.70, 0.0, 0.40], b: c + [1.70, 0.95, 0.40], r: 0.035m, albedo: [0.35, 0.28, 0.22])
+  emit GlossBead(c: c + [1.70, 1.08, 0.40], r: 0.11m, albedo: [1.0, 0.72, 0.30])
+  emit Capsule(a: c + [1.58, 1.22, 0.40], b: c + [1.82, 1.22, 0.40], r: 0.04m, albedo: [0.35, 0.28, 0.22])
+  # ground cross
+  emit Capsule(a: [-3.0, -0.02, -0.5]@World, b: [3.0, -0.02, -0.5]@World, r: 0.12m, albedo: [0.34, 0.31, 0.27])
+  emit Capsule(a: [0.0, -0.02, -2.5]@World, b: [0.0, -0.02, 2.5]@World, r: 0.12m, albedo: [0.34, 0.31, 0.27])
+}
+
+schedule Main {
+  orbit(at: [0, 1.8, 0]@World, radius: 7.5m, height: 2.6m, period: 24.0s, fov: 40deg)
+  cull_indirect(Capsule)
+  cull_indirect(GlossBead)
+  render_bundle(Vis64) { draw_indirect(Capsule) }
+  render_bundle(Vis64) { draw_indirect(GlossBead) }
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: sun_sky, sun: [0.45, 0.8, 0.35])
+  tonemap_aces(ColorHdr, sky: sky_color)
+}

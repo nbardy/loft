@@ -5,7 +5,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/../../.."
 for c in golem-shape lantern-color golem-texture golem-expression \
-         solar-material abyss-lure rune-legibility; do
+         solar-material abyss-lure rune-legibility \
+         golem-brute golem-librarian golem-titan; do
   mkdir -p "out/spark_pairs/loft3d/$c"
   for t in $(seq 0 40); do
     n=$(printf %02d "$t")
