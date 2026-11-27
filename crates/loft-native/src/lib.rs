@@ -1,10 +1,6 @@
 //! Native execution of the Phase 1.5 picture and motion fixtures.
 mod motion;
-#[cfg(not(target_arch = "wasm32"))]
-mod edit;
 mod reuse;
-#[cfg(not(target_arch = "wasm32"))]
-pub use edit::{EditReceipt, EditSession};
 use loft_passes::emit::Aov;
 use std::sync::Mutex;
 pub mod ray_query;
@@ -82,20 +78,14 @@ pub struct Loaded {
     frame_table: TableId,
     runner: Mutex<Runner>,
     id: InstanceId,
-    #[cfg(not(target_arch = "wasm32"))]
-    modules: Vec<ModuleId>,
     kind_tables: Vec<TableId>,
     twin_sources: Vec<naga::Module>,
     luts: Vec<f32>,
-    #[cfg(not(target_arch = "wasm32"))]
-    lut_table: TableId,
     kind_words: Vec<[u32; 4]>,
     params: Mutex<(Vec<f32>, bool)>,
     visibility: Mutex<reuse::Reuse>,
     tiled_modules: std::collections::BTreeSet<ModuleId>,
     shadow: Option<(u16, u32, Mutex<reuse::Reuse>)>,
-    #[cfg(not(target_arch = "wasm32"))]
-    instance_bounds: wgpu::Buffer,
     color: wgpu::Texture,
     planes: [TableId; 2],
     color_view: wgpu::TextureView,
@@ -383,11 +373,6 @@ impl Loaded {
     }
 
     pub fn with_aov(g: &Gpu, p: &Program, size: (u32, u32), nonce: Option<u32>, aov: Aov) -> Result<Self, String> {
-        Self::load(g, p, size, nonce, None, aov)
-    }
-
-    fn load(g: &Gpu, p: &Program, size: (u32, u32), nonce: Option<u32>,
-        editable: Option<usize>, aov: Aov) -> Result<Self, String> {
         let started = Instant::now();
         let d = &g.device;
         if size.0 == 0 || size.1 == 0 || size.0.max(size.1) > d.limits().max_texture_dimension_2d {
@@ -402,12 +387,9 @@ impl Loaded {
             // Strand fragment launches from 96.9M to 6.2M with every hit kept, but each eligible kind then issues
             // one scissored draw per 32-pixel tile: the full gate measured capsules-20 at 1006 commands against
             // the manifest's 5, one more module, two more pipelines and a paired p95 0.01 to 0.26 ms slower
-            // (26 Nov 2026, agent_notes/2026-11-20_v1/OPEN.md). The condition that selected tiles was
-            // `p.camera.fixed_eye.is_none() && editable.is_none() && aov == Aov::Beauty
-            //  && reuse::Reuse::stock_visibility(p).is_some()`.
+            // (26 Nov 2026, agent_notes/2026-11-20_v1/OPEN.md).
             segment_tiles: false,
-            // An edit swaps the editable kind's module, so its load keeps the software world.
-            hardware_ray_query: editable.is_none() && loft_runner::ray_query::has_aabb_capacity(d, p.instances.len()),
+            hardware_ray_query: loft_runner::ray_query::has_aabb_capacity(d, p.instances.len()),
             precision: precision(), features: device_features(d),
         }, frame)?;
         let color_format = if aov == Aov::Beauty { COLOR } else { wgpu::TextureFormat::Rgba8Unorm };
@@ -471,7 +453,7 @@ impl Loaded {
         let photons = p.path.as_ref().is_some_and(|p| matches!(p.integrator, loft_passes::emit::paths::Integrator::Spectral));
         let indexed = |kind: &loft_passes::program::KindTable| aov != Aov::Overdraw
             && p.modules[kind.module].naga.entry_points.iter().any(|e| e.name == "vs_grid");
-        let visibility = Mutex::new(reuse::Reuse::visibility(p, indexed, editable));
+        let visibility = Mutex::new(reuse::Reuse::visibility(p, indexed));
         let shadow = plan.shadow_wave.and_then(|wave| {
             let [(i, casters)] = p.passes.iter().enumerate().filter_map(|(i, pass)| match pass {
                 Pass::Shadow(casters) => Some((i, casters)),
@@ -479,7 +461,7 @@ impl Loaded {
             }).collect::<Vec<_>>()[..] else { return None };
             (i > 0 && i + 1 < p.passes.len() && !p.passes[..i].iter().any(|pass| matches!(pass, Pass::Shade(_))))
                 .then(|| {
-                    (wave, i as u32 + u32::from(photons), Mutex::new(reuse::Reuse::shadow(p, casters, indexed, editable)))
+                    (wave, i as u32 + u32::from(photons), Mutex::new(reuse::Reuse::shadow(p, casters, indexed)))
                 })
         });
         let clock = g.timestamps.then(|| Clock::new(g, 2 * (p.passes.len() as u32 + u32::from(photons))));
@@ -491,17 +473,12 @@ impl Loaded {
             words
         }).collect();
         let frame_table = plan.bundle.resources.frame.as_ref().ok_or("missing frame declaration")?.main;
-        #[cfg(not(target_arch = "wasm32"))]
-        let instance_bounds = runner.export_buffer(id, plan.instances).ok_or("missing bounds table")?.as_ref().clone();
         stats.resources_ms = resource_started.elapsed().as_secs_f64() * 1e3;
         Ok(Self { size, camera: p.camera, sun: p.sun, light_view: plan.shadow.map(|(lo, hi, side)| sun_camera(p.sun, lo, hi, side)),
             frame_table, runner: Mutex::new(runner), id,
-            #[cfg(not(target_arch = "wasm32"))] modules: plan.modules,
             kind_tables,
             twin_sources: p.kinds.iter().map(|k| p.modules[k.module].naga.clone()).collect(),
             luts: p.luts.clone(), kind_words, params: Mutex::new((p.params.clone(), false)),
-            #[cfg(not(target_arch = "wasm32"))] lut_table: plan.luts,
-            #[cfg(not(target_arch = "wasm32"))] instance_bounds,
             visibility, tiled_modules: plan.tiled_modules, shadow,
             color, planes: [plan.visibility, plan.depth], color_view, clock, stats, precision: plan.precision })
     }

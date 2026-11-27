@@ -15,6 +15,7 @@ pub trait ExecutionBackend: Sized {
     fn hot_swap_module(&mut self, inst: InstanceId, module: ModuleId, wgsl: &str) -> Result<()>;
     fn hot_swap_bundle(&mut self, inst: InstanceId, bundle: &Bundle) -> Result<()>;
     fn encode_into(&mut self, inst: InstanceId, encoder: &mut Self::Encoder, target: &Self::View, depth: Option<&Self::View>, time_s: f64, dt_s: f32) -> Result<FrameIdentity>;
+    #[cfg(feature = "cpu-twin")]
     /// Synchronous row-local CPU twin step. See [`Runner::step_pass_cpu`].
     fn step_pass_cpu(&mut self, inst: InstanceId, pass: PassId, rows: std::ops::Range<u32>, ticks: u32) -> Result<&[u8]>;
     fn bind_external_buffer(&mut self, inst: InstanceId, table: TableId, buf: Self::Buffer) -> Result<()>;
@@ -62,6 +63,7 @@ impl ExecutionBackend for WgpuBackend {
     fn encode_into(&mut self, inst: InstanceId, encoder: &mut Self::Encoder, target: &Self::View, depth: Option<&Self::View>, time_s: f64, dt_s: f32) -> Result<FrameIdentity> {
         WgpuBackend::encode_into(self, inst, encoder, target, depth, time_s, dt_s)
     }
+    #[cfg(feature = "cpu-twin")]
     fn step_pass_cpu(&mut self, inst: InstanceId, pass: PassId, rows: std::ops::Range<u32>, ticks: u32) -> Result<&[u8]> {
         WgpuBackend::step_pass_cpu(self, inst, pass, rows, ticks)
     }

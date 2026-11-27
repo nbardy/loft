@@ -13,14 +13,22 @@ loft-wgpu = { path = "../loft-wgpu" }
 loft-std = { path = "../loft-std" }
 loft-format = { path = "../loft-format" }
 blake3 = "1"
-wgpu = { workspace = true, features = ["webgpu"] }
+wgpu.workspace = true
 naga.workspace = true
 
 [features]
-web-sys = ["loft-wgpu/web-sys"]
+cpu-twin = ["loft-std/cpu-twin"]
 
 [dev-dependencies]
 pollster.workspace = true
+
+[[example]]
+name = "loftb"
+path = "tests/probes/loftb.rs"
+
+[[example]]
+name = "phase5_host"
+path = "tests/probes/phase5_host.rs"
 
 [lints]
 workspace = true

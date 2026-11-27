@@ -10,7 +10,7 @@ pub use loft_wgpu::mips;
 use loft_wgpu::allocate;
 mod stepping;
 pub use loft_wgpu::readback::{read_buffer, read_texture};
-use loft_std::inputs;
+use loft_std::{inputs, params};
 pub use backend::{ExecutionBackend, WgpuBackend};
 pub type Runner = WgpuBackend;
 
@@ -41,7 +41,7 @@ struct Instance {
     history: stepping::History,
     uploads: wgpu::util::StagingBelt,
     outbox: Option<events::Outbox>,
-    pick_source: Option<pick::Source>,
+    pick_source: Option<loft_wgpu::pick::Source>,
     compute: encode::ComputeCache,
     initializers: initialize::Initializers,
 }
@@ -50,31 +50,6 @@ impl std::ops::Deref for Table {
     fn deref(&self) -> &Resource { &self.resource }
 }
 impl Instance {
-    fn new(device: &wgpu::Device, queue: &wgpu::Queue, decl: &Bundle, adapter: Option<&wgpu::Adapter>, pipeline_cache: Option<&wgpu::PipelineCache>, target: Option<&embed::Target<'_>>, clock: Option<fn() -> std::time::Duration>) -> Result<Self> {
-        let mut decl = decl.clone();
-        let descriptor = decl.tables.iter().position(|t| t.id == execution::DESCRIPTOR);
-        let exec = descriptor.map(|i| execution::Execution::read(&decl.tables.remove(i))
-            .ok_or(RunnerError::AbiMismatch)).transpose()?.unwrap_or_default();
-        if decl.tables.iter().any(|t| t.id == execution::DESCRIPTOR) { return Err(RunnerError::AbiMismatch); }
-        let mut tables = storage::allocations(&decl, &device.limits())?.into_iter().map(|(t,active,alloc)| {
-            let resource = storage::create(device, queue, t, alloc, interop::buffer_usage(&decl, t.id),
-                decl.resources.comparison_samplers.contains(&t.id))?;
-            Ok((t.id, Table { decl:t.clone(), resource, active, epoch:0 }))
-        }).collect::<Result<BTreeMap<_,_>>>()?;
-        let checkpoints = if let Some(s) = &decl.state {
-            let table = tables.get(&s.table).ok_or(RunnerError::UnknownResource)?;
-            let size = table.bytes()?.size();
-            (0..s.checkpoint_slots).map(|_| allocate(device, size, wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST)).collect()
-        } else {
-            Vec::new()
-        };
-        let initializers = initialize::Initializers::prepare(&exec, &mut decl, &mut tables, device, adapter)?;
-        let compute = encode::ComputeCache::prepare(device, &decl, &exec, adapter, pipeline_cache, target.map(|target| (target, &tables)), clock)?;
-        initializers.check_params(compute.params.bytes().len() / 4)?;
-        Ok(Self { tables, decl, execution: exec, compute, initializers, checkpoints, resource_epoch:0,
-            uploads: wgpu::util::StagingBelt::new(device.clone(), 4096),
-            history:Default::default(), outbox:None, pick_source:None })
-    }
     fn arena(&mut self, k: KindId) -> Result<&mut Table> {
         let id = self.decl.rows.get(&k).ok_or(RunnerError::UnknownResource)?;
         let t = self.tables.get_mut(id).ok_or(RunnerError::UnknownResource)?;
@@ -196,6 +171,57 @@ impl Runner {
         self.instance(id)?.compute.input.push(slot, tick, value)
     }
 
+    pub fn load_bundle_bytes(&mut self, bytes: &[u8]) -> Result<InstanceId> {
+        let bundle = bundle::decode(bytes).map_err(RunnerError::Bundle)?;
+        self.load_bundle(&bundle)
+    }
+
+    /// Take the oldest completed outbox eligible for the two-frame readback delay.
+    pub fn drain_events(&mut self, id: InstanceId) -> Result<(Vec<events::OutboxEvent>, u32)> {
+        let _ = self.device.poll(wgpu::PollType::Poll);
+        self.instance(id)?
+            .outbox
+            .as_mut()
+            .map_or_else(|| Ok((vec![], 0)), events::Outbox::drain)
+    }
+
+    pub fn params(&self, inst: InstanceId) -> &[ParamMeta] {
+        self.instances.get(inst.0 as usize).map_or(&[], |i| i.decl.params.as_slice())
+    }
+
+    pub fn set_param(&mut self, inst: InstanceId, id: ParamId, values: &[f32]) -> Result<()> {
+        let inst = self.instance(inst)?;
+        let meta = inst.decl.params.iter().find(|p| p.id == id).ok_or(RunnerError::UnknownResource)?;
+        inst.compute.params.set(meta, values)
+    }
+
+    pub fn set_pick_source(&mut self, id: InstanceId, visibility: &wgpu::Texture, depth: &wgpu::Texture, inv_vp: [[f32; 4]; 4]) -> Result<()> {
+        let d = self.device.clone();
+        loft_wgpu::pick::Source::publish(&mut self.instance(id)?.pick_source, &d, visibility, depth, inv_vp)
+    }
+
+    pub fn pick_async(&mut self, id: InstanceId, px: [u32; 2], cb: Box<dyn FnOnce(Result<pick::PickResult>) + Send>) -> Result<()> {
+        let (d, q) = (self.device.clone(), self.queue.clone());
+        self.instance(id)?.pick_source.as_ref().ok_or(RunnerError::UnknownResource)?.pick_async(&d, &q, px, |enc, pipeline, group| {
+            command::Pass::Compute(vec![command::Dispatch { pipeline, groups: vec![group], work: command::Work::Direct([1; 3]) }]).record(enc, None);
+        }, cb)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn pick_sync(&mut self, id: InstanceId, px: [u32; 2]) -> Result<pick::PickResult> {
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        self.pick_async(
+            id,
+            px,
+            Box::new(move |result| {
+                let _ = tx.send(result);
+            }),
+        )?;
+        self.device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .map_err(|_| RunnerError::Unsupported("pick polling failed"))?;
+        rx.recv().map_err(|_| RunnerError::Readback)?
+    }
+
     /// Record the bundle into the caller's encoder without submitting it.
     ///
     /// Render passes share one caller color attachment and optional depth attachment.
@@ -208,18 +234,14 @@ impl Runner {
         Ok(FrameIdentity { instance: id, resource_epoch: self.instance(id)?.resource_epoch, time_s })
     }
 }
-pub mod bundle;
+pub use loft_format::bundle;
 pub mod embed;
-pub mod events;
-pub mod params;
-pub mod pick;
+pub use loft_wgpu::outbox as events;
+pub mod pick {
+    pub use loft_ir::PickResult;
+}
 pub use loft_format::replay;
 
-#[cfg(test)]
-mod tests;
 pub use loft_wgpu::command;
-
-#[cfg(all(target_arch = "wasm32", feature = "web-sys"))]
-pub use loft_wgpu::web;
 
 pub use loft_wgpu::ray_query;
