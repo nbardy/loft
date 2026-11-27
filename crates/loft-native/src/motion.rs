@@ -1,7 +1,7 @@
 //! Run the same fixed-step entry for interactive and baked sampling.
 use super::*;
 use loft_ir::{DepthConvention, GpuFeatures, HostCaps};
-use loft_passes::{fusion, program::MotionSample};
+use loft_passes::{motion as fusion, program::MotionSample};
 use loft_runner::Runner;
 use std::sync::Arc;
 

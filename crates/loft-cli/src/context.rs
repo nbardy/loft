@@ -213,7 +213,6 @@ fn signature(out: &mut String, ast: &Module, item: &Item, source: &str, roots: &
         Item::Fn(_) | Item::Kind(_) | Item::Scan(_) | Item::Law(_)
         | Item::Kernel(_) | Item::Check(_)
         | Item::Camera(_) | Item::Bake(_) => ast.bodies[&names[0].span].lo,
-        Item::Unit(_) => names[0].span.hi,
         Item::Schedule(_) | Item::Use(_) | Item::Build(_) => unreachable!("handled or unnamed"),
     };
     compact(out, source, tokens, first(&roots[start]).span.lo, end);

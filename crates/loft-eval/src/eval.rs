@@ -739,8 +739,8 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                     _ => Err(Diag::new(Code::E211, condition.span, "conditional block cannot be bounded over both paths", "use a continuous field expression")),
                 }
             }
-            ExprKind::Num { value, suffix, .. } => {
-                let v = if *suffix == NumSuffix::Deg { value.to_radians() } else { *value };
+            ExprKind::Num { value, .. } => {
+                let v = *value;
                 Ok(match self.ty(e) {
                     Ty::U32 => Val::U(v as u32),
                     Ty::I32 | Ty::AbstractInt => Val::I(v as i32),

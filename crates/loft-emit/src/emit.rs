@@ -499,7 +499,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 Ty::U32 => format!("{}u", *value as u32),
                 Ty::I32 => format!("{}i", *value as i32),
                 Ty::AbstractInt => text.clone(),
-                Ty::Void | Ty::Bool | Ty::F32 | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) | Ty::Frame(_) | Ty::Table(_) | Ty::Verdict | Ty::Struct(_) | Ty::Array(..) | Ty::Id(_) | Ty::Bsdf => f32_lit(if *suffix == NumSuffix::Deg { value.to_radians() } else { *value }),
+                Ty::Void | Ty::Bool | Ty::F32 | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) | Ty::Frame(_) | Ty::Table(_) | Ty::Verdict | Ty::Struct(_) | Ty::Array(..) | Ty::Id(_) | Ty::Bsdf => f32_lit(*value),
             },
             ExprKind::Bool(b) => b.to_string(),
             ExprKind::String(_) => unreachable!("Stage 0 literal"),
@@ -680,8 +680,6 @@ impl<'p, 'a> Emitter<'p, 'a> {
                         return format!("det_{}({})", spec.name, a.join(", ")),
                     Some(spec) => match spec.wgsl {
                         WgslLowering::Direct(symbol) => symbol,
-                        WgslLowering::Prefix(op) => return format!("({op}{})", a[0]),
-                        WgslLowering::Infix(op) => return format!("({} {op} {})", a[0], a[1]),
                         // Generated BSDF evaluation retains its WGSL name.
                         WgslLowering::Custom => name,
                     },

@@ -10,8 +10,6 @@
 //!
 //! A scene loads the core prelude and its reachable authored modules.
 
-#[cfg(not(target_arch = "wasm32"))]
-mod edit_cmd;
 mod build;
 mod render;
 mod clip;
@@ -103,16 +101,8 @@ fn command(mut args: Vec<String>, set: &[(String, f64)]) -> Result<(), Failure> 
         "still" => {
             let edit = flag(&mut args, "--edit")?;
             let kind = flag(&mut args, "--kind")?;
-            if let Some(edit) = edit {
-                exact(&args, 3, 3)?;
-                let kind = kind.ok_or_else(|| Failure::Usage("still --edit needs --kind K".into()))?;
-                #[cfg(target_arch = "wasm32")]
-                {
-                    let _ = (edit, kind);
-                    return Err(Failure::Device("edited stills need the native renderer".into()));
-                }
-                #[cfg(not(target_arch = "wasm32"))]
-                return edit_cmd::edited_still(&scene(&args)?, Path::new(&edit), &kind, set, time, Path::new(&args[2]), max_frame);
+            if edit.is_some() {
+                return Err(Failure::Usage("still --edit was retired; render the edited scene directly".into()));
             }
             if kind.is_some() { return Err(Failure::Usage("still --kind needs --edit SOURCE".into())); }
             exact(&args, 3, 3)?;
