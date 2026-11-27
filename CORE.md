@@ -10,9 +10,12 @@ program it generates, and run it on a native or host-owned wgpu device.
 3. **Authoring cost.** Count the tokens required to express the scene. The author can inspect
    generated WGSL and replace library behavior where the scene needs it.
 4. **Truth.** Compare CPU and GPU observations. A verdict needs evidence. Preserve the
-   distinction between a held claim, a measured miss and an unknown result.
-5. **Size.** Keep one implementation of each contract. Measure executor work across every crate
-   that performs it, including native preparation and the embedded runner.
+   distinction between a held claim, a measured miss and an unknown result. Contended timing
+   runs are never treated as silent passes.
+5. **Size (Rust core only; `stdlib/` is uncapped).** Keep one implementation of each contract.
+   Target **~10k LOC** for the entire Rust core (`crates/`, excluding `tests/`). Never add baked
+   renderers, scene-specific names, or WGSL string `.replace()` surgery to Rust — put engines,
+   passes, shapes, materials, and motion in clean, composable `stdlib/` code instead.
 
 ## How to score a change
 

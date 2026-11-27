@@ -55,8 +55,13 @@ So Loft does the opposite of a classic engine:
 
 An engine here is a default composition of small functions, not a framework that owns the program.
 
-- **The core is tiny.** It loads a set of GPU programs, resources and an ordered list of passes and runs them on a
-  device someone else may own. On the order of hundreds of lines. Everything else is library.
+- **The Rust core is tiny (~10k LOC target, compiler + runner + CLI + ABI combined).** The runtime loads a set of GPU
+  programs, resources, and an ordered pass graph and runs them on a device someone else may own (~1.5k–2k LOC). The
+  compiler turns typed `.loft` maths, `kind` row tables, and schedules into validated WGSL and bundles (~5.5k LOC).
+  **Everything else is `stdlib/`.**
+- **`stdlib/` is uncapped and does NOT count against core size.** Grow `stdlib/` freely as long as modules are clean,
+  well-organized, composable, and forkable. Putting an engine, shader, material, shape, or motion solver in `stdlib/`
+  is always preferred over putting 10 lines of special-case code in Rust.
 - **Every framework is a recipe.** Any "renderer", "animation system", "physics" or "scene" that Loft ships is a
   composition of the same public pieces a consumer has. A consumer can copy it, edit one line, or throw it away.
   Nothing in a default is privileged.
@@ -117,3 +122,33 @@ Set new state of the art in three things at once, without inheriting the limits 
 
 Prior art is a launchpad. Understand why a technique won, keep it if nothing better exists, replace it if we can do
 better, and say which ideas are inherited and which are ours.
+
+## 6. Architectural Red Lines (for Future Agents and Authors)
+
+Previous agent waves let the Rust core bloat to ~29.4k LOC by bolting demo-specific renderers, string hacks, and
+benchmark workarounds into `crates/`. These rules are hard boundaries going forward:
+
+1. **Keep the compiler — delete the baked engines.** Loft has a compiler specifically for: (a) 3×–4× token density and
+   O(kinds) GPU batching (`kind` row tables + stage-0 `build`/`emit`), (b) static analysis over maths (interval/Lipschitz
+   bounds, forward-mode AD, `@Space` affine checks, `writes` ownership, deterministic `det_*` motion), and (c) generic
+   pass-graph lowering to `wgpu`. Everything above that — visibility buffers, shadows, tiled shading, woodblock outlines,
+   path tracers, caustics, volumes, creature anatomy — belongs in `stdlib/`, NEVER hardcoded in Rust.
+2. **Zero scene, style, or creature names in Rust.** Never branch in the compiler on literal library/scene names
+   (`"woodblock_pigment"`, `"sun_sky"`, `"spectral_dielectric"`, `"bead_observation"`), never put game/creature structs
+   (`CreatureHeader`, `FootPin`, `ManipState`, `TrailNode`) in `loft-abi`, and never maintain hardcoded stdlib file
+   whitelists in the module loader.
+3. **Zero WGSL string surgery.** Never stitch shaders with `.replace(...)`, comment-line splits, or byte-offset header
+   slicing across WGSL text. Compose from structured AST/IR or explicit template bindings.
+4. **One implementation per contract.** One generic `wgpu` runner (native + WebGPU — no separate `loft-native` host layer
+   and no parallel JS metadata exporter), one CPU expression evaluator (keep verification twins in `tools/loft-verify/`,
+   not in core runtime crates), one ray-AABB / BVH implementation.
+5. **Never weaken soundness or gates to pass a benchmark.** Never punch holes in `@Space`, module privacy, Lipschitz
+   bounds, or determinism checks to salvage an eval run, and never filter contended runs out of gate exit codes. If a
+   check is partial or fake (e.g. kernel-only units), either make it real or remove the claim.
+6. **Core Rust shrinks; `stdlib/` grows cleanly.** Judge Rust core size strictly under `crates/` (target ~10k LOC).
+   Keep test suites and examples in `tests/` and `tools/`, not inline in `crates/*/src/`. `stdlib/` is uncapped — prefer
+   clean, composable `.loft`/`.wgsl` library code over adding special cases to Rust.
+7. **Keep existing consumer rollouts working.** When moving hardcoded schedule verbs out of Rust into `stdlib/`, keep
+   the same verb names and call signatures, and make new language ergonomics (`v3(...)@Space`, `match`, `if` over `emit`,
+   fixed arrays, `struct` returns, `target`) strictly additive so existing rollouts (`out/spark_pairs/`, `corpus/`,
+   `scenes/`, `engines/gates.json`) keep compiling and rendering.
