@@ -436,6 +436,54 @@ impl<'p, 'a> Emitter<'p, 'a> {
 
     pub fn expr(&mut self,e:&Expr)->String{crate::provenance::expression(e.span,self.expression(e))}
 
+    fn match_expr(&mut self, e: &Expr, selector: &Expr, cases: &MatchCases, first: &Expr, fallback: &Expr) -> String {
+        let id = self.temp;
+        self.temp += 1;
+        let key = format!("loft_match_key_{id}");
+        let name = format!("loft_tmp_{id}");
+        let selector_ty = self.ty_of(selector).clone();
+        let value = self.expr(selector);
+        let key_ty = self.wt(&selector_ty);
+        self.line(1, &format!("let {key}: {key_ty} = {value};"));
+        let ty = if *self.ty_of(e) == Ty::Bsdf {
+            let shape = self.shape(e);
+            self.bsdf_struct(&shape)
+        } else {
+            self.wt(self.ty_of(e))
+        };
+        self.line(1, &format!("var {name}: {ty};"));
+        let switch = if selector_ty == Ty::F32 {
+            // WGSL switches take integers. Compare the float as a float, including signed zero,
+            // and select a case index so the arm expressions still run only on their own paths.
+            let mut index = "select(".repeat(1 + cases.rest.len());
+            index.push_str("0u");
+            for (i, ((pattern, _), _)) in cases.arms(first).enumerate() {
+                let _ = write!(index, ", {}u, {key} == {})", i + 1, f32_lit(pattern as f64));
+            }
+            index
+        } else {
+            key
+        };
+        self.line(1, &format!("switch {switch} {{"));
+        for (i, ((pattern, _), arm)) in cases.arms(first).enumerate() {
+            let label = match selector_ty {
+                Ty::F32 => format!("{}u", i + 1),
+                Ty::U32 => format!("{pattern}u"),
+                _ => pattern.to_string(),
+            };
+            self.line(2, &format!("case {label}: {{"));
+            let value = self.expr(arm);
+            self.line(3, &format!("{name} = {value};"));
+            self.line(2, "}");
+        }
+        self.line(2, "default: {");
+        let value = self.expr(fallback);
+        self.line(3, &format!("{name} = {value};"));
+        self.line(2, "}");
+        self.line(1, "}");
+        name
+    }
+
     fn expression(&mut self, e: &Expr) -> String {
         if self.baked_column == Some(e.id) {
             return "loft_column_value".into();
@@ -479,7 +527,9 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 let lo = args.join(", ");
                 format!("(({symbol}({hi}) - {symbol}({lo})) / {})", 2.0 * step)
             }
-            ExprKind::If { condition, then, otherwise } => {
+            ExprKind::If { condition, then, otherwise, cases: Some(cases) } =>
+                self.match_expr(e, condition, cases, &then.value, &otherwise.value),
+            ExprKind::If { condition, then, otherwise, cases: None } => {
                 let name = format!("loft_tmp_{}", self.temp);
                 self.temp += 1;
                 let condition = self.expr(condition);

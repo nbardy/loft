@@ -97,7 +97,7 @@ impl<'a> Linker<'a> {
             let stock = graph.is_stdlib(id);
             for item in &node.module.items {
                 if matches!(item, Item::Camera(_))
-                    || matches!(item, Item::Schedule(_)) && id == usize::from(graph.entry)
+                    || matches!(item, Item::Schedule(s) if s.params.is_empty()) && id == usize::from(graph.entry)
                 {
                     continue;
                 }
@@ -442,8 +442,14 @@ impl Scope<'_> {
                 condition,
                 then,
                 otherwise,
+                cases,
             } => {
                 self.expr(condition, locals)?;
+                if let Some(cases) = cases {
+                    for (_, value) in &mut cases.rest {
+                        self.expr(value, locals)?;
+                    }
+                }
                 self.arm(then, locals)?;
                 self.arm(otherwise, locals)?;
             }

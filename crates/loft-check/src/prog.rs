@@ -166,7 +166,7 @@ impl<'a> Prog<'a> {
             if !known.insert(name) { continue; }
             let mut refs = crate::references::References::default();
             refs.expr(&self.consts[name].value, &[]);
-            if matches!(self.consts[name].value.kind, ExprKind::If { .. }) || !refs.calls.is_empty()
+            if matches!(self.consts[name].value.kind, ExprKind::If { .. }) || refs.has_match || !refs.calls.is_empty()
                 || refs.names.iter().any(|(n, _)| *n == "time" || self.param_slot(n).is_some())
             {
                 return true;

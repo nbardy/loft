@@ -53,7 +53,7 @@ write_set:   LIDENT ("." "{" ident_list "}")?
 check_decl:  "check" LIDENT "(" params ")" "->" type_expr block
 
 world_decl:  "world" UIDENT "{" field_inits "}"
-build_fn:    "build" "fn" LIDENT "(" build_params? ")" ("->" type_expr)? fn_body
+build_fn:    "build" "fn" LIDENT "(" build_params? ")" ("->" type_expr)? (fn_body | "=" if_stmt)
 build_params: build_param ("," build_param)* ","?
 build_param: param ("=" expr)?
 build_blk:   "build" block
@@ -92,8 +92,11 @@ stmt:        "let" LIDENT (":" type_expr)? "=" expr
            | build_for_stmt
            | "for" LIDENT "in" expr ".." expr block
            | "return" expr
+           | if_stmt
            | lhs "=" expr
            | expr
+
+if_stmt:     "if" expr block ("else" (if_stmt | block))?
 
 build_for_stmt: "build" "for" for_bind ("," for_bind)* block
 for_bind:    LIDENT "in" (expr ".." expr | "[" expr_list "]")
@@ -119,10 +122,15 @@ postfix_expr: primary ( "." LIDENT | "(" call_args? ")" | "[" expr "]" | "'" )*
 primary:     unit_number | NUMBER | STRING | "true" | "false" | name_ref
            | "(" expr ")"
            | "[" expr_list? "]" ("@" name_ref)?
-           | "if" expr block ("else" "if" expr block)* ("else" block)?
+           | ("v3" | "p3") "(" expr_list ")" "@" name_ref
+           | "if" expr block ("else" "if" expr block)* "else" block
+           | "match" expr "{" _NL* match_case ("," match_case)* "," "_" "=>" _NL? expr ","? _NL? "}"
            | "emit" kind_ref ("[" expr_list "]")? "(" named_args? ")"
            | "unproved" "(" ("step_scale" ":")? expr ")" block
            | "wgsl" "(" params? ")" "->" type_expr RAW_WGSL_BLOCK
+
+match_case:  "-"? MATCH_INT "=>" _NL? expr
+MATCH_INT:   /0x[0-9a-fA-F]+|[0-9]+[ui]?/
 
 // mix_bsdf(a, b, t) uses ordinary call syntax; its arguments are checked as Bsdf, Bsdf, f.
 call_args:   arg ("," arg)* ","?

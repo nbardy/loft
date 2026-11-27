@@ -370,7 +370,7 @@ impl<'src> Parser<'src, '_> {
                     }
                 }
                 let clock = if self.eat("on") { Some(self.clock()?) } else { None };
-                passes.push(PassDecl { label: verb.clone(), verb, args, body, resources, clock });
+                passes.push(PassDecl { label: verb.clone(), verb, call_site: None, args, body, resources, clock });
                 self.end()?
             }
             return Ok(Item::Schedule(ScheduleDecl { implicit: false, name, params, passes, radiance }));
@@ -1005,8 +1005,8 @@ impl<'src> Parser<'src, '_> {
         if !eq {
             return self.err("= expression or a block");
         }
-        if value && self.eat("if") {
-            return Ok(Block { stmts: vec![self.if_stmt(true)?] });
+        if self.eat("if") {
+            return Ok(Block { stmts: vec![self.if_stmt(value)?] });
         }
         // `trace(p) =` then `let` lines and a final expression: a block without braces. No expression starts
         // with `let`, so it reads unambiguously; fresh crab programs wrote it (`let local = p - at`, `let op`).
@@ -1350,6 +1350,52 @@ impl<'src> Parser<'src, '_> {
         };
         Ok(ExprBlock { body, value: Box::new(value) })
     }
+    fn match_arm(&mut self) -> Res<((i64, Span), Expr)> {
+        let start = self.cur().span;
+        let negative = self.eat("-");
+        let token = self.cur();
+        let invalid = || Diag::new(Code::E001, token.span, "expected an integer match pattern",
+            "write a signed or unsigned integer literal");
+        if token.kind != Kind::Number {
+            return Err(invalid());
+        }
+        self.pop();
+        let n = if let Some(hex) = token.text.strip_prefix("0x") {
+            u32::from_str_radix(hex, 16)
+        } else {
+            token.text.strip_suffix('u').or_else(|| token.text.strip_suffix('i'))
+                .unwrap_or(token.text).parse::<u32>()
+        }.map_err(|_| invalid())?;
+        let key = if negative { -i64::from(n) } else { i64::from(n) };
+        self.expect("=>")?;
+        self.seps();
+        Ok(((key, start.to(token.span)), self.expr(0)?))
+    }
+
+    fn match_expr(&mut self, start: Span) -> Res<Expr> {
+        let condition = Box::new(self.expr(0)?);
+        self.expect("{")?;
+        self.seps();
+        let (first, then) = self.match_arm()?;
+        self.expect(",")?;
+        let mut rest = vec![];
+        while !self.eat("_") {
+            rest.push(self.match_arm()?);
+            self.expect(",")?;
+        }
+        self.expect("=>")?;
+        self.seps();
+        let otherwise = self.expr(0)?;
+        self.eat(",");
+        self.seps();
+        let end = self.cur().span;
+        self.expect("}")?;
+        let arm = |value| ExprBlock { body: Block { stmts: vec![] }, value: Box::new(value) };
+        Ok(self.node(start.to(end), ExprKind::If {
+            condition, then: arm(then), otherwise: arm(otherwise), cases: Some(MatchCases { first, rest }),
+        }))
+    }
+
     fn primary(&mut self) -> Res<Expr> {
         let span = self.cur().span;
         if self.cur().kind == Kind::String {
@@ -1395,7 +1441,10 @@ impl<'src> Parser<'src, '_> {
             } else {
                 self.expr_arm()?
             };
-            return Ok(self.node(span, ExprKind::If { condition, then, otherwise }));
+            return Ok(self.node(span, ExprKind::If { condition, then, otherwise, cases: None }));
+        }
+        if self.eat("match") {
+            return self.match_expr(span);
         }
         if self.eat("(") {
             let e = self.expr(0)?;
@@ -1444,6 +1493,16 @@ impl<'src> Parser<'src, '_> {
         }
         if self.is("(") {
             let mut args = self.args()?;
+            if matches!(n.name.as_str(), "p3" | "v3") && self.eat("@") {
+                if args.is_empty() || args.iter().any(|arg| arg.name.is_some()) {
+                    return self.err("positional point or vector components");
+                }
+                let mut space = self.space()?;
+                space.var |= self.maps.contains(&space.name);
+                let span = span.to(space.span);
+                let geo = if n.name == "p3" { Geo::Pt } else { Geo::Vec };
+                return Ok(self.node(span, ExprKind::Ctor { ty: TyExpr::Geo(geo, space), args }));
+            }
             if self
                 .module
                 .items
