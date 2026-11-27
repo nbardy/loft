@@ -43,6 +43,7 @@ pub enum Item {
     /// `check name(h: K, ...) -> unit { ... }`: `ret` is the verdict's unit.
     Check(FnDecl),
     Camera(CameraDecl),
+    Target(TargetDecl),
     World(Ident, Vec<Ident>),
     Bake(BakeDecl),
 }
@@ -75,10 +76,26 @@ impl Item {
             Self::Law(x) => &x.f.name,
             Self::Kernel(x) => &x.f.name,
             Self::Camera(x) => &x.name,
+            Self::Target(x) => &x.name,
             Self::Bake(x) => &x.texel.name,
         };
         std::slice::from_ref(name)
     }
+}
+
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct TargetDecl {
+    pub name: Ident,
+    pub format: Ident,
+    pub extent: TargetExtent,
+    pub samples: u32,
+    pub span: Span,
+}
+
+#[derive(serde::Serialize, Clone, Copy, Debug, PartialEq)]
+pub enum TargetExtent {
+    Fixed(u32, u32),
+    View(f64),
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]

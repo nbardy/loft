@@ -402,6 +402,9 @@ impl<'src> Parser<'src, '_> {
             let fields = self.fields("}")?;
             return Ok(Item::Camera(CameraDecl { name, fields }));
         }
+        if self.eat("target") {
+            return self.target(start).map(Item::Target);
+        }
         if self.eat("scan") {
             let name = self.ident()?;
             let var = self.ident()?;
@@ -550,19 +553,45 @@ impl<'src> Parser<'src, '_> {
             return Ok(Item::Use(Import { path, binding, span }));
         }
         Err(Diag::new(
-            if matches!(
-                self.cur().text,
-                "target"
-            ) {
-                Code::E405
-            } else {
-                Code::E404
-            },
+            Code::E404,
             start,
             format!("unsupported module item `{}`", self.cur().text),
             "declare a v1 item or put row generation inside build { ... }",
         ))
     }
+    fn target(&mut self, start: Span) -> Res<TargetDecl> {
+        let name = self.upper_ident()?;
+        self.expect(":")?;
+        let format = self.ident()?;
+        let extent = if self.eat("view") {
+            let scale = if self.eat("*") {
+                let token = self.cur();
+                let scale = token.text.parse().map_err(|_| Diag::new(
+                    Code::E001, token.span, "invalid target scale", "use a decimal number"))?;
+                self.pop();
+                scale
+            } else {
+                1.0
+            };
+            TargetExtent::View(scale)
+        } else if self.cur().kind == Kind::Grid {
+            let token = self.pop();
+            let (width, height) = token.text.split_once('x').expect("grid token");
+            let dimension = |text: &str| text.parse::<u32>().map_err(|_| Diag::new(
+                Code::E001, token.span, "invalid target dimensions", "write two integer sides as WxH"));
+            TargetExtent::Fixed(dimension(width)?, dimension(height)?)
+        } else if self.cur().kind == Kind::Number {
+            let width = self.integer()?;
+            self.expect("x")?;
+            TargetExtent::Fixed(width, self.integer()?)
+        } else {
+            TargetExtent::View(1.0)
+        };
+        let samples = if self.eat("msaa") { self.integer()? } else { 1 };
+        let span = start.to(self.tokens[self.at - 1].span);
+        Ok(TargetDecl { name, format, extent, samples, span })
+    }
+
     fn bake_tex(&mut self) -> Res<BakeDecl> {
         let name = self.upper_ident()?;
         let cube = self.eat("cube");

@@ -3,6 +3,9 @@
 //! the kind's uniform), so 1 and 20 instances lower to byte-identical modules.
 
 pub use loft_check::program::{Dispatch, DispatchBinding, DispatchRead, DispatchResource, DispatchRows, Draw, Instance, KindTable, abi};
+use loft_check::check::Target;
+use loft_ir::execution::{BlendMode, CullMode};
+use std::collections::BTreeMap;
 
 #[derive(serde::Serialize)]
 pub struct ExpressionOrigin { pub function:usize,pub expression:usize,pub span:(String,usize,usize) }
@@ -38,7 +41,7 @@ impl Orbit {
 }
 
 /// The frame's passes in schedule order; one variant per pass kind, one handler each in the runner.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq)]
 #[derive(serde::Serialize)]
 pub enum Pass {
     /// The RenderBundle: per kind, set pipeline and one `drawIndirect`, into Vis64 + depth.
@@ -58,7 +61,8 @@ impl Pass {
     pub fn presents(&self) -> bool {
         match self {
             Self::Path(_) => true,
-            Self::Authored(a) => matches!(a.run, AuthoredRun::FullScreen { .. }),
+            Self::Authored(a) => matches!(&a.run, AuthoredRun::FullScreen { targets, .. }
+                if targets.as_ref().is_none_or(|t| t.colors.iter().any(|name| name == "Swapchain"))),
             Self::Vis(_) | Self::Shadow(_) | Self::Shade(_) => false,
         }
     }
@@ -78,7 +82,7 @@ impl std::fmt::Debug for Pass {
 }
 
 /// A schedule-authored frame pass: its module, how it runs, and the frame resource behind each binding.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 #[derive(serde::Serialize)]
 pub struct AuthoredPass {
     pub label: String,
@@ -86,18 +90,36 @@ pub struct AuthoredPass {
     pub run: AuthoredRun,
     /// (group, binding) as the template declares it, and the frame resource bound there.
     pub bindings: Vec<(u32, u32, FrameView)>,
+    /// Original WGSL addresses bound to declared textures or tables.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub named_bindings: Vec<(u32, u32, String)>,
+    #[serde(skip)]
+    pub(crate) targets: BTreeMap<String, Target>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[derive(serde::Serialize)]
 pub enum AuthoredRun {
     Compute { entry: String, extent: Extent },
-    /// One full-screen triangle into the swapchain.
-    FullScreen { vertex: String, fragment: String },
+    /// One full-screen triangle. An omitted attachment list is the stock swapchain draw.
+    FullScreen {
+        vertex: String,
+        fragment: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        targets: Option<DrawTargets>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct DrawTargets {
+    pub colors: Vec<String>,
+    pub depth: Option<String>,
+    #[serde(skip)]
+    pub raster: Option<(CullMode, BlendMode)>,
 }
 
 /// Workgroups of a compute frame pass.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[derive(serde::Serialize)]
 pub enum Extent {
     Groups([u32; 3]),
@@ -105,6 +127,8 @@ pub enum Extent {
     Instances { width: u32 },
     /// One invocation per pixel, `tile` per workgroup (the entry's `@workgroup_size`).
     Pixels { tile: [u32; 2] },
+    /// One invocation per texel of a declared target.
+    Target { name: String, tile: [u32; 2] },
 }
 
 /// The frame ABI a template binds by WGSL global name.
@@ -141,7 +165,7 @@ pub enum ViewStore {
 
 impl FrameView {
     /// The view a WGSL global of this name binds, its store, and whether binding it writes the store.
-    pub fn named(name: &str) -> Option<(Self, ViewStore, bool)> {
+    pub fn stock(name: &str) -> Option<(Self, ViewStore, bool)> {
         use ViewStore::{Kinds, Named};
         Some(match name {
             "insts" => (Self::Instances, Kinds, false),

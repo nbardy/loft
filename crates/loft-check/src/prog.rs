@@ -18,6 +18,7 @@ pub struct Prog<'a> {
     pub schedule: Option<&'a ScheduleDecl>,
     pub kernels: BTreeMap<&'a str, &'a KernelDecl>,
     pub bakes: BTreeMap<&'a str, &'a BakeDecl>,
+    pub targets: BTreeMap<&'a str, crate::check::Target>,
     pub laws:BTreeMap<&'a str,&'a LawDecl>,
     pub checks:BTreeMap<&'a str,&'a FnDecl>,
 }
@@ -39,6 +40,7 @@ impl<'a> Prog<'a> {
             scans: BTreeMap::new(),
             kernels: BTreeMap::new(),
             bakes: BTreeMap::new(),
+            targets: BTreeMap::new(),
             schedule: None,laws:BTreeMap::new(),checks:BTreeMap::new(),
         };
         let mut seen: BTreeMap<&str, Span> = BTreeMap::new();
@@ -61,6 +63,10 @@ impl<'a> Prog<'a> {
                 }
                 Item::Use(_) => {}
                 Item::Camera(_) => {}
+                Item::Target(t) => {
+                    name(&t.name)?;
+                    p.targets.insert(&t.name.name, crate::check::target(t)?);
+                }
                 Item::World(n, kinds) => {
                     name(n)?;
                     let mut seen = HashSet::new();
