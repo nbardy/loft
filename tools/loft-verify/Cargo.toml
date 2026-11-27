@@ -8,11 +8,16 @@ description = "Loft's verification and benchmarking instruments."
 
 [dependencies]
 blake3 = "1"
+loft-abi = { path = "../../crates/loft-abi" }
+loft-check = { path = "../../crates/loft-check" }
 loft-cli = { path = "../../crates/loft-cli" }
+loft-eval = { path = "../../crates/loft-eval" }
+loft-format = { path = "../../crates/loft-format" }
 loft-ir = { path = "../../crates/loft-ir" }
 loft-parse = { path = "../../crates/loft-parse" }
 loft-passes = { path = "../../crates/loft-passes" }
 loft-runner = { path = "../../crates/loft-runner" }
+loft-std = { path = "../../crates/loft-std" }
 naga.workspace = true
 png.workspace = true
 pollster.workspace = true

@@ -1,7 +1,5 @@
 use super::*;
 use loft_abi::AdvanceArgs;
-#[cfg(feature = "cpu-twin")]
-use std::ops::Range;
 
 pub(super) use loft_std::stepping::{Fused, History};
 
@@ -35,38 +33,6 @@ impl Runner {
         queue.submit([encoder.finish()]);
         inst.history.restored(tick, |id| inst.compute.fused(id).is_some_and(|f| f.rows == state));
         Ok(())
-    }
-
-    #[cfg(feature = "cpu-twin")]
-    pub fn step_pass_cpu(&mut self, inst: InstanceId, pass: PassId, rows: Range<u32>, ticks: u32) -> Result<&[u8]> {
-        #[cfg(target_arch = "wasm32")]
-        {
-            let _ = (inst, pass, rows, ticks);
-            Err(RunnerError::Unsupported(
-                "synchronous GPU readback on WebGPU",
-            ))
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let (device, queue) = (self.device.clone(), self.queue.clone());
-            let instance = self.instance(inst)?;
-            let f = instance.compute.fused(pass).ok_or(RunnerError::Unsupported("pass is not row local"))?;
-            let decl = loft_std::bundle::passes(&instance.decl.passes).find(|p| p.id == pass).ok_or(RunnerError::UnknownResource)?;
-            let state = &instance.tables[&f.rows];
-            instance.history.step_live(f, decl, state.active, state.decl.stride_bytes, rows, ticks, inst,
-                instance.compute.outbox, instance.compute.params.bytes(),
-                |id| read_buffer(&device, &queue, instance.tables[&id].bytes()?),
-                |id, bytes| { queue.write_buffer(instance.tables[&id].bytes()?, 0, bytes); Ok(()) })
-        }
-    }
-
-    /// Evaluate a fixed-step pass without a device. The caller owns the packed table bytes.
-    #[cfg(feature = "cpu-twin")]
-    pub fn step_bundle_cpu(
-        bundle: &Bundle, pass: PassId, tables: &mut BTreeMap<TableId, Vec<u8>>,
-        inst: InstanceId, rows: Range<u32>, ticks: AdvanceArgs,
-    ) -> Result<()> {
-        loft_std::stepping::step_bundle_cpu(bundle, pass, tables, inst, rows, ticks)
     }
 }
 

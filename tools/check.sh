@@ -62,7 +62,7 @@ plan() {
 }
 
 wasm() {
-  tools/dev.sh check loft-runner --target wasm32-unknown-unknown --features web-sys
+  tools/dev.sh check loft-runner --target wasm32-unknown-unknown
 }
 
 parity() {
@@ -79,7 +79,7 @@ full_gate() {
   : "${LOFT_TIMING_MARGIN:?full gate requires an allowed paired delta as a fraction of the timing budget}"
   baseline_root="$(git -C "$(dirname "$LOFT_BASELINE_BIN")" rev-parse --show-toplevel)"
   out="$(mktemp -d "$root/out/check.XXXXXX")"
-  tools/dev.sh check --workspace --target wasm32-unknown-unknown --features loft-runner/web-sys
+  tools/dev.sh check --workspace --target wasm32-unknown-unknown
   tools/dev.sh test --workspace --doc --profile "$profile" || failed=$?
   tools/dev.sh build --workspace --profile "$profile" --bins --tests --examples --message-format=json-render-diagnostics >"$out/build.jsonl"
   corpus_lint "$CARGO_TARGET_DIR/$profile/loft" || failed=$?

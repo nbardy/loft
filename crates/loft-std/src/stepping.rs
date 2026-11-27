@@ -1,6 +1,4 @@
 //! Fixed-step dispatch windows and checkpoint history.
-#[cfg(feature = "cpu-twin")]
-pub use crate::cpu_twin::step_bundle_cpu;
 use loft_abi::{AdvanceArgs, advance};
 use loft_ir::*;
 use std::{collections::BTreeMap, ops::Range};
@@ -15,10 +13,6 @@ pub enum Tick {
 const ARGUMENTS: &str = "loft_advance_args";
 
 pub struct Fused {
-    #[cfg(feature = "cpu-twin")]
-    pub(crate) module: naga::Module,
-    #[cfg(feature = "cpu-twin")]
-    pub(crate) entry: String,
     pub rows: TableId,
     pub args: PassBinding,
     pub workgroup: u32,
@@ -63,10 +57,6 @@ impl Fused {
             return Err(Error::AbiMismatch);
         }
         Ok(Self {
-            #[cfg(feature = "cpu-twin")]
-            module: ir.clone(),
-            #[cfg(feature = "cpu-twin")]
-            entry: entry.clone(),
             rows: *instances,
             args,
             workgroup: e.workgroup_size[0],
@@ -114,8 +104,6 @@ pub struct History {
     pub ticks: BTreeMap<PassId, Vec<u32>>,
     pub saved: Vec<Option<u32>>,
     next: usize,
-    #[cfg(feature = "cpu-twin")]
-    pub(crate) returned: Vec<u8>,
 }
 impl History {
     pub fn seek(&mut self, pass: PassId, active: u32) -> &mut [u32] {

@@ -1,10 +1,10 @@
 //! Evaluates the same checked kind queries used by the emitted draw modules.
-use super::{Bvh2, Ray};
-use crate::eval::{Eval, Rigid, RowVal, Val};
-use crate::program::{Draw, KindTable, Program, abi};
-use crate::{Compiled, Prog, pose_field, rot, unit, v3};
 use loft_abi::LeafRef;
+use loft_check::unit;
+use loft_eval::{bvh::{Bvh2, Ray}, eval::{Eval, Rigid, RowVal, Val}};
 use loft_ir::{Code, Diag, Res, Span};
+use loft_passes::program::{Draw, KindTable, Program, abi};
+use loft_passes::{Compiled, Prog, pose_field, rot};
 use loft_parse::ast::{FnDecl, QueryKind};
 
 const STEPS: usize = 192;
@@ -51,7 +51,7 @@ impl<'a> Kind<'_, 'a> {
         scalar(
             ev.call_fn(
                 self.trace,
-                vec![Val::Row(self.table, leaf.row_id as usize), v3(p)],
+                vec![Val::Row(self.table, leaf.row_id as usize), Val::V(p.to_vec(), 0.0)],
                 span,
             )?,
             span,
@@ -80,8 +80,8 @@ impl<'a> Kind<'_, 'a> {
                         f,
                         vec![
                             Val::Row(self.table, leaf.row_id as usize),
-                            v3(local(ray.at(*ray.interval().start()))),
-                            v3(direction),
+                            Val::V(local(ray.at(*ray.interval().start())).to_vec(), 0.0),
+                            Val::V(direction.to_vec(), 0.0),
                         ],
                         at,
                     )?,

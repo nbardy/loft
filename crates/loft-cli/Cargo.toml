@@ -26,7 +26,6 @@ serde_json.workspace = true
 sha2.workspace = true
 
 [dev-dependencies]
-loft-runner = { path = "../loft-runner", features = ["cpu-twin"] }
 naga.workspace = true
 
 [lints]

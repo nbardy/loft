@@ -16,9 +16,6 @@ blake3 = "1"
 wgpu.workspace = true
 naga.workspace = true
 
-[features]
-cpu-twin = ["loft-std/cpu-twin"]
-
 [dev-dependencies]
 pollster.workspace = true
 

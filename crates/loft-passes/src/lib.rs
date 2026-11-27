@@ -452,7 +452,6 @@ pub mod telemetry;
 // Native sampling still uses this import path until the runtime lanes are combined.
 #[doc(hidden)]
 pub use motion as fusion;
-pub mod bvh;
 pub mod quant;
 pub mod bake_tex;
 #[path = "bundle.rs"]
