@@ -632,7 +632,7 @@ impl Scope<'_> {
 
     fn item(&self, item: &mut Item) -> Res<()> {
         match item {
-            Item::Use(_) | Item::Space(_) => {}
+            Item::Use(_) | Item::Space(_) | Item::Target(_) => {}
             Item::Fn(f) | Item::Check(f) | Item::Build(f) => self.function(f)?,
             Item::Law(l) => self.function(&mut l.f)?,
             Item::Kernel(k) => self.function(&mut k.f)?,
@@ -717,6 +717,9 @@ impl Scope<'_> {
                         for texture in resources.reads.iter_mut().filter(|t| !params.contains(&t.name)) {
                             self.ident(texture)?;
                         }
+                        for texture in resources.writes.iter_mut().filter(|t| !params.contains(&t.name)) {
+                            self.ident(texture)?;
+                        }
                         self.block(&mut resources.body, &mut params.clone())?;
                     }
                 }
@@ -748,6 +751,7 @@ impl Scope<'_> {
             Item::Law(x) => &mut x.f.name,
             Item::Kernel(x) => &mut x.f.name,
             Item::Camera(x) => &mut x.name,
+            Item::Target(x) => &mut x.name,
             Item::Bake(x) => &mut x.texel.name,
         };
         if let Some(d) = self.own.values.get(&name.name) {

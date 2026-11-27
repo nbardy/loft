@@ -204,6 +204,7 @@ fn signature(out: &mut String, ast: &Module, item: &Item, source: &str, roots: &
 
     let end = match item {
         Item::Space(_) => names.last().unwrap().span.hi,
+        Item::Target(t) => t.span.hi,
         Item::Const(c) => c.range.as_ref()
             .map_or(&c.value, |range| range.hi.as_ref().unwrap_or(&range.lo)).span.hi,
         Item::TypeAlias(..) => type_end(roots, name + 2, source),

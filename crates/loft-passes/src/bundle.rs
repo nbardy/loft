@@ -945,7 +945,7 @@ fn compute_bakes(program: &Program, tables: &BTreeMap<String, TableId>, bundle: 
     Ok(())
 }
 
-fn append_bvh(nodes: &mut Vec<u32>, leaves: &mut Vec<u32>, tree: &crate::bvh::Bvh2) -> Result<u32> {
+fn append_bvh(nodes: &mut Vec<u32>, leaves: &mut Vec<u32>, tree: &loft_eval::bvh::Bvh2) -> Result<u32> {
     let node_base = u32::try_from(nodes.len() / 8).map_err(|_| "World BVH node address overflow")?;
     let leaf_base = u32::try_from(leaves.len() / 2).map_err(|_| "World BVH leaf address overflow")?;
     let root = if tree.nodes().is_empty() { 0 } else { node_base.checked_add(1).ok_or("World root overflow")? };
@@ -970,7 +970,7 @@ fn path_words(program: &Program, path: &crate::emit::paths::PathTrace) -> Result
     let mut world_data = vec![word(path.worlds.len())?, media_count];
     for world in &path.worlds {
         let instances = p.instances.iter().filter(|r| world.kinds.contains(&r.kind)).copied().collect::<Vec<_>>();
-        let tree = crate::bvh::Bvh2::build(&instances).map_err(|e| format!("invalid world BVH: {e:?}"))?;
+        let tree = loft_eval::bvh::Bvh2::build(&instances).map_err(|e| format!("invalid world BVH: {e:?}"))?;
         let root = append_bvh(&mut nodes, &mut leaves, &tree)?;
         world_data.extend([root, if world.media { media_count } else { 0 }]);
     }

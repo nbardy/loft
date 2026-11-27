@@ -104,14 +104,14 @@ pub fn attachment(t: TextureDecl, limits: &wgpu::Limits) -> Result<wgpu::Texture
         || width.max(height) > limits.max_texture_dimension_2d
         || layers != 1
         || !matches!(t.samples, 1 | 4)
-        || (t.samples == 4 && matches!(t.format, ImageFormat::Rgba16Float | ImageFormat::Rgba32Float))
+        || (t.samples == 4 && matches!(t.format, ImageFormat::Rgba32Float))
         || t.clear.is_some_and(|clear| clear.iter().any(|v| !v.is_finite()))
     {
         return Err(RunnerError::AbiMismatch);
     }
     let mut usage = T::TEXTURE_BINDING | T::RENDER_ATTACHMENT;
     if t.samples == 1 { usage |= T::COPY_SRC; }
-    if matches!(t.format, ImageFormat::Rgba16Float | ImageFormat::Rgba32Float) {
+    if t.samples == 1 && matches!(t.format, ImageFormat::Rgba16Float | ImageFormat::Rgba32Float) {
         usage |= T::STORAGE_BINDING;
     }
     Ok(wgpu::TextureDescriptor {
