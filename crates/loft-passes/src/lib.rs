@@ -7,7 +7,7 @@
 mod cache;
 mod authored_compute;
 mod frame_pass;
-mod motion;
+pub mod motion;
 mod pipeline;
 pub use pipeline::param_key;
 mod provenance;
@@ -91,7 +91,6 @@ pub fn front(src: &Graph) -> Res<(Vec<Module>, Vec<Ty>)> {
     let mut modules = parse_all(src)?;
     let mut types = vec![];
     check_modules(&mut modules, &mut types)?;
-    loft_eval::refine::check(&Prog::index(&modules)?, &types, &[])?;
     Ok((modules, types))
 }
 
@@ -449,9 +448,10 @@ pub fn compile_for_device(src: &Graph, overrides: &[(String, f64)], aov: emit::A
 }
 
 pub mod program;
-pub mod sexp;
 pub mod telemetry;
-pub mod fusion;
+// Native sampling still uses this import path until the runtime lanes are combined.
+#[doc(hidden)]
+pub use motion as fusion;
 pub mod bvh;
 pub mod quant;
 pub mod bake_tex;

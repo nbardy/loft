@@ -184,11 +184,12 @@ fn e307_diff_of_a_c0_expression() {
 }
 
 #[test]
-fn row_division_needs_a_proof_before_specialization(){
-    let src=kind("", "let divisor = scale; sphere(q - [0,0,0]@Body, 0.5) / divisor",OK_MATERIAL)
+fn row_division_is_checked_on_emitted_shapes() {
+    let trace = "let o = [0,0,0]@Body; max(sphere(q - o, 0.5) / scale, box_sdf(q - o, rgb(0.6)))";
+    let src = kind("", trace, OK_MATERIAL)
         .replace("pose: xf@Body>World)", "pose: xf@Body>World, scale: f = 1)");
-    expect(Code::E211,&src);
-    assert!(compile(&src.replace("scale: f =", "scale: f > 0 =")).is_ok());
+    assert!(compile(&src).is_ok());
+    expect(Code::E211, &src.replace("scale: f = 1", "scale: f = 0"));
 }
 
 #[test]
@@ -210,27 +211,12 @@ fn forward_kind_map_and_bare_map_refusal(){
 }
 
 #[test]
-fn branch_cannot_hide_a_row_divisor() {
-    let scene = kind("", "var d = 1.0; if scale < 1 { d = scale }; sphere(q - [0,0,0]@Body, 0.5) / d", OK_MATERIAL)
-        .replace("pose: xf@Body>World)", "pose: xf@Body>World, scale: f = 1)");
-    expect(Code::E211, &scene);
-}
-
-#[test]
 fn row_declarations_resolve_outside_the_emit_scope() {
     let src = "const minimum = 1.0\n".to_owned() + &kind("", OK_TRACE, OK_MATERIAL)
         .replace("pose: xf@Body>World)", "pose: xf@Body>World, scale: f > minimum = minimum + 1)");
     let shadow = src.replace("build { emit", "build { let minimum = -1.0; emit");
     assert!(compile(&shadow).is_ok(), "the default uses the module minimum");
     expect(Code::E602, &shadow.replace("emit K(pose:", "emit K(scale: minimum + 1, pose:"));
-}
-
-#[test]
-fn row_division_preserves_dependencies_across_constants() {
-    let src = "const offset = 1.0\n".to_owned() + &kind("", "sphere(q - [0,0,0]@Body, 0.5) / (scale - offset)", OK_MATERIAL)
-        .replace("pose: xf@Body>World)", "pose: xf@Body>World, scale: f = 2)");
-    expect(Code::E211, &src);
-    assert!(compile(&src.replace("scale: f =", "scale: f > offset =")).is_ok());
 }
 
 #[test]
@@ -279,7 +265,7 @@ fn bracketed_if_expression_scopes_branch_locals() {
 #[test]
 fn frozen_diagnostic_fixtures() {
     let dir=Path::new(env!("CARGO_MANIFEST_DIR")).join("../loft-abi/tests/negative");
-    for code in [Code::E104, Code::E105, Code::E108, Code::E210, Code::E211, Code::E307, Code::E401,
+    for code in [Code::E104, Code::E105, Code::E108, Code::E210, Code::E307, Code::E401,
         Code::E402, Code::E404, Code::E501, Code::E502, Code::E504, Code::E505] {
         expect(code,&std::fs::read_to_string(dir.join(format!("{code}.loft"))).unwrap());
     }

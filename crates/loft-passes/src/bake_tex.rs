@@ -6,7 +6,7 @@ pub use loft_emit::bake_tex::{Clock, SAMPLE_SAMPLER, SAMPLE_TEXTURE_PREFIX};
 use loft_parse::ast::BakeDecl;
 use crate::Prog;
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug)]
 pub struct Bake {
     pub name: String,
     pub dim: TexDim,
@@ -14,14 +14,9 @@ pub struct Bake {
     pub clock: Clock,
     pub mips: bool,
     pub module: usize,
-    /// Rows produced by one shader invocation. Archived programs bake one.
-    #[serde(default = "one_row", skip_serializing_if = "one_row_only")]
+    /// Rows produced by one shader invocation.
     pub rows_per_invocation: u32,
 }
-
-fn one_row() -> u32 { 1 }
-fn one_row_only(rows: &u32) -> bool { *rows == 1 }
-
 
 pub(crate) fn bake_module(p: &Prog, types: &[loft_parse::ast::Ty], decl: &BakeDecl, module: usize) -> loft_ir::Res<(Bake, String)> {
     use naga::StorageFormat as F;

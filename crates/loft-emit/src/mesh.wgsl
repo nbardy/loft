@@ -37,20 +37,12 @@ fn mesh_hit(base: u32, tri: u32, ro: vec3f, rd: vec3f) -> f32 {
 }
 struct MeshHit { t: f32, triangle: u32 }
 
-fn mesh_overlaps(ro: vec3f, rd: vec3f, lo: vec3f, hi: vec3f, interval: vec2f) -> bool {
-    var near = interval.x;
-    var far = interval.y;
-    for (var axis = 0u; axis < 3u; axis++) {
-        if rd[axis] == 0.0 {
-            if ro[axis] < lo[axis] || ro[axis] > hi[axis] { return false; }
-        } else {
-            let a = (lo[axis] - ro[axis]) / rd[axis];
-            let b = (hi[axis] - ro[axis]) / rd[axis];
-            near = max(near, min(a, b));
-            far = min(far, max(a, b));
-        }
-    }
-    return near <= far;
+struct MeshVisit { node: u32, enter: f32 }
+
+fn mesh_span(node: u32, ro: vec3f, inv_d: vec3f, parallel: vec3<bool>, interval: vec2f) -> vec2f {
+    let lo = vec3f(luts[node], luts[node + 1u], luts[node + 2u]);
+    let hi = vec3f(luts[node + 3u], luts[node + 4u], luts[node + 5u]);
+    return loft_box_span(ro, inv_d, parallel, lo, hi, interval);
 }
 
 fn mesh_intersect(row: Row, ro: vec3f, rd: vec3f, interval: vec2f, any: bool) -> MeshHit {
@@ -59,26 +51,38 @@ fn mesh_intersect(row: Row, ro: vec3f, rd: vec3f, interval: vec2f, any: bool) ->
     let descriptor = bitcast<u32>(luts[header + 7u]);
     let nodes = bitcast<u32>(luts[descriptor]);
     let leaves = bitcast<u32>(luts[descriptor + 1u]);
+    let parallel = rd == vec3f(0.0);
+    let inv_d = 1.0 / select(rd, vec3f(1.0), parallel);
+    let root = mesh_span(nodes, ro, inv_d, parallel, interval);
+    if !(root.x <= root.y) { return MeshHit(-1.0, 0xffffffffu); }
     var nearest = interval.y;
     var triangle = 0xffffffffu;
     // The CPU builder halves a u32-bounded triangle set at every split.
     // Its depth fits 32 deferred siblings.
-    var stack: array<u32, 32>;
-    var depth = 1u;
+    var stack: array<MeshVisit, 32>;
+    var depth = 0u;
+    var node = nodes;
     loop {
-        if depth == 0u { break; }
-        depth -= 1u;
-        let node = nodes + 8u * stack[depth];
-        let lo = vec3f(luts[node], luts[node + 1u], luts[node + 2u]);
-        let hi = vec3f(luts[node + 3u], luts[node + 4u], luts[node + 5u]);
-        if !mesh_overlaps(ro, rd, lo, hi, vec2f(interval.x, nearest)) { continue; }
         let first = bitcast<u32>(luts[node + 6u]);
         let count = bitcast<u32>(luts[node + 7u]);
         if count == 0u {
-            stack[depth] = first + 1u;
-            stack[depth + 1u] = first;
-            depth += 2u;
-            continue;
+            let a = nodes + 8u * first;
+            let b = a + 8u;
+            let clipped = vec2f(interval.x, nearest);
+            let sa = mesh_span(a, ro, inv_d, parallel, clipped);
+            let sb = mesh_span(b, ro, inv_d, parallel, clipped);
+            let hit_a = sa.x <= sa.y;
+            let hit_b = sb.x <= sb.y;
+            if hit_a || hit_b {
+                // Any-hit queries retain left-first order.
+                let a_first = hit_a && (!hit_b || any || sa.x <= sb.x);
+                if hit_a && hit_b {
+                    stack[depth] = MeshVisit(select(a, b, a_first), select(sa.x, sb.x, a_first));
+                    depth += 1u;
+                }
+                node = select(b, a, a_first);
+                continue;
+            }
         }
         for (var i = 0u; i < count; i++) {
             let candidate = bitcast<u32>(luts[leaves + first + i]);
@@ -91,6 +95,11 @@ fn mesh_intersect(row: Row, ro: vec3f, rd: vec3f, interval: vec2f, any: bool) ->
                 }
             }
         }
+        // A deferred child was already intersected. Keep equal entry distances for the ID tie break.
+        while depth > 0u && stack[depth - 1u].enter > nearest { depth -= 1u; }
+        if depth == 0u { break; }
+        depth -= 1u;
+        node = stack[depth].node;
     }
     return MeshHit(select(nearest, -1.0, triangle == 0xffffffffu), triangle);
 }

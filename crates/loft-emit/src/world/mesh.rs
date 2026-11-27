@@ -1,7 +1,7 @@
 //! WGSL for the portable mesh draw and traversal.
 pub(crate) fn draw() -> (String, String, String) {
     (
-            include_str!("../mesh.wgsl").to_string(),
+            concat!(include_str!("../slab.wgsl"), include_str!("../mesh.wgsl")).to_string(),
             "  let base = bitcast<u32>(luts[row.r_asset * 8u]);
   let a = mesh_position(base, 3u * v.y);
   let ab = mesh_position(base, 3u * v.y + 1u) - a;

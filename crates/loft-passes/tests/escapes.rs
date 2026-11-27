@@ -175,12 +175,10 @@ fn nondet_law_keeps_gpu_math_and_refuses_mixed_tiers() {
     let (program, _, _) = loft_passes::compile(&src, &[]).unwrap_or_else(|d| panic!("{}", d.render(&src)));
     let step = &program.dispatches[0];
     assert_eq!(step.tier, Determinism::NonDet);
-    let bundle = loft_passes::fusion::motion_bundle(&program, step, 2);
+    let bundle = loft_passes::motion::motion_bundle(&program, step, 2);
     assert!(matches!(bundle.passes[0].run, PassRun::ComputeNonDetTicks { .. }));
     assert_eq!(bundle.state.unwrap().checkpoint_slots, 0);
     assert!(!program.modules[step.module].wgsl.contains("fn det_sin"));
-    let roundtrip = loft_passes::sexp::read(&loft_passes::sexp::write(&program).unwrap()).unwrap();
-    assert_eq!(roundtrip.dispatches[0].tier, Determinism::NonDet);
     for variant in [scene.replace("drift(b: Body, dt) nondet", "drift(b: Body, dt)"), scene.replace("run_laws(drift)", "run_laws(drift, move)")] {
         let src = sources("motion.loft", &variant);
         let error = loft_passes::compile(&src, &[]).err().unwrap();

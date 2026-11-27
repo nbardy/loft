@@ -12,14 +12,13 @@ loft-eval = { path = "../loft-eval" }
 loft-emit = { path = "../loft-emit" }
 loft-gltf = { path = "../loft-gltf" }
 loft-abi = { path = "../loft-abi" }
-serde-lexpr = "0.1"
 loft-parse = { path = "../loft-parse" }
 blake3 = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json.workspace = true
 tempfile = "3"
 loft-ir = { path = "../loft-ir" }
-naga = { workspace = true, features = ["serialize", "deserialize", "wgsl-out"] }
+naga = { workspace = true, features = ["serialize", "wgsl-out"] }
 
 [features]
 gltf = []

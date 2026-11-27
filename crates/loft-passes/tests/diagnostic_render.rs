@@ -136,23 +136,6 @@ build { emit K(pose: place([0,0,0]@World)) }
 "###,
     ),
     (
-        Code::E211,
-        r###"space World Local
-kind K @Local (pose: xf@Local>World, r: f = 1) {
-  trace(p) = sphere(p - [0,0,0]@Local, 0.5) / r
-  material(p,n) = ggx(rgb(0.5), 0.5, 0)
-}
-build { emit K(pose: place([0,0,0]@World)) }
-"###,
-        r###"error[E211]: row divisor can reach zero over its declared range
-  --> case.loft:3:47
-   |
-  3 |   trace(p) = sphere(p - [0,0,0]@Local, 0.5) / r
-   |                                               ^
-   = fix: declare a nonzero column range or clamp the divisor away from zero
-"###,
-    ),
-    (
         Code::E212,
         r###"space Body
 kind K @Body (pose: xf@Body>World) {

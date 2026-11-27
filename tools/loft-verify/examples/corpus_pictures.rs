@@ -6,7 +6,7 @@ use loft_passes::{program::Program, source::Graph};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-#[path = "../../../tools/gates/ordered_cull.rs"]
+#[path = "../../gates/ordered_cull.rs"]
 mod ordered_cull;
 
 fn compile(root: &Path, file: &str) -> Result<Program, Box<dyn Error>> {

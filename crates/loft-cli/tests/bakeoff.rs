@@ -138,36 +138,10 @@ fn heron_checks_fail_for_reversed_pitch_and_a_displaced_landmark() {
 }
 
 #[test]
-fn sexp_rebuilds_the_crab_with_its_shader_origins_and_pixels() {
-    let source = scene("crab");
-    let (program, _, _) = compile(&source, &[]).unwrap();
-    let text = loft_passes::sexp::write(&program).unwrap();
-    let restored = loft_passes::sexp::read(&text).unwrap();
-    assert_eq!(loft_passes::sexp::write(&restored).unwrap(), text);
-    assert!(
-        restored
-            .modules
-            .iter()
-            .flat_map(|m| &m.origins)
-            .any(|o| o.span.0.ends_with("crab.loft") && o.span.1 > 1 && o.span.2 > 1)
-    );
-    let device = loft_cli::native::gpu().unwrap();
-    let pixels = |p| {
-        let loaded = loft_cli::native::Loaded::new(&device, p, (160, 100), None).unwrap();
-        loaded.frame(&device, 2.0);
-        loaded.pixels(&device).unwrap()
-    };
-    let actual = pixels(&restored);
-    let expected = pixels(&program);
-    assert_eq!(actual.len(), expected.len());
-    assert_eq!(
-        actual
-            .iter()
-            .zip(expected)
-            .filter(|(a, b)| **a != *b)
-            .count(),
-        0
-    );
+fn crab_shaders_keep_authored_source_origins() {
+    let (program, _, _) = compile(&scene("crab"), &[]).unwrap();
+    assert!(program.modules.iter().flat_map(|m| &m.origins)
+        .any(|o| o.span.0.ends_with("crab.loft") && o.span.1 > 1 && o.span.2 > 1));
 }
 
 fn source(text: &str) -> Graph {

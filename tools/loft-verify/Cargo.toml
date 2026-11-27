@@ -22,5 +22,8 @@ sha2.workspace = true
 tempfile = "3"
 wgpu.workspace = true
 
+[dev-dependencies]
+loft-native = { path = "../../crates/loft-native" }
+
 [lints]
 workspace = true

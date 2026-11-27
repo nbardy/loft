@@ -49,10 +49,7 @@ pub(super) fn emit_world(
     em.out.push_str(world);
     em.out.push_str(loft_check::bsdf::VOLUME_STEP_WGSL);
     // The authored medium arithmetic uses the arena accessors in WORLD.
-    let (_, medium) = include_str!("../world_medium.wgsl").split_once("struct WorldSigma")
-        .expect("world medium math");
-    em.out.push_str("struct WorldSigma");
-    em.out.push_str(medium);
+    em.out.push_str(include_str!("../world_medium.wgsl"));
     // The path template uses the checked ABI payloads from lighting/world.
     let world_payload = |name| p.structs.get(name).ok_or_else(|| Diag::new(Code::E011, span,
         format!("missing World payload `{name}`"), "import stdlib::lighting::world"));

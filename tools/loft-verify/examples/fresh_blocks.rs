@@ -1,6 +1,6 @@
 //! Warm the device before the first native load control, then bracket a full 120-frame orbit.
 use loft_cli::{native, sources};
-use loft_passes::{compile, program::Pass, sexp};
+use loft_passes::{compile, program::Pass};
 use std::{env, fs, path::Path};
 
 fn main() -> Result<(), String> {
@@ -8,12 +8,8 @@ fn main() -> Result<(), String> {
     let [source, width, height, destination] = &args[..] else { return Err("expected input, width, height and output".into()); };
     let path = Path::new(source);
     let size = (width.parse().map_err(|_| "invalid width")?, height.parse().map_err(|_| "invalid height")?);
-    let p = if path.extension().is_some_and(|x| x == "ir") {
-        sexp::read(&fs::read_to_string(path).map_err(|e| e.to_string())?)?
-    } else {
-        let src = sources(path)?;
-        compile(&src, &[]).map_err(|d| d.render(&src))?.0
-    };
+    let src = sources(path)?;
+    let p = compile(&src, &[]).map_err(|d| d.render(&src))?.0;
     if p.camera.fixed_eye.is_some() { return Err("requires a moving camera".into()); }
     let vis = p.passes.iter().position(|p| matches!(p, Pass::Vis(_))).ok_or("missing Vis")?;
     let g = native::gpu()?;
