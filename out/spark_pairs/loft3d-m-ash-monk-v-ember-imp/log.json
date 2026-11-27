@@ -1,0 +1,43 @@
+{
+  "alignment": {
+    "format": "png",
+    "framing": "orbit still, subject centred, 1280x800 PNG",
+    "size": [
+      1280,
+      800
+    ]
+  },
+  "created_by": "loft-model-01",
+  "criteria": "Which character reads stronger, ash-monk or ember-imp? Base models head to head. Judge overall appeal only.",
+  "pair_id": "loft3d-m-ash-monk-v-ember-imp",
+  "renders": [
+    {
+      "params": {
+        "kind": "model",
+        "model": "ash-monk"
+      },
+      "path": "out/spark_pairs/models/ash-monk/model.png",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): base model ash-monk; (scene out/spark_pairs/models/ash-monk/model.loft).",
+      "sha256": "e93f371a71ccf17653baf83b61448e0abb9c2f2a1318ebff3ff5dc0a5a52524e",
+      "side": "a",
+      "size": [
+        1280,
+        800
+      ]
+    },
+    {
+      "params": {
+        "kind": "model",
+        "model": "ember-imp"
+      },
+      "path": "out/spark_pairs/models/ember-imp/model.png",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): base model ember-imp; (scene out/spark_pairs/models/ember-imp/model.loft).",
+      "sha256": "b8f8b276ff1857605657201d882be967b49f7367537adc9b55d5c11f67f5708a",
+      "side": "b",
+      "size": [
+        1280,
+        800
+      ]
+    }
+  ]
+}

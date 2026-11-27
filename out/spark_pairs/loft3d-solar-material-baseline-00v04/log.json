@@ -19,7 +19,7 @@
       },
       "path": "out/spark_pairs/loft3d/solar-material/step_00.png",
       "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 0 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=0).",
-      "sha256": "e20a8638ce4fa8cdfa1c49dcd07545caf3c54e41438fe0179e370a67f75bef63",
+      "sha256": "9d7452f70341ea0c1c6bd67cadf2664d342299b815dafdf452a54dc22a898b2a",
       "side": "a",
       "size": [
         1280,
@@ -34,7 +34,7 @@
       },
       "path": "out/spark_pairs/loft3d/solar-material/step_04.png",
       "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 4 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=4).",
-      "sha256": "a2d74ef8efc42a000dcb6276e8de02bf3f6a813a869d4ef3fd965e0508a520e9",
+      "sha256": "929839095fa4e1a183a52679235c9380652c71f7225a3e012c64203712195ffb",
       "side": "b",
       "size": [
         1280,
@@ -46,7 +46,7 @@
     "exit": 0,
     "scene": "out/spark_pairs/chains/solar-material/chain.loft",
     "summary": [
-      "kind Capsule      Analytic  rows    4  shapes   4  derived L 1.0000..1.0000  bound evals 0  derive 0.00 s",
+      "kind Capsule      Analytic  rows    9  shapes   9  derived L 1.0000..1.0000  bound evals 0  derive 0.00 s",
       "modules 4  passes [cull, Vis([0]), classify, Shade([0]), present]"
     ]
   }

@@ -1,0 +1,45 @@
+{
+  "alignment": {
+    "format": "png",
+    "framing": "orbit still, subject centred, 1280x800 PNG",
+    "size": [
+      1280,
+      800
+    ]
+  },
+  "created_by": "loft-still-01",
+  "criteria": "Which character reads stronger, abyss-lure or lantern-color? Best foot each (step 8 vs step 8). Judge overall appeal only.",
+  "pair_id": "loft3d-x-abyss-lure-v-lantern-color-08v08",
+  "renders": [
+    {
+      "params": {
+        "chain": "abyss-lure",
+        "kind": "cross",
+        "t": 8
+      },
+      "path": "out/spark_pairs/loft3d/abyss-lure/step_08.png",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 8 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=8).",
+      "sha256": "85e08c1dd0da472cb02669244ca90b02324c981541a9c7776556ec1720820013",
+      "side": "a",
+      "size": [
+        1280,
+        800
+      ]
+    },
+    {
+      "params": {
+        "chain": "lantern-color",
+        "kind": "cross",
+        "t": 8
+      },
+      "path": "out/spark_pairs/loft3d/lantern-color/step_08.png",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): paper lantern with glow core, orbit camera, 1280x800 still; chain lantern-color iteration step 8 (scene out/spark_pairs/chains/lantern-color/chain.loft, param step=8).",
+      "sha256": "b7be418fde5ae741db00ae67dc4b9085f4f5c2036d2bc921f9bf1ed3ec276c23",
+      "side": "b",
+      "size": [
+        1280,
+        800
+      ]
+    }
+  ]
+}

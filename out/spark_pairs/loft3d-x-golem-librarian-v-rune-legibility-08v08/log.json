@@ -1,0 +1,45 @@
+{
+  "alignment": {
+    "format": "png",
+    "framing": "orbit still, subject centred, 1280x800 PNG",
+    "size": [
+      1280,
+      800
+    ]
+  },
+  "created_by": "loft-still-01",
+  "criteria": "Which character reads stronger, golem-librarian or rune-legibility? Best foot each (step 8 vs step 8). Judge overall appeal only.",
+  "pair_id": "loft3d-x-golem-librarian-v-rune-legibility-08v08",
+  "renders": [
+    {
+      "params": {
+        "chain": "golem-librarian",
+        "kind": "cross",
+        "t": 8
+      },
+      "path": "out/spark_pairs/loft3d/golem-librarian/step_08.png",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): robed scholar with book, orbit camera, 1280x800 still; chain golem-librarian iteration step 8 (scene out/spark_pairs/chains/golem-librarian/chain.loft, param step=8).",
+      "sha256": "cc6d572e3fd151c672a9e04aa912a4182743b2a9dd76e3951866de21a7296634",
+      "side": "a",
+      "size": [
+        1280,
+        800
+      ]
+    },
+    {
+      "params": {
+        "chain": "rune-legibility",
+        "kind": "cross",
+        "t": 8
+      },
+      "path": "out/spark_pairs/loft3d/rune-legibility/step_08.png",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 8 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=8).",
+      "sha256": "f79fc4c253abc450ad6e15f4b8f50d3a355adb66e3116e69ca04ad4ad8c628ba",
+      "side": "b",
+      "size": [
+        1280,
+        800
+      ]
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "alignment": {
+    "format": "png",
+    "framing": "orbit still, subject centred, 1280x800 PNG",
+    "size": [
+      1280,
+      800
+    ]
+  },
+  "created_by": "loft-model-01",
+  "criteria": "Which character reads stronger, dune-merchant or moss-archer? Base models head to head. Judge overall appeal only.",
+  "pair_id": "loft3d-m-dune-merchant-v-moss-archer",
+  "renders": [
+    {
+      "params": {
+        "kind": "model",
+        "model": "dune-merchant"
+      },
+      "path": "out/spark_pairs/models/dune-merchant/model.png",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): base model dune-merchant; (scene out/spark_pairs/models/dune-merchant/model.loft).",
+      "sha256": "d99fd570735279f9cacdb7f8f16800f87d05b35f7bb86651383723c529ae9d85",
+      "side": "a",
+      "size": [
+        1280,
+        800
+      ]
+    },
+    {
+      "params": {
+        "kind": "model",
+        "model": "moss-archer"
+      },
+      "path": "out/spark_pairs/models/moss-archer/model.png",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): base model moss-archer; (scene out/spark_pairs/models/moss-archer/model.loft).",
+      "sha256": "844c232c8258c9880989982309cd19ae26911d69a82208402bb516f7082a1a5c",
+      "side": "b",
+      "size": [
+        1280,
+        800
+      ]
+    }
+  ]
+}

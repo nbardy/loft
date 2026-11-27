@@ -19,7 +19,7 @@
       },
       "path": "out/spark_pairs/loft3d/rune-legibility/step_06.png",
       "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 6 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=6).",
-      "sha256": "cab63b704ee80d403736e763d6b4cf29f9f2d8aa48ba972cf37400670ac6a288",
+      "sha256": "44b0415ed7195e033e324b5ae6383f94370d1c2315dabd249c796d55d7b3ee71",
       "side": "a",
       "size": [
         1280,
@@ -34,7 +34,7 @@
       },
       "path": "out/spark_pairs/loft3d/rune-legibility/step_07.png",
       "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 7 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=7).",
-      "sha256": "cab63b704ee80d403736e763d6b4cf29f9f2d8aa48ba972cf37400670ac6a288",
+      "sha256": "e68b65712709dce0a4e71deb97044f5018aeb8e9dca9a34e527d3775a482e88c",
       "side": "b",
       "size": [
         1280,
@@ -46,7 +46,7 @@
     "exit": 0,
     "scene": "out/spark_pairs/chains/rune-legibility/chain.loft",
     "summary": [
-      "kind Capsule      Analytic  rows    7  shapes   7  derived L 1.0000..1.0000  bound evals 0  derive 0.00 s",
+      "kind Capsule      Analytic  rows    9  shapes   9  derived L 1.0000..1.0000  bound evals 0  derive 0.00 s",
       "modules 4  passes [cull, Vis([0]), classify, Shade([0]), present]"
     ]
   }

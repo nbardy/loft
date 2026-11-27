@@ -1,0 +1,43 @@
+{
+  "alignment": {
+    "format": "png",
+    "framing": "orbit still, subject centred, 1280x800 PNG",
+    "size": [
+      1280,
+      800
+    ]
+  },
+  "created_by": "loft-model-01",
+  "criteria": "Which character reads stronger, bone-collector or frost-warden? Base models head to head. Judge overall appeal only.",
+  "pair_id": "loft3d-m-bone-collector-v-frost-warden",
+  "renders": [
+    {
+      "params": {
+        "kind": "model",
+        "model": "bone-collector"
+      },
+      "path": "out/spark_pairs/models/bone-collector/model.png",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): base model bone-collector; (scene out/spark_pairs/models/bone-collector/model.loft).",
+      "sha256": "07e431b5e7504a336a4c4db3969a7e91d2419ed808babad7451e0dac5ea74dd9",
+      "side": "a",
+      "size": [
+        1280,
+        800
+      ]
+    },
+    {
+      "params": {
+        "kind": "model",
+        "model": "frost-warden"
+      },
+      "path": "out/spark_pairs/models/frost-warden/model.png",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): base model frost-warden; (scene out/spark_pairs/models/frost-warden/model.loft).",
+      "sha256": "b1e3057774b9bd204bfb0444b68a0cc1cbe58986e7f11710bb5fd864fee9047f",
+      "side": "b",
+      "size": [
+        1280,
+        800
+      ]
+    }
+  ]
+}

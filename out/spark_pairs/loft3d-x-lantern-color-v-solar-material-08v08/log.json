@@ -1,0 +1,45 @@
+{
+  "alignment": {
+    "format": "png",
+    "framing": "orbit still, subject centred, 1280x800 PNG",
+    "size": [
+      1280,
+      800
+    ]
+  },
+  "created_by": "loft-still-01",
+  "criteria": "Which character reads stronger, lantern-color or solar-material? Best foot each (step 8 vs step 8). Judge overall appeal only.",
+  "pair_id": "loft3d-x-lantern-color-v-solar-material-08v08",
+  "renders": [
+    {
+      "params": {
+        "chain": "lantern-color",
+        "kind": "cross",
+        "t": 8
+      },
+      "path": "out/spark_pairs/loft3d/lantern-color/step_08.png",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): paper lantern with glow core, orbit camera, 1280x800 still; chain lantern-color iteration step 8 (scene out/spark_pairs/chains/lantern-color/chain.loft, param step=8).",
+      "sha256": "b7be418fde5ae741db00ae67dc4b9085f4f5c2036d2bc921f9bf1ed3ec276c23",
+      "side": "a",
+      "size": [
+        1280,
+        800
+      ]
+    },
+    {
+      "params": {
+        "chain": "solar-material",
+        "kind": "cross",
+        "t": 8
+      },
+      "path": "out/spark_pairs/loft3d/solar-material/step_08.png",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): desert solar-scavenger robot torso, orbit camera, 1280x800 still; chain solar-material iteration step 8 (scene out/spark_pairs/chains/solar-material/chain.loft, param step=8).",
+      "sha256": "f91a2afcc99a3e0055aee69b5a7b2037473699121a18cd5a5200d00038544158",
+      "side": "b",
+      "size": [
+        1280,
+        800
+      ]
+    }
+  ]
+}

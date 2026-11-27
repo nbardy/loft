@@ -41,12 +41,12 @@ build {
   emit Capsule(a: c + [-0.20, 0.60, 0], b: c + [-0.28, 0.05, 0.12], r: 0.12m, albedo: cloth * 0.8)
   emit Capsule(a: c + [0.20, 0.60, 0], b: c + [0.26, 0.05, -0.12], r: 0.12m, albedo: cloth * 0.8)
   emit Capsule(a: c + [0.0, 0.60, 0], b: c + [0.0, 1.50, 0], r: 0.36m, albedo: cloth)
-  # overloaded pack sack looming behind the shoulders
-  emit GlossBead(c: c + [0.0, 1.55, -0.48], r: 0.38m, albedo: [0.52, 0.40, 0.26])
-  emit Capsule(a: c + [-0.30, 1.30, -0.30], b: c + [-0.10, 1.05, -0.30], r: 0.06m, albedo: [0.40, 0.30, 0.20])
-  emit Capsule(a: c + [0.30, 1.30, -0.30], b: c + [0.10, 1.05, -0.30], r: 0.06m, albedo: [0.40, 0.30, 0.20])
-  # rug roll strapped across the very top of the pack
-  emit Capsule(a: c + [-0.35, 1.95, -0.48], b: c + [0.35, 1.95, -0.48], r: 0.09m, albedo: [0.65, 0.30, 0.25])
+  # overloaded pack sack slung to the side so it bulges into profile
+  emit GlossBead(c: c + [0.48, 1.35, -0.30], r: 0.34m, albedo: [0.52, 0.40, 0.26])
+  emit Capsule(a: c + [0.30, 1.30, -0.20], b: c + [0.45, 1.05, -0.28], r: 0.06m, albedo: [0.40, 0.30, 0.20])
+  emit Capsule(a: c + [0.55, 1.30, -0.35], b: c + [0.50, 1.05, -0.32], r: 0.06m, albedo: [0.40, 0.30, 0.20])
+  # rug roll strapped diagonally across the visible pack
+  emit Capsule(a: c + [0.28, 1.62, -0.30], b: c + [0.68, 1.42, -0.30], r: 0.09m, albedo: [0.65, 0.30, 0.25])
   # walking staff planted ahead in the right hand
   emit Capsule(a: c + [0.38, 1.40, 0.05], b: c + [0.52, 0.60, 0.35], r: 0.045m, albedo: [0.45, 0.34, 0.22])
   emit Capsule(a: c + [0.52, 0.60, 0.35], b: c + [0.55, 0.05, 0.42], r: 0.04m, albedo: [0.45, 0.34, 0.22])
@@ -58,9 +58,9 @@ build {
   emit GlossBead(c: c + [0.0, 2.14, 0], r: 0.20m, albedo: [0.48, 0.36, 0.22])
   emit Capsule(a: c + [-0.14, 1.90, 0.22], b: c + [-0.04, 1.88, 0.22], r: 0.028m, albedo: [0.15, 0.12, 0.10])
   emit Capsule(a: c + [0.04, 1.88, 0.22], b: c + [0.14, 1.90, 0.22], r: 0.028m, albedo: [0.15, 0.12, 0.10])
-  # scarf ends streaming behind in the desert wind
-  emit Capsule(a: c + [0.10, 1.70, -0.30], b: c + [0.45, 1.85, -0.75], r: 0.05m, albedo: [0.70, 0.35, 0.25])
-  emit Capsule(a: c + [-0.05, 1.66, -0.30], b: c + [-0.30, 1.70, -0.80], r: 0.05m, albedo: [0.70, 0.35, 0.25])
+  # scarf ends streaming sideways into view in the desert wind
+  emit Capsule(a: c + [0.10, 1.70, -0.20], b: c + [0.62, 1.80, -0.35], r: 0.05m, albedo: [0.70, 0.35, 0.25])
+  emit Capsule(a: c + [-0.05, 1.66, -0.20], b: c + [-0.55, 1.72, -0.30], r: 0.05m, albedo: [0.70, 0.35, 0.25])
   # ground cross
   emit Capsule(a: [-2.5, -0.02, -0.5]@World, b: [2.5, -0.02, -0.5]@World, r: 0.12m, albedo: [0.34, 0.31, 0.27])
   emit Capsule(a: [0.0, -0.02, -2.5]@World, b: [0.0, -0.02, 2.5]@World, r: 0.12m, albedo: [0.34, 0.31, 0.27])
@@ -68,10 +68,8 @@ build {
 
 schedule Main {
   orbit(at: [0, 1.1, 0]@World, radius: 4.8m, height: 2.0m, period: 24.0s, fov: 40deg)
-  cull_indirect(Capsule)
-  cull_indirect(GlossBead)
-  render_bundle(Vis64) { draw_indirect(Capsule) }
-  render_bundle(Vis64) { draw_indirect(GlossBead) }
+  cull_indirect(Capsule, GlossBead)
+  render_bundle(Vis64) { draw_indirect(Capsule); draw_indirect(GlossBead) }
   tile_classify(Vis64, tile: 8)
   shade_tiles(Vis64, light: sun_sky, sun: [0.45, 0.8, 0.35])
   tonemap_aces(ColorHdr, sky: sky_color)

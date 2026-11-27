@@ -1,0 +1,43 @@
+{
+  "alignment": {
+    "format": "png",
+    "framing": "orbit still, subject centred, 1280x800 PNG",
+    "size": [
+      1280,
+      800
+    ]
+  },
+  "created_by": "loft-model-01",
+  "criteria": "Which character reads stronger, dune-merchant or tide-priest? Base models head to head. Judge overall appeal only.",
+  "pair_id": "loft3d-m-dune-merchant-v-tide-priest",
+  "renders": [
+    {
+      "params": {
+        "kind": "model",
+        "model": "dune-merchant"
+      },
+      "path": "out/spark_pairs/models/dune-merchant/model.png",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): base model dune-merchant; (scene out/spark_pairs/models/dune-merchant/model.loft).",
+      "sha256": "d99fd570735279f9cacdb7f8f16800f87d05b35f7bb86651383723c529ae9d85",
+      "side": "a",
+      "size": [
+        1280,
+        800
+      ]
+    },
+    {
+      "params": {
+        "kind": "model",
+        "model": "tide-priest"
+      },
+      "path": "out/spark_pairs/models/tide-priest/model.png",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): base model tide-priest; (scene out/spark_pairs/models/tide-priest/model.loft).",
+      "sha256": "04aeaad24a703d444a3791378386c1a333c8861b64e756d694448b2350179ee8",
+      "side": "b",
+      "size": [
+        1280,
+        800
+      ]
+    }
+  ]
+}

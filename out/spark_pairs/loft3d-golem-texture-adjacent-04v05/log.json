@@ -19,7 +19,7 @@
       },
       "path": "out/spark_pairs/loft3d/golem-texture/step_04.png",
       "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 4 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=4).",
-      "sha256": "14ab80cfa9167c58233060e91ec42c2daf5742c77781d38d3d1a5f103246fac8",
+      "sha256": "e2abc903f9f07f4ecf091834e596f8927db6c98682b0a38eed6c63ce275f051f",
       "side": "a",
       "size": [
         1280,
@@ -34,7 +34,7 @@
       },
       "path": "out/spark_pairs/loft3d/golem-texture/step_05.png",
       "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-texture iteration step 5 (scene out/spark_pairs/chains/golem-texture/chain.loft, param step=5).",
-      "sha256": "14ab80cfa9167c58233060e91ec42c2daf5742c77781d38d3d1a5f103246fac8",
+      "sha256": "f121a2e73e396437e9229ac5a92ce25304979f2973eceaa35cad9d34d970b94c",
       "side": "b",
       "size": [
         1280,
@@ -46,7 +46,7 @@
     "exit": 0,
     "scene": "out/spark_pairs/chains/golem-texture/chain.loft",
     "summary": [
-      "kind Capsule      Analytic  rows    9  shapes   9  derived L 1.0000..1.0000  bound evals 0  derive 0.00 s",
+      "kind Capsule      Analytic  rows   13  shapes  13  derived L 1.0000..1.0000  bound evals 0  derive 0.00 s",
       "modules 4  passes [cull, Vis([0]), classify, Shade([0]), present]"
     ]
   }

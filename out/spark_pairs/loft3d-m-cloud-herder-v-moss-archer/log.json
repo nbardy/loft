@@ -1,0 +1,43 @@
+{
+  "alignment": {
+    "format": "png",
+    "framing": "orbit still, subject centred, 1280x800 PNG",
+    "size": [
+      1280,
+      800
+    ]
+  },
+  "created_by": "loft-model-01",
+  "criteria": "Which character reads stronger, cloud-herder or moss-archer? Base models head to head. Judge overall appeal only.",
+  "pair_id": "loft3d-m-cloud-herder-v-moss-archer",
+  "renders": [
+    {
+      "params": {
+        "kind": "model",
+        "model": "cloud-herder"
+      },
+      "path": "out/spark_pairs/models/cloud-herder/model.png",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): base model cloud-herder; (scene out/spark_pairs/models/cloud-herder/model.loft).",
+      "sha256": "07874171aec6b6a4292a714a5b4c75821ec8b98e1b826dc3844cd86a85abc4fd",
+      "side": "a",
+      "size": [
+        1280,
+        800
+      ]
+    },
+    {
+      "params": {
+        "kind": "model",
+        "model": "moss-archer"
+      },
+      "path": "out/spark_pairs/models/moss-archer/model.png",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): base model moss-archer; (scene out/spark_pairs/models/moss-archer/model.loft).",
+      "sha256": "844c232c8258c9880989982309cd19ae26911d69a82208402bb516f7082a1a5c",
+      "side": "b",
+      "size": [
+        1280,
+        800
+      ]
+    }
+  ]
+}

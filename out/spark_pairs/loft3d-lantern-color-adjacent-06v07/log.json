@@ -19,7 +19,7 @@
       },
       "path": "out/spark_pairs/loft3d/lantern-color/step_06.png",
       "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): paper lantern with glow core, orbit camera, 1280x800 still; chain lantern-color iteration step 6 (scene out/spark_pairs/chains/lantern-color/chain.loft, param step=6).",
-      "sha256": "cdc99baf481442ad1be12974f4542a18a87847b7ff7e58653639875b8ef55f30",
+      "sha256": "edc467a10b0236d4cf6a34a077464a4c3ebc4a0f1eedc42ded154bc585648db4",
       "side": "a",
       "size": [
         1280,
@@ -34,7 +34,7 @@
       },
       "path": "out/spark_pairs/loft3d/lantern-color/step_07.png",
       "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): paper lantern with glow core, orbit camera, 1280x800 still; chain lantern-color iteration step 7 (scene out/spark_pairs/chains/lantern-color/chain.loft, param step=7).",
-      "sha256": "7638ae30bbe80281878f63b78277e252002d829985d2e51a0d43d89ec3c22fbd",
+      "sha256": "4f3845747ddf8bd1a32af63ed7da7abbab39c0ad0ed6e43f639ef765c8fb03db",
       "side": "b",
       "size": [
         1280,
@@ -46,7 +46,7 @@
     "exit": 0,
     "scene": "out/spark_pairs/chains/lantern-color/chain.loft",
     "summary": [
-      "kind Capsule      Analytic  rows    4  shapes   4  derived L 1.0000..1.0000  bound evals 0  derive 0.00 s",
+      "kind Capsule      Analytic  rows    5  shapes   5  derived L 1.0000..1.0000  bound evals 0  derive 0.00 s",
       "modules 4  passes [cull, Vis([0]), classify, Shade([0]), present]"
     ]
   }

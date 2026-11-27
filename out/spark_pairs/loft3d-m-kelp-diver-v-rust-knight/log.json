@@ -1,0 +1,43 @@
+{
+  "alignment": {
+    "format": "png",
+    "framing": "orbit still, subject centred, 1280x800 PNG",
+    "size": [
+      1280,
+      800
+    ]
+  },
+  "created_by": "loft-model-01",
+  "criteria": "Which character reads stronger, kelp-diver or rust-knight? Base models head to head. Judge overall appeal only.",
+  "pair_id": "loft3d-m-kelp-diver-v-rust-knight",
+  "renders": [
+    {
+      "params": {
+        "kind": "model",
+        "model": "kelp-diver"
+      },
+      "path": "out/spark_pairs/models/kelp-diver/model.png",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): base model kelp-diver; (scene out/spark_pairs/models/kelp-diver/model.loft).",
+      "sha256": "2aed09a448617b3cc7f82e02ad2d0283a1251606521fa5c25b8038344d9ecbb1",
+      "side": "a",
+      "size": [
+        1280,
+        800
+      ]
+    },
+    {
+      "params": {
+        "kind": "model",
+        "model": "rust-knight"
+      },
+      "path": "out/spark_pairs/models/rust-knight/model.png",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): base model rust-knight; (scene out/spark_pairs/models/rust-knight/model.loft).",
+      "sha256": "991aac6900be69ff880751cfb28aaf824e54be4b1375632c9b5bcda7d52ccdd3",
+      "side": "b",
+      "size": [
+        1280,
+        800
+      ]
+    }
+  ]
+}

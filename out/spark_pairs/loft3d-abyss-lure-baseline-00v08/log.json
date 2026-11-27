@@ -19,7 +19,7 @@
       },
       "path": "out/spark_pairs/loft3d/abyss-lure/step_00.png",
       "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 0 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=0).",
-      "sha256": "a96f127afd9d681ef8cb61bc99ecc0e184844d1c3821c5e1e29e17ec7147eca9",
+      "sha256": "0a61d8631b3a1d12928db3dbad4a9787bc192b050183f335296d35ed3e0947f3",
       "side": "a",
       "size": [
         1280,
@@ -34,7 +34,7 @@
       },
       "path": "out/spark_pairs/loft3d/abyss-lure/step_08.png",
       "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 8 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=8).",
-      "sha256": "1275a15e57f414b8c03f37b5ac4aec4d51972091b7eec27259be83d073416a2e",
+      "sha256": "85e08c1dd0da472cb02669244ca90b02324c981541a9c7776556ec1720820013",
       "side": "b",
       "size": [
         1280,
@@ -46,7 +46,7 @@
     "exit": 0,
     "scene": "out/spark_pairs/chains/abyss-lure/chain.loft",
     "summary": [
-      "kind Capsule      Analytic  rows    6  shapes   6  derived L 1.0000..1.0000  bound evals 0  derive 0.00 s",
+      "kind Capsule      Analytic  rows    9  shapes   9  derived L 1.0000..1.0000  bound evals 0  derive 0.00 s",
       "modules 4  passes [cull, Vis([0]), classify, Shade([0]), present]"
     ]
   }

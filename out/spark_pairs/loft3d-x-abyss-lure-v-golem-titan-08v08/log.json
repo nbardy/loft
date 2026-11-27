@@ -1,0 +1,45 @@
+{
+  "alignment": {
+    "format": "png",
+    "framing": "orbit still, subject centred, 1280x800 PNG",
+    "size": [
+      1280,
+      800
+    ]
+  },
+  "created_by": "loft-still-01",
+  "criteria": "Which character reads stronger, abyss-lure or golem-titan? Best foot each (step 8 vs step 8). Judge overall appeal only.",
+  "pair_id": "loft3d-x-abyss-lure-v-golem-titan-08v08",
+  "renders": [
+    {
+      "params": {
+        "chain": "abyss-lure",
+        "kind": "cross",
+        "t": 8
+      },
+      "path": "out/spark_pairs/loft3d/abyss-lure/step_08.png",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): brass diver helmet with lure stalk, orbit camera, 1280x800 still; chain abyss-lure iteration step 8 (scene out/spark_pairs/chains/abyss-lure/chain.loft, param step=8).",
+      "sha256": "85e08c1dd0da472cb02669244ca90b02324c981541a9c7776556ec1720820013",
+      "side": "a",
+      "size": [
+        1280,
+        800
+      ]
+    },
+    {
+      "params": {
+        "chain": "golem-titan",
+        "kind": "cross",
+        "t": 8
+      },
+      "path": "out/spark_pairs/loft3d/golem-titan/step_08.png",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): monumental guardian with lantern post, orbit camera, 1280x800 still; chain golem-titan iteration step 8 (scene out/spark_pairs/chains/golem-titan/chain.loft, param step=8).",
+      "sha256": "2caa82d59556e8833212a43f6bde40ec6e7ab685b8bffe19aa1831f1ed302316",
+      "side": "b",
+      "size": [
+        1280,
+        800
+      ]
+    }
+  ]
+}

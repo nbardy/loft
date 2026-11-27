@@ -46,24 +46,28 @@ build fn crack_roll(slot: u) -> u {
   u32(sample_key(2011, slot, 4, 0, 7) * 100.0)
 }
 
-# One weathering crack on the torso front, kept by roll.
+# One jagged weathering crack, kept by roll: slashes wander sideways and
+# spread across the whole torso front instead of marching in formation.
 build fn crack(slot: u, keep: u, stone: rgb) {
-  let x = (f32(slot % 2) - 0.5) * 0.25
-  let y = 1.45 + f32(slot / 2) * 0.30
-  let o = [x, y, 0.70]@World
+  let x = (f32(slot % 4) - 1.5) * 0.20 + 0.08 * sin(f32(slot) * 2.3)
+  let y = 1.40 + f32(slot / 4) * 0.38
+  let lean = 0.16 * sin(f32(slot) * 1.3 + 0.7)
+  let o = [x, y, 0.68]@World
   if crack_roll(slot) < keep {
-    emit Capsule(a: o + [0.0, -0.14, 0], b: o + [0.03, 0.14, 0], r: 0.035m, albedo: stone * 0.35)
+    emit Capsule(a: o + [-lean, -0.16, 0], b: o + [lean, 0.16, 0], r: 0.05m, albedo: stone * 0.30)
   }
 }
 
 build {
   let f = axis_f(step)
   let c = [0.0, 0.0, 0.0]@World
-  let stone = [0.55, 0.52, 0.47]
-  # pillar legs + monumental torso
+  let stone = [0.48, 0.45, 0.40]
+  # pillar legs + monumental torso, weathered darker than the golems
   emit Capsule(a: c + [-0.35, 1.20, 0], b: c + [-0.35, 0.05, 0], r: 0.25m, albedo: stone * 0.85)
   emit Capsule(a: c + [0.35, 1.20, 0], b: c + [0.35, 0.05, 0], r: 0.25m, albedo: stone * 0.85)
   emit Capsule(a: c + [0.0, 1.20, 0], b: c + [0.0, 2.80, 0], r: 0.72m, albedo: stone)
+  # shoulder yoke breaking the pawn silhouette
+  emit Capsule(a: c + [-0.70, 2.85, 0], b: c + [0.70, 2.85, 0], r: 0.28m, albedo: stone * 1.05)
   # long arms hanging to the ground, finger nubs
   emit Capsule(a: c + [-0.85, 2.80, 0], b: c + [-1.00, 0.60, 0.05], r: 0.20m, albedo: stone * 0.9)
   emit Capsule(a: c + [0.85, 2.80, 0], b: c + [1.00, 0.60, 0.05], r: 0.20m, albedo: stone * 0.9)
@@ -71,9 +75,9 @@ build {
   emit GlossBead(c: c + [-1.00, 0.28, 0.05], r: 0.09m, albedo: stone * 0.9)
   emit GlossBead(c: c + [1.00, 0.45, 0.05], r: 0.09m, albedo: stone * 0.9)
   emit GlossBead(c: c + [1.00, 0.28, 0.05], r: 0.09m, albedo: stone * 0.9)
-  # tiny head, single cyclops eye slit glowing through the dark
-  emit Capsule(a: c + [-0.18, 3.35, 0], b: c + [0.18, 3.35, 0], r: 0.20m, albedo: stone * 1.05)
-  emit GlossBead(c: c + [0.0, 3.35, 0.19], r: 0.06m, albedo: [0.70, 0.90, 0.90])
+  # small bronze head riding clear above the torso, one big cyclops eye
+  emit Capsule(a: c + [-0.20, 3.62, 0], b: c + [0.20, 3.62, 0], r: 0.22m, albedo: [0.50, 0.38, 0.24])
+  emit GlossBead(c: c + [0.0, 3.62, 0.21], r: 0.09m, albedo: [0.70, 0.90, 0.90])
   # weathering cracks accrete with f
   let keep = u32(100.0 * f)
   build for slot in 0..16 {
@@ -90,10 +94,8 @@ build {
 
 schedule Main {
   orbit(at: [0, 1.8, 0]@World, radius: 7.5m, height: 2.6m, period: 24.0s, fov: 40deg)
-  cull_indirect(Capsule)
-  cull_indirect(GlossBead)
-  render_bundle(Vis64) { draw_indirect(Capsule) }
-  render_bundle(Vis64) { draw_indirect(GlossBead) }
+  cull_indirect(Capsule, GlossBead)
+  render_bundle(Vis64) { draw_indirect(Capsule); draw_indirect(GlossBead) }
   tile_classify(Vis64, tile: 8)
   shade_tiles(Vis64, light: sun_sky, sun: [0.45, 0.8, 0.35])
   tonemap_aces(ColorHdr, sky: sky_color)

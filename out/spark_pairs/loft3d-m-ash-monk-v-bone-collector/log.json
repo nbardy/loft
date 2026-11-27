@@ -1,0 +1,43 @@
+{
+  "alignment": {
+    "format": "png",
+    "framing": "orbit still, subject centred, 1280x800 PNG",
+    "size": [
+      1280,
+      800
+    ]
+  },
+  "created_by": "loft-model-01",
+  "criteria": "Which character reads stronger, ash-monk or bone-collector? Base models head to head. Judge overall appeal only.",
+  "pair_id": "loft3d-m-ash-monk-v-bone-collector",
+  "renders": [
+    {
+      "params": {
+        "kind": "model",
+        "model": "ash-monk"
+      },
+      "path": "out/spark_pairs/models/ash-monk/model.png",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): base model ash-monk; (scene out/spark_pairs/models/ash-monk/model.loft).",
+      "sha256": "e93f371a71ccf17653baf83b61448e0abb9c2f2a1318ebff3ff5dc0a5a52524e",
+      "side": "a",
+      "size": [
+        1280,
+        800
+      ]
+    },
+    {
+      "params": {
+        "kind": "model",
+        "model": "bone-collector"
+      },
+      "path": "out/spark_pairs/models/bone-collector/model.png",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): base model bone-collector; (scene out/spark_pairs/models/bone-collector/model.loft).",
+      "sha256": "07e431b5e7504a336a4c4db3969a7e91d2419ed808babad7451e0dac5ea74dd9",
+      "side": "b",
+      "size": [
+        1280,
+        800
+      ]
+    }
+  ]
+}

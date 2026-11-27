@@ -1,0 +1,54 @@
+{
+  "alignment": {
+    "format": "png",
+    "framing": "orbit still, subject centred, 1280x800 PNG",
+    "size": [
+      1280,
+      800
+    ]
+  },
+  "created_by": "loft-still-01",
+  "criteria": "Which brute looks angrier? Judge face and fists only.",
+  "pair_id": "loft3d-golem-brute-adjacent-07v08",
+  "renders": [
+    {
+      "params": {
+        "chain": "golem-brute",
+        "kind": "adjacent",
+        "t": 7
+      },
+      "path": "out/spark_pairs/loft3d/golem-brute/step_07.png",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): scarred horned ogre, orbit camera, 1280x800 still; chain golem-brute iteration step 7 (scene out/spark_pairs/chains/golem-brute/chain.loft, param step=7).",
+      "sha256": "0d5e92bf5156af5b517a2fc8f86fafafcd15abb9412c29b72795b3728016c076",
+      "side": "a",
+      "size": [
+        1280,
+        800
+      ]
+    },
+    {
+      "params": {
+        "chain": "golem-brute",
+        "kind": "adjacent",
+        "t": 8
+      },
+      "path": "out/spark_pairs/loft3d/golem-brute/step_08.png",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): scarred horned ogre, orbit camera, 1280x800 still; chain golem-brute iteration step 8 (scene out/spark_pairs/chains/golem-brute/chain.loft, param step=8).",
+      "sha256": "0094caf0adc0ce4f27c974b029a5bfb5e8ce2ea35ea1fecc97991b171d4458b4",
+      "side": "b",
+      "size": [
+        1280,
+        800
+      ]
+    }
+  ],
+  "scene_check": {
+    "exit": 0,
+    "scene": "out/spark_pairs/chains/golem-brute/chain.loft",
+    "summary": [
+      "kind Capsule      Analytic  rows   19  shapes  19  derived L 1.0000..1.0000  bound evals 0  derive 0.00 s",
+      "kind GlossBead    Analytic  rows   10  shapes  10  derived L 1.0000..1.0000  bound evals 0  derive 0.00 s",
+      "modules 5  passes [cull, Vis([0, 1]), classify, Shade([0, 1]), present]"
+    ]
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "alignment": {
+    "format": "png",
+    "framing": "orbit still, subject centred, 1280x800 PNG",
+    "size": [
+      1280,
+      800
+    ]
+  },
+  "created_by": "loft-still-01",
+  "criteria": "Which character reads stronger, golem-shape or rune-legibility? Best foot each (step 8 vs step 8). Judge overall appeal only.",
+  "pair_id": "loft3d-x-golem-shape-v-rune-legibility-08v08",
+  "renders": [
+    {
+      "params": {
+        "chain": "golem-shape",
+        "kind": "cross",
+        "t": 8
+      },
+      "path": "out/spark_pairs/loft3d/golem-shape/step_08.png",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): mossy stone golem guardian, orbit camera, 1280x800 still; chain golem-shape iteration step 8 (scene out/spark_pairs/chains/golem-shape/chain.loft, param step=8).",
+      "sha256": "cfb9a5856c8721fdda2e14d85f07f19d473630ce47827a5d10f7534290b270cc",
+      "side": "a",
+      "size": [
+        1280,
+        800
+      ]
+    },
+    {
+      "params": {
+        "chain": "rune-legibility",
+        "kind": "cross",
+        "t": 8
+      },
+      "path": "out/spark_pairs/loft3d/rune-legibility/step_08.png",
+      "prompt": "Loft still render (orbit still, subject centred, 1280x800 PNG): carved stone tablet with six glyphs, orbit camera, 1280x800 still; chain rune-legibility iteration step 8 (scene out/spark_pairs/chains/rune-legibility/chain.loft, param step=8).",
+      "sha256": "f79fc4c253abc450ad6e15f4b8f50d3a355adb66e3116e69ca04ad4ad8c628ba",
+      "side": "b",
+      "size": [
+        1280,
+        800
+      ]
+    }
+  ]
+}
