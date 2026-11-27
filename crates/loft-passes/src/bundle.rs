@@ -142,6 +142,15 @@ impl Builder {
         let mut bundle = Bundle::default();
         let mut bindings = Vec::new();
         for (i, module) in program.modules.iter().enumerate() {
+            // A template's declared images keep their exact formats, even for a global called `hdr`.
+            let hdr = if program.passes.iter().any(|pass| matches!(pass,
+                Pass::Authored(a) if a.module == i && !a.named_bindings.is_empty()
+                    && !a.bindings.iter().any(|(_, _, view)| *view == FrameView::HdrStore)))
+            {
+                ImageFormat::Rgba16Float
+            } else {
+                hdr
+            };
             let (code, reflected) = shader(module.naga.clone(), &module.name, nonce, draw_words, hdr)?;
             bindings.push(reflected);
             bundle.modules.push(ModuleBlob {
@@ -239,6 +248,7 @@ impl Builder {
         &mut self,
         format: ImageFormat,
         size: (u32, u32),
+        samples: u8,
         clear: Option<[f64; 4]>,
     ) -> TableId {
         let table = self.external();
@@ -246,7 +256,7 @@ impl Builder {
             table,
             format,
             extent: [size.0, size.1, 1],
-            samples: 1,
+            samples,
             clear,
         });
         table
@@ -322,7 +332,7 @@ impl Builder {
         module: usize,
         entries: (&str, &str),
         args: (TableId, u32, Option<TableId>),
-        targets: (TableId, Option<TableId>),
+        targets: (&[TableId], Option<TableId>, u8),
         resources: &Resources,
     ) -> Result<()> {
         let module = ModuleId(module as u32);
@@ -338,9 +348,9 @@ impl Builder {
                     vertex: None,
                     index: args.2,
                 }]),
-                color_targets: Box::new([TargetDesc { table: targets.0 }]),
+                color_targets: targets.0.iter().map(|&table| TargetDesc { table }).collect(),
                 depth: targets.1.map(|table| DepthDesc { table, write: true }),
-                msaa: 1,
+                msaa: targets.2,
             },
             &[
                 (module, vertex, ShaderStage::Vertex),
@@ -593,14 +603,14 @@ fn prepare(
     let tiles = b.transient(4, count * groups[0] * groups[1]);
     let empty = Some([f64::from(u32::MAX), 0., 0., 0.]);
     let far = Some([1., 0., 0., 0.]);
-    let vis = b.texture(Role::Integer.format(precision), size, empty);
-    let depth = b.texture(Role::Depth.format(precision), size, far);
+    let vis = b.texture(Role::Integer.format(precision), size, 1, empty);
+    let depth = b.texture(Role::Depth.format(precision), size, 1, far);
     let side = program.shadow_size.max(1);
-    let shadow = b.texture(Role::Depth.format(precision), (side, side), far);
-    let shadow_vis = b.texture(Role::Integer.format(precision), (side, side), empty);
+    let shadow = b.texture(Role::Depth.format(precision), (side, side), 1, far);
+    let shadow_vis = b.texture(Role::Integer.format(precision), (side, side), 1, empty);
     let sampler = b.external();
     b.bundle.resources.comparison_samplers.push(sampler);
-    let hdr = b.texture(hdr_format, size, opts.overdraw.then_some([0.; 4]));
+    let hdr = b.texture(hdr_format, size, 1, opts.overdraw.then_some([0.; 4]));
     let target = b.external();
     let shadow_bounds = program.passes.iter().find_map(|pass| match pass {
         Pass::Shadow(ids) => {
@@ -646,7 +656,36 @@ fn prepare(
         baked_tables.insert(bake.name.as_str(), texture);
         execution.initializers.push(append_bake(&mut b.bundle, bake, texture, &mut b.wave)?);
     }
-    let mut authored = compute.append_to(&mut b.bundle, &baked_tables).peekable();
+    let mut images = BTreeMap::new();
+    let mut named = baked_tables;
+    for pass in &program.passes {
+        let Pass::Authored(pass) = pass else { continue };
+        for (name, decl) in &pass.targets {
+            if images.contains_key(name.as_str()) { continue; }
+            let [x, y] = target_size(name, decl.extent, size)?;
+            let clear = matches!(decl.format, ImageFormat::Depth32Float).then_some([1., 0., 0., 0.]);
+            let id = b.texture(decl.format, (x, y), decl.samples, clear);
+            images.insert(name.as_str(), ([x, y], decl.samples, decl.format));
+            named.insert(name.as_str(), id);
+        }
+    }
+    // A table used by both template and kernel passes must have one allocation. Reserve those
+    // shared IDs and pass them to the same append remapper used for baked images.
+    let layout_base = b.bundle.struct_layouts.len() as u32;
+    for pass in &program.passes {
+        let Pass::Authored(pass) = pass else { continue };
+        for (_, _, name) in &pass.named_bindings {
+            if named.contains_key(name.as_str()) { continue; }
+            let source = compute.tables.get(name).ok_or_else(|| format!("missing authored table `{name}`"))?;
+            let mut table = compute.bundle.tables.iter().find(|table| table.id == *source).cloned()
+                .ok_or_else(|| format!("missing allocation for table `{name}`"))?;
+            table.id = TableId(b.bundle.tables.len() as u32);
+            if let ElemFormat::Struct(index) = &mut table.format { *index += layout_base; }
+            named.insert(name.as_str(), table.id);
+            b.bundle.tables.push(table);
+        }
+    }
+    let mut authored = compute.append_to(&mut b.bundle, &named).peekable();
     let mut present = Resources::from([((1, 0), hdr), ((1, 1), vis)]);
     let spectral = program.path.as_ref().is_some_and(|path| matches!(path.integrator, crate::emit::paths::Integrator::Spectral));
     if let Some(path) = &program.path {
@@ -677,7 +716,7 @@ fn prepare(
         match pass {
             // The template's own (group, binding) addresses carry the frame views it bound by name.
             Pass::Authored(a) => {
-                let resources = a.bindings.iter().map(|&(group, binding, view)| ((group, binding), match view {
+                let mut resources = a.bindings.iter().map(|&(group, binding, view)| ((group, binding), match view {
                     FrameView::Instances => instances,
                     FrameView::KindBases => bases,
                     FrameView::DrawArgs => draw_args,
@@ -687,17 +726,52 @@ fn prepare(
                     FrameView::ShadeArgs => shade_args,
                     FrameView::Tiles => tiles,
                 })).collect::<Resources>();
+                resources.extend(a.named_bindings.iter().map(|(group, binding, name)|
+                    ((*group, *binding), named[name.as_str()])));
                 match &a.run {
                     AuthoredRun::Compute { entry, extent } => {
-                        let groups = match *extent {
-                            Extent::Groups(groups) => groups,
-                            Extent::Instances { width } => [(program.instances.len() as u32).div_ceil(width), 1, 1],
+                        let groups = match extent {
+                            Extent::Groups(groups) => *groups,
+                            Extent::Instances { width } => [(program.instances.len() as u32).div_ceil(*width), 1, 1],
                             Extent::Pixels { tile } => [size.0.div_ceil(tile[0]), size.1.div_ceil(tile[1]), 1],
+                            Extent::Target { name, tile } => {
+                                let ([x, y], _, _) = images[name.as_str()];
+                                [x.div_ceil(tile[0]), y.div_ceil(tile[1]), 1]
+                            }
                         };
                         b.compute(a.module, entry, DispatchExtent::Fixed(groups), &resources)?
                     }
-                    AuthoredRun::FullScreen { vertex, fragment } => b.draw(
-                        a.module, (vertex.as_str(), fragment.as_str()), (present_args, 0, None), (target, None), &resources)?,
+                    AuthoredRun::FullScreen { vertex, fragment, targets } => {
+                        let mut colors = vec![];
+                        let mut depth = None;
+                        let mut attachment_shape = None;
+                        if let Some(targets) = targets {
+                            for name in targets.colors.iter().chain(&targets.depth) {
+                                let (id, extent, samples, format) = if name == "Swapchain" {
+                                    (target, [size.0, size.1], 1, None)
+                                } else {
+                                    let (extent, samples, format) = images[name.as_str()];
+                                    (named[name.as_str()], extent, samples, Some(format))
+                                };
+                                if attachment_shape.replace((extent, samples)).is_some_and(|old| old != (extent, samples)) {
+                                    return Err(format!("pass `{}` has attachments with different extents or sample counts", a.label));
+                                }
+                                match format {
+                                    Some(ImageFormat::Depth32Float) => depth = Some(id),
+                                    Some(ImageFormat::Rg32Uint) if targets.raster.is_some_and(|(_, blend)| blend != execution::BlendMode::Opaque) =>
+                                        return Err(format!("pass `{}` blends into integer target `{name}`", a.label)),
+                                    Some(_) | None => colors.push(id),
+                                }
+                            }
+                            if let Some((cull, blend)) = targets.raster {
+                                execution.raster.push(execution::RasterState { pass: PassId(b.bundle.passes.len() as u32), cull, blend });
+                            }
+                        } else {
+                            colors.push(target);
+                        }
+                        let samples = attachment_shape.map_or(1, |(_, samples)| samples);
+                        b.draw(a.module, (vertex, fragment), (present_args, 0, None), (&colors, depth, samples), &resources)?;
+                    }
                 }
             }
             Pass::Vis(ids) | Pass::Shadow(ids) | Pass::Shade(ids) => {
@@ -730,7 +804,7 @@ fn prepare(
                                 program.kinds[k].module,
                                 (vs, "fs"),
                                 (args, offset, index),
-                                (vis, Some(depth)),
+                                (&[vis], Some(depth), 1),
                                 &resources,
                             )?;
                         }
@@ -744,7 +818,7 @@ fn prepare(
                                 program.kinds[k].module,
                                 (vs, "fs"),
                                 (shadow_args, offset, index),
-                                (shadow_vis, Some(shadow)),
+                                (&[shadow_vis], Some(shadow), 1),
                                 &resources,
                             )?;
                         }
@@ -752,7 +826,7 @@ fn prepare(
                             resources.insert((1, 1), visible);
                             execution.additive.push(PassId(b.bundle.passes.len() as u32));
                             b.draw(program.kinds[k].module, ("vs", "fs_overdraw"),
-                                (draw_args, offset, None), (hdr, None), &resources)?;
+                                (draw_args, offset, None), (&[hdr], None, 1), &resources)?;
                         }
                         Pass::Shade(_) => {
                             resources.extend([
@@ -782,7 +856,7 @@ fn prepare(
                     b.compute(*module, "photons", DispatchExtent::Fixed([1024, 1, 1]), &present)?;
                     b.wave = b.wave.checked_add(1).ok_or("too many pass waves")?;
                 }
-                b.draw(*module, ("vs_present", "fs_present"), (present_args, 0, None), (target, None), &present)?;
+                b.draw(*module, ("vs_present", "fs_present"), (present_args, 0, None), (&[target], None, 1), &present)?;
             }
         }
         // Binning reads the completed native cull and shares its compute-pass timestamp.
@@ -812,6 +886,20 @@ fn prepare(
     let tiled_modules = tile_lists.keys().map(|&k| ModuleId(program.kinds[k].module as u32)).collect();
     Ok(Prepared { bundle: b.bundle, instances, luts, visibility: vis, depth, shadow: shadow_bounds, shadow_wave, tiled_modules,
         modules: program.kinds.iter().map(|k| ModuleId(k.module as u32)).collect(), precision })
+}
+
+fn target_size(name: &str, extent: loft_parse::ast::TargetExtent, size: (u32, u32)) -> Result<[u32; 2]> {
+    use loft_parse::ast::TargetExtent;
+    match extent {
+        TargetExtent::Fixed(w, h) => Ok([w, h]),
+        TargetExtent::View(scale) => {
+            let [w, h] = [size.0, size.1].map(|side| (f64::from(side) * scale).ceil());
+            if [w, h].iter().any(|side| !(1.0..=f64::from(u32::MAX)).contains(side)) {
+                return Err(format!("target `{name}` has an out-of-range scaled view extent"));
+            }
+            Ok([w as u32, h as u32])
+        }
+    }
 }
 
 fn append_bake(bundle: &mut Bundle, bake: &crate::bake_tex::Bake, texture: TableId, wave: &mut u16) -> Result<Initializer> {

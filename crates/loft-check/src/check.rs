@@ -6,7 +6,7 @@
 use crate::Prog;
 use loft_builtins::{ArgShape, Builtin, BuiltinSpec, MotionClass, PolyRule, RetShape, SigRule, lookup};
 use loft_parse::ast::*;
-use loft_ir::{Code, Diag, Res, Span};
+use loft_ir::{Code, Diag, ImageFormat, Res, Span};
 use std::collections::{BTreeMap, HashMap};
 
 #[derive(Clone)]
@@ -44,6 +44,46 @@ pub const VARIANT_BUDGET: u64 = 8;
 pub struct CheckedEffects {
     pub kernels: BTreeMap<String, BTreeMap<String, Determinism>>,
     pub pending_lowering: Option<Span>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Target {
+    pub format: ImageFormat,
+    pub extent: TargetExtent,
+    pub samples: u8,
+}
+
+impl PartialEq for Target {
+    fn eq(&self, other: &Self) -> bool {
+        std::mem::discriminant(&self.format) == std::mem::discriminant(&other.format)
+            && self.extent == other.extent && self.samples == other.samples
+    }
+}
+
+pub(crate) fn target(decl: &TargetDecl) -> Res<Target> {
+    let format = match decl.format.name.as_str() {
+        "rg32uint" => ImageFormat::Rg32Uint,
+        "rgba16f" | "rgba16float" => ImageFormat::Rgba16Float,
+        "rgba32f" | "rgba32float" => ImageFormat::Rgba32Float,
+        "depth32f" | "depth32float" => ImageFormat::Depth32Float,
+        _ => return Err(Diag::new(Code::E003, decl.format.span, "unknown target format",
+            "use rg32uint, rgba16f, rgba32f or depth32f")),
+    };
+    match decl.extent {
+        TargetExtent::Fixed(w, h) if w == 0 || h == 0 => {
+            return Err(Diag::new(Code::E602, decl.span, "target sides must be positive", "write a nonzero width and height"));
+        }
+        TargetExtent::View(scale) if !scale.is_finite() || scale <= 0.0 => {
+            return Err(Diag::new(Code::E602, decl.span, "target scale must be finite and positive", "write `view` or `view * scale`"));
+        }
+        TargetExtent::Fixed(..) | TargetExtent::View(_) => {}
+    }
+    let samples = match decl.samples {
+        1 => 1,
+        4 => 4,
+        _ => return Err(Diag::new(Code::E602, decl.span, "unsupported target sample count", "use `msaa 1` or `msaa 4`")),
+    };
+    Ok(Target { format, extent: decl.extent, samples })
 }
 
 pub fn check(p: &Prog, types: &mut Vec<Ty>) -> Res<CheckedEffects> {
