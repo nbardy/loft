@@ -11,6 +11,8 @@ pub struct Inputs {
     event_seq: BTreeMap<u32, u64>,
     bytes: Vec<u8>,
     tick: Option<u64>,
+    dirty: bool,
+    event_active: bool,
 }
 impl Inputs {
     pub fn new(slots: &[InputSlot], max_bytes: u64) -> Result<Self> {
@@ -34,6 +36,8 @@ impl Inputs {
             event_seq: BTreeMap::new(),
             bytes: vec![0; size as usize * 4],
             tick: None,
+            dirty: !slots.is_empty(),
+            event_active: false,
         })
     }
 
@@ -71,6 +75,7 @@ impl Inputs {
             (tick, id.0),
             values.iter().flat_map(|v| v.to_le_bytes()).collect(),
         );
+        self.dirty = true;
         Ok(())
     }
 
@@ -81,8 +86,18 @@ impl Inputs {
         if self.tick.is_some_and(|last| tick < last) {
             return Err(Error::AbiMismatch);
         }
-        for slot in self.slots.iter().filter(|s| s.kind == InputKind::Event) {
-            self.bytes[range(slot)].fill(0);
+        let mut upload = self.event_active || (self.dirty && self.tick.is_none());
+        if self.event_active {
+            for slot in self.slots.iter().filter(|s| s.kind == InputKind::Event) {
+                self.bytes[range(slot)].fill(0);
+            }
+        }
+        self.event_active = false;
+        // Future values remain queued after the mutation flag has been cleared.
+        self.dirty |= self.pending.first_key_value().is_some_and(|(&(at, _), _)| at <= tick);
+        if !self.dirty && !upload {
+            self.tick = Some(tick);
+            return Ok(None);
         }
         while let Some((&(at, id), _)) = self.pending.first_key_value() {
             if at > tick {
@@ -92,10 +107,15 @@ impl Inputs {
             let slot = &self.slots[id as usize];
             if at == tick || slot.kind != InputKind::Event {
                 self.bytes[range(slot)].copy_from_slice(&bytes);
+                upload = true;
+                if slot.kind == InputKind::Event {
+                    self.event_active |= bytes.iter().any(|&byte| byte != 0);
+                }
             }
         }
         self.tick = Some(tick);
-        Ok(Some(&self.bytes))
+        self.dirty = false;
+        Ok(upload.then_some(&self.bytes))
     }
 }
 
