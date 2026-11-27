@@ -501,7 +501,8 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 let (a, b, unsigned) = match (a, b) {
                     (Val::U(a), Val::U(b)) => (i64::from(a), i64::from(b), true),
                     (Val::I(a), Val::I(b)) => (i64::from(a), i64::from(b), false),
-                    (Val::U(a), Val::I(b)) | (Val::I(b), Val::U(a)) => (i64::from(a), i64::from(b), true),
+                    (Val::U(a), Val::I(b)) => (i64::from(a), i64::from(b), true),
+                    (Val::I(a), Val::U(b)) => (i64::from(a), i64::from(b), true),
                     _ => return Err(err(lo.span, "loop bounds are not known integers", "bound the loop with integers")),
                 };
                 for i in a..b {
@@ -1215,8 +1216,8 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
             Floor => map1(&v[0], Un::Floor),
             Fract => map1(&v[0], Un::Fract),
             Sign => map1(&v[0], Un::Sign),
-            Min => map2(&v[0], &v[1], S::min),
-            Max => map2(&v[0], &v[1], S::max),
+            Min => map2_extrema(&v[0], &v[1], S::min),
+            Max => map2_extrema(&v[0], &v[1], S::max),
             Pow => map2(&v[0], &v[1], S::pow),
             Step => map2(&v[0], &v[1], |e, x| {
                 let d = x.sub(e);
@@ -1385,26 +1386,44 @@ fn map1<S: Scalar>(x: &Val<S>, f: Un) -> Val<S> {
 }
 
 fn map2<S: Scalar>(x: &Val<S>, y: &Val<S>, f: impl Fn(&S, &S) -> S) -> Val<S> {
+    // Project each input lane from its vector proof. Some vector operations carry
+    // spatial dependence only in the aggregate bound.
+    let components: Vec<S> = match (x, y) {
+        (Val::S(a), Val::S(b)) => return Val::S(f(a, b)),
+        (Val::V(a, la), Val::V(b, lb)) => a.iter().zip(b)
+            .map(|(p, q)| f(&p.clone().project(*la), &q.clone().project(*lb))).collect(),
+        (Val::V(a, la), Val::S(b)) => a.iter().map(|p| f(&p.clone().project(*la), b)).collect(),
+        (Val::S(a), Val::V(b, lb)) => b.iter().map(|q| f(a, &q.clone().project(*lb))).collect(),
+        other => unreachable!("checked binary builtin on {other:?}"),
+    };
+    let l = components.iter().map(S::lip).fold(0.0_f64, |norm, lane| {
+        norm.hypot(if lane.is_finite() { lane } else { f64::INFINITY })
+    });
+    Val::V(components, l)
+}
+
+fn map2_extrema<S: Scalar>(x: &Val<S>, y: &Val<S>, f: impl Fn(&S, &S) -> S) -> Val<S> {
+    // Componentwise min/max are 1-Lipschitz on the concatenated vectors.
+    // A scalar broadcast repeats the same change in every output lane.
     match (x, y) {
         (Val::S(a), Val::S(b)) => Val::S(f(a, b)),
         (Val::V(a, la), Val::V(b, lb)) => Val::V(a.iter().zip(b).map(|(p, q)| f(p, q)).collect(), la.hypot(*lb)),
-        (Val::V(a, la), Val::S(b)) => Val::V(a.iter().map(|p| f(p, b)).collect(), la.hypot(b.lip())),
-        (Val::S(a), Val::V(b, lb)) => Val::V(b.iter().map(|q| f(a, q)).collect(), lb.hypot(a.lip())),
+        (Val::V(a, la), Val::S(b)) => Val::V(a.iter().map(|p| f(p, b)).collect(), la.hypot((a.len() as f64).sqrt() * b.lip())),
+        (Val::S(a), Val::V(b, lb)) => Val::V(b.iter().map(|q| f(a, q)).collect(), lb.hypot((b.len() as f64).sqrt() * a.lip())),
         other => unreachable!("checked binary builtin on {other:?}"),
     }
 }
 
-// Keep both binary stages so mixed scalar/vector args retain the original
-// intermediate Lipschitz bound and hypot order.
+// Keep both extrema stages to carry the intermediate vector bound.
 fn map3<S: Scalar>(
     x: &Val<S>, y: &Val<S>, z: &Val<S>,
     first: impl Fn(&S, &S) -> S, second: impl Fn(&S, &S) -> S,
 ) -> Val<S> {
-    map2(&map2(x, y, first), z, second)
+    map2_extrema(&map2_extrema(x, y, first), z, second)
 }
 
 fn saturate<S: Scalar>(x: &Val<S>) -> Val<S> {
-    map2(x, &Val::S(S::c(0.0)), |a, z| a.max(z).min(&S::c(1.0)))
+    map2_extrema(x, &Val::S(S::c(0.0)), |a, z| a.max(z).min(&S::c(1.0)))
 }
 
 fn max_mag<S: Scalar>(v: &[S]) -> f64 {
@@ -1778,5 +1797,67 @@ fn texel_store(x: f64, format: &str) -> f64 {
             (x / unit).round_ties_even() * unit
         }
         _ => x,
+    }
+}
+
+#[cfg(test)]
+mod soundness_tests {
+    use super::*;
+    use crate::lip::Iv;
+
+    fn vector_lip(value: Val<Iv>) -> f64 {
+        let Val::V(_, l) = value else { panic!("expected a vector") };
+        l
+    }
+
+    #[test]
+    fn componentwise_binary_bounds_include_discontinuities_and_broadcast() {
+        let moving = Iv { lo: -1.0, hi: 1.0, l: 1.0 };
+        // The vector can be spatially varying even when its lanes carry stale bounds.
+        let v = Val::V(vec![moving.with_lip(0.0), Iv::c(1.0)], 1.0);
+        let zero = Val::S(Iv::c(0.0));
+        let step = map2(&zero, &v, |edge, x| x.sub(edge).un(Un::Sign).max(&Iv::c(0.0)));
+        assert_eq!(vector_lip(step), f64::INFINITY);
+        assert_eq!(vector_lip(map2(&v, &Val::S(Iv::c(0.5)), Iv::pow)), f64::INFINITY);
+        assert_eq!(vector_lip(map2(&v, &Val::S(Iv::c(-1.0)), Iv::atan2)), f64::INFINITY);
+
+        let exponents = Val::V(vec![Iv::c(2.0); 3], 0.0);
+        let base = Val::S(Iv { lo: 1.0, hi: 2.0, l: 1.0 });
+        let bound = vector_lip(map2(&base, &exponents, Iv::pow));
+        let expected = 4.0 * 3.0_f64.sqrt();
+        assert!(bound.to_bits().abs_diff(expected.to_bits()) <= 1, "{bound}");
+
+        // The extrema of two vectors keep the tight aggregate proof.
+        assert_eq!(vector_lip(map2_extrema(&v, &v, Iv::min)), 1.0_f64.hypot(1.0));
+        assert_eq!(vector_lip(map2_extrema(&v, &zero, Iv::max)), 1.0);
+        assert_eq!(
+            vector_lip(map2_extrema(&base, &exponents, Iv::min)),
+            3.0_f64.sqrt()
+        );
+        assert!(matches!(map2_extrema(&base, &zero, Iv::max), Val::S(x) if x.l == 1.0));
+    }
+
+    #[test]
+    fn mixed_integer_range_preserves_bound_order() {
+        let modules = [loft_parse::parse(0, "
+            fn first(a: u, b: u) -> f {
+                for i in a..b { return f32(i) }
+                return -1.0
+            }
+        ", &mut 0).unwrap()];
+        let p = Prog::index(&modules).unwrap();
+        let mut types = vec![];
+        assert!(loft_check::check::check(&p, &mut types).is_ok());
+        let mut eval = Eval::<f32>::new(&p, &types, vec![], &[]);
+        // Exercise both runtime representations independently of type inference.
+        for (a, b, expected) in [
+            (Val::I(2), Val::U(5), 2.0),
+            (Val::U(2), Val::I(5), 2.0),
+            (Val::I(5), Val::U(2), -1.0),
+            (Val::U(5), Val::I(2), -1.0),
+        ] {
+            let result = eval.call_fn(p.fns["first"], vec![a, b], Span::NONE).unwrap();
+            assert!(matches!(result, Val::S(n) if n == expected), "{result:?}");
+        }
     }
 }

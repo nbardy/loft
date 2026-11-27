@@ -153,8 +153,6 @@ fn add_path_resources(p: &Prog<'_>, tables: &Tables, path: &mut PathTrace) -> Re
             let [pos, color, reach] = row.as_slice() else { return Err(Diag::new(Code::E003, lamp.name.span, "invalid light layout", "use the PointLamp from the light prelude")); };
             let [x,y,z] = as_v3(pos.clone(), lamp.name.span)?;
             let [r,g,b] = as_v3(color.clone(), lamp.name.span)?;
-            // Preserve the medium records paired with each authored lamp in the original packing order.
-            add_media(p, tables, path)?;
             path.lamps.push([[x, y, z, as_f32(reach.clone(), lamp.name.span)?], [r, g, b, 0.0]]);
         }
     }
@@ -433,4 +431,38 @@ fn pack_luts(
     lut_words.resize(lut_words.len().next_multiple_of(12), 0.);
     lut_words.extend(luts.iter().flat_map(|l| l.frames.iter().flatten().copied()));
     Ok((lut_words, lut_refs))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn path_medium_is_packed_once_with_multiple_point_lamps() {
+        let modules = [loft_parse::parse(0, "
+            space World
+            kind PointLamp @World () {}
+            kind FieldMedium @World () {}
+        ", &mut 0).unwrap()];
+        let p = Prog::index(&modules).unwrap();
+        let v = |x: [f32; 3]| RowVal::V(x.to_vec());
+        let lamp = vec![v([0.0; 3]), v([1.0; 3]), RowVal::F(2.0)];
+        let medium = vec![
+            v([-1.0; 3]), v([1.0; 3]), v([0.5; 3]),
+            v([0.5; 3]), RowVal::F(0.0), v([0.0; 3]),
+        ];
+        let tables = vec![vec![lamp.clone(), lamp], vec![medium]];
+        let mut path = PathTrace {
+            integrator: loft_check::paths::Integrator::Reference,
+            bounces: 1,
+            lens: [0.0; 2],
+            lamps: vec![],
+            worlds: vec![],
+            media: vec![],
+        };
+        add_path_resources(&p, &tables, &mut path).unwrap();
+        assert_eq!(path.lamps.len(), 3);
+        assert_eq!(path.media.len(), 1);
+        assert_eq!(path.media[0][3], [0.25, 0.25, 0.25, 0.0]);
+    }
 }

@@ -57,7 +57,8 @@ pub fn motion_module(
                 return Err(unsupported(f.name.span, "row-local laws take the target row and dt"));
             }
             tables(f, 2)?;
-            tier = law.tier;
+            // A dispatch has the weakest determinism guarantee of any of its laws.
+            tier = tier.max(law.tier);
             fields.extend(law.writes.iter().map(|w| w.name.clone()));
             laws.push(f);
         } else {
@@ -278,4 +279,32 @@ var<private> loft_tick: u32;
             lockstep: false,
         },
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dispatch_tier_keeps_nondet_in_either_order() {
+        for laws in ["loose, exact", "exact, loose"] {
+            let source = format!(r#"
+                space World
+                kind Agent @World () {{}}
+                law loose(a: Agent, dt) nondet writes a.{{}} {{}}
+                law exact(a: Agent, dt) writes a.{{}} {{}}
+                schedule Main {{ run_laws({laws}) }}
+            "#);
+            let modules = [loft_parse::parse(0, &source, &mut 0).unwrap()];
+            let p = Prog::index(&modules).unwrap();
+            // The checker normally rejects mixed tiers. Exercise lowering directly.
+            let (wgsl, dispatch) = motion_module(
+                &p, &[], p.kinds["Agent"], &Default::default(),
+                || Ok((0, DispatchRows::Drawable(0))),
+                |_, _| unreachable!("no reads"),
+            ).unwrap().unwrap();
+            assert_eq!(dispatch.tier, Determinism::NonDet);
+            assert!(!wgsl.contains("fn det_sin"));
+        }
+    }
 }

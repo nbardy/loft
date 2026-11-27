@@ -17,7 +17,9 @@ fn horner(x: f32, coefficients: [f32; 6]) -> f32 {
 }
 pub fn det_sin(a: f32) -> f32 {
     let r = (-(a / TAU + 0.5).floor()).mul_add(TAU, a);
-    let x = r.signum() * r.abs().min(PI - r.abs());
+    // WGSL sign returns positive zero for either sign of zero.
+    let sign = if r > 0.0 { 1.0 } else if r < 0.0 { -1.0 } else { 0.0 };
+    let x = sign * r.abs().min(PI - r.abs());
     let z = x * x;
     x * z.mul_add(horner(z, SIN), 1.)
 }
@@ -68,4 +70,56 @@ pub fn det_exp(x: f32) -> f32 {
         return pow2(-126) * (exp_poly((-(j as f32)).mul_add(LN_2, r)) * pow2(j));
     }
     pow2(k) * exp_poly(r)
+}
+
+pub fn det_log(x: f32) -> f32 {
+    if x == 0.0 {
+        return f32::NEG_INFINITY;
+    }
+    if x < 0.0 {
+        return f32::from_bits(0x7fc00000);
+    }
+    if x == f32::INFINITY {
+        return x;
+    }
+    // Normalize subnormals before extracting the exponent, as in det.wgsl.
+    let small = x < f32::MIN_POSITIVE;
+    let bits = if small { x * 8_388_608.0 } else { x }.to_bits();
+    let k = (bits >> 23) as i32 - if small { 150 } else { 127 };
+    let m = f32::from_bits((bits & 0x007f_ffff) | 0x3f80_0000);
+    let z = (m - 1.0) / (m + 1.0);
+    let w = z * z;
+    let coefficients = [1. / 13., 1. / 11., 1. / 9., 1. / 7., 1. / 5., 1. / 3.];
+    (k as f32).mul_add(LN_2, (2.0 * z) * w.mul_add(horner(w, coefficients), 1.0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sin_normalizes_signed_zero() {
+        assert_eq!(det_sin(0.0).to_bits(), 0);
+        assert_eq!(det_sin(-0.0).to_bits(), 0);
+    }
+
+    #[test]
+    fn log_matches_wgsl_range_reduction_and_special_values() {
+        for (x, expected) in [
+            (0.0, f32::NEG_INFINITY),
+            (-0.0, f32::NEG_INFINITY),
+            (-1.0, f32::from_bits(0x7fc00000)),
+            (f32::INFINITY, f32::INFINITY),
+            (1.0, 0.0),
+            (2.0, LN_2),
+            (0.5, -LN_2),
+            (f32::MIN_POSITIVE, -126.0 * LN_2),
+            (f32::from_bits(1), -149.0 * LN_2),
+        ] {
+            assert_eq!(det_log(x).to_bits(), expected.to_bits(), "x = {x}");
+        }
+        for x in [f32::from_bits(3), 0.75, 1.5, f32::MAX] {
+            assert!(det_log(x).to_bits().abs_diff(x.ln().to_bits()) <= 2, "x = {x}");
+        }
+    }
 }
