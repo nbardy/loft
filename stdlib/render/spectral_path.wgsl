@@ -14,8 +14,8 @@ fn medium_interface(stack: MediumStack, h: PathHit, rd: vec3<f32>, optical: Opti
     if stack.top == 3u { return MediumBend(PathRay(h.p,rd),stack,1.0,false,false); }
     next.top += 1u;
     next.boundary[next.top] = h.at;
-    next.ior[next.top] = loft_user_spectral_ior(optical.base,optical.dispersion,nm);
-    next.absorb[next.top] = max(0.0,loft_user_spectral_band(optical.absorb,nm));
+    next.ior[next.top] = {{SPECTRAL_IOR}}(optical.base,optical.dispersion,nm);
+    next.absorb[next.top] = max(0.0,{{SPECTRAL_BAND}}(optical.absorb,nm));
   } else {
     if stack.top == 0u || stack.boundary[stack.top] != h.at {
       return MediumBend(PathRay(h.p,rd),stack,1.0,false,false);
@@ -23,7 +23,7 @@ fn medium_interface(stack: MediumStack, h: PathHit, rd: vec3<f32>, optical: Opti
     next.top -= 1u;
   }
   let eta = stack.ior[stack.top]/next.ior[next.top];
-  let sample = loft_user_spectral_transition(rd,h.n,eta,xi);
+  let sample = {{SPECTRAL_TRANSITION}}(rd,h.n,eta,xi);
   if sample.w==0.0 { return MediumBend(PathRay(h.p+h.n*0.0002,sample.xyz),stack,eta,false,true); }
   return MediumBend(PathRay(h.p-h.n*0.0002,sample.xyz),next,eta,true,true);
 }
@@ -80,5 +80,5 @@ fn caustic_gather(h: PathHit, wo: vec3<f32>, nm: f32, lane: u32) -> f32 {
   // Launch and receiver have equal area. Normalize by photons per wavelength
   // and by texel area. The stored measure is irradiance.
   let irradiance = events * (4.0*f32(PHOTON_SIDE*PHOTON_SIDE)/f32(PHOTON_COUNT));
-  return irradiance * loft_user_spectral_band(world_eval(h,wo,h.n)*loft_params[0].xyz,nm);
+  return irradiance * {{SPECTRAL_BAND}}(world_eval(h,wo,h.n)*loft_params[0].xyz,nm);
 }

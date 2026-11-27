@@ -112,8 +112,8 @@ pub struct Emitter<'p, 'a> {
     pub motion_tier: Determinism,
     pub locals: Vec<String>,
     temp: u32,
-    prepare_light: bool,
-    in_prepared_light: bool,
+    prepare_light: Option<&'p str>,
+    prepared_args: Option<[String; 3]>,
     baked_column: Option<u32>,
     sampled_bakes: BTreeSet<String>,
     kernel_atomics: BTreeMap<(String, String), AtomicScalar>,
@@ -137,7 +137,7 @@ static NO_FIXED: BTreeMap<(String, String), String> = BTreeMap::new();
 impl<'p, 'a> Emitter<'p, 'a> {
     pub fn new(p: &'p Prog<'a>, types: &'p [Ty]) -> Self {
         Emitter { p, types, out: String::new(), maps: vec![], luts: &[],motion:false,motion_tier:Determinism::Det,locals:vec![],temp:0,
-            prepare_light: false, in_prepared_light: false, baked_column: None, sampled_bakes: BTreeSet::new(), kernel_atomics: BTreeMap::new(), kernel_sampling: false, fixed: &NO_FIXED,
+            prepare_light: None, prepared_args: None, baked_column: None, sampled_bakes: BTreeSet::new(), kernel_atomics: BTreeMap::new(), kernel_sampling: false, fixed: &NO_FIXED,
             tables: BTreeMap::new(), foreign_rows: BTreeSet::new(), material: None, bsdf_locals: vec![], bsdf_structs: BTreeMap::new() }
     }
 
@@ -195,13 +195,14 @@ impl<'p, 'a> Emitter<'p, 'a> {
             let bsdf = prm.ty.as_ref().is_some_and(|t| matches!(t, TyExpr::Name(n) if n.name == "Bsdf"));
             (prm.name.name.clone(), if bsdf { self.material.clone() } else { None })
         }).collect();
-        self.in_prepared_light = self.prepare_light && f.name.name == "sun_sky"
-            && self.locals.get(..3).is_some_and(|keys| keys == ["b", "n", "v"]);
-        if self.in_prepared_light {
-            self.line(1, "let loft_lighting = loft_prepare_bsdf(loft_local_b, loft_local_n, loft_local_v);");
+        if self.prepare_light == Some(f.name.name.as_str()) {
+            let args = std::array::from_fn(|i| f.params[i].name.name.clone());
+            let [b, n, v] = args.each_ref().map(|arg| wgsl_name(arg));
+            self.line(1, &format!("let loft_lighting = loft_prepare_bsdf({b}, {n}, {v});"));
+            self.prepared_args = Some(args);
         }
         self.block_body(&f.body, 1);
-        self.in_prepared_light = false;
+        self.prepared_args = None;
         self.out += "}\n\n";
     }
 
@@ -291,10 +292,12 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 self.line(d, "}");
             }
             Stmt::For { var, lo, hi, body, .. } => {
-                let t = wty(self.ty_of(lo)).replace("i32", match self.ty_of(hi) {
-                    Ty::U32 => "u32",
-                    Ty::Void | Ty::Bool | Ty::I32 | Ty::F32 | Ty::AbstractInt | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) | Ty::Frame(_) | Ty::Table(_) | Ty::Verdict | Ty::Struct(_) | Ty::Array(..) | Ty::Id(_) | Ty::Bsdf => "i32",
-                });
+                let lo_ty = self.ty_of(lo);
+                let t = if matches!(lo_ty, Ty::I32 | Ty::AbstractInt) && *self.ty_of(hi) == Ty::U32 {
+                    "u32".into()
+                } else {
+                    wty(lo_ty)
+                };
                 let (a, b) = (self.expr(lo), self.expr(hi));
                 let v = wgsl_name(&var.name);
                 self.line(d, &format!("for (var {v}: {t} = {a}; {v} < {b}; {v}++) {{"));
@@ -605,13 +608,16 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 }
             }
             ExprKind::Call { callee, args } if callee.name == "loft_vec" => self.expr(&args[0].value),
-            ExprKind::Call { callee, args } if self.in_prepared_light && callee.name == "eval_bsdf"
-                && args.len() == 4 && args.iter().zip(["b", "n", "v"]).all(|(arg, key)|
-                    matches!(&arg.value.kind, ExprKind::Name(name) if name == key)
-                    && self.locals.iter().filter(|name| name.as_str() == key).count() == 1) =>
+            ExprKind::Call { callee, args }
+                if callee.name == "eval_bsdf" && !self.p.fns.contains_key("eval_bsdf")
+                    && args.len() == 4 && self.prepared_args.as_ref().is_some_and(|params|
+                        args.iter().zip(params).all(|(arg, key)|
+                            matches!(&arg.value.kind, ExprKind::Name(name) if name == key)
+                            && self.locals.iter().filter(|name| *name == key).count() == 1)) =>
             {
+                let [b, n, v] = self.prepared_args.as_ref().unwrap().each_ref().map(|arg| wgsl_name(arg));
                 let l = self.expr(&args[3].value);
-                format!("loft_eval_prepared(loft_local_b, loft_local_n, loft_local_v, {l}, loft_lighting)")
+                format!("loft_eval_prepared({b}, {n}, {v}, {l}, loft_lighting)")
             }
             ExprKind::Call { callee, args } => {
                 if callee.name == "unknown" && !self.p.fns.contains_key("unknown") {
@@ -770,28 +776,35 @@ impl<'p, 'a> Emitter<'p, 'a> {
     }
 
     pub fn row_header(&mut self, k: &KindDecl) {
-        // The row: the author's fields, then the compiler's hidden columns.
-        let (fields, loads, stride) = self.row_parts(k, "rows");
+        let row = self.kind_row(k, "rows", "i * STRIDE");
+        self.out.push_str(&row);
+        self.out.push_str(
+            "struct KindParams { kind_id: u32, base: u32, n_rows: u32, pad: u32 }\n\
+             @group(1) @binding(0) var<storage, read> rows: array<f32>;\n\
+             @group(1) @binding(1) var<storage, read> visible: array<u32>;\n\
+             @group(1) @binding(2) var<uniform> kp: KindParams;\n\
+             @group(1) @binding(3) var<storage, read> luts: array<f32>;\n",
+        );
+        self.out.push_str(LUTS);
+    }
+
+    // The raster loader takes a row ID. World dispatch already has an arena word address.
+    fn kind_row(&self, k: &KindDecl, buffer: &str, base: &str) -> String {
+        let (fields, loads, stride) = self.row_parts(k, buffer);
         let pose = match pose_field(k) {
             Some(i) => format!("r.r_{}", k.row[i].name.name),
             None => "LoftXform(mat3x3<f32>(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0), vec3<f32>(0.0))".into(),
         };
-        let _ = write!(
-            self.out,
+        format!(
             "// kind {name}: one module for every instance; rows are data.\nstruct Row {{\n{fields}\n}}\n\
-             struct KindParams {{ kind_id: u32, base: u32, n_rows: u32, pad: u32 }}\n\
-             @group(1) @binding(0) var<storage, read> rows: array<f32>;\n\
-             @group(1) @binding(1) var<storage, read> visible: array<u32>;\n\
-             @group(1) @binding(2) var<uniform> kp: KindParams;\n\
-             @group(1) @binding(3) var<storage, read> luts: array<f32>;\n\
              const STRIDE: u32 = {stride}u;\n\
-             fn load_row(i: u32) -> Row {{\n  let o = i * STRIDE;\n  return Row(\n    {loads}\n  );\n}}\n\
+             fn load_row(i: u32) -> Row {{\n  let o = {base};\n  return Row(\n    {loads}\n  );\n}}\n\
              // The row's placement in World: the compiler applies it, so queries are written in the kind's own space.\n\
-             fn loft_pose(r: Row) -> LoftXform {{ return {pose}; }}\n\n{LUTS}",
+             fn loft_pose(r: Row) -> LoftXform {{ return {pose}; }}\n\n",
             name = k.name.name,
             fields = fields.join("\n"),
             loads = loads.join(",\n    "),
-        );
+        )
     }
 
     pub fn constants(&mut self, constants: &BTreeSet<String>) {
@@ -825,8 +838,22 @@ fn material_layout(p: &Prog, k: &KindDecl) -> Res<Shape> {
     fn_shape(p, k.query(QueryKind::Material).expect("checked material"), &mut BTreeSet::new())
 }
 
-const SHADE_ENTRY: &str = "// One workgroup per 8x8 tile that classify listed for this kind.";
-const TWIN_BINDINGS: &str = "@group(3) @binding(0) var<storage, read> twin_in";
+/// Independently generated sections shared by raster, World shading, and screen passes.
+pub struct KindModule {
+    raster_prefix: String,
+    queries: String,
+    raster_bindings: String,
+    shade: String,
+    twin: String,
+    sampled_bakes: BTreeSet<String>,
+}
+
+impl KindModule {
+    pub fn source(&self, p: &Prog<'_>) -> String {
+        let textures = crate::bake_tex::sampled_declarations(p, &self.sampled_bakes, false);
+        format!("{}{}{textures}{}{}{}", self.raster_prefix, self.queries, self.raster_bindings, self.shade, self.twin)
+    }
+}
 
 /// The other kinds whose rows a kind's queries read (`K[i]`), in first-use order; group 1, slot 4 + j in its module.
 pub fn kind_reads(p: &Prog, k: &KindDecl) -> Vec<String> {
@@ -865,12 +892,18 @@ fn traced_march(count_steps: bool, guard: Option<(u32, f32)>) -> String {
     ])
 }
 
-/// The text of one kind's module. `light` is the library fn the shade pass calls (named in the schedule).
+/// The query and raster sections for one drawable kind.
 /// `fixed` holds kind parameters as literals; the others are read from the row.
 pub fn emit_kind_module(
-    p: &Prog, types: &[Ty], k: &KindDecl, light: Option<&str>, luts: &[LutRef],
-    draw: Draw, aov: Aov, fixed: &BTreeMap<(String, String), String>, guard: Option<(u32, f32)>, sources: &loft_ir::Sources,
-) -> Res<String> {
+    p: &Prog, types: &[Ty], k: &KindDecl, lighting: shade_tiles::Lighting<'_>, luts: &[LutRef],
+    draw: Draw, aov: Aov, fixed: &BTreeMap<(String, String), String>, guard: Option<(u32, f32)>,
+    split_ao: bool, sources: &loft_ir::Sources,
+) -> Res<KindModule> {
+    let (light, coverage) = match lighting {
+        shade_tiles::Lighting::Bsdf(name, visibility) =>
+            (Some(name), matches!(visibility, shade_tiles::Visibility::Coverage)),
+        shade_tiles::Lighting::World { .. } => (None, false),
+    };
     let mut em = Emitter::new(p, types);
     em.luts = luts;
     em.fixed = fixed;
@@ -888,18 +921,20 @@ pub fn emit_kind_module(
     for (j, read) in kind_reads(p, k).iter().enumerate() {
         em.foreign_table(p.kinds[read.as_str()], 1, 4 + j as u32);
     }
+    let raster_prefix = std::mem::take(&mut em.out);
     // The Bsdf struct: one field per bound lobe argument, in the material's lobe order.
     let layout = if mesh { Shape::default() } else { material_layout(p, k)? };
     // A mesh's struct is its one fixed lobe (below); a mesh material written as that lobe still builds `Bsdf`.
     em.material = Some(mesh_lobe.map_or_else(|| layout.clone(), |lobe| Shape::lobe(lobe, 3)));
     let mut lobes: Vec<_> = layout.lobes.iter().map(|(name, arity)| (name.as_str(), *arity)).collect();
     if let Some(lobe) = mesh_lobe { lobes.push((lobe, 3)); }
+    let prepare = light.filter(|name| lighting::uses_bsdf_loop(&em, p.fns[*name]));
     let invariants = lobes.iter().map(|(name, _)| {
-        if light == Some("sun_sky") { lighting::invariant_lets(p, p.fns[name]) } else { Vec::new() }
+        if prepare.is_some() { lighting::invariant_lets(p, p.fns[name]) } else { Vec::new() }
     }).collect::<Vec<_>>();
     let mut bfields = vec![];
     let mut evals = String::new();
-    let mut replacements = Vec::new();
+    let mut prepared_evals = String::new();
     for (i, (name, arity)) in lobes.iter().enumerate() {
         let f = p.fns[name];
         let mut names = vec![];
@@ -909,22 +944,31 @@ pub fn emit_kind_module(
         }
         names.extend(["n".into(), "v".into(), "l".into()]);
         let args = names.join(", ");
-        let call = format!("  let r{i} = {}({args});", fn_symbol(name));
-        if !invariants[i].is_empty() {
-            replacements.push((call.clone(), format!("  let r{i} = loft_prepared_lobe_{i}({args}, prepared);")));
-        }
-        let _ = writeln!(evals, "{call}");
-        if layout.weights != 0 { continue; }
-        if *name == "emit_lobe" {
-            let _ = writeln!(evals, "  emission += r{i}.xyz;");
+        let symbol = fn_symbol(name);
+        let _ = writeln!(evals, "  let r{i} = {symbol}({args});");
+        if invariants[i].is_empty() {
+            let _ = writeln!(prepared_evals, "  let r{i} = {symbol}({args});");
         } else {
-            let _ = writeln!(evals, "  c = c * r{i}.w + r{i}.xyz;");
+            let _ = writeln!(prepared_evals, "  let r{i} = loft_prepared_lobe_{i}({args}, prepared);");
+        }
+        if layout.weights == 0 {
+            let combine = if *name == "emit_lobe" {
+                format!("  emission += r{i}.xyz;\n")
+            } else {
+                format!("  c = c * r{i}.w + r{i}.xyz;\n")
+            };
+            evals.push_str(&combine);
+            prepared_evals.push_str(&combine);
         }
     }
     let result = if layout.weights == 0 { "c + emission".into() } else {
         em.out.push_str("struct LoftMaterial { c: vec3<f32>, t: f32, e: vec3<f32> }\n");
         bfields.extend((0..layout.weights).map(|i| format!("  mix{i}: f32,")));
-        layout.eval(&mut evals)
+        let mut combine = String::new();
+        let result = layout.eval(&mut combine);
+        evals.push_str(&combine);
+        prepared_evals.push_str(&combine);
+        result
     };
     // The shelf's reflective lobes vanish behind the surface. The wrapped
     // diffuse lobe extends support only by its authored wrap. Preserve custom lobes.
@@ -946,14 +990,10 @@ pub fn emit_kind_module(
          fn eval_bsdf(b: Bsdf, n: vec3<f32>, v: vec3<f32>, l: vec3<f32>) -> vec3<f32> {{\n{support}  var c = vec3<f32>(0.0);\n  var emission = vec3<f32>(0.0);\n{evals}  return {result};\n}}\n\n",
         bfields.join("\n")
     );
-    if !replacements.is_empty() {
-        let mut prepared_evals = evals;
-        for (call, replacement) in replacements {
-            prepared_evals = prepared_evals.replace(&call, &replacement);
-        }
+    if invariants.iter().any(|indices| !indices.is_empty()) {
         let body = format!("{support}  var c = vec3f(0.0);\n  var emission = vec3f(0.0);\n{prepared_evals}  return {result};\n");
         lighting::emit_prepared(&mut em, &lobes, &invariants, &body);
-        em.prepare_light = true;
+        em.prepare_light = prepare;
     }
     em.library(&lib, &consts);
     for f in &k.fns {
@@ -968,15 +1008,28 @@ pub fn emit_kind_module(
         };
         em.func(f, n);
     }
-    em.sampled_textures();
     // Draw-form glue: the vis entry points, how shade rebuilds the hit, and the twin's geometry.
     let count_steps = aov == Aov::SdfSteps && draw == Draw::Traced;
     let uses_world_hit = light.is_none() && aov == Aov::Beauty;
+    let surface_cross = |uv: &str| {
+        if k.proof == GeometryProof::Required {
+            format!("let cr = cross(loft_surface_jvp(row, {uv}.x, {uv}.y, 1.0, 0.0), loft_surface_jvp(row, {uv}.x, {uv}.y, 0.0, 1.0));")
+        } else {
+            // Four diagonal taps recover the two tangents of the parameterized surface.
+            let step = FINITE_DIFF_STEP;
+            format!(
+                "let a0 = q_surface(row, {uv}.x - {step}, {uv}.y - {step});\n  \
+                 let a1 = q_surface(row, {uv}.x + {step}, {uv}.y - {step});\n  \
+                 let a2 = q_surface(row, {uv}.x - {step}, {uv}.y + {step});\n  \
+                 let a3 = q_surface(row, {uv}.x + {step}, {uv}.y + {step});\n  \
+                 let cr = cross((a1 - a0) + (a3 - a2), (a2 - a0) + (a3 - a1));")
+        }
+    };
     let (mut vis, mut geometry, twin_geo) = match draw {
         Draw::Surface { nu, nv } => (
             render_template(include_str!("../../../stdlib/core/surface_vis.wgsl"), &[("NU", &nu.to_string()), ("NV", &nv.to_string())]),
-            include_str!("../../../stdlib/core/surface_geometry.wgsl").to_owned(),
-            include_str!("../../../stdlib/core/surface_twin.wgsl").to_owned(),
+            render_template(include_str!("../../../stdlib/render/surface_geometry.wgsl"), &[("CROSS", &surface_cross("uv"))]),
+            render_template(include_str!("../../../stdlib/render/surface_twin.wgsl"), &[("CROSS", &surface_cross("a"))]),
         ),
         Draw::Mesh { .. } => crate::mesh::draw(),
         Draw::Analytic | Draw::Traced => {
@@ -999,7 +1052,7 @@ pub fn emit_kind_module(
   let t = near + local_t;
 ".to_owned(), false),
                 Draw::Analytic => ("  // Closed form: the author's `visible` query, in the kind's space (a rigid pose keeps t).\n  let t = q_visible(row, lro, lrd);\n  if t < 0.0 { discard; }\n".to_owned(),
-                    light == Some("woodblock_pigment") && aov == Aov::Beauty),
+                    split_ao && aov == Aov::Beauty),
                 Draw::Traced => (traced_march(count_steps, guard), false),
                 Draw::Surface { .. } | Draw::Mesh { .. } => unreachable!("ray draw"),
             };
@@ -1008,42 +1061,20 @@ pub fn emit_kind_module(
             let visible_twin = if q(QueryKind::Visible) { "q_visible(row, pl, dl)" } else { "0.0" };
             (
                 render_template(include_str!("../../../stdlib/core/ray_vis.wgsl"), &[("ROW_ID", row_id), ("CORNER_ID", corner_id), ("PRIMARY_DIRECTION", primary_direction), ("HIT", &hit), ("DISTANCE", distance)]),
-                if split_ao {
-                    // The tetrahedral sum and the five AO taps keep their original
-                    // order. Separate the loops to compute only the active sample.
-                    include_str!("../../../stdlib/core/ray_geometry_split_ao.wgsl").to_owned()
-                } else {
-                    include_str!("../../../stdlib/core/ray_geometry.wgsl").to_owned()
-                },
+                render_template(
+                    if split_ao { include_str!("../../../stdlib/render/ray_geometry_split_ao.wgsl") }
+                    else { include_str!("../../../stdlib/render/ray_geometry.wgsl") },
+                    &[("DISTANCE_BITS", if count_steps { "v.y & 0xffffff00u" } else { "v.y" })],
+                ),
                 render_template(include_str!("../../../stdlib/core/ray_twin.wgsl"), &[("VISIBLE_TWIN", visible_twin)]),
             )
         }
     };
-    let mut twin_geo = twin_geo;
-    if matches!(draw, Draw::Surface { .. }) && k.proof != GeometryProof::Required {
-        // Four diagonal taps recover the two tangents of the parameterized surface.
-        let step = FINITE_DIFF_STEP;
-        let stencil = |uv: &str| format!(
-            "let a0 = q_surface(row, {uv}.x - {step}, {uv}.y - {step});\n  \
-             let a1 = q_surface(row, {uv}.x + {step}, {uv}.y - {step});\n  \
-             let a2 = q_surface(row, {uv}.x - {step}, {uv}.y + {step});\n  \
-             let a3 = q_surface(row, {uv}.x + {step}, {uv}.y + {step});\n  \
-             let cr = cross((a1 - a0) + (a3 - a2), (a2 - a0) + (a3 - a1));");
-        geometry = geometry.replace(
-            "let cr = cross(loft_surface_jvp(row, uv.x, uv.y, 1.0, 0.0), loft_surface_jvp(row, uv.x, uv.y, 0.0, 1.0));",
-            &stencil("uv"));
-        twin_geo = twin_geo.replace(
-            "let cr = cross(loft_surface_jvp(row, a.x, a.y, 1.0, 0.0), loft_surface_jvp(row, a.x, a.y, 0.0, 1.0));",
-            &stencil("a"));
-    }
     let mut diagnostics = "";
     if let Draw::Surface { nu, nv } = draw {
         vis.push_str(&surface::indexed_grid(p, k.query(QueryKind::Surface).expect("surface query"), nu, nv));
     }
     let shade: String = match aov {
-        // The shelf light evaluates an emission-only stack exactly once at zero incident direction.
-        Aov::Beauty if light == Some("sun_sky") && layout.lobes.iter().all(|(name, _)| *name == "emit_lobe") =>
-            "eval_bsdf(b, n, -rd, vec3<f32>(0.0))".into(),
         Aov::Beauty => match light {
             Some(light) => format!("{}(b, n, -rd, sun, loft_shadow(p, n), ao)", fn_symbol(light)),
             // The tiled World module replaces this entry before validation.
@@ -1063,7 +1094,6 @@ pub fn emit_kind_module(
         Aov::SdfSteps => {
             diagnostics = aov::TRACE_STEPS;
             if count_steps {
-                geometry = geometry.replace("bitcast<f32>(v.y)", "bitcast<f32>(v.y & 0xffffff00u)");
                 "loft_steps(f32(v.y & 255u) / 192.0)".into()
             } else {
                 "loft_steps(0.0)".into()
@@ -1085,18 +1115,26 @@ pub fn emit_kind_module(
             "vec3<f32>(0.0)".into()
         }
     };
-    // Module-scope declarations are order-free in WGSL. The composed Bsdf structs go before the shade entry,
-    // since the path and tiled integrators embed only the text above it (namespacing each `struct` per kind).
+    // World shading and screen passes use these structs with the queries, under each kind's namespace.
     let structs = std::mem::take(&mut em.bsdf_structs);
     em.out.extend(structs.into_values());
-    let [l0, l1, l2] = unit(TWIN_LIGHT).map(|v| f32_lit(f64::from(v)));
-    em.out += &render_template(include_str!("../../../stdlib/core/kind_shade.wgsl"), &[
-        ("QUERIES_END", paths::QUERIES_END), ("VIS", &vis), ("DIAGNOSTICS", diagnostics),
-        ("SHADOW", include_str!("../../../stdlib/core/shadow.wgsl")), ("SHADE_ENTRY", SHADE_ENTRY), ("GEOMETRY", &geometry),
-        ("SHADE", &shade), ("TWIN_BINDINGS", TWIN_BINDINGS), ("TWIN_GEO", &twin_geo),
-        ("L0", &l0), ("L1", &l1), ("L2", &l2),
+    let (edge_helpers, ownership, alpha) =
+        if coverage && aov == Aov::Beauty && matches!(draw, Draw::Analytic | Draw::Traced) {
+            (shade_tiles::bsdf_coverage(), shade_tiles::COVERAGE_OWNER, "loft_alpha")
+        } else {
+            (String::new(), "  if v.x == LOFT_EMPTY || (v.x >> 24u) != kp.kind_id { return; }\n", "1.0")
+        };
+    let raster_bindings = render_template(include_str!("../../../stdlib/render/raster_bindings.wgsl"), &[
+        ("VIS", &vis), ("DIAGNOSTICS", diagnostics), ("SHADOW", include_str!("../../../stdlib/core/shadow.wgsl")),
     ]);
-    Ok(em.out)
+    let shade = edge_helpers + &render_template(include_str!("../../../stdlib/render/shade_raster.wgsl"), &[
+        ("OWNERSHIP", ownership), ("GEOMETRY", &geometry), ("SHADE", &shade), ("ALPHA", alpha),
+    ]);
+    let [l0, l1, l2] = unit(TWIN_LIGHT).map(|v| f32_lit(f64::from(v)));
+    let twin = render_template(include_str!("../../../stdlib/render/query_twin.wgsl"), &[
+        ("TWIN_GEO", &twin_geo), ("L0", &l0), ("L1", &l1), ("L2", &l2),
+    ]);
+    Ok(KindModule { raster_prefix, queries: em.out, raster_bindings, shade, twin, sampled_bakes: em.sampled_bakes })
 }
 
 /// Scan tables: frame `i` of a scan at `off`, clamped to its ends; the uniform cubic B-spline (C2 in t) and its

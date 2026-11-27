@@ -25,7 +25,7 @@ fn loft_bvh_trace(ray: LoftRay, node_count: u32, any_hit: bool) -> LoftBvhHit {
 fn loft_bvh_trace_at(ray: LoftRay, root_id: u32, any_hit: bool) -> LoftBvhHit {
   var best = LoftBvhHit(LoftLeafRef(0xffffffffu, 0xffffffffu), -1.0);
   if root_id == 0xffffffffu { return best; }
-  var node = loft_bvh_nodes[root_id];
+  var node = loft_bvh_node(root_id);
   let parallel = ray.d == vec3f(0.0);
   // Substitute a finite divisor on parallel axes before multiplying distances.
   let inv_d = 1.0 / select(ray.d, vec3f(1.0), parallel);
@@ -43,8 +43,8 @@ fn loft_bvh_trace_at(ray: LoftRay, root_id: u32, any_hit: bool) -> LoftBvhHit {
     let first = node.left_or_first;
     var descend = false;
     if node.count == 0u {
-      let a = loft_bvh_nodes[first];
-      let b = loft_bvh_nodes[first + 1u];
+      let a = loft_bvh_node(first);
+      let b = loft_bvh_node(first + 1u);
       let sa = loft_box_span(ray.o, inv_d, parallel, a.lo, a.hi, vec2f(ray.t0, active_ray.t1));
       let sb = loft_box_span(ray.o, inv_d, parallel, b.lo, b.hi, vec2f(ray.t0, active_ray.t1));
       let hit_a = sa.x <= sa.y;
@@ -64,7 +64,7 @@ fn loft_bvh_trace_at(ray: LoftRay, root_id: u32, any_hit: bool) -> LoftBvhHit {
       }
     } else {
       for (var j = 0u; j < node.count; j++) {
-        let leaf = loft_bvh_leaves[first + j];
+        let leaf = loft_bvh_leaf(first + j);
         let t = loft_bvh_intersect(leaf, active_ray);
         if t < -1.0 { return LoftBvhHit(leaf, t); }
         if t >= active_ray.t0 && t <= active_ray.t1 {
@@ -80,7 +80,7 @@ fn loft_bvh_trace_at(ray: LoftRay, root_id: u32, any_hit: bool) -> LoftBvhHit {
     }
     while !descend && depth > 0u {
       depth -= 1u;
-      let popped = loft_bvh_nodes[stack[depth]];
+      let popped = loft_bvh_node(stack[depth]);
       let popped_span = loft_box_span(ray.o, inv_d, parallel, popped.lo, popped.hi, vec2f(ray.t0, active_ray.t1));
       if popped_span.x <= popped_span.y {
         node = popped;
