@@ -40,7 +40,8 @@ s.className="strip";for(let t=0;t<=8;t++){const im=document.createElement("img")
 im.src=ch+"/step_"+String(t).padStart(2,"0")+".png";im.loading="lazy";
 im.title=ch+" step "+t;s.appendChild(im)}d.appendChild(s);st.appendChild(d)});
 function draw(){const f=sel.value;
-const list=PAIRS.filter(p=>!f||(f==="mixed"?p.id.includes("-x-"):p.id.startsWith("loft3d-"+f+"-")));
+function hit(p,f){if(!f)return true;if(f==="mixed")return p.id.includes("-x-");if(f==="models")return p.id.includes("-m-");return p.id.startsWith("loft3d-"+f+"-");}
+const list=PAIRS.filter(p=>hit(p,f));
 const done=list.filter(p=>V[p.id]).length;
 document.getElementById("p").style.width=(100*done/Math.max(1,list.length))+"%";
 document.getElementById("c").textContent=done+"/"+list.length+" voted";
@@ -77,9 +78,13 @@ draw();"""
 def main():
     votes = json.load(open(os.path.join(ROOT, "votes.json")))
     pairs = [p for p in votes["pairs"] if p["id"].startswith("loft3d-")]
-    chains = sorted({("mixed" if "-x-" in p["id"]
-                       else p["id"][len("loft3d-"):].rsplit("-", 2)[0])
-                     for p in pairs})
+    def bucket(pid):
+        if "-x-" in pid:
+            return "mixed"
+        if "-m-" in pid:
+            return "models"
+        return pid[len("loft3d-"):].rsplit("-", 2)[0]
+    chains = sorted({bucket(p["id"]) for p in pairs})
     html = ("""<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Loft3d Ballot: real stills</title><style>""" + CSS + """</style></head><body>

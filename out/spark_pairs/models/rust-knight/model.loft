@@ -1,0 +1,76 @@
+use stdlib::geometry::analytic::{ray_capsule}
+use stdlib::integrators::direct::{sun_sky}
+use stdlib::materials::bsdf::{ggx}
+use stdlib::sdf::solid::{capsule}
+use stdlib::sky::environment::{sky_color}
+
+# rust-knight: pitted crusader, tower shield forward, sword high. Base model.
+
+space World
+
+kind Capsule @World (a: p3@World, b: p3@World, r: m, albedo: rgb) {
+
+  visible(ro, rd) {
+    ray_capsule(ro, rd, a, b, r)
+  }
+  trace(p) {
+    capsule(p, a, b, r)
+  }
+  material(p, n) {
+    ggx(albedo, 0.55, 0)
+  }
+}
+
+kind GlossBead @World (c: p3@World, r: m, albedo: rgb) {
+
+  visible(ro, rd) {
+    ray_capsule(ro, rd, c, c, r)
+  }
+  trace(p) {
+    capsule(p, c, c, r)
+  }
+  material(p, n) {
+    ggx(albedo, 0.12, 0)
+  }
+}
+
+build {
+  let c = [0.0, 0.0, 0.0]@World
+  let rust = [0.58, 0.33, 0.17]
+  let steel = [0.60, 0.65, 0.70]
+  # planted greaves
+  emit Capsule(a: c + [-0.24, 0.60, 0], b: c + [-0.24, 0.05, 0], r: 0.15m, albedo: rust * 0.8)
+  emit Capsule(a: c + [0.24, 0.60, 0], b: c + [0.24, 0.05, 0], r: 0.15m, albedo: rust * 0.8)
+  # barrel torso + pauldrons
+  emit Capsule(a: c + [0.0, 0.60, 0], b: c + [0.0, 1.55, 0], r: 0.44m, albedo: rust)
+  emit GlossBead(c: c + [-0.50, 1.62, 0], r: 0.16m, albedo: steel)
+  emit GlossBead(c: c + [0.50, 1.62, 0], r: 0.16m, albedo: steel)
+  # bucket helm + narrow slit + red plume
+  emit GlossBead(c: c + [0.0, 1.95, 0], r: 0.28m, albedo: rust * 1.05)
+  emit Capsule(a: c + [-0.14, 1.97, 0.26], b: c + [0.14, 1.97, 0.26], r: 0.035m, albedo: [0.12, 0.10, 0.10])
+  emit GlossBead(c: c + [0.0, 2.22, -0.05], r: 0.07m, albedo: [0.75, 0.20, 0.15])
+  emit GlossBead(c: c + [0.0, 2.34, -0.05], r: 0.055m, albedo: [0.75, 0.20, 0.15])
+  # shield arm braced forward: tower shield + boss
+  emit Capsule(a: c + [-0.44, 1.40, 0.05], b: c + [-0.30, 1.20, 0.55], r: 0.12m, albedo: rust * 0.9)
+  emit Capsule(a: c + [-0.30, 0.70, 0.62], b: c + [-0.30, 1.70, 0.62], r: 0.30m, albedo: steel * 0.9)
+  emit GlossBead(c: c + [-0.30, 1.20, 0.70], r: 0.10m, albedo: steel)
+  # sword arm high: blade + crossguard + pommel
+  emit Capsule(a: c + [0.44, 1.40, 0.05], b: c + [0.62, 1.95, -0.10], r: 0.12m, albedo: rust * 0.9)
+  emit Capsule(a: c + [0.62, 1.95, -0.10], b: c + [0.72, 2.90, -0.15], r: 0.045m, albedo: steel)
+  emit Capsule(a: c + [0.60, 2.02, -0.10], b: c + [0.84, 2.02, -0.10], r: 0.035m, albedo: [0.50, 0.38, 0.20])
+  emit GlossBead(c: c + [0.62, 1.90, -0.10], r: 0.06m, albedo: [0.50, 0.38, 0.20])
+  # ground cross
+  emit Capsule(a: [-2.5, -0.02, -0.5]@World, b: [2.5, -0.02, -0.5]@World, r: 0.12m, albedo: [0.34, 0.31, 0.27])
+  emit Capsule(a: [0.0, -0.02, -2.5]@World, b: [0.0, -0.02, 2.5]@World, r: 0.12m, albedo: [0.34, 0.31, 0.27])
+}
+
+schedule Main {
+  orbit(at: [0, 1.2, 0]@World, radius: 4.8m, height: 2.2m, period: 24.0s, fov: 40deg)
+  cull_indirect(Capsule)
+  cull_indirect(GlossBead)
+  render_bundle(Vis64) { draw_indirect(Capsule) }
+  render_bundle(Vis64) { draw_indirect(GlossBead) }
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: sun_sky, sun: [0.45, 0.8, 0.35])
+  tonemap_aces(ColorHdr, sky: sky_color)
+}

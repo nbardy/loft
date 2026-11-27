@@ -1,0 +1,73 @@
+use stdlib::geometry::analytic::{ray_capsule}
+use stdlib::integrators::direct::{sun_sky}
+use stdlib::materials::bsdf::{ggx}
+use stdlib::sdf::solid::{capsule}
+use stdlib::sky::environment::{sky_color}
+
+# frost-warden: gaunt sentinel of the ice line, icicle crown, deep blue gaze.
+
+space World
+
+kind Capsule @World (a: p3@World, b: p3@World, r: m, albedo: rgb) {
+
+  visible(ro, rd) {
+    ray_capsule(ro, rd, a, b, r)
+  }
+  trace(p) {
+    capsule(p, a, b, r)
+  }
+  material(p, n) {
+    ggx(albedo, 0.55, 0)
+  }
+}
+
+kind GlossBead @World (c: p3@World, r: m, albedo: rgb) {
+
+  visible(ro, rd) {
+    ray_capsule(ro, rd, c, c, r)
+  }
+  trace(p) {
+    capsule(p, c, c, r)
+  }
+  material(p, n) {
+    ggx(albedo, 0.12, 0)
+  }
+}
+
+build {
+  let c = [0.0, 0.0, 0.0]@World
+  let ice = [0.62, 0.74, 0.84]
+  # stilt legs + narrow towering torso
+  emit Capsule(a: c + [-0.20, 0.90, 0], b: c + [-0.20, 0.05, 0], r: 0.11m, albedo: ice * 0.8)
+  emit Capsule(a: c + [0.20, 0.90, 0], b: c + [0.20, 0.05, 0], r: 0.11m, albedo: ice * 0.8)
+  emit Capsule(a: c + [0.0, 0.90, 0], b: c + [0.0, 2.00, 0], r: 0.28m, albedo: ice)
+  # long arms folded into sleeves of frost
+  emit Capsule(a: c + [-0.26, 1.80, 0], b: c + [-0.44, 0.90, 0.10], r: 0.10m, albedo: ice * 0.9)
+  emit Capsule(a: c + [0.26, 1.80, 0], b: c + [0.44, 0.90, 0.10], r: 0.10m, albedo: ice * 0.9)
+  # hood cowl + deep blue gaze from the dark
+  emit GlossBead(c: c + [0.0, 2.25, 0], r: 0.26m, albedo: ice * 0.9)
+  emit GlossBead(c: c + [-0.10, 2.24, 0.22], r: 0.045m, albedo: [0.30, 0.55, 1.0])
+  emit GlossBead(c: c + [0.10, 2.24, 0.22], r: 0.045m, albedo: [0.30, 0.55, 1.0])
+  # icicle crown: five spikes ringing the cowl
+  emit Capsule(a: c + [-0.24, 2.38, 0], b: c + [-0.34, 2.72, 0], r: 0.045m, albedo: [0.85, 0.92, 0.97])
+  emit Capsule(a: c + [-0.12, 2.44, 0], b: c + [-0.16, 2.84, 0], r: 0.045m, albedo: [0.85, 0.92, 0.97])
+  emit Capsule(a: c + [0.0, 2.46, 0], b: c + [0.0, 2.90, 0], r: 0.05m, albedo: [0.85, 0.92, 0.97])
+  emit Capsule(a: c + [0.12, 2.44, 0], b: c + [0.16, 2.84, 0], r: 0.045m, albedo: [0.85, 0.92, 0.97])
+  emit Capsule(a: c + [0.24, 2.38, 0], b: c + [0.34, 2.72, 0], r: 0.045m, albedo: [0.85, 0.92, 0.97])
+  # heart-gem burning cold in the chest
+  emit GlossBead(c: c + [0.0, 1.55, 0.26], r: 0.09m, albedo: [0.45, 0.75, 1.0])
+  # ground cross
+  emit Capsule(a: [-2.5, -0.02, -0.5]@World, b: [2.5, -0.02, -0.5]@World, r: 0.12m, albedo: [0.34, 0.31, 0.27])
+  emit Capsule(a: [0.0, -0.02, -2.5]@World, b: [0.0, -0.02, 2.5]@World, r: 0.12m, albedo: [0.34, 0.31, 0.27])
+}
+
+schedule Main {
+  orbit(at: [0, 1.4, 0]@World, radius: 5.0m, height: 2.2m, period: 24.0s, fov: 40deg)
+  cull_indirect(Capsule)
+  cull_indirect(GlossBead)
+  render_bundle(Vis64) { draw_indirect(Capsule) }
+  render_bundle(Vis64) { draw_indirect(GlossBead) }
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: sun_sky, sun: [0.45, 0.8, 0.35])
+  tonemap_aces(ColorHdr, sky: sky_color)
+}

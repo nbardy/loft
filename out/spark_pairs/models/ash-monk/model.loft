@@ -1,0 +1,73 @@
+use stdlib::geometry::analytic::{ray_capsule}
+use stdlib::integrators::direct::{sun_sky}
+use stdlib::materials::bsdf::{ggx}
+use stdlib::sdf::solid::{capsule}
+use stdlib::sky::environment::{sky_color}
+
+# ash-monk: grey pilgrim in deep cowl, ring staff, counting beads. Base model.
+
+space World
+
+kind Capsule @World (a: p3@World, b: p3@World, r: m, albedo: rgb) {
+
+  visible(ro, rd) {
+    ray_capsule(ro, rd, a, b, r)
+  }
+  trace(p) {
+    capsule(p, a, b, r)
+  }
+  material(p, n) {
+    ggx(albedo, 0.55, 0)
+  }
+}
+
+kind GlossBead @World (c: p3@World, r: m, albedo: rgb) {
+
+  visible(ro, rd) {
+    ray_capsule(ro, rd, c, c, r)
+  }
+  trace(p) {
+    capsule(p, c, c, r)
+  }
+  material(p, n) {
+    ggx(albedo, 0.12, 0)
+  }
+}
+
+build {
+  let c = [0.0, 0.0, 0.0]@World
+  let ash = [0.52, 0.50, 0.47]
+  # robe column to the ground, rope belt
+  emit Capsule(a: c + [0.0, 0.70, 0], b: c + [0.0, 0.05, 0], r: 0.34m, albedo: ash * 0.9)
+  emit Capsule(a: c + [0.0, 0.70, 0], b: c + [0.0, 1.55, 0], r: 0.32m, albedo: ash)
+  emit Capsule(a: c + [-0.30, 1.05, 0.10], b: c + [0.30, 1.05, 0.10], r: 0.05m, albedo: [0.45, 0.36, 0.24])
+  # sleeves meet at the waist holding the bead loop
+  emit Capsule(a: c + [-0.30, 1.40, 0.05], b: c + [-0.08, 1.00, 0.30], r: 0.10m, albedo: ash * 0.9)
+  emit Capsule(a: c + [0.30, 1.40, 0.05], b: c + [0.08, 1.00, 0.30], r: 0.10m, albedo: ash * 0.9)
+  emit GlossBead(c: c + [0.0, 0.92, 0.32], r: 0.05m, albedo: [0.30, 0.22, 0.16])
+  emit GlossBead(c: c + [0.0, 0.80, 0.32], r: 0.05m, albedo: [0.30, 0.22, 0.16])
+  emit GlossBead(c: c + [0.0, 0.68, 0.32], r: 0.05m, albedo: [0.30, 0.22, 0.16])
+  # deep cowl: shadow dome with two calm coals for eyes
+  emit GlossBead(c: c + [0.0, 1.92, 0], r: 0.28m, albedo: ash * 0.95)
+  emit GlossBead(c: c + [0.0, 1.90, 0.22], r: 0.16m, albedo: [0.10, 0.09, 0.09])
+  emit GlossBead(c: c + [-0.07, 1.92, 0.30], r: 0.028m, albedo: [0.95, 0.60, 0.25])
+  emit GlossBead(c: c + [0.07, 1.92, 0.30], r: 0.028m, albedo: [0.95, 0.60, 0.25])
+  # ring staff planted beside: pole + halo ring + hanging bead
+  emit Capsule(a: c + [0.55, 0.05, 0.15], b: c + [0.55, 2.10, 0.15], r: 0.035m, albedo: [0.45, 0.34, 0.22])
+  emit Capsule(a: c + [0.43, 2.28, 0.15], b: c + [0.67, 2.28, 0.15], r: 0.035m, albedo: [0.60, 0.55, 0.40])
+  emit GlossBead(c: c + [0.55, 2.10, 0.15], r: 0.05m, albedo: [0.60, 0.55, 0.40])
+  # ground cross
+  emit Capsule(a: [-2.5, -0.02, -0.5]@World, b: [2.5, -0.02, -0.5]@World, r: 0.12m, albedo: [0.34, 0.31, 0.27])
+  emit Capsule(a: [0.0, -0.02, -2.5]@World, b: [0.0, -0.02, 2.5]@World, r: 0.12m, albedo: [0.34, 0.31, 0.27])
+}
+
+schedule Main {
+  orbit(at: [0, 1.1, 0]@World, radius: 4.4m, height: 2.0m, period: 24.0s, fov: 40deg)
+  cull_indirect(Capsule)
+  cull_indirect(GlossBead)
+  render_bundle(Vis64) { draw_indirect(Capsule) }
+  render_bundle(Vis64) { draw_indirect(GlossBead) }
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: sun_sky, sun: [0.45, 0.8, 0.35])
+  tonemap_aces(ColorHdr, sky: sky_color)
+}

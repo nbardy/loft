@@ -1,0 +1,79 @@
+use stdlib::geometry::analytic::{ray_capsule}
+use stdlib::integrators::direct::{sun_sky}
+use stdlib::materials::bsdf::{ggx}
+use stdlib::sdf::solid::{capsule}
+use stdlib::sky::environment::{sky_color}
+
+# bone-collector: hunched reliquary keeper, skull mask, relic sack. Base model.
+
+space World
+
+kind Capsule @World (a: p3@World, b: p3@World, r: m, albedo: rgb) {
+
+  visible(ro, rd) {
+    ray_capsule(ro, rd, a, b, r)
+  }
+  trace(p) {
+    capsule(p, a, b, r)
+  }
+  material(p, n) {
+    ggx(albedo, 0.55, 0)
+  }
+}
+
+kind GlossBead @World (c: p3@World, r: m, albedo: rgb) {
+
+  visible(ro, rd) {
+    ray_capsule(ro, rd, c, c, r)
+  }
+  trace(p) {
+    capsule(p, c, c, r)
+  }
+  material(p, n) {
+    ggx(albedo, 0.12, 0)
+  }
+}
+
+build {
+  let c = [0.0, 0.0, 0.0]@World
+  let cloak = [0.30, 0.28, 0.30]
+  let bone = [0.88, 0.85, 0.76]
+  # shuffling legs under a long dark cloak
+  emit Capsule(a: c + [-0.18, 0.65, 0], b: c + [-0.20, 0.05, 0.05], r: 0.12m, albedo: cloak * 0.8)
+  emit Capsule(a: c + [0.18, 0.65, 0], b: c + [0.20, 0.05, 0.05], r: 0.12m, albedo: cloak * 0.8)
+  emit Capsule(a: c + [0.0, 0.70, -0.05], b: c + [0.0, 0.05, -0.05], r: 0.34m, albedo: cloak * 0.85)
+  # hunched torso leaning on the staff
+  emit Capsule(a: c + [0.0, 0.65, -0.05], b: c + [0.0, 1.45, 0.15], r: 0.34m, albedo: cloak)
+  # skull mask: white dome, dark sockets, grinning teeth nubs
+  emit GlossBead(c: c + [0.0, 1.80, 0.22], r: 0.24m, albedo: bone)
+  emit GlossBead(c: c + [-0.09, 1.82, 0.42], r: 0.05m, albedo: [0.08, 0.07, 0.08])
+  emit GlossBead(c: c + [0.09, 1.82, 0.42], r: 0.05m, albedo: [0.08, 0.07, 0.08])
+  emit GlossBead(c: c + [-0.08, 1.66, 0.42], r: 0.028m, albedo: bone * 0.9)
+  emit GlossBead(c: c + [0.0, 1.65, 0.43], r: 0.028m, albedo: bone * 0.9)
+  emit GlossBead(c: c + [0.08, 1.66, 0.42], r: 0.028m, albedo: bone * 0.9)
+  # right hand grips the bone staff planted ahead
+  emit Capsule(a: c + [0.32, 1.30, 0.10], b: c + [0.45, 0.95, 0.45], r: 0.09m, albedo: cloak * 0.9)
+  emit Capsule(a: c + [0.45, 0.05, 0.45], b: c + [0.45, 1.90, 0.45], r: 0.035m, albedo: bone * 0.85)
+  # tiny skull crowning the staff
+  emit GlossBead(c: c + [0.45, 2.02, 0.45], r: 0.10m, albedo: bone)
+  emit GlossBead(c: c + [-0.03 + 0.45, 2.04, 0.53], r: 0.022m, albedo: [0.08, 0.07, 0.08])
+  emit GlossBead(c: c + [0.03 + 0.45, 2.04, 0.53], r: 0.022m, albedo: [0.08, 0.07, 0.08])
+  # relic sack slung over the left shoulder, knotted shut
+  emit GlossBead(c: c + [-0.15, 1.55, -0.50], r: 0.30m, albedo: [0.50, 0.40, 0.28])
+  emit Capsule(a: c + [-0.15, 1.80, -0.50], b: c + [-0.15, 2.00, -0.50], r: 0.07m, albedo: [0.50, 0.40, 0.28])
+  emit Capsule(a: c + [-0.40, 1.45, -0.20], b: c + [-0.25, 1.70, -0.45], r: 0.09m, albedo: cloak * 0.9)
+  # ground cross
+  emit Capsule(a: [-2.5, -0.02, -0.5]@World, b: [2.5, -0.02, -0.5]@World, r: 0.12m, albedo: [0.34, 0.31, 0.27])
+  emit Capsule(a: [0.0, -0.02, -2.5]@World, b: [0.0, -0.02, 2.5]@World, r: 0.12m, albedo: [0.34, 0.31, 0.27])
+}
+
+schedule Main {
+  orbit(at: [0, 1.1, 0]@World, radius: 4.6m, height: 2.0m, period: 24.0s, fov: 40deg)
+  cull_indirect(Capsule)
+  cull_indirect(GlossBead)
+  render_bundle(Vis64) { draw_indirect(Capsule) }
+  render_bundle(Vis64) { draw_indirect(GlossBead) }
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: sun_sky, sun: [0.45, 0.8, 0.35])
+  tonemap_aces(ColorHdr, sky: sky_color)
+}

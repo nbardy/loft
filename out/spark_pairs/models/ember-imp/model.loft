@@ -1,0 +1,78 @@
+use stdlib::geometry::analytic::{ray_capsule}
+use stdlib::integrators::direct::{sun_sky}
+use stdlib::materials::bsdf::{ggx}
+use stdlib::sdf::solid::{capsule}
+use stdlib::sky::environment::{sky_color}
+
+# ember-imp: knee-high mischief, pot belly, glowing coals for eyes. Base model.
+
+space World
+
+kind Capsule @World (a: p3@World, b: p3@World, r: m, albedo: rgb) {
+
+  visible(ro, rd) {
+    ray_capsule(ro, rd, a, b, r)
+  }
+  trace(p) {
+    capsule(p, a, b, r)
+  }
+  material(p, n) {
+    ggx(albedo, 0.55, 0)
+  }
+}
+
+kind GlossBead @World (c: p3@World, r: m, albedo: rgb) {
+
+  visible(ro, rd) {
+    ray_capsule(ro, rd, c, c, r)
+  }
+  trace(p) {
+    capsule(p, c, c, r)
+  }
+  material(p, n) {
+    ggx(albedo, 0.12, 0)
+  }
+}
+
+build {
+  let c = [0.0, 0.0, 0.0]@World
+  let hide = [0.55, 0.25, 0.15]
+  # stubby digitigrade legs
+  emit Capsule(a: c + [-0.16, 0.45, 0], b: c + [-0.20, 0.05, 0.08], r: 0.10m, albedo: hide * 0.8)
+  emit Capsule(a: c + [0.16, 0.45, 0], b: c + [0.20, 0.05, 0.08], r: 0.10m, albedo: hide * 0.8)
+  # pot belly + glowing coal core in the gut
+  emit GlossBead(c: c + [0.0, 0.75, 0], r: 0.34m, albedo: hide)
+  emit GlossBead(c: c + [0.0, 0.72, 0.30], r: 0.10m, albedo: [1.0, 0.45, 0.10])
+  # scrawny arms thrown wide in mockery
+  emit Capsule(a: c + [-0.28, 0.95, 0], b: c + [-0.62, 1.05, 0.10], r: 0.07m, albedo: hide * 0.9)
+  emit Capsule(a: c + [0.28, 0.95, 0], b: c + [0.62, 1.05, 0.10], r: 0.07m, albedo: hide * 0.9)
+  emit GlossBead(c: c + [-0.66, 1.05, 0.10], r: 0.07m, albedo: hide)
+  emit GlossBead(c: c + [0.66, 1.05, 0.10], r: 0.07m, albedo: hide)
+  # big-eared head: bat ears + coal eyes + fang grin
+  emit GlossBead(c: c + [0.0, 1.30, 0], r: 0.26m, albedo: hide * 1.05)
+  emit Capsule(a: c + [-0.18, 1.45, 0], b: c + [-0.34, 1.72, 0], r: 0.06m, albedo: hide * 0.9)
+  emit Capsule(a: c + [0.18, 1.45, 0], b: c + [0.34, 1.72, 0], r: 0.06m, albedo: hide * 0.9)
+  emit GlossBead(c: c + [-0.11, 1.32, 0.22], r: 0.055m, albedo: [1.0, 0.55, 0.10])
+  emit GlossBead(c: c + [0.11, 1.32, 0.22], r: 0.055m, albedo: [1.0, 0.55, 0.10])
+  emit Capsule(a: c + [-0.12, 1.12, 0.24], b: c + [0.12, 1.12, 0.24], r: 0.025m, albedo: [0.20, 0.12, 0.10])
+  emit GlossBead(c: c + [-0.06, 1.16, 0.25], r: 0.025m, albedo: [0.92, 0.90, 0.84])
+  emit GlossBead(c: c + [0.06, 1.16, 0.25], r: 0.025m, albedo: [0.92, 0.90, 0.84])
+  # curling tail with a barbed tip
+  emit Capsule(a: c + [0.0, 0.55, -0.30], b: c + [0.25, 0.75, -0.55], r: 0.05m, albedo: hide * 0.9)
+  emit Capsule(a: c + [0.25, 0.75, -0.55], b: c + [0.15, 1.05, -0.62], r: 0.035m, albedo: hide * 0.9)
+  emit GlossBead(c: c + [0.15, 1.10, -0.62], r: 0.05m, albedo: [1.0, 0.45, 0.10])
+  # ground cross
+  emit Capsule(a: [-2.5, -0.02, -0.5]@World, b: [2.5, -0.02, -0.5]@World, r: 0.12m, albedo: [0.34, 0.31, 0.27])
+  emit Capsule(a: [0.0, -0.02, -2.5]@World, b: [0.0, -0.02, 2.5]@World, r: 0.12m, albedo: [0.34, 0.31, 0.27])
+}
+
+schedule Main {
+  orbit(at: [0, 0.8, 0]@World, radius: 3.6m, height: 1.6m, period: 24.0s, fov: 40deg)
+  cull_indirect(Capsule)
+  cull_indirect(GlossBead)
+  render_bundle(Vis64) { draw_indirect(Capsule) }
+  render_bundle(Vis64) { draw_indirect(GlossBead) }
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: sun_sky, sun: [0.45, 0.8, 0.35])
+  tonemap_aces(ColorHdr, sky: sky_color)
+}
