@@ -29,13 +29,14 @@ pub enum DrawSource<'a> {
 pub struct Draw<'a> {
     pub pipeline: &'a RenderPipeline,
     pub groups: Vec<&'a BindGroup>,
+    pub vertex: Option<&'a Buffer>,
     pub source: DrawSource<'a>,
 }
 
 #[derive(Clone)]
 pub enum Raster {
     Bundle { bundle: RenderBundle, draws: u32 },
-    Scissored { pipeline: RenderPipeline, groups: Vec<BindGroup>, args: Buffer, size: [u32; 2], side: u32 },
+    Scissored { pipeline: RenderPipeline, groups: Vec<BindGroup>, vertex: Option<Buffer>, args: Buffer, size: [u32; 2], side: u32 },
 }
 
 impl Raster {
@@ -50,6 +51,9 @@ impl Raster {
         let mut count = 0;
         for draw in draws {
             enc.set_pipeline(draw.pipeline);
+            if let Some(vertex) = draw.vertex {
+                enc.set_vertex_buffer(0, vertex.slice(..));
+            }
             for (i, group) in draw.groups.iter().enumerate() {
                 enc.set_bind_group((fixed.len() + i) as u32, *group, &[]);
             }
@@ -152,8 +156,11 @@ fn record_render(enc: &mut CommandEncoder, colors: &[Color], depth: Option<&Dept
                 Raster::Bundle { bundle, .. } => Some(bundle),
                 Raster::Scissored { .. } => None,
             })),
-            Raster::Scissored { pipeline, groups, args, size, side } => {
+            Raster::Scissored { pipeline, groups, vertex, args, size, side } => {
                 pass.set_pipeline(pipeline);
+                if let Some(vertex) = vertex {
+                    pass.set_vertex_buffer(0, vertex.slice(..));
+                }
                 for (slot, group) in groups.iter().enumerate() {
                     pass.set_bind_group(slot as u32, group, &[]);
                 }
@@ -180,6 +187,7 @@ pub struct RasterRecipe {
     canvas: Canvas,
     layout: PipelineLayout,
     vertex: String,
+    vertex_layout: Option<(u64, Vec<VertexAttribute>)>,
     fragment: String,
     cull: CullMode,
     blend: BlendMode,
@@ -193,6 +201,7 @@ impl RasterRecipe {
             |state| (state.cull, state.blend),
         );
         Self { canvas: canvas.clone(), layout: layout.clone(), vertex: draw.decl.vertex_entry.clone(),
+            vertex_layout: draw.vertex_layout.clone(),
             fragment: draw.decl.fragment_entry.clone(), cull, blend, module: draw.decl.module }
     }
 
@@ -213,10 +222,13 @@ impl RasterRecipe {
         let targets = self.canvas.colors.iter().map(|&format| Some(ColorTargetState {
             format, blend, write_mask: ColorWrites::ALL,
         })).collect::<Vec<_>>();
+        let vertex_layout = self.vertex_layout.as_ref().map(|(stride, attributes)| VertexBufferLayout {
+            array_stride: *stride, step_mode: VertexStepMode::Vertex, attributes,
+        });
         device.create_render_pipeline(&RenderPipelineDescriptor {
             label: None, layout: Some(&self.layout),
             vertex: VertexState { module: shader, entry_point: Some(&self.vertex),
-                buffers: &[], compilation_options: Default::default() },
+                buffers: vertex_layout.as_slice(), compilation_options: Default::default() },
             primitive: PrimitiveState { cull_mode, ..Default::default() },
             depth_stencil: self.canvas.depth_state(),
             multisample: MultisampleState { count: self.canvas.samples, ..Default::default() },

@@ -1,6 +1,7 @@
 //! Reusable host algorithms. GPU table ownership and command encoding stay
 //! with the backend.
-pub mod compute_twin;
+#[cfg(feature = "cpu-twin")]
+mod cpu_twin;
 pub mod params;
 pub mod events;
 pub mod inputs;

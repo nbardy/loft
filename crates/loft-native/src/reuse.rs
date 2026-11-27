@@ -22,26 +22,25 @@ impl Reuse {
         p: &Program,
         casters: &[u32],
         indexed: impl Fn(&loft_passes::program::KindTable) -> bool,
-        editable: Option<usize>,
     ) -> Self {
         if p.shadow_clock == loft_passes::program::StepClock::Load {
             return Self::Once { drawn: false };
         }
-        Self::geometry(p, casters, indexed, editable)
+        Self::geometry(p, casters, indexed)
     }
 
     // A compacted cull list can submit equal-depth rows in different orders. Retention
     // keeps the first draw's legal winner at those pixels until the view invalidates.
     pub(super) fn visibility(
-        p: &Program, indexed: impl Fn(&loft_passes::program::KindTable) -> bool, editable: Option<usize>,
+        p: &Program, indexed: impl Fn(&loft_passes::program::KindTable) -> bool,
     ) -> Self {
-        if p.camera.fixed_eye.is_none() || editable.is_some() { return Self::EveryFrame; }
+        if p.camera.fixed_eye.is_none() { return Self::EveryFrame; }
         let Some(drawn) = Self::stock_visibility(p) else { return Self::EveryFrame; };
-        Self::geometry(p, drawn, indexed, editable)
+        Self::geometry(p, drawn, indexed)
     }
 
     /// Native retention and segment tiling both require the stock culler to own these row lists.
-    pub(super) fn stock_visibility(p: &Program) -> Option<&[u32]> {
+    fn stock_visibility(p: &Program) -> Option<&[u32]> {
         use loft_passes::program::{AuthoredRun, Extent, FrameView, Pass};
         let [Pass::Authored(cull), Pass::Vis(drawn), tail @ ..] = p.passes.as_slice() else {
             return None;
@@ -83,15 +82,10 @@ impl Reuse {
     }
 
     fn geometry(p: &Program, casters: &[u32], indexed: impl Fn(&loft_passes::program::KindTable) -> bool,
-        editable: Option<usize>) -> Self {
+    ) -> Self {
         let mut reads_params = false;
-        let editable_module = editable.map(|id| p.kinds[id].module);
         for &id in casters {
             let kind = &p.kinds[id as usize];
-            // An edit replaces this caster's shader, which may then read time or params.
-            if editable_module == Some(kind.module) {
-                return Self::EveryFrame;
-            }
             let vertex = if indexed(kind) { "vs_grid" } else { "vs" };
             let Some(params) = static_caster(&p.modules[kind.module].naga, vertex) else {
                 return Self::EveryFrame;

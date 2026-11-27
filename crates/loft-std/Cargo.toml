@@ -12,5 +12,8 @@ loft-abi = { path = "../loft-abi" }
 naga.workspace = true
 loft-ir = { path = "../loft-ir" }
 
+[features]
+cpu-twin = []
+
 [lints]
 workspace = true

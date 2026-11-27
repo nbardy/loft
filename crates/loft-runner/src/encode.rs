@@ -31,19 +31,17 @@ impl Group {
     }
 }
 
-struct Kernel { pipeline: wgpu::ComputePipeline, layout: wgpu::PipelineLayout, module: ModuleId, entry: String }
-
 enum Operation {
-    Dispatch(Kernel, DispatchExtent),
-    Ticks(Kernel, stepping::Fused),
+    Dispatch(wgpu::ComputePipeline, DispatchExtent),
+    Ticks(wgpu::ComputePipeline, stepping::Fused),
     Draw(embed::Render),
     Mips(TableId, Option<(u64, mips::Mips)>),
 }
 struct Command { groups: Vec<Group>, op: Operation }
 impl Command {
-    fn dispatch(&self, fixed: &wgpu::BindGroup, k: &Kernel, work: Work) -> Pass {
+    fn dispatch(&self, fixed: &wgpu::BindGroup, pipeline: &wgpu::ComputePipeline, work: Work) -> Pass {
         let groups = std::iter::once(fixed).chain(self.groups.iter().map(Group::bound)).cloned().collect();
-        Pass::Compute(vec![Dispatch { pipeline: k.pipeline.clone(), groups, work }])
+        Pass::Compute(vec![Dispatch { pipeline: pipeline.clone(), groups, work }])
     }
 }
 pub(super) struct ComputeCache {
@@ -96,7 +94,7 @@ impl ComputeCache {
         adapter: Option<&wgpu::Adapter>, cache: Option<&wgpu::PipelineCache>,
         canvas: Option<(&embed::Target<'_>, &Tables)>, clock: Option<fn() -> Duration>) -> Result<Self> {
         use wgpu::{BufferBindingType::{Storage, Uniform}, BufferUsages as U};
-        let schedule = schedule::Schedule::new(b, d.features())?;
+        let schedule = schedule::Schedule::with_execution(b, d.features(), exec)?;
         let mut ranges = BTreeMap::new();
         for range in &exec.ranges {
             if ranges.insert((range.pass, range.group, range.slot), (range.offset, range.size)).is_some() {
@@ -193,12 +191,12 @@ impl ComputeCache {
                         recipes.push((module, entry.clone(), layout.clone()));
                         index
                     });
-                    linked.push((id, groups, module, entry, layout, work, index));
+                    linked.push((id, groups, work, index));
                 }
                 schedule::Pass::Draw(spec, _) => {
                     let shaders = spec.draws.iter().map(|draw| modules[&draw.decl.module].clone()).collect();
                     let draw = embed::Render { spec, shaders, layout: layout.expect("raster layout"), cached: None,
-                        additive: exec.additive.contains(&id), override_pipeline: None };
+                        additive: exec.additive.contains(&id) };
                     if let Some((target, tables)) = canvas {
                         draw.misses(target, |id| tables.get(&id)?.attachment(), &mut renders)?;
                     }
@@ -242,11 +240,11 @@ impl ComputeCache {
                 }
             }
         }
-        for (id, groups, module, entry, layout, work, index) in linked {
-            let k = Kernel { pipeline: kernels[index].clone(), layout, module, entry };
+        for (id, groups, work, index) in linked {
+            let pipeline = kernels[index].clone();
             let op = match work {
-                schedule::Work::Dispatch(extent) => Operation::Dispatch(k, extent),
-                schedule::Work::Ticks(fused) => Operation::Ticks(k, fused),
+                schedule::Work::Dispatch(extent) => Operation::Dispatch(pipeline, extent),
+                schedule::Work::Ticks(fused) => Operation::Ticks(pipeline, fused),
             };
             passes.insert(id, Command { groups, op });
         }
@@ -270,17 +268,6 @@ impl ComputeCache {
     }
     pub fn fused(&self, id: PassId) -> Option<&stepping::Fused> {
         if let Operation::Ticks(_, f) = &self.passes.get(&id)?.op { Some(f) } else { None }
-    }
-    #[cfg(test)]
-    pub fn pipeline(&self, id: PassId) -> Result<&wgpu::ComputePipeline> {
-        match &self.passes.get(&id).ok_or(RunnerError::UnknownResource)?.op {
-            Operation::Dispatch(k,_) | Operation::Ticks(k,_) => Ok(&k.pipeline),
-            Operation::Draw(_) | Operation::Mips(..) => Err(RunnerError::UnknownResource),
-        }
-    }
-    #[cfg(test)]
-    pub fn bound_groups(&self, id: PassId) -> Vec<wgpu::BindGroup> {
-        self.passes[&id].groups.iter().map(|g| g.bound().clone()).collect()
     }
 }
 pub(super) use loft_wgpu::frame::Clock;
@@ -561,55 +548,5 @@ fn resolve(d: &wgpu::Device, tables: &Tables, extent: &DispatchExtent) -> Result
 fn upload(belt: &mut wgpu::util::StagingBelt, enc: &mut wgpu::CommandEncoder, bytes: &[u8], dst: &wgpu::Buffer, offset: u64) {
     if let Some(size) = wgpu::BufferSize::new(bytes.len() as u64) {
         belt.write_buffer(enc, dst, offset, size).copy_from_slice(bytes);
-    }
-}
-
-#[derive(Clone)]
-pub struct ModulePipelines {
-    pub render: wgpu::RenderPipeline,
-    pub shade: wgpu::ComputePipeline,
-}
-
-#[derive(Clone)]
-pub struct ModuleRecipe {
-    raster: embed::RasterRecipe,
-    layout: wgpu::PipelineLayout,
-    entry: String,
-}
-
-impl ModuleRecipe {
-    pub fn compile(&self, d: &wgpu::Device, source: &str) -> ModulePipelines {
-        let module = d.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: None, source: wgpu::ShaderSource::Wgsl(source.into()),
-        });
-        ModulePipelines { render: self.raster.create(d, &module, None), shade: pipeline(d, &self.layout, &module, &self.entry, None) }
-    }
-}
-
-impl ComputeCache {
-    pub(super) fn recipe(&self, id: ModuleId) -> Result<(ModuleRecipe, ModulePipelines)> {
-        let (raster, render) = self.passes.values().find_map(|cmd| match &cmd.op {
-            Operation::Draw(draw) if draw.spec.draws.iter().any(|d| d.decl.module == id) => draw.recipe(),
-            _ => None,
-        }).ok_or(RunnerError::UnknownResource)?;
-        let k = self.passes.values().find_map(|cmd| match &cmd.op {
-            Operation::Dispatch(k, DispatchExtent::Indirect { .. }) if k.module == id => Some(k),
-            _ => None,
-        }).ok_or(RunnerError::UnknownResource)?;
-        let shade = k.pipeline.clone();
-        Ok((ModuleRecipe { raster, layout: k.layout.clone(), entry: k.entry.clone() }, ModulePipelines { render, shade }))
-    }
-
-    pub(super) fn install(&mut self, id: ModuleId, pipes: &ModulePipelines) {
-        for cmd in self.passes.values_mut() {
-            match &mut cmd.op {
-                Operation::Draw(draw) if draw.spec.draws.iter().any(|d| d.decl.module == id) => {
-                    draw.override_pipeline = Some(pipes.render.clone());
-                    draw.cached = None;
-                }
-                Operation::Dispatch(k, DispatchExtent::Indirect { .. }) if k.module == id => k.pipeline = pipes.shade.clone(),
-                _ => (),
-            }
-        }
     }
 }

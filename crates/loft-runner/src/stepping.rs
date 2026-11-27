@@ -1,10 +1,9 @@
 use super::*;
 use loft_abi::AdvanceArgs;
+#[cfg(feature = "cpu-twin")]
 use std::ops::Range;
 
 pub(super) use loft_std::stepping::{Fused, History};
-use loft_std::stepping;
-
 
 impl Runner {
     /// Encode the fixed-step passes up to an absolute tick. The caller submits the encoder in order.
@@ -38,6 +37,7 @@ impl Runner {
         Ok(())
     }
 
+    #[cfg(feature = "cpu-twin")]
     pub fn step_pass_cpu(&mut self, inst: InstanceId, pass: PassId, rows: Range<u32>, ticks: u32) -> Result<&[u8]> {
         #[cfg(target_arch = "wasm32")]
         {
@@ -61,11 +61,12 @@ impl Runner {
     }
 
     /// Evaluate a fixed-step pass without a device. The caller owns the packed table bytes.
+    #[cfg(feature = "cpu-twin")]
     pub fn step_bundle_cpu(
         bundle: &Bundle, pass: PassId, tables: &mut BTreeMap<TableId, Vec<u8>>,
         inst: InstanceId, rows: Range<u32>, ticks: AdvanceArgs,
     ) -> Result<()> {
-        stepping::step_bundle_cpu(bundle, pass, tables, inst, rows, ticks)
+        loft_std::stepping::step_bundle_cpu(bundle, pass, tables, inst, rows, ticks)
     }
 }
 

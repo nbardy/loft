@@ -11,7 +11,6 @@ pub(super) struct Render {
     pub shaders: Vec<ShaderModule>,
     pub layout: PipelineLayout,
     pub additive: bool,
-    pub override_pipeline: Option<RenderPipeline>,
     pub cached: Option<(Canvas, Vec<RenderPipeline>, u64, command::Raster)>,
 }
 
@@ -19,14 +18,16 @@ impl Render {
     pub fn prepare(&mut self, device: &Device, target: &Target<'_>, fixed: &BindGroup,
                    groups: &[Group], tables: &BTreeMap<TableId, Table>, epoch: u64, pool: &[(RasterRecipe, RenderPipeline)]) -> super::Result<()> {
         let canvas = self.spec.targets.canvas(target, |id| tables.get(&id)?.attachment())?;
-        let mut newest = groups.iter().flat_map(|g| &g.slots).map(|(_,id)| tables[id].epoch).max().unwrap_or(0);
-        for draw in &self.spec.draws {
-            // Bundles capture argument and index handles even when the shader has no binding for either.
-            newest = newest.max(tables[&draw.decl.args].epoch);
-            if let Some((id, _)) = draw.index { newest = newest.max(tables[&id].epoch); }
-        }
-        // Buffer usage and capacity are fixed for a resource epoch.
-        if self.cached.as_ref().is_some_and(|(c,_,e,_)| *c == canvas && *e >= newest) { return Ok(()); }
+        if self.cached.as_ref().is_some_and(|(old, _, cached, _)| {
+            let stamp = |id| tables[&id].epoch;
+            *old == canvas
+                && groups.iter().flat_map(|g| &g.slots).all(|(_, id)| stamp(*id) <= *cached)
+                // Draw buffers are captured independently of shader bind groups.
+                && self.spec.draws.iter().all(|draw| {
+                    stamp(draw.decl.args) <= *cached
+                        && !render_bundle_stale(std::slice::from_ref(&draw.decl), *cached, stamp)
+                })
+        }) { return Ok(()); }
         let sources = self.spec.draws.iter().map(|draw| {
             let args = tables[&draw.decl.args].bytes()?;
             let offset = u64::from(draw.decl.offset_bytes);
@@ -40,20 +41,19 @@ impl Render {
             };
             if !args.usage().contains(BufferUsages::INDIRECT) { return Err(RunnerError::AbiMismatch); }
             if offset + size > interop::logical_size(&tables[&draw.decl.args].decl).min(args.size()) { return Err(RunnerError::Capacity); }
-            Ok(source)
+            Ok((source, vertex_buffer(draw, tables)?))
         }).collect::<super::Result<Vec<_>>>()?;
         let pipelines = match self.cached.take() {
             Some((old, pipelines, _, _)) if old == canvas => pipelines,
-            _ => self.spec.draws.iter().zip(&self.shaders).map(|(draw, _)| {
-                if let Some(pipeline) = &self.override_pipeline { return pipeline.clone(); }
+            _ => self.spec.draws.iter().map(|draw| {
                 let recipe = self.draw_recipe(&canvas, draw);
                 pool.iter().find(|(r, _)| r == &recipe).expect("prepared raster recipe").1.clone()
             }).collect(),
         };
         let formats: Vec<_> = canvas.colors.iter().copied().map(Some).collect();
         let fixed = std::iter::once(fixed).chain(groups.iter().map(Group::bound)).collect::<Vec<_>>();
-        let draws = sources.into_iter().zip(&pipelines).map(|(source, pipeline)| command::Draw {
-            pipeline, groups: vec![], source,
+        let draws = sources.into_iter().zip(&pipelines).map(|((source, vertex), pipeline)| command::Draw {
+            pipeline, groups: vec![], source, vertex,
         });
         let raster = command::Raster::prepare(device, &RenderBundleEncoderDescriptor {
             color_formats: &formats, depth_stencil: canvas.depth_layout(), sample_count: canvas.samples, ..Default::default()
@@ -84,12 +84,21 @@ impl Render {
             let raster = command::Raster::Scissored {
                 pipeline: pipelines[0].clone(),
                 groups: std::iter::once(fixed).chain(groups.iter().map(Group::bound)).cloned().collect(),
+                vertex: vertex_buffer(draw, tables)?.cloned(),
                 args: args.bytes()?.clone(), size, side,
             };
             return Ok(command::Pass::Render { colors, depth, rasters: vec![raster] });
         }
         Ok(bundle.attach(colors, depth))
     }
+}
+
+fn vertex_buffer<'a>(draw: &loft_wgpu::schedule::Draw, tables: &'a BTreeMap<TableId, Table>) -> super::Result<Option<&'a Buffer>> {
+    if draw.vertex_layout.is_none() { return Ok(None); }
+    let id = draw.decl.vertex.ok_or(RunnerError::AbiMismatch)?;
+    let buffer = tables[&id].bytes()?;
+    if !buffer.usage().contains(BufferUsages::VERTEX) { return Err(RunnerError::AbiMismatch); }
+    Ok(Some(buffer))
 }
 
 impl Render {
@@ -100,17 +109,11 @@ impl Render {
     pub fn misses<'a>(&self, target: &Target<'_>, attachment: impl Fn(TableId) -> Option<(&'a TextureView, TextureDecl)>,
         recipes: &mut Vec<(RasterRecipe, ShaderModule)>) -> super::Result<()> {
         let canvas = self.spec.targets.canvas(target, attachment)?;
-        if self.override_pipeline.is_some() || self.cached.as_ref().is_some_and(|(old, _, _, _)| *old == canvas) { return Ok(()); }
+        if self.cached.as_ref().is_some_and(|(old, _, _, _)| *old == canvas) { return Ok(()); }
         for (draw, shader) in self.spec.draws.iter().zip(&self.shaders) {
             let recipe = self.draw_recipe(&canvas, draw);
             if !recipes.iter().any(|(old, _)| *old == recipe) { recipes.push((recipe, shader.clone())); }
         }
         Ok(())
-    }
-
-    pub fn recipe(&self) -> Option<(RasterRecipe, RenderPipeline)> {
-        let (canvas, pipes, _, _) = self.cached.as_ref()?;
-        let [draw] = self.spec.draws.as_slice() else { return None };
-        Some((self.draw_recipe(canvas, draw), pipes[0].clone()))
     }
 }

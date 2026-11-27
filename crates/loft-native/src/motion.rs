@@ -15,32 +15,10 @@ pub fn sample_motion_timed(g: &Gpu, p: &Program, seconds: f32) -> Result<(Vec<Mo
     sample(g, p, seconds, clock.as_ref())
 }
 
-/// A scene fault, found before any GPU work: native sampling reads law writes back as scalar f32 columns.
-/// Callers report it as a compile failure. Inside `sample` the same condition surfaced as a device error
-/// (exit 6), and the crab trainer stops on device errors, so one model program writing `at` stopped a run.
+/// Check the scalar f32 columns that native sampling reads back. Callers can report a scene error
+/// before allocating GPU resources.
 pub fn motion_layout(p: &Program) -> Result<(), String> {
-    for step in &p.dispatches {
-        let module = &p.modules[step.module].naga;
-        let Some(row) = module.types.iter().find_map(|(_, ty)| match &ty.inner {
-            naga::TypeInner::Struct { members, .. } if ty.name.as_deref() == Some("Row") => Some(members),
-            _ => None,
-        }) else {
-            continue;
-        };
-        for (field, _) in &step.fields {
-            let name = format!("r_{field}");
-            if !row.iter().any(|m| m.name.as_deref() == Some(&name)
-                && module.types[m.ty].inner == naga::TypeInner::Scalar(naga::Scalar::F32))
-            {
-                return Err(format!(
-                    "law writes `{field}`, which is not a scalar float: native motion sampling reads only \
-                     scalar f32 law writes. Keep the vector field fixed and write scalars (e.g. `phase`, `x`) that \
-                     the pose or trace reads"
-                ));
-            }
-        }
-    }
-    Ok(())
+    p.dispatches.iter().try_for_each(|step| scalar_writes(p, step))
 }
 
 fn sample(g: &Gpu, p: &Program, seconds: f32, clock: Option<&Clock>) -> Result<(Vec<MotionSample>, f64), String> {
@@ -51,6 +29,7 @@ fn sample(g: &Gpu, p: &Program, seconds: f32, clock: Option<&Clock>) -> Result<(
             "motion time must be finite, nonnegative and representable in 120 Hz ticks".into(),
         );
     }
+    motion_layout(p)?;
     let ticks = (f64::from(seconds) * 120.).round() as u32;
     let mut runner = Runner::attach(
         Arc::new(g.device.clone()),
@@ -80,7 +59,6 @@ fn sample(g: &Gpu, p: &Program, seconds: f32, clock: Option<&Clock>) -> Result<(
         Ok(())
     };
     for (index, step) in p.dispatches.iter().enumerate().filter(|(_, step)| !step.lockstep) {
-        scalar_writes(p, step)?;
         let n_rows = step.input.view(&p.kinds).ok_or("dispatch input table is missing")?.1;
         let id = runner.load_bundle(&fusion::motion_bundle(p, step, 0)).map_err(err)?;
         advance(&mut runner, id, n_rows != 0)?;
@@ -89,7 +67,6 @@ fn sample(g: &Gpu, p: &Program, seconds: f32, clock: Option<&Clock>) -> Result<(
     // Kinds that read each other's rows advance together, one tick at a time, in one bundle.
     let group: Vec<usize> = (0..p.dispatches.len()).filter(|&i| p.dispatches[i].lockstep).collect();
     if !group.is_empty() {
-        for &i in &group { scalar_writes(p, &p.dispatches[i])?; }
         let (bundle, tables) = fusion::motion_group(p, &group);
         let id = runner.load_bundle(&bundle).map_err(err)?;
         advance(&mut runner, id, true)?;
@@ -104,17 +81,11 @@ fn sample(g: &Gpu, p: &Program, seconds: f32, clock: Option<&Clock>) -> Result<(
 /// Stills sample a dispatch's writes as scalar f32 columns of its `Row`.
 fn scalar_writes(p: &Program, step: &loft_passes::program::Dispatch) -> Result<(), String> {
     let module = &p.modules[step.module].naga;
-    let row = module
-        .types
-        .iter()
-        .find_map(|(_, ty)| {
-            if ty.name.as_deref() == Some("Row")
-                && let naga::TypeInner::Struct { members, .. } = &ty.inner
-            {
-                Some(members)
-            } else {
-                None
-            }
+    let row = module.types.iter()
+        .find(|(_, ty)| ty.name.as_deref() == Some("Row"))
+        .and_then(|(_, ty)| {
+            let naga::TypeInner::Struct { members, .. } = &ty.inner else { return None };
+            Some(members)
         })
         .ok_or("missing state row layout")?;
     for (field, _) in &step.fields {
@@ -124,7 +95,9 @@ fn scalar_writes(p: &Program, step: &loft_passes::program::Dispatch) -> Result<(
                 && module.types[m.ty].inner == naga::TypeInner::Scalar(naga::Scalar::F32)
         }) {
             return Err(format!(
-                "still sampling requires scalar float writes, found {field}"
+                "law writes `{field}`, which is not a scalar float: native motion sampling reads only \
+                 scalar f32 law writes. Keep the vector field fixed and write scalars (e.g. `phase`, `x`) that \
+                 the pose or trace reads"
             ));
         }
     }

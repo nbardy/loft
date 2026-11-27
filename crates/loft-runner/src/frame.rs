@@ -1,6 +1,6 @@
 //! Frame entry points for hosts that also own presentation and timestamp readback.
 use super::*;
-pub use encode::{FrameOptions, FrameRecord, ModulePipelines, ModuleRecipe, PipelineCreates};
+pub use encode::{FrameOptions, FrameRecord, PipelineCreates};
 
 impl Runner {
     /// Prepare all cold pipeline misses together when the host already has its attachments.
@@ -44,15 +44,5 @@ impl Runner {
         let (device, caps) = (self.device.clone(), self.caps);
         let clock = encode::Clock { id, time, dt, to: (time * 120.).round() as u32, keep: 0, timer: None };
         self.instance(id)?.record_frame(&device, enc, clock, Some(&embed::Target { color, depth, caps }), options)
-    }
-
-
-    pub fn module_pipelines(&mut self, id: InstanceId, module: ModuleId) -> Result<(ModuleRecipe, ModulePipelines)> {
-        self.instance(id)?.compute.recipe(module)
-    }
-
-    pub fn install_module_pipelines(&mut self, id: InstanceId, module: ModuleId, pipes: &ModulePipelines) -> Result<()> {
-        self.instance(id)?.compute.install(module, pipes);
-        Ok(())
     }
 }

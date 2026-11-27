@@ -18,6 +18,7 @@ pub enum Work {
 pub struct Draw {
     pub decl: IndirectDraw,
     pub index: Option<(TableId, wgpu::IndexFormat)>,
+    pub vertex_layout: Option<(u64, Vec<wgpu::VertexAttribute>)>,
     pub state: Option<RasterState>,
 }
 pub struct Raster {
@@ -70,6 +71,7 @@ struct Shader {
 }
 struct Linker<'a> {
     tables: BTreeMap<TableId, &'a TableDecl>,
+    layouts: &'a [StructLayout],
     shaders: BTreeMap<ModuleId, Shader>,
     culling: &'a [PassId],
     raster: BTreeMap<PassId, RasterState>,
@@ -101,6 +103,7 @@ impl Schedule {
         if raster.len() != exec.raster.len() { return Err(RunnerError::AbiMismatch); }
         let mut link = Linker {
             tables: b.tables.iter().filter(|t| t.id != execution::DESCRIPTOR).map(|t| (t.id, t)).collect(),
+            layouts: &b.struct_layouts,
             shaders,
             culling: &b.resources.cull_front,
             raster,
@@ -117,7 +120,8 @@ impl Schedule {
     }
 }
 
-pub(crate) fn descriptor(b: &Bundle) -> Result<Execution> {
+/// Decode the single reserved execution descriptor. Legacy bundles can omit it.
+pub fn descriptor(b: &Bundle) -> Result<Execution> {
     let mut descriptors = b.tables.iter().filter(|t| t.id == execution::DESCRIPTOR);
     let Some(table) = descriptors.next() else { return Ok(Execution::default()) };
     if descriptors.next().is_some() { return Err(RunnerError::AbiMismatch); }
@@ -250,10 +254,6 @@ impl Linker<'_> {
         let draws = draws
             .iter()
             .map(|d| {
-                if let Some(id) = d.vertex {
-                    let table = self.tables.get(&id).ok_or(RunnerError::UnknownResource)?;
-                    if table.stride_bytes == 0 { return Err(RunnerError::AbiMismatch); }
-                }
                 if !self.tables.contains_key(&d.args) {
                     return Err(RunnerError::UnknownResource);
                 }
@@ -284,7 +284,13 @@ impl Linker<'_> {
                 if !colors.is_empty() || !d.fragment_entry.is_empty() {
                     stage(ShaderStage::Fragment, &d.fragment_entry, S::FRAGMENT)?;
                 }
-                Ok(Draw { decl: d.clone(), index, state })
+                let vertex_layout = if let Some(id) = d.vertex {
+                    let table = self.tables.get(&id).ok_or(RunnerError::UnknownResource)?;
+                    vertex_layout(&shader.ir, &d.vertex_entry, table, self.layouts)?
+                } else {
+                    None
+                };
+                Ok(Draw { decl: d.clone(), index, vertex_layout, state })
             })
             .collect::<Result<_>>()?;
         let targets = Attachments {
@@ -301,6 +307,66 @@ impl Linker<'_> {
             groups(p, reflected, S::FRAGMENT)?,
         ))
     }
+}
+
+fn vertex_layout(
+    ir: &naga::Module, entry: &str, table: &TableDecl, layouts: &[StructLayout],
+) -> Result<Option<(u64, Vec<wgpu::VertexAttribute>)>> {
+    use naga::{Binding, Scalar, TypeInner};
+    use wgpu::VertexFormat as V;
+
+    let stride = u64::from(table.stride_bytes);
+    if stride == 0 || !stride.is_multiple_of(4) {
+        return Err(RunnerError::AbiMismatch);
+    }
+    let offsets = if let ElemFormat::Struct(index) = table.format {
+        let layout = layouts.get(index as usize).ok_or(RunnerError::AbiMismatch)?;
+        if layout.stride_bytes != table.stride_bytes { return Err(RunnerError::AbiMismatch); }
+        Some(layout.offsets.as_ref())
+    } else {
+        None
+    };
+    let mut attrs = Vec::new();
+    let mut attribute = |ty: naga::Handle<naga::Type>, binding: Option<&Binding>| -> Result<()> {
+        let Some(&Binding::Location { location, .. }) = binding else { return Ok(()) };
+        let (scalar, lanes) = if let TypeInner::Scalar(scalar) = ir.types[ty].inner {
+            (scalar, 1)
+        } else if let TypeInner::Vector { size, scalar } = ir.types[ty].inner {
+            (scalar, size as usize)
+        } else {
+            return Err(RunnerError::AbiMismatch);
+        };
+        let (element, formats) = match scalar {
+            Scalar::F32 => (ElemFormat::F32, [V::Float32, V::Float32x2, V::Float32x3, V::Float32x4]),
+            Scalar::I32 => (ElemFormat::I32, [V::Sint32, V::Sint32x2, V::Sint32x3, V::Sint32x4]),
+            Scalar::U32 => (ElemFormat::U32, [V::Uint32, V::Uint32x2, V::Uint32x3, V::Uint32x4]),
+            _ => return Err(RunnerError::Unsupported("vertex attribute scalar type")),
+        };
+        // A plain table supplies location 0. A struct table indexes its byte offsets by location.
+        let offset = match offsets {
+            Some(offsets) => u64::from(*offsets.get(location as usize).ok_or(RunnerError::AbiMismatch)?),
+            None if location == 0 && table.format == element => 0,
+            None => return Err(RunnerError::AbiMismatch),
+        };
+        let format = formats[lanes - 1];
+        if !offset.is_multiple_of(4) || offset + format.size() > stride {
+            return Err(RunnerError::AbiMismatch);
+        }
+        attrs.push(wgpu::VertexAttribute { format, offset, shader_location: location });
+        Ok(())
+    };
+    let vertex = ir.entry_points.iter().find(|e| e.name == entry && e.stage == ShaderStage::Vertex)
+        .ok_or(RunnerError::AbiMismatch)?;
+    for arg in &vertex.function.arguments {
+        if let TypeInner::Struct { members, .. } = &ir.types[arg.ty].inner {
+            for member in members {
+                attribute(member.ty, member.binding.as_ref())?;
+            }
+        } else {
+            attribute(arg.ty, arg.binding.as_ref())?;
+        }
+    }
+    Ok((!attrs.is_empty()).then_some((stride, attrs)))
 }
 
 impl Shader {
