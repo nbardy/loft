@@ -1,5 +1,5 @@
 use crate::{budget::Failure, flag, sources};
-use loft_cli::{shader_hashes, write_json};
+use loft_cli::{percentile_nearest_rank, shader_hashes, write_json};
 use loft_cli::native::{self, FrameTiming, Loaded};
 use loft_passes::program::Program;
 use loft_passes::telemetry::{self, ModuleTelemetry};
@@ -135,8 +135,8 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
         println!(
             "{} frames, GPU p50 {:.3} ms, p95 {:.3} ms ({}), load control p50 {c0:.3} before / {c1:.3} after{}",
             frames,
-            times[(times.len() * 50).div_ceil(100) - 1],
-            times[(times.len() * 95).div_ceil(100) - 1],
+            percentile_nearest_rank(&times, 0.5),
+            percentile_nearest_rank(&times, 0.95),
             report.adapter,
             if contended { ": CONTENDED, do not trust these times" } else { "" }
         );

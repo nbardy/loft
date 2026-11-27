@@ -35,7 +35,7 @@ fn_body:     "=" (expr | block) | block
 
 scan_decl:   "scan" LIDENT LIDENT "in" expr ".." expr "by" INT "on" LIDENT "{" _NL? "init" "=" expr _sep "step" LIDENT "=" expr _sep? "}"
 
-kind_decl:   "kind" UIDENT var_params? "@" kind_ref "(" col_list? ")" "{" (_NL? kind_item (_sep kind_item)* _sep?)? "}"
+kind_decl:   "kind" UIDENT var_params? "@" kind_ref ("(" col_list? ")")? "{" (_NL? kind_item (_sep kind_item)* _sep?)? "}"
 var_params:  "[" var_param ("," var_param)* ","? "]"
 var_param:   LIDENT ":" type_expr ("in" expr ".." expr)?
 col_list:    col ("," col)* ","?
@@ -105,7 +105,11 @@ pipe_expr:   or_expr ("|>" pipe_rhs)*
 pipe_rhs:    LIDENT ("(" call_args? ")")?
 or_expr:     and_expr ("||" and_expr)*
 and_expr:    cmp_expr ("&&" cmp_expr)*
-cmp_expr:    add_expr (("==" | "!=" | "<" | "<=" | ">" | ">=") add_expr)?
+cmp_expr:    bit_or_expr (("==" | "!=" | "<" | "<=" | ">" | ">=") bit_or_expr)*
+bit_or_expr: bit_xor_expr ("|" bit_xor_expr)*
+bit_xor_expr: bit_and_expr ("^" bit_and_expr)*
+bit_and_expr: shift_expr ("&" shift_expr)*
+shift_expr:  add_expr (("<<" | ">>") add_expr)*
 add_expr:    mul_expr (("+" | "-") mul_expr)*
 mul_expr:    unary_expr (("*" | "/" | "%") unary_expr)*
 unary_expr:  ("-" | "!") unary_expr | postfix_expr
@@ -136,7 +140,7 @@ unit_atom: (UNIT_SYM | "1") ("^" "-"? INT)?
 UNIT_SYM: "mm" | "m" | "rad" | "deg" | "s" | "kg" | "N" | "J" | "Hz"
 unit_number: NUM_UNIT ("^" "-"? INT)? (("*" | "/") unit_atom)*
 NUM_UNIT: /[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?(mm|m|rad|deg|s|kg|N|J|Hz)/
-NUMBER:      /0x[0-9a-fA-F]+|[0-9]+[ui]|[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?/
+NUMBER:      /0x[0-9a-fA-F]+|[0-9]+([ui]|(\.[0-9]+)?([eE][+-]?[0-9]+)?)/
 UIDENT:      /[A-Z][a-zA-Z0-9_]*/
 LIDENT:      /[a-z_][a-zA-Z0-9_]*/
 IDENT:       UIDENT | LIDENT

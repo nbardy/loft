@@ -749,21 +749,45 @@ fn run_selected(approve: bool, only: Option<&str>, selected: &[Gate]) -> Result<
     result(&checks)
 }
 
-fn result(checks:&[Check])->Result<(),Failure>{
-    let failed_in = |gate| checks.iter().any(|c| c.gate == gate && !c.contended && !matches!(c.verdict, Verdict::Held { .. }));
-    let failed=checks.iter().filter(|c| !c.contended && !matches!(c.verdict, Verdict::Held { .. })).count();
+fn result(checks: &[Check]) -> Result<(), Failure> {
+    let failures = || checks.iter().filter(|c| !c.contended && !matches!(c.verdict, Verdict::Held { .. }));
+    let failed_in = |gate| failures().any(|c| c.gate == gate);
+    let failed = failures().count();
     let message = format!("{failed} checks failed");
     if failed_in(Gate::Truth) { Err(Failure::Truth(message)) }
     else if failed_in(Gate::Pictures) || failed_in(Gate::Twin) { Err(Failure::Parity(message)) }
     else if failed_in(Gate::Load) { Err(Failure::Load(message)) }
     else if failed != 0 { Err(Failure::Budget(message)) }
+    // Contention prevents a timing verdict even when every other check holds.
+    else if let Some(check) = checks.iter().find(|c| c.contended) {
+        Err(Failure::Device(format!("{:?} {}: {} (contended)", check.gate, check.scene, check.verdict)))
+    }
     else { Ok(()) }
-
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn contention_fails_only_after_other_gate_failures() {
+        let check = |gate, contended, verdict| Check {
+            gate,
+            scene: "capsules-1".into(),
+            what: "test check".into(),
+            verdict,
+            contended,
+        };
+        let mut checks = Vec::from(GATES.map(|gate| check(gate, false, Verdict::Held { margin: 0.0 })));
+        assert!(result(&checks).is_ok());
+        checks.push(check(Gate::Speed, true, Verdict::Unknown { reason: "busy GPU".into() }));
+        assert!(matches!(result(&checks), Err(Failure::Device(_))));
+        for (gate, exit) in [(Gate::Speed, 7), (Gate::Load, 4), (Gate::Twin, 3), (Gate::Pictures, 3), (Gate::Truth, 2)] {
+            checks.push(check(gate, false, Verdict::Missed { by: 1.0 }));
+            assert_eq!(result(&checks).unwrap_err().exit().0, exit);
+            checks.pop();
+        }
+    }
 
     #[test]
     fn required_frames_and_selections_are_strict() {
