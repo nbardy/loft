@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, HashSet};
 fn tty(t: &TyExpr) -> TyExpr {
     match t {
         TyExpr::Geo(Geo::Pt | Geo::Dir | Geo::Norm, s) => TyExpr::Geo(Geo::Vec, s.clone()),
-        other @ (TyExpr::Name(_) | TyExpr::Generic(..) | TyExpr::Array(..) | TyExpr::Geo(..) | TyExpr::Xform(..) | TyExpr::Field(_) | TyExpr::Frame(_) | TyExpr::Table(_)) => other.clone(),
+        other @ (TyExpr::Name(_) | TyExpr::Array(..) | TyExpr::Geo(..) | TyExpr::Xform(..) | TyExpr::Field(_) | TyExpr::Frame(_) | TyExpr::Table(_)) => other.clone(),
     }
 }
 
@@ -53,20 +53,90 @@ impl Ad<'_> {
     /// A deep copy with fresh ids (the checker types every node by id).
     fn cp(&mut self, x: &Expr) -> Expr {
         let kind = match &x.kind {
-            ExprKind::Unproved { .. } | ExprKind::FiniteDiff { .. } | ExprKind::If { .. } => x.kind.clone(),
+            ExprKind::Unproved { step_scale, body } => ExprKind::Unproved {
+                step_scale: Box::new(self.cp(step_scale)),
+                body: self.cp_arm(body),
+            },
+            ExprKind::FiniteDiff { function, parameter, args } => ExprKind::FiniteDiff {
+                function: function.clone(),
+                parameter: parameter.clone(),
+                args: self.cp_args(args),
+            },
+            ExprKind::If { condition, then, otherwise, cases } => ExprKind::If {
+                condition: Box::new(self.cp(condition)),
+                then: self.cp_arm(then),
+                otherwise: self.cp_arm(otherwise),
+                cases: cases.as_ref().map(|cases| Box::new(MatchCases {
+                    first: cases.first,
+                    rest: cases.rest.iter().map(|(key, value)| (*key, self.cp(value))).collect(),
+                })),
+            },
             ExprKind::Num { value, suffix, text, float } => ExprKind::Num { value: *value, suffix: *suffix, text: text.clone(), float: *float },
             ExprKind::Bool(b) => ExprKind::Bool(*b),
             ExprKind::String(s) => ExprKind::String(s.clone()),
             ExprKind::Name(n) => ExprKind::Name(n.clone()),
             ExprKind::Member(b, m) => ExprKind::Member(Box::new(self.cp(b)), m.clone()),
             ExprKind::Index(a, i) => ExprKind::Index(Box::new(self.cp(a)), Box::new(self.cp(i))),
-            ExprKind::Call { callee, args } => ExprKind::Call { callee: callee.clone(), args: args.iter().map(|a| Arg { name: a.name.clone(), value: self.cp(&a.value) }).collect() },
-            ExprKind::Ctor { ty, args } => ExprKind::Ctor { ty: ty.clone(), args: args.iter().map(|a| Arg { name: a.name.clone(), value: self.cp(&a.value) }).collect() },
+            ExprKind::Call { callee, args } => ExprKind::Call { callee: callee.clone(), args: self.cp_args(args) },
+            ExprKind::Ctor { ty, args } => ExprKind::Ctor { ty: ty.clone(), args: self.cp_args(args) },
             ExprKind::Binary(op, a, b) => ExprKind::Binary(*op, Box::new(self.cp(a)), Box::new(self.cp(b))),
             ExprKind::Unary(op, a) => ExprKind::Unary(*op, Box::new(self.cp(a))),
         };
         self.e(x.span, kind)
     }
+    fn cp_args(&mut self, args: &[Arg]) -> Vec<Arg> {
+        args.iter().map(|a| Arg { name: a.name.clone(), value: self.cp(&a.value) }).collect()
+    }
+
+    fn cp_arm(&mut self, arm: &ExprBlock) -> ExprBlock {
+        ExprBlock { body: self.cp_block(&arm.body), value: Box::new(self.cp(&arm.value)) }
+    }
+
+    fn cp_block(&mut self, block: &Block) -> Block {
+        let stmts = block.stmts.iter().map(|stmt| match stmt {
+            Stmt::Let { mutable, name, ty, value } => Stmt::Let {
+                mutable: *mutable, name: name.clone(), ty: ty.clone(), value: self.cp(value),
+            },
+            Stmt::Assign { target, op, value } => Stmt::Assign {
+                target: self.cp(target), op: *op, value: self.cp(value),
+            },
+            Stmt::Map { name, head, stages } => Stmt::Map {
+                name: name.clone(),
+                head: self.cp(head),
+                stages: stages.iter().map(|(name, args)| {
+                    (name.clone(), args.iter().map(|arg| self.cp(arg)).collect())
+                }).collect(),
+            },
+            Stmt::Return(value, span) => Stmt::Return(value.as_ref().map(|e| self.cp(e)), *span),
+            Stmt::If { cond, then, otherwise } => Stmt::If {
+                cond: self.cp(cond),
+                then: self.cp_block(then),
+                otherwise: otherwise.as_ref().map(|b| self.cp_block(b)),
+            },
+            Stmt::Each { var, values, body, span } => Stmt::Each {
+                var: var.clone(),
+                values: values.iter().map(|value| self.cp(value)).collect(),
+                body: self.cp_block(body),
+                span: *span,
+            },
+            Stmt::For { comptime, var, lo, hi, body, span } => Stmt::For {
+                comptime: *comptime, var: var.clone(), lo: self.cp(lo), hi: self.cp(hi),
+                body: self.cp_block(body), span: *span,
+            },
+            Stmt::Emit { kind, fields, span, bind } => Stmt::Emit {
+                kind: kind.clone(),
+                fields: fields.iter().map(|(name, value)| (name.clone(), self.cp(value))).collect(),
+                span: *span,
+                bind: bind.clone(),
+            },
+            Stmt::ImportTable { kind, path, index, span } => Stmt::ImportTable {
+                kind: kind.clone(), path: path.clone(), index: self.cp(index), span: *span,
+            },
+            Stmt::Expr(e) => Stmt::Expr(self.cp(e)),
+        }).collect();
+        Block { stmts }
+    }
+
     /// The tangent, or a zero of the primal's tangent type.
     fn dz(&mut self, x: &Expr) -> Res<Expr> {
         match self.d(x)? {
@@ -95,7 +165,10 @@ impl Ad<'_> {
             ExprKind::Unproved { .. } | ExprKind::FiniteDiff { .. } => return Err(Diag::new(
                 Code::E307, sp, "automatic differentiation crosses a numerical derivative boundary",
                 "use finite differences inside unproved geometry")),
-            ExprKind::If { .. } => return Err(Diag::new(Code::E307, x.span, "conditional expression has no smooth derivative", "use a smooth blend")),
+            ExprKind::If { condition, cases: Some(_), .. } => return Err(Diag::new(
+                Code::E307, condition.span, "match may switch arms at the differentiated input",
+                "differentiate the smooth arm expressions or use a smooth blend")),
+            ExprKind::If { cases: None, .. } => return Err(Diag::new(Code::E307, x.span, "conditional expression has no smooth derivative", "use a smooth blend")),
             ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::String(_) => None,
             ExprKind::Name(n) => self.live.contains(n).then(|| self.name(&format!("{n}__t"), sp)),
             ExprKind::Member(b, m) => {
@@ -164,7 +237,14 @@ impl Ad<'_> {
                     };
                     self.add(l, r, true)
                 }
-                BinOp::Rem | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::Eq | BinOp::Ne | BinOp::And | BinOp::Or | BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => None,
+                BinOp::Rem => {
+                    if self.d(a)?.is_some() || self.d(b)?.is_some() {
+                        return Err(Diag::new(Code::E307, sp, "remainder has a jump discontinuity",
+                            "keep the remainder outside the differentiated expression"));
+                    }
+                    None
+                }
+                BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::Eq | BinOp::Ne | BinOp::And | BinOp::Or | BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => None,
             },
             ExprKind::Ctor { ty, args } => {
                 let ds: Vec<Option<Expr>> = args.iter().map(|a| self.d(&a.value)).collect::<Res<_>>()?;
@@ -173,7 +253,7 @@ impl Ad<'_> {
                 }
                 let ty = match ty {
                     TyExpr::Geo(Geo::Pt | Geo::Vec, s) => TyExpr::Geo(Geo::Vec, s.clone()),
-                    TyExpr::Name(_) | TyExpr::Generic(..) => ty.clone(),
+                    TyExpr::Name(_) => ty.clone(),
                     TyExpr::Array(..) | TyExpr::Geo(..) | TyExpr::Xform(..) | TyExpr::Field(_) | TyExpr::Table(_) | TyExpr::Frame(_) => return Err(refuse("this constructor")),
                 };
                 let mut out = vec![];
@@ -437,11 +517,11 @@ impl Ad<'_> {
     fn jvp(&mut self, f: &FnDecl, active: &[bool]) -> Res<FnDecl> {
         if f.raw.is_some(){return Err(Diag::new(Code::E307,f.name.span,"raw WGSL has no symbolic derivative","write the differentiated function in Loft"))}
         self.live.clear();
-        let mut params: Vec<Param> = f.params.iter().map(|p| Param { name: p.name.clone(), ty: p.ty.clone() }).collect();
+        let mut params: Vec<Param> = f.params.clone();
         for (p, active) in f.params.iter().zip(active) {
             if *active && let Some(t) = &p.ty {
                 self.live.insert(p.name.name.clone());
-                params.push(Param { name: Ident { name: format!("{}__t", p.name.name), span: p.name.span }, ty: Some(tty(t)) });
+                params.push(Param { default: None, name: Ident { name: format!("{}__t", p.name.name), span: p.name.span }, ty: Some(tty(t)) });
             }
         }
         let body = self.block(&f.body)?;
@@ -498,7 +578,7 @@ pub fn run(modules: &mut Vec<Module>, next: &mut u32) -> Res<()> {
                 comptime: false,
                 attrs: vec![],
                 name: Ident { name: format!("{}__d_{}", f.name, x.name), span: sp },
-                params: decl.params.iter().map(|p| Param { name: p.name.clone(), ty: p.ty.clone() }).collect(),
+                params: decl.params.clone(),
                 ret: decl.ret.as_ref().map(tty),
                 body: Block { stmts: vec![Stmt::Return(Some(call), sp)] },
             });
@@ -538,10 +618,88 @@ pub fn run(modules: &mut Vec<Module>, next: &mut u32) -> Res<()> {
     for (k, f) in in_kinds {
         let kd = modules.iter_mut().flat_map(|m| m.items.iter_mut()).find_map(|item| match item {
             Item::Kind(kd) if kd.name.name == k => Some(kd),
-            Item::World(..) | Item::Bake(_) | Item::Kernel(_) | Item::Struct(..) | Item::TypeAlias(..) | Item::Build(_) | Item::Use(_) | Item::Law(_) | Item::Check(_) | Item::Camera(_) | Item::Kind(_) | Item::Space(_) | Item::Unit(_) | Item::Const(_) | Item::Fn(_) | Item::Scan(_) | Item::Schedule(_) => None,
+            Item::World(..) | Item::Bake(_) | Item::Kernel(_) | Item::Struct(..) | Item::TypeAlias(..) | Item::Build(_) | Item::Use(_) | Item::Law(_) | Item::Check(_) | Item::Camera(_) | Item::Target(_) | Item::Kind(_) | Item::Space(_) | Item::Const(_) | Item::Fn(_) | Item::Scan(_) | Item::Schedule(_) => None,
         });
         kd.expect("the kind the jvp came from").fns.push(f);
     }
     modules.push(Module { items: top.into_iter().map(Item::Fn).collect(), ..Module::default() });
     Ok(())
+}
+
+#[cfg(test)]
+mod soundness_tests {
+    use super::*;
+
+    fn ids(expr: &Expr) -> HashSet<u64> {
+        fn collect(value: &serde_json::Value, ids: &mut HashSet<u64>) {
+            match value {
+                serde_json::Value::Object(fields) => {
+                    if let Some(id) = fields.get("id").and_then(serde_json::Value::as_u64) {
+                        assert!(ids.insert(id), "duplicate expression id {id}");
+                    }
+                    for field in fields.values() {
+                        collect(field, ids);
+                    }
+                }
+                serde_json::Value::Array(items) => {
+                    for item in items {
+                        collect(item, ids);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut result = HashSet::new();
+        collect(&serde_json::to_value(expr).unwrap(), &mut result);
+        result
+    }
+
+    #[test]
+    fn copies_all_expression_ids_through_nested_arms() {
+        let mut next = 0;
+        let mut ad = Ad { orig: BTreeMap::new(), next: &mut next, todo: vec![], live: HashSet::new() };
+        let span = Span::NONE;
+        let name = Ident { name: "x".into(), span };
+        let arg = Arg { name: Some(name.clone()), value: ad.num(0.25, span) };
+        let finite = ad.e(span, ExprKind::FiniteDiff {
+            function: name.clone(), parameter: name.clone(), args: vec![arg],
+        });
+        let value = ad.name(&name.name, span);
+        let step_scale = ad.num(0.5, span);
+        let unproved = ad.e(span, ExprKind::Unproved {
+            step_scale: Box::new(step_scale),
+            body: ExprBlock {
+                body: Block { stmts: vec![Stmt::Let {
+                    mutable: false, name, ty: None, value: finite,
+                }] },
+                value: Box::new(value),
+            },
+        });
+        let condition = ad.e(span, ExprKind::Bool(true));
+        let value = ad.num(0.0, span);
+        let expr = ad.e(span, ExprKind::If {
+            condition: Box::new(condition),
+            then: ExprBlock { body: Block { stmts: vec![] }, value: Box::new(unproved) },
+            otherwise: ExprBlock { body: Block { stmts: vec![] }, value: Box::new(value) },
+            cases: None,
+        });
+        let original = ids(&expr);
+        let copied = ids(&ad.cp(&expr));
+        assert_eq!(original.len(), copied.len());
+        assert!(original.is_disjoint(&copied));
+    }
+
+    #[test]
+    fn remainder_rejects_either_active_operand() {
+        let mut next = 0;
+        let mut ad = Ad { orig: BTreeMap::new(), next: &mut next, todo: vec![], live: HashSet::new() };
+        let x = ad.name("x", Span::NONE);
+        let y = ad.name("y", Span::NONE);
+        let rem = ad.bin(BinOp::Rem, x, y);
+        assert!(ad.d(&rem).unwrap().is_none());
+        for active in ["x", "y"] {
+            ad.live = HashSet::from([active.into()]);
+            assert_eq!(ad.d(&rem).unwrap_err().code, Code::E307);
+        }
+    }
 }

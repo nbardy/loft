@@ -3,8 +3,8 @@ use crate::{
     bundle::{Resources, Role},
     error::*,
 };
-use loft_ir::*;
-use std::collections::BTreeSet;
+use loft_ir::{*, execution::{self, Execution, SamplerSpec}};
+use std::collections::{BTreeMap, BTreeSet};
 use wgpu::TextureUsages as T;
 
 pub enum Allocation {
@@ -12,17 +12,25 @@ pub enum Allocation {
     ExternalBuffer,
     Texture,
     Attachment(TextureDecl),
-    Sampler,
+    Sampler(Option<SamplerSpec>),
     AccelerationStructure,
     HostAttachment,
 }
 
 pub fn allocations<'a>(b: &'a Bundle, limits: &wgpu::Limits) -> Result<Vec<(&'a TableDecl, u32, Allocation)>> {
+    allocations_with_execution(b, limits, &crate::schedule::descriptor(b)?)
+}
+
+pub fn allocations_with_execution<'a>(
+    b: &'a Bundle, limits: &wgpu::Limits, exec: &Execution,
+) -> Result<Vec<(&'a TableDecl, u32, Allocation)>> {
     let roles = Resources::new(b)?;
+    let mut samplers: BTreeMap<_, _> = exec.samplers.iter().map(|spec| (spec.table, *spec)).collect();
+    if samplers.len() != exec.samplers.len() { return Err(RunnerError::AbiMismatch); }
     let mut seen = BTreeSet::new();
     let mut buffers = BTreeSet::new();
     let mut out = Vec::new();
-    for t in &b.tables {
+    for t in b.tables.iter().filter(|t| t.id != execution::DESCRIPTOR) {
         let role = roles.role(t.id);
         if !seen.insert(t.id)
             || t.stride_bytes == 0
@@ -48,7 +56,7 @@ pub fn allocations<'a>(b: &'a Bundle, limits: &wgpu::Limits) -> Result<Vec<(&'a 
             Role::Buffer => Allocation::Buffer(bounds(t, t.capacity, limits)?),
             Role::Texture => Allocation::Texture,
             Role::Attachment(desc) => Allocation::Attachment(desc),
-            Role::Sampler => Allocation::Sampler,
+            Role::Sampler => Allocation::Sampler(samplers.remove(&t.id)),
             Role::AccelerationStructure => Allocation::AccelerationStructure,
             Role::HostAttachment => Allocation::HostAttachment,
         };
@@ -57,6 +65,7 @@ pub fn allocations<'a>(b: &'a Bundle, limits: &wgpu::Limits) -> Result<Vec<(&'a 
     if b.rows.values().any(|id| !buffers.contains(id)) {
         return Err(RunnerError::UnknownResource);
     }
+    if !samplers.is_empty() { return Err(RunnerError::AbiMismatch); }
     Ok(out)
 }
 
@@ -95,14 +104,14 @@ pub fn attachment(t: TextureDecl, limits: &wgpu::Limits) -> Result<wgpu::Texture
         || width.max(height) > limits.max_texture_dimension_2d
         || layers != 1
         || !matches!(t.samples, 1 | 4)
-        || (t.samples == 4 && matches!(t.format, ImageFormat::Rgba16Float | ImageFormat::Rgba32Float))
+        || (t.samples == 4 && matches!(t.format, ImageFormat::Rgba32Float))
         || t.clear.is_some_and(|clear| clear.iter().any(|v| !v.is_finite()))
     {
         return Err(RunnerError::AbiMismatch);
     }
     let mut usage = T::TEXTURE_BINDING | T::RENDER_ATTACHMENT;
     if t.samples == 1 { usage |= T::COPY_SRC; }
-    if matches!(t.format, ImageFormat::Rgba16Float | ImageFormat::Rgba32Float) {
+    if t.samples == 1 && matches!(t.format, ImageFormat::Rgba16Float | ImageFormat::Rgba32Float) {
         usage |= T::STORAGE_BINDING;
     }
     Ok(wgpu::TextureDescriptor {
@@ -158,11 +167,21 @@ pub fn create(d: &wgpu::Device, q: &wgpu::Queue, t: &TableDecl, alloc: Allocatio
             let tex = d.create_texture(&attachment(desc,&d.limits())?);
             Resource::Attachment(tex.create_view(&Default::default()),desc)
         }
-        Allocation::Sampler => Resource::Sampler(d.create_sampler(&wgpu::SamplerDescriptor {
-            mag_filter: wgpu::FilterMode::Linear, min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Linear,
-            compare: comparison.then_some(wgpu::CompareFunction::LessEqual), ..Default::default()
-        })),
+        Allocation::Sampler(spec) => {
+            let nearest = spec.is_some_and(|sampler| sampler.nearest);
+            let filter = if nearest { wgpu::FilterMode::Nearest } else { wgpu::FilterMode::Linear };
+            let mipmap_filter = if nearest { wgpu::MipmapFilterMode::Nearest } else { wgpu::MipmapFilterMode::Linear };
+            let address = if spec.is_some_and(|sampler| sampler.repeat) {
+                wgpu::AddressMode::Repeat
+            } else {
+                wgpu::AddressMode::ClampToEdge
+            };
+            Resource::Sampler(d.create_sampler(&wgpu::SamplerDescriptor {
+                mag_filter: filter, min_filter: filter, mipmap_filter,
+                address_mode_u: address, address_mode_v: address, address_mode_w: address,
+                compare: comparison.then_some(wgpu::CompareFunction::LessEqual), ..Default::default()
+            }))
+        }
         Allocation::AccelerationStructure => Resource::AccelerationStructure(crate::ray_query::build_aabbs(d, q, t)?),
         Allocation::HostAttachment => Resource::HostAttachment,
     })

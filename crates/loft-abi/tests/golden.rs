@@ -11,36 +11,10 @@ macro_rules! layout {
 fn storage_layouts() {
     assert_eq!((size_of::<MeshAsset>(), align_of::<MeshAsset>()), (4, 4));
     layout!(MeshRow, 56, 4; pose=0, asset=48, lod=52);
-    layout!(BodyRow, 112, 16; com_local=0, mass=12, inv_inertia=16, inv_mass=64, rest_h=68, tc=72, mu=76, strength=80, chain_start=84, chain_count=88, seg_start=92, seg_count=96, eye_chain=100, flags=104, pad=108);
-    layout!(ChainRow, 112, 16; socket_pos=0, role=12, socket_rot=16, rest_end=32, ik_kind=44, lens=48, pitch_lo=64, pitch_hi=68, yaw_lo=72, yaw_hi=76, twist_lo=80, twist_hi=84, mu_s=88, mu_k=92, max_load=96, seg_count=100, pose_offset=104, neighbours=108);
-    layout!(SegmentRow, 48, 16; rest_pos=0, mass=12, rest_rot=16, half_extents=32, parent_seg=44);
-    layout!(CreatureHeader, 176, 16; pos=0, composure=12, vel=16, squash_q=28, acc=32, squash_v=44, rot=48, omega=64, tick=76, prev_rot=80, head_world=96, yaw_unwrapped=108, skull_q=112, bob_phase=128, handoff=132, glance_err=136, pad=140, body_id=144, feet_start=148, feet_count=152, manip_start=156, manip_count=160, trail_start=164, hit_window=168, chained_hits=172);
-    layout!(FootPin, 80, 16; local_p=0, lift=12, local_n=16, f_n=28, from_p=32, f_t=44, aim_p=48, phase=60, surface_id=64, mode=68, dur=72, down_t=76);
-    layout!(ManipState, 32, 16; target=0, authority=12, vel=16, active=28);
-    layout!(TrailNode, 32, 16; pos=0, inv_m=12, prev=16, pad=28);
-    layout!(PoseJoint, 32, 16; pos=0, scale=12, rot=16);
     layout!(BvhNode, 32, 16; lo=0, left_or_first=12, hi=16, count=28);
     layout!(LeafRef, 8, 4; kind_id=0, row_id=4);
     layout!(VerdictRecord, 32, 4; constraint_id=0, instance_id=4, site_id=8, tick=12, tag=16, reason_code=20, value=24, law_hash_lo=28);
     layout!(AdvanceArgs, 12, 4; from_tick=0, to_tick=4, keep_stride=8);
-}
-
-#[test]
-fn reference_motion_footprints() {
-    for (feet, manipulators, trail, joints, state_bytes, pose_bytes) in [
-        (2, 0, 0, 16, 336, 512),
-        (8, 0, 0, 25, 816, 800),
-        (8, 2, 64, 96, 2928, 3072),
-    ] {
-        assert_eq!(
-            size_of::<CreatureHeader>()
-                + feet * size_of::<FootPin>()
-                + manipulators * size_of::<ManipState>()
-                + trail * size_of::<TrailNode>(),
-            state_bytes
-        );
-        assert_eq!(joints * size_of::<PoseJoint>(), pose_bytes);
-    }
 }
 
 #[test]

@@ -1,5 +1,5 @@
 use loft_cli::{budget::{self, Failure}, flag, sources, write_json};
-use loft_cli::native::{self, FrameTiming, Gpu, Loaded};
+use loft_cli::native::{self, FrameTiming, Gpu, Loaded, QUIET_CONTROL_P50_MS};
 use loft_passes::{
     emit::Aov,
     program::{Pass, Program, ShaderModule},
@@ -10,7 +10,6 @@ use std::{path::Path, time::Instant};
 
 const SIZE: (u32, u32) = (1280, 800);
 const WARMUP: usize = 30;
-const CONTENDED_MS: f64 = 0.35;
 const LIMIT: f64 = 1.05;
 const BOOTSTRAPS: usize = 4096;
 const BLOCK: usize = 10;
@@ -690,11 +689,29 @@ enum Arm {
 struct TimingBlock {
     arm: Arm,
     passes: Vec<String>,
-    triangle_p50_ms: f64,
+    load_control_before_p50_ms: f64,
+    load_control_after_p50_ms: f64,
     frame_time_bits: Vec<u32>,
     frames: Vec<FrameTiming>,
     subject_ms: Vec<f64>,
     whole_frame_ms: Vec<f64>,
+}
+
+impl TimingBlock {
+    fn contended(&self) -> bool {
+        self.load_control_before_p50_ms > QUIET_CONTROL_P50_MS
+            || self.load_control_after_p50_ms > QUIET_CONTROL_P50_MS
+    }
+}
+
+fn whole_frame_ticks(ticks: &[u64]) -> Option<u64> {
+    // Reused static shadows occupy a slot in pass order with no timestamps.
+    let mut pairs = ticks.chunks_exact(2).filter(|pair| *pair != [0, 0]);
+    let pair = pairs.next()?;
+    let (first, last) = pairs.fold((pair[0], pair[1]), |(first, last), pair| {
+        (first.min(pair[0]), last.max(pair[1]))
+    });
+    Some(last - first)
 }
 
 fn block(
@@ -704,18 +721,19 @@ fn block(
     scene: &Loaded,
     p: &Program,
 ) -> Result<TimingBlock, Failure> {
-    let triangle_p50_ms = g.triangle_control_ms(SIZE).map_err(Failure::Device)?;
     let times = (0..f.frames()).map(|i| f.time(i)).collect::<Vec<_>>();
     let warmup = (0..WARMUP).map(|i| match f {
         Fixture::Hermit => i as f32 / 30.0,
         Fixture::Shrine => 0.0,
     });
+    let [load_control_before_p50_ms, _] = g.load_control(SIZE).map_err(Failure::Device)?;
     let frames = scene
         .profile_frames(g, warmup.chain(times.iter().copied()), true)
         .map_err(Failure::Device)?
         .into_iter()
         .skip(WARMUP)
         .collect::<Vec<_>>();
+    let [load_control_after_p50_ms, _] = g.load_control(SIZE).map_err(Failure::Device)?;
     let period = f64::from(g.queue.get_timestamp_period()) * 1e-6;
     let indices = p
         .passes
@@ -740,14 +758,15 @@ fn block(
             .map(|&i| elapsed(frame.ticks[2 * i], frame.ticks[2 * i + 1]))
             .sum();
         subject_ms.push(duration);
-        let first = frame.ticks.iter().step_by(2).min().unwrap();
-        let last = frame.ticks.iter().skip(1).step_by(2).max().unwrap();
-        whole_frame_ms.push(elapsed(*first, *last));
+        let ticks = whole_frame_ticks(&frame.ticks)
+            .ok_or_else(|| Failure::Device(format!("frame {} has no GPU pass stamps", frame.serial)))?;
+        whole_frame_ms.push(ticks as f64 * period);
     }
     Ok(TimingBlock {
         arm,
         passes: p.passes.iter().map(|pass| format!("{pass:?}")).collect(),
-        triangle_p50_ms,
+        load_control_before_p50_ms,
+        load_control_after_p50_ms,
         frame_time_bits: times.into_iter().map(f32::to_bits).collect(),
         frames,
         subject_ms,
@@ -929,14 +948,14 @@ fn execute(
     )?;
     let pass = bootstrap(&blocks, |b| &b.subject_ms)?;
     let frame = bootstrap(&blocks, |b| &b.whole_frame_ms)?;
-    let contended = blocks.iter().any(|b| b.triangle_p50_ms > CONTENDED_MS);
+    let contended = blocks.iter().any(TimingBlock::contended);
     let slower = pass.ci_low > LIMIT;
     let point_flag = pass.ratio > LIMIT;
     write(
         "stats",
         &serde_json::json!({
             "fixture": f.name(), "mutant": mutant, "pass": pass, "frame": frame, "limit": LIMIT,
-            "contended": contended, "triangle_limit_ms": CONTENDED_MS, "parity_held": parity_held,
+            "contended": contended, "quiet_control_p50_ms": QUIET_CONTROL_P50_MS, "parity_held": parity_held,
             "measurably_slower": slower, "point_estimate_over_limit": point_flag,
             "interval_crosses_limit": pass.ci_low <= LIMIT && pass.ci_high > LIMIT,
             "elapsed_seconds": start.elapsed().as_secs_f64(), "bootstrap_block_frames": BLOCK,
@@ -945,14 +964,14 @@ fn execute(
     )?;
     let label = if mutant { " mutant" } else { "" };
     println!(
-        "{}{label}: p95 ratio {:.3}x (95% CI {:.3}–{:.3}), frame {:.3}x, parity {}, triangles {:?}{}",
+        "{}{label}: p95 ratio {:.3}x (95% CI {:.3}–{:.3}), frame {:.3}x, parity {}, load control p50 before/after {:?}{}",
         f.name(),
         pass.ratio,
         pass.ci_low,
         pass.ci_high,
         frame.ratio,
         if parity_held { "held" } else { "miss" },
-        blocks.iter().map(|b| b.triangle_p50_ms).collect::<Vec<_>>(),
+        blocks.iter().map(|b| [b.load_control_before_p50_ms, b.load_control_after_p50_ms]).collect::<Vec<_>>(),
         if point_flag {
             ", point estimate exceeds 1.05x"
         } else {
@@ -999,7 +1018,7 @@ impl Measurement {
         } = self;
         if contended {
             return Err(Failure::Device(format!(
-                "{name}{label}: triangle control exceeds {CONTENDED_MS:.2} ms"
+                "{name}{label}: load control p50 exceeds {QUIET_CONTROL_P50_MS:.2} ms before or after a block"
             )));
         }
         if pass.ci_low > LIMIT {
@@ -1092,6 +1111,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn frame_span_ignores_skipped_shadow_stamps() {
+        assert_eq!(whole_frame_ticks(&[1000, 1100, 0, 0, 1080, 1350, 1200, 1280]), Some(350));
+        assert_eq!(whole_frame_ticks(&[0, 0]), None);
+    }
+
+    #[test]
     fn only_a_conclusive_slowdown_uses_the_budget_exit() {
         let verdict = |ci_low, ci_high, contended, parity_held| {
             let ratio = (ci_low + ci_high) / 2.0;
@@ -1130,7 +1155,8 @@ mod tests {
             TimingBlock {
                 arm,
                 passes: vec![],
-                triangle_p50_ms: 0.0,
+                load_control_before_p50_ms: 0.0,
+                load_control_after_p50_ms: 0.0,
                 frame_time_bits: vec![],
                 frames: vec![],
                 subject_ms: (1..=100).map(|i| f64::from(i * i) * scale).collect(),

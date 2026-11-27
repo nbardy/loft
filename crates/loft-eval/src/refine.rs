@@ -50,7 +50,7 @@ impl Proof<'_, '_> {
                 Some(unknown(true))
             }
             ExprKind::FiniteDiff { .. } => unreachable!("finite differences occur within an opted-out body"),
-            ExprKind::If { condition, then, otherwise } => {
+            ExprKind::If { condition, then, otherwise, cases } => {
                 let row_condition = self.expr(condition, env)?.is_some_and(|v| v.row);
                 let mut result: Option<Term> = None;
                 for arm in [then, otherwise] {
@@ -62,13 +62,18 @@ impl Proof<'_, '_> {
                         (a, b) => a.or(b),
                     };
                 }
+                if let Some(cases) = cases {
+                    for (_, value) in &cases.rest {
+                        let next = self.expr(value, env)?;
+                        result = match (result, next) {
+                            (Some(a), Some(b)) => Some(union(a, b)),
+                            (a, b) => a.or(b),
+                        };
+                    }
+                }
                 result.map(|mut value| { value.row |= row_condition; value })
             }
-            ExprKind::Num { value, suffix, .. } => Some(num(if *suffix == NumSuffix::Deg {
-                value.to_radians()
-            } else {
-                *value
-            })),
+            ExprKind::Num { value, .. } => Some(num(*value)),
             ExprKind::Bool(_) | ExprKind::String(_) => None,
             ExprKind::Name(n) => env.get(n).or_else(|| self.constants.get(n)).copied(),
             ExprKind::Member(b, f) => {

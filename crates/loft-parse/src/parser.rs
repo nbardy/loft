@@ -1,79 +1,13 @@
-//! Recursive descent over the lossless CST. Newlines are virtual separators;
+//! Recursive descent over flat tokens. Newlines are virtual separators;
 //! all expression and diagnostic spans still address the original UTF-8.
-use crate::cst::{Cst, Kind, Trivia};
+use crate::lex::{Kind, Lex, lex, unit};
 use crate::ast::*;
 use loft_ir::{Code, Diag, Res, Span};
 use std::collections::HashSet;
 
-#[derive(Clone, Copy)]
-struct Lex<'a> {
-    text: &'a str,
-    span: Span,
-    kind: Kind,
-}
-
-fn continued(prev: &str, next: &str, depth: usize) -> bool {
-    depth > 0
-        || matches!(
-            prev,
-            "+" | "-"
-                | "*"
-                | "/"
-                | "%"
-                | "=="
-                | "!="
-                | "<"
-                | "<="
-                | ">"
-                | ">="
-                | "&&"
-                | "||"
-                | ","
-                | "="
-                | "|>"
-        )
-        // A line that starts with a binary operator cannot start a statement, so it continues the last one:
-        // `ggx(..)\n  + coat(..)`. Models stack lobes this way (4 of 16 fresh crab programs). `-` is excluded
-        // because it can begin a unary expression.
-        || matches!(next, "|>" | "else" | "+" | "*" | "/" | "%" | "==" | "!=" | "<=" | ">=" | "&&" | "||")
-}
-
 pub fn parse(file: u16, source: &str, next: &mut u32) -> Res<Module> {
-    let tree = Cst::parse(file, source)?;
-    let mut tokens = vec![];
-    let mut depth = 0usize;
-    let mut prev = "";
-    for t in tree.tokens() {
-        let word = t.text(source);
-        if (!continued(prev, word, depth)
-            || (prev == "*"
-                && tokens
-                    .iter()
-                    .rev()
-                    .nth(1)
-                    .is_some_and(|t: &Lex| t.text == "::")))
-            && let Some((_, s)) = t.leading.iter().find(|(k, _)| *k == Trivia::Newline)
-        {
-            tokens.push(Lex {
-                text: ";",
-                span: *s,
-                kind: Kind::Newline,
-            });
-        }
-        tokens.push(Lex {
-            text: word,
-            span: t.span,
-            kind: t.kind,
-        });
-        match word {
-            "(" | "[" => depth += 1,
-            ")" | "]" => depth -= 1,
-            _ => (),
-        }
-        prev = word;
-    }
     let mut p = Parser {
-        tokens,
+        tokens: lex(file, source)?,
         at: 0,
         next,
         module: Module { file: Some(file), ..Module::default() },
@@ -305,7 +239,7 @@ impl<'src> Parser<'src, '_> {
         if self.eat(keyword) {
             self.expect("[")?;
             while !self.eat("]") {
-                names.push(self.ident()?);
+                names.push(self.reference()?);
                 if !self.eat(",") {
                     self.expect("]")?;
                     break;
@@ -443,7 +377,7 @@ impl<'src> Parser<'src, '_> {
                     }
                 }
                 let clock = if self.eat("on") { Some(self.clock()?) } else { None };
-                passes.push(PassDecl { label: verb.clone(), verb, args, body, resources, clock });
+                passes.push(PassDecl { label: verb.clone(), verb, call_site: None, args, body, resources, clock });
                 self.end()?
             }
             return Ok(Item::Schedule(ScheduleDecl { implicit: false, name, params, passes, radiance }));
@@ -475,6 +409,9 @@ impl<'src> Parser<'src, '_> {
             let fields = self.fields("}")?;
             return Ok(Item::Camera(CameraDecl { name, fields }));
         }
+        if self.eat("target") {
+            return self.target(start).map(Item::Target);
+        }
         if self.eat("scan") {
             let name = self.ident()?;
             let var = self.ident()?;
@@ -499,7 +436,7 @@ impl<'src> Parser<'src, '_> {
             let step = self.expr(0)?;
             self.end()?;
             self.expect("}")?;
-            return Ok(Item::Scan(ScanDecl {
+            return Ok(Item::Scan(Box::new(ScanDecl {
                 name,
                 at: var.clone(),
                 var_ty: ty("f32", var.span),
@@ -511,7 +448,7 @@ impl<'src> Parser<'src, '_> {
                 prev,
                 step,
                 elem: None,
-            }));
+            })));
         }
         if self.eat("kernel") {
             let name = self.ident()?;
@@ -623,19 +560,45 @@ impl<'src> Parser<'src, '_> {
             return Ok(Item::Use(Import { path, binding, span }));
         }
         Err(Diag::new(
-            if matches!(
-                self.cur().text,
-                "target"
-            ) {
-                Code::E405
-            } else {
-                Code::E404
-            },
+            Code::E404,
             start,
             format!("unsupported module item `{}`", self.cur().text),
             "declare a v1 item or put row generation inside build { ... }",
         ))
     }
+    fn target(&mut self, start: Span) -> Res<TargetDecl> {
+        let name = self.upper_ident()?;
+        self.expect(":")?;
+        let format = self.ident()?;
+        let extent = if self.eat("view") {
+            let scale = if self.eat("*") {
+                let token = self.cur();
+                let scale = token.text.parse().map_err(|_| Diag::new(
+                    Code::E001, token.span, "invalid target scale", "use a decimal number"))?;
+                self.pop();
+                scale
+            } else {
+                1.0
+            };
+            TargetExtent::View(scale)
+        } else if self.cur().kind == Kind::Grid {
+            let token = self.pop();
+            let (width, height) = token.text.split_once('x').expect("grid token");
+            let dimension = |text: &str| text.parse::<u32>().map_err(|_| Diag::new(
+                Code::E001, token.span, "invalid target dimensions", "write two integer sides as WxH"));
+            TargetExtent::Fixed(dimension(width)?, dimension(height)?)
+        } else if self.cur().kind == Kind::Number {
+            let width = self.integer()?;
+            self.expect("x")?;
+            TargetExtent::Fixed(width, self.integer()?)
+        } else {
+            TargetExtent::View(1.0)
+        };
+        let samples = if self.eat("msaa") { self.integer()? } else { 1 };
+        let span = start.to(self.tokens[self.at - 1].span);
+        Ok(TargetDecl { name, format, extent, samples, span })
+    }
+
     fn bake_tex(&mut self) -> Res<BakeDecl> {
         let name = self.upper_ident()?;
         let cube = self.eat("cube");
@@ -681,9 +644,9 @@ impl<'src> Parser<'src, '_> {
         }
         self.expect("dirty")?;
         self.expect("(")?;
-        let mut names = vec![self.ident()?];
+        let mut names = vec![self.reference()?];
         while self.eat(",") {
-            names.push(self.ident()?);
+            names.push(self.reference()?);
         }
         self.expect(")")?;
         Ok(BakeClock::Dirty(names))
@@ -709,6 +672,9 @@ impl<'src> Parser<'src, '_> {
     }
 
     fn params(&mut self) -> Res<Vec<Param>> {
+        self.parameter_list(false)
+    }
+    fn parameter_list(&mut self, build: bool) -> Res<Vec<Param>> {
         self.expect("(")?;
         let mut out = vec![];
         while !self.eat(")") {
@@ -718,7 +684,11 @@ impl<'src> Parser<'src, '_> {
             } else {
                 None
             };
-            out.push(Param { name, ty });
+            let default = if build && self.eat("=") { Some(self.expr(0)?) } else { None };
+            if build && out.iter().any(|p: &Param| p.name.name == name.name) {
+                return Err(Diag::new(Code::E003, name.span, "duplicate build parameter", "give each parameter its own name"));
+            }
+            out.push(Param { name, ty, default });
             if !self.eat(",") {
                 self.expect(")")?;
                 break;
@@ -739,7 +709,7 @@ impl<'src> Parser<'src, '_> {
             }
             self.expect("]")?
         }
-        let params = self.params()?;
+        let params = self.parameter_list(build)?;
         let ret = if self.eat("->") {
             Some(self.ty()?)
         } else if lobe {
@@ -991,6 +961,7 @@ impl<'src> Parser<'src, '_> {
                     Param {
                         name: named("self", n.span),
                         ty: None,
+                        default: None,
                     },
                 );
                 queries.push((
@@ -1041,8 +1012,8 @@ impl<'src> Parser<'src, '_> {
         if !eq {
             return self.err("= expression or a block");
         }
-        if value && self.eat("if") {
-            return Ok(Block { stmts: vec![self.if_stmt(true)?] });
+        if self.eat("if") {
+            return Ok(Block { stmts: vec![self.if_stmt(value)?] });
         }
         // `trace(p) =` then `let` lines and a final expression: a block without braces. No expression starts
         // with `let`, so it reads unambiguously; fresh crab programs wrote it (`let local = p - at`, `let op`).
@@ -1386,6 +1357,52 @@ impl<'src> Parser<'src, '_> {
         };
         Ok(ExprBlock { body, value: Box::new(value) })
     }
+    fn match_arm(&mut self) -> Res<((i64, Span), Expr)> {
+        let start = self.cur().span;
+        let negative = self.eat("-");
+        let token = self.cur();
+        let invalid = || Diag::new(Code::E001, token.span, "expected an integer match pattern",
+            "write a signed or unsigned integer literal");
+        if token.kind != Kind::Number {
+            return Err(invalid());
+        }
+        self.pop();
+        let n = if let Some(hex) = token.text.strip_prefix("0x") {
+            u32::from_str_radix(hex, 16)
+        } else {
+            token.text.strip_suffix('u').or_else(|| token.text.strip_suffix('i'))
+                .unwrap_or(token.text).parse::<u32>()
+        }.map_err(|_| invalid())?;
+        let key = if negative { -i64::from(n) } else { i64::from(n) };
+        self.expect("=>")?;
+        self.seps();
+        Ok(((key, start.to(token.span)), self.expr(0)?))
+    }
+
+    fn match_expr(&mut self, start: Span) -> Res<Expr> {
+        let condition = Box::new(self.expr(0)?);
+        self.expect("{")?;
+        self.seps();
+        let (first, then) = self.match_arm()?;
+        self.expect(",")?;
+        let mut rest = vec![];
+        while !self.eat("_") {
+            rest.push(self.match_arm()?);
+            self.expect(",")?;
+        }
+        self.expect("=>")?;
+        self.seps();
+        let otherwise = self.expr(0)?;
+        self.eat(",");
+        self.seps();
+        let end = self.cur().span;
+        self.expect("}")?;
+        let arm = |value| ExprBlock { body: Block { stmts: vec![] }, value: Box::new(value) };
+        Ok(self.node(start.to(end), ExprKind::If {
+            condition, then: arm(then), otherwise: arm(otherwise), cases: Some(Box::new(MatchCases { first, rest })),
+        }))
+    }
+
     fn primary(&mut self) -> Res<Expr> {
         let span = self.cur().span;
         if self.cur().kind == Kind::String {
@@ -1431,7 +1448,10 @@ impl<'src> Parser<'src, '_> {
             } else {
                 self.expr_arm()?
             };
-            return Ok(self.node(span, ExprKind::If { condition, then, otherwise }));
+            return Ok(self.node(span, ExprKind::If { condition, then, otherwise, cases: None }));
+        }
+        if self.eat("match") {
+            return self.match_expr(span);
         }
         if self.eat("(") {
             let e = self.expr(0)?;
@@ -1480,6 +1500,16 @@ impl<'src> Parser<'src, '_> {
         }
         if self.is("(") {
             let mut args = self.args()?;
+            if matches!(n.name.as_str(), "p3" | "v3") && self.eat("@") {
+                if args.is_empty() || args.iter().any(|arg| arg.name.is_some()) {
+                    return self.err("positional point or vector components");
+                }
+                let mut space = self.space()?;
+                space.var |= self.maps.contains(&space.name);
+                let span = span.to(space.span);
+                let geo = if n.name == "p3" { Geo::Pt } else { Geo::Vec };
+                return Ok(self.node(span, ExprKind::Ctor { ty: TyExpr::Geo(geo, space), args }));
+            }
             if self
                 .module
                 .items
@@ -1644,11 +1674,6 @@ pub const TYPE_ALIASES: &[(&str, &str)] = &[
     ("v2", "vec2f"), ("rgb", "vec3f"), ("v3", "vec3f"), ("v4", "vec4f"),
 ];
 
-pub const UNIT_SYMBOLS: &[&str] = &["m", "mm", "rad", "deg", "kg", "s", "N", "J", "Hz"];
-
-fn unit(s: &str) -> bool {
-    UNIT_SYMBOLS.contains(&s)
-}
 fn operator(s: &str) -> Option<(u8, BinOp)> {
     use BinOp::*;
     Some(match s {

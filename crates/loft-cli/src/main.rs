@@ -10,14 +10,10 @@
 //!
 //! A scene loads the core prelude and its reachable authored modules.
 
-mod diff;
-#[cfg(not(target_arch = "wasm32"))]
-mod edit_cmd;
 mod build;
 mod render;
 mod clip;
 mod profile;
-mod fmt;
 mod fork;
 mod context;
 mod lint;
@@ -51,27 +47,6 @@ fn command(mut args: Vec<String>, set: &[(String, f64)]) -> Result<(), Failure> 
         Ok(())
     };
     match cmd.as_str() {
-        "ir" | "build" if cmd == "ir" || args.get(1).is_some_and(|p| p.ends_with(".sexp")) => {
-            let telemetry = if cmd == "build" { flag(&mut args, "--json")? } else { None };
-            let output = flag(&mut args, "-o")?;
-            args.retain(|a| a != "--sexp");
-            exact(&args, 2, 2)?;
-            let path = scene(&args)?;
-            let program = if path.extension().is_some_and(|e| e == "sexp") {
-                let text = std::fs::read_to_string(&path).map_err(|e| Failure::Usage(format!("{}: {e}", path.display())))?;
-                loft_passes::sexp::read(&text).map_err(Failure::Compile)?
-            } else {
-                let src = sources(&path).map_err(Failure::Usage)?;
-                loft_passes::compile(&src, set).map_err(|d| Failure::Compile(render(&d, &src)))?.0
-            };
-            if let Some(path) = telemetry {
-                write_json(&path, &loft_passes::telemetry::collect(&program))?;
-            }
-            let text = loft_passes::sexp::write(&program).map_err(Failure::Compile)?;
-            if let Some(out) = output { std::fs::write(out, text).map_err(|e| Failure::Usage(e.to_string()))?; }
-            else if cmd == "ir" { println!("{text}"); }
-            Ok(())
-        }
         "build" if let Some(path) = flag(&mut args, "--json")? => {
             exact(&args, 2, 2)?;
             let src = sources(&scene(&args)?).map_err(Failure::Usage)?;
@@ -81,11 +56,10 @@ fn command(mut args: Vec<String>, set: &[(String, f64)]) -> Result<(), Failure> 
         }
         "build" => build::run(&args[1..], set),
         "render" => render::run(&args[1..], set),
-        "diff" => diff::run(&args[1..]),
         "clip" => clip::run(&args[1..], set),
         "profile" => profile::run(&args[1..], set),
         "lint" if set.is_empty() => lint::run(&args[1..]),
-        "fmt" => fmt::run(&args[1..]),
+        "fmt" => Err(Failure::Usage("loft fmt is reserved for Phase 2 authoring".into())),
         "show" => {
             let kind = flag(&mut args, "--kind")?;
             let json = args.iter().any(|a| a == "--json");
@@ -127,16 +101,8 @@ fn command(mut args: Vec<String>, set: &[(String, f64)]) -> Result<(), Failure> 
         "still" => {
             let edit = flag(&mut args, "--edit")?;
             let kind = flag(&mut args, "--kind")?;
-            if let Some(edit) = edit {
-                exact(&args, 3, 3)?;
-                let kind = kind.ok_or_else(|| Failure::Usage("still --edit needs --kind K".into()))?;
-                #[cfg(target_arch = "wasm32")]
-                {
-                    let _ = (edit, kind);
-                    return Err(Failure::Device("edited stills need the native renderer".into()));
-                }
-                #[cfg(not(target_arch = "wasm32"))]
-                return edit_cmd::edited_still(&scene(&args)?, Path::new(&edit), &kind, set, time, Path::new(&args[2]), max_frame);
+            if edit.is_some() {
+                return Err(Failure::Usage("still --edit was retired; render the edited scene directly".into()));
             }
             if kind.is_some() { return Err(Failure::Usage("still --kind needs --edit SOURCE".into())); }
             exact(&args, 3, 3)?;
@@ -169,7 +135,7 @@ fn command(mut args: Vec<String>, set: &[(String, f64)]) -> Result<(), Failure> 
             }
             Ok(())
         }
-        _ => Err(Failure::Usage("usage: loft build|check|show|still|clip|gate|load|ir|render|profile|controls|fmt|fork|context|diff|lint".into())),
+        _ => Err(Failure::Usage("usage: loft build|check|show|still|clip|gate|load|render|profile|controls|fmt|fork|context|diff|lint".into())),
     }
 }
 
@@ -211,6 +177,7 @@ fn dispatch(mut args: Vec<String>) -> Result<ExitCode, Failure> {
         matches!(a.as_str(), "--trace" | "--record" | "--replay" | "--format")
     });
     let subcommand = match parsed.as_slice() {
+        [cmd, ..] if cmd == "diff" => return exec_sibling("loft-verify", cmd, &parsed[1..]),
         [cmd, ..] if matches!(cmd.as_str(), "controls" | "gate") => cmd.as_str(),
         [cmd, tail @ ..] if cmd == "check" && trace_requested(tail) => "trace-check",
         [cmd, tail @ ..] if cmd == "render" && trace_requested(tail) => "trace-render",

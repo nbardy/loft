@@ -1,0 +1,425 @@
+# Sly Marrow, the otter raft-bandit. Parts in world space, placed by `marrow(...)`; heads in forms.loft.
+use stdlib::sdf::solid::{smin, round_cone}
+use stdlib::geometry::analytic::{ray_round_cone, ray_sphere, ray_ground}
+use stdlib::sdf::solid::{box_sdf}
+use stdlib::materials::bsdf::{emit_lobe}
+use stdlib::noise::value::{vnoise}
+use self::mat::{water_surface, surface, torso_surface, tail_surface, coat_surface, rope_surface, bit_surface, log_surface}
+use self::parts::{el, ell, smax, at_v, q_to_body, bend, hturn}
+use self::fur::{groom}
+use self::forms::{Head0, Head1, Head2, Head3, Head4, head_fur0, head_fur1, head_fur2, head_fur3, head_fur4, form_s, form_ml, form_eye, form_eye_r, form_up}
+use self::face::{face_bl, face_br, face_tl, face_tr, face_ll, face_lr, face_kl, face_kr, face_jw, face_pf, face_er, face_gx, face_gy, face_dn, face_dt, face_dl}
+
+# ---- an eye: a dark brown ball with a black pupil facing (pdx, pdy, pdz) and one painted catchlight toward the camera
+# side (up and forward, as a game camera sees).
+const CatchDir = [0.55, 0.55, 0.63]
+pub kind Eye @World (c: p3@World, r: m, pdx: f, pdy: f, pdz: f, mode: f = 0.0) {
+  visible(ro, rd) = ray_sphere(ro, rd, c, r)
+  trace(p) = length((p - c).xyz) - r
+  material(p, n) {
+    let look = n.x * pdx + n.y * pdy + n.z * pdz
+    let spot = smoothstep(0.90, 0.95, n.x * CatchDir.x + n.y * CatchDir.y + n.z * CatchDir.z)
+    let iris = smoothstep(0.55, 0.70, look)
+    let pupil = smoothstep(0.80, 0.86, look)
+    let ball = mix([0.045, 0.028, 0.018], [0.20, 0.105, 0.035], iris)
+    surface(mode, mix(ball, [0.006, 0.005, 0.005], pupil), 0.5, 0.0, [0.0, 0.0, 0.0], 0.0, 0.8, 9.0, 0.0, 1.0) + emit_lobe([1.6, 1.55, 1.4] * spot * step(mode, 0.5) * step(-0.5, mode))
+  }
+}
+
+# Whiskers: two rows of five on each whisker pad, each a root and a tip segment, thin and short.
+build fn whiskers(c: rgb, at: p3@World, s: rgb, ml: f, nod: f, turn: f, tilt: f, mode: f) {
+  build for side_id in 0..2 {
+    let side = select(-1.0, 1.0, side_id == 1)
+    build for i in 0..2 {
+      build for j in 0..5 {
+        let a = f32(j) / 4.0 - 0.5
+        let b = f32(i) - 0.5
+        let nx = 0.6 * a + 0.15
+        let ny = 0.75 * b
+        let nz = sqrt(max(1.0 - nx * nx - ny * ny, 0.05))
+        let pad = [0.05 + 0.077 * ml, -0.0201, 0.0374]
+        let rad = [0.036 * ml, 0.0203, 0.0264]
+        let lr = [pad.x + rad.x * nx * 0.92, pad.y + rad.y * ny * 0.92, side * (pad.z + rad.z * nz * 0.92)]
+        let ld = normalize([1.3 - 0.3 * a + 0.4 * nx, -0.06 - 0.35 * b + 0.4 * ny, side * (0.8 + 0.4 * nz)])
+        let l2 = normalize(ld + [-0.02, -0.0875, 0.0])
+        let k = 0.105 * (1.0 - 0.3 * abs(b) - 0.2 * (0.5 - a))
+        let lm = lr + ld * (0.5 * k)
+        let lt = lm + l2 * (0.5 * k)
+        let root = q_to_body(lr, c, nod, turn, tilt, s)
+        let mid = q_to_body(lm, c, nod, turn, tilt, s)
+        let tip = q_to_body(lt, c, nod, turn, tilt, s)
+        emit Bit(a: at_v(at, root), b: at_v(at, mid), ra: 0.0008 * s.z, rb: 0.0005 * s.z, mat: 6.0, mode: mode)
+        emit Bit(a: at_v(at, mid), b: at_v(at, tip), ra: 0.0005 * s.z, rb: 0.0002 * s.z, mat: 6.0, mode: mode)
+      }
+    }
+  }
+}
+
+# ---- the body: the fur under the coat, the legs, the arms, the feet, the neck.
+fn foot_sd(p: p3@World, f: p3@World, side: f) -> f {
+  let d = (p - f).xyz
+  let c = 0.90045
+  let s = 0.43497 * side
+  let q = [c * d.x + s * d.z, d.y, -s * d.x + c * d.z]
+  let sole = el(q, [0.022, 0.0, 0.0], [0.058, 0.0155, 0.036])
+  let t0 = el(q, [0.064, -0.002, -0.022], [0.016, 0.0125, 0.0115])
+  let t1 = el(q, [0.070, -0.002, 0.0], [0.016, 0.0125, 0.0115])
+  let t2 = el(q, [0.064, -0.002, 0.022], [0.016, 0.0125, 0.0115])
+  smin(smin(smin(sole, t0, 0.008), t1, 0.008), t2, 0.008)
+}
+
+pub kind Torso @World (
+  pelvis: p3@World, chest: p3@World, hd: f in 0.7..1.3,
+  foot_l: p3@World, foot_r: p3@World, knee_l: p3@World, knee_r: p3@World,
+  elbow_l: p3@World, elbow_r: p3@World, hand_l: p3@World, hand_r: p3@World,
+  fat: f in 0.7..1.5
+, mode: f = 0.0) {
+  trace(p) {
+    let pel = ell(p, pelvis, [0.060 * fat, 0.085, 0.075 * fat])
+    let belly = ell(p, pelvis + [0.012, 0.045, 0.0], [0.062 * fat, 0.078, 0.068 * fat])
+    let chs = ell(p, chest, [0.046, 0.085, 0.045])
+    let yoke = ell(p, chest + [-0.008, 0.030, 0.0], [0.036, 0.030, 0.047])
+    let neck = ell(p, chest + [0.025, 0.085, 0.0], [0.045 * hd, 0.045, 0.050 * hd])
+    var d = smin(smin(smin(smin(pel, belly, 0.05), chs, 0.05), yoke, 0.04), neck, 0.04)
+    for i in 0..2 {
+      let s = select(-1.0, 1.0, i == 1)
+      let hip = pelvis + [0.005, -0.045, s * 0.045 * fat]
+      let foot = select(foot_l, foot_r, i == 1)
+      let knee = select(knee_l, knee_r, i == 1)
+      let ankle = foot + [-0.012, 0.024, 0.0]
+      let leg = smin(round_cone(p, hip, knee, 0.052, 0.038), round_cone(p, knee, ankle, 0.037, 0.026), 0.02)
+      d = smin(d, smin(leg, foot_sd(p, foot, s), 0.015), 0.03)
+      let sh = chest + [-0.005, 0.040, s * 0.050]
+      let elbow = select(elbow_l, elbow_r, i == 1)
+      let hand = select(hand_l, hand_r, i == 1)
+      let arm = smin(round_cone(p, sh, elbow, 0.024, 0.021), round_cone(p, elbow, hand, 0.021, 0.018), 0.015)
+      d = smin(d, smin(arm, ell(p, hand, [0.026, 0.021, 0.022]), 0.01), 0.02)
+    }
+    d
+  }
+  material(p, n) {
+    let w = p.xyz
+    let paw = 1.0 - smoothstep(0.018, 0.034, min(dist(p, hand_l), dist(p, hand_r)))
+    let toe = 1.0 - smoothstep(0.012, 0.030, p.y - (foot_l.y - 0.0155))
+    let paws = max(paw, toe * step(pelvis.y - 0.04, 9.0))
+    let wr = min(min(dist(p, hand_l), dist(p, hand_r)), min(dist(p, foot_l), dist(p, foot_r)))
+    let low = smoothstep(pelvis.y - 0.02, pelvis.y - 0.07, p.y)
+    let wet = max(1.0 - smoothstep(0.02, 0.07, wr), 0.7 * low)
+    let front = smoothstep(pelvis.y - 0.03, pelvis.y + 0.02, p.y)
+    torso_surface(mode, w, n.xyz, front, wet, paws)
+  }
+}
+
+# ---- the coat: oilskin shell over the torso, open at the chest, hem at the hip, sleeves, hood pushed back.
+fn coat_solid(p: p3@World, pelvis: p3@World, chest: p3@World, fat: f) -> f {
+  let pel = ell(p, pelvis, [0.071 * fat, 0.095, 0.087 * fat])
+  let belly = ell(p, pelvis + [0.012, 0.045, 0.0], [0.073 * fat, 0.088, 0.079 * fat])
+  let chs = ell(p, chest, [0.057, 0.095, 0.056])
+  let yoke = ell(p, chest + [-0.008, 0.030, 0.0], [0.046, 0.040, 0.058])
+  let hem = (pelvis.y - 0.040 - 0.2 * (p.x - pelvis.x)) - p.y
+  smax(smin(smin(smin(pel, belly, 0.05), chs, 0.05), yoke, 0.04), hem, 0.012)
+}
+
+pub kind Coat @World (
+  pelvis: p3@World, chest: p3@World, neck: p3@World, hd: f in 0.7..1.3,
+  elbow_l: p3@World, elbow_r: p3@World, hand_l: p3@World, hand_r: p3@World,
+  fat: f in 0.7..1.5
+, mode: f = 0.0) {
+  trace(p) {
+    let w = p.xyz
+    let fold_a = w.y * 65.0 + 4.0 * sin(w.x * 30.0) + 3.0 * sin(w.z * 34.0)
+    var d = coat_solid(p, pelvis, chest, fat) + 0.0022 * sin(fold_a)
+    d = smax(d, 0.0 - ell(p, chest + [0.060, -0.012, 0.0], [0.040, 0.085, 0.026]), 0.01)
+    for i in 0..2 {
+      let s = select(-1.0, 1.0, i == 1)
+      let sh = chest + [-0.005, 0.040, s * 0.050]
+      let elbow = select(elbow_l, elbow_r, i == 1)
+      let hand = select(hand_l, hand_r, i == 1)
+      let cuff = mix(elbow, hand, 0.78)
+      let sleeve = smin(round_cone(p, sh, elbow, 0.030, 0.028), round_cone(p, elbow, cuff, 0.028, 0.026), 0.02)
+      d = smin(d, sleeve, 0.02)
+    }
+    let ring_o = ell(p, neck + [-0.020, 0.0, 0.0], [0.080 * hd, 0.050, 0.098 * hd])
+    let ring_i = ell(p, neck + [0.005, 0.015, 0.0], [0.056 * hd, 0.052, 0.078 * hd])
+    let sack = ell(p, neck + [-0.070 * hd, 0.0, 0.0], [0.045 * hd, 0.050, 0.075 * hd])
+    let hood0 = smax(smin(ring_o, sack, 0.03), 0.0 - ring_i, 0.01)
+    let hood = smax(hood0, 0.0 - ell(p, neck + [0.075 * hd, 0.0, 0.0], [0.060, 0.070, 0.060 * hd]), 0.01)
+    smin(d, hood, 0.025)
+  }
+  material(p, n) {
+    let w = p.xyz
+    let sh_r = chest + [-0.005, 0.072, 0.050]
+    let dsh = dist(p, sh_r)
+    let up = smoothstep(-0.1, 0.5, n.y)
+    let mustard = (1.0 - smoothstep(0.034, 0.037, dsh)) * up
+    let stitch = (1.0 - smoothstep(0.0007, 0.0016, abs(dsh - 0.0395))) * up
+    let patch = max(1.0 - smoothstep(0.016, 0.019, dist(p, elbow_r)), 1.0 - smoothstep(0.024, 0.027, dist(p, pelvis + [0.040, 0.020, -0.065])))
+    let a = w.y * 65.0 + 4.0 * sin(w.x * 30.0) + 3.0 * sin(w.z * 34.0)
+    let ca = cos(a)
+    let g = [120.0 * cos(30.0 * w.x) * ca, 65.0 * ca, 102.0 * cos(34.0 * w.z) * ca]
+    coat_surface(mode, w, patch, mustard, stitch, smoothstep(0.55, 0.95, ca), g * (0.0 - 0.0016))
+  }
+}
+
+# ---- the belt: a rope that follows the coat surface at one height, so it can never float or sink.
+pub kind Belt @World (pelvis: p3@World, chest: p3@World, fat: f in 0.7..1.5, mode: f = 0.0) {
+  trace(p) {
+    let yb = pelvis.y + 0.062 + 0.02 * (p.z - pelvis.z)
+    length([coat_solid(p, pelvis, chest, fat) - 0.003, p.y - yb]) - 0.0085
+  }
+  material(p, n) {
+    let yb = pelvis.y + 0.062 + 0.02 * (p.z - pelvis.z)
+    let dx = p.x - pelvis.x
+    let dz = p.z - pelvis.z
+    let ph = atan2(dz, dx) * 34.0 + (p.y - yb) * 300.0
+    let r2 = max(dx * dx + dz * dz, 0.0001)
+    let g = [-34.0 * dz / r2, 300.0, 34.0 * dx / r2]
+    rope_surface(mode, 0.5 + 0.5 * sin(ph), g * (0.0 - 0.0007 * cos(ph)))
+  }
+}
+
+# ---- the tail: five tapering cones, thick as his neck at the root, lying along the raft and curling up at the tip.
+pub kind Tail @World (t0: p3@World, t1: p3@World, t2: p3@World, t3: p3@World, t4: p3@World, mode: f = 0.0) {
+  trace(p) {
+    let a = smin(round_cone(p, t0, t1, 0.038, 0.037), round_cone(p, t1, t2, 0.037, 0.031), 0.03)
+    smin(a, smin(round_cone(p, t2, t3, 0.031, 0.022), round_cone(p, t3, t4, 0.022, 0.008), 0.02), 0.03)
+  }
+  material(p, n) {
+    let flow = normalize((t4 - t0).xyz)
+    let wet = max(1.0 - smoothstep(0.03, 0.12, dist(p, t4)), 0.5 * (1.0 - smoothstep(0.03, 0.07, p.y)))
+    tail_surface(mode, p.xyz, flow, wet)
+  }
+}
+
+# ---- small things with analytic hits: gaff pole and hook, rope, toggles, lures, whiskers (mat 6 is pale).
+pub kind Bit @World (a: p3@World, b: p3@World, ra: m, rb: m, mat: f = 0.0, mode: f = 0.0) {
+  visible(ro, rd) = ray_round_cone(ro, rd, a, b, ra, rb)
+  trace(p) = round_cone(p, a, b, ra, rb)
+  material(p, n) = bit_surface(mode, mat, (p - a).xyz, dot((p - a).xyz, normalize((b - a).xyz)))
+}
+
+# ---- raft logs: flat-ended cylinders along x.
+pub kind Log @World (x0: f, x1: f, y: f, z: f, r: f in 0.02..0.07, mode: f = 0.0) {
+  trace(p) {
+    let w = [abs(p.x - 0.5 * (x0 + x1)) - 0.5 * (x1 - x0) + 0.008, length([p.y - y, p.z - z]) - r + 0.008]
+    min(max(w.x, w.y), 0.0) + length(max(w, [0.0, 0.0])) - 0.008
+  }
+  material(p, n) {
+    let e = 0.003
+    let gy = vnoise([p.x * 7.0, (p.y + e) * 160.0, p.z * 160.0]) - vnoise([p.x * 7.0, (p.y - e) * 160.0, p.z * 160.0])
+    let gz = vnoise([p.x * 7.0, p.y * 160.0, (p.z + e) * 160.0]) - vnoise([p.x * 7.0, p.y * 160.0, (p.z - e) * 160.0])
+    log_surface(mode, p.xyz, [0.5 * (x0 + x1), y, z], smoothstep(0.85, 0.95, abs(n.x)), smoothstep(y + 0.01, y - 0.03, p.y), [0.0, gy, gz] * 0.9)
+  }
+}
+
+# A thing hanging from the belt on a cord: `a` is the belt point, `len` the cord, then the item from its hook.
+fn belt_point(pel: rgb, fat: f, ang: f) -> rgb {
+  [pel.x + 0.012 + 0.088 * fat * cos(ang), pel.y + 0.060, pel.z + 0.090 * fat * sin(ang)]
+}
+
+# Everything he has stolen, hung from the rope belt: two brass lures and a toll-keeper's key on his right and back,
+# a tin cup on his left back; three bone toggles down the left lapel of the open coat.
+build fn belt_things(at: p3@World, pel: rgb, che: rgb, fat: f, mode: f) {
+  let b1 = belt_point(pel, fat, 0.70)
+  let b2 = belt_point(pel, fat, 1.10)
+  let b3 = belt_point(pel, fat, 1.95)
+  let b4 = belt_point(pel, fat, -2.20)
+  # cords
+  emit Bit(a: at_v(at, b1), b: at_v(at, b1 + [0.004, -0.028, 0.006]), ra: 0.0016, rb: 0.0016, mat: 2.0, mode: mode)
+  emit Bit(a: at_v(at, b2), b: at_v(at, b2 + [0.000, -0.034, 0.008]), ra: 0.0016, rb: 0.0016, mat: 2.0, mode: mode)
+  emit Bit(a: at_v(at, b3), b: at_v(at, b3 + [-0.002, -0.024, 0.006]), ra: 0.0016, rb: 0.0016, mat: 2.0, mode: mode)
+  emit Bit(a: at_v(at, b4), b: at_v(at, b4 + [0.000, -0.020, -0.006]), ra: 0.0016, rb: 0.0016, mat: 2.0, mode: mode)
+  # lure one: a brass fish, nose up, with a bone tail fin and an iron hook
+  let l1 = b1 + [0.004, -0.028, 0.006]
+  emit Bit(a: at_v(at, l1), b: at_v(at, l1 + [0.002, -0.034, 0.004]), ra: 0.0075, rb: 0.0045, mat: 4.0, mode: mode)
+  emit Bit(a: at_v(at, l1 + [0.002, -0.034, 0.004]), b: at_v(at, l1 + [0.003, -0.048, 0.005]), ra: 0.0030, rb: 0.0012, mat: 3.0, mode: mode)
+  emit Bit(a: at_v(at, l1 + [0.002, -0.030, 0.008]), b: at_v(at, l1 + [0.006, -0.046, 0.012]), ra: 0.0012, rb: 0.0006, mat: 1.0, mode: mode)
+  # lure two, longer
+  let l2 = b2 + [0.000, -0.034, 0.008]
+  emit Bit(a: at_v(at, l2), b: at_v(at, l2 + [0.000, -0.040, 0.006]), ra: 0.0065, rb: 0.0040, mat: 4.0, mode: mode)
+  emit Bit(a: at_v(at, l2 + [0.000, -0.040, 0.006]), b: at_v(at, l2 + [0.000, -0.054, 0.007]), ra: 0.0028, rb: 0.0010, mat: 3.0, mode: mode)
+  # the toll-keeper's key: bow, shaft, two teeth
+  let k0 = b3 + [-0.002, -0.024, 0.006]
+  emit Bit(a: at_v(at, k0), b: at_v(at, k0 + [0.0, -0.008, 0.0]), ra: 0.0075, rb: 0.0075, mat: 1.0, mode: mode)
+  emit Bit(a: at_v(at, k0 + [0.0, -0.008, 0.0]), b: at_v(at, k0 + [0.0, -0.046, 0.002]), ra: 0.0028, rb: 0.0028, mat: 1.0, mode: mode)
+  emit Bit(a: at_v(at, k0 + [0.0, -0.046, 0.002]), b: at_v(at, k0 + [-0.009, -0.046, 0.003]), ra: 0.0022, rb: 0.0022, mat: 1.0, mode: mode)
+  emit Bit(a: at_v(at, k0 + [0.0, -0.038, 0.002]), b: at_v(at, k0 + [-0.007, -0.038, 0.003]), ra: 0.0022, rb: 0.0022, mat: 1.0, mode: mode)
+  # the tin cup, mouth up, with a handle
+  let c0 = b4 + [0.000, -0.020, -0.006]
+  emit Bit(a: at_v(at, c0 + [0.0, -0.030, 0.0]), b: at_v(at, c0), ra: 0.012, rb: 0.016, mat: 5.0, mode: mode)
+  emit Bit(a: at_v(at, c0 + [-0.014, -0.006, 0.0]), b: at_v(at, c0 + [-0.020, -0.018, 0.0]), ra: 0.0025, rb: 0.0025, mat: 5.0, mode: mode)
+  emit Bit(a: at_v(at, c0 + [-0.020, -0.018, 0.0]), b: at_v(at, c0 + [-0.014, -0.028, 0.0]), ra: 0.0025, rb: 0.0025, mat: 5.0, mode: mode)
+  # three toggles on the left lapel edge of the open coat
+  build for i in 0..3 {
+    let y = che.y + 0.045 - 0.045 * f32(i)
+    let x = che.x + 0.046 - 0.004 * f32(i)
+    emit Bit(a: at_v(at, [x + 0.003, y, che.z - 0.024]), b: at_v(at, [x - 0.002, y, che.z - 0.044]), ra: 0.0050, rb: 0.0050, mat: 3.0, mode: mode)
+  }
+}
+
+# ---- wet strands along the tail: a chart of 4 segments x 8 along x 24 around, for fur.loft's groom. The tail is
+# wetter toward the tip (wet 0.35 at the root, `wet` at the tip) and the strands lie along it toward the tip.
+fn tail_cell(k: u, t0: p3@World, t1: p3@World, t2: p3@World, t3: p3@World, t4: p3@World) -> frame@World {
+  let seg = k / 192u
+  let j = k % 192u
+  let fa = (f32(j / 24u) + 0.5) / 8.0
+  let ph = (f32(j % 24u) + 0.5) * 0.26179939
+  let a = select(select(select(t0, t1, seg > 0u), t2, seg > 1u), t3, seg > 2u)
+  let b = select(select(select(t1, t2, seg > 0u), t3, seg > 1u), t4, seg > 2u)
+  let r0 = select(select(select(0.038, 0.037, seg > 0u), 0.031, seg > 1u), 0.022, seg > 2u)
+  let r1 = select(select(select(0.037, 0.031, seg > 0u), 0.022, seg > 1u), 0.008, seg > 2u)
+  let ab = (b - a).xyz
+  let tg = normalize(ab)
+  let n1 = normalize(cross(tg, [0.0, 0.0, 1.0]))
+  let n2 = cross(tg, n1)
+  let dirn = n1 * cos(ph) + n2 * sin(ph)
+  let e_ph = n2 * cos(ph) - n1 * sin(ph)
+  let r = mix(r0, r1, fa)
+  let zero = [0, 0, 0]@World
+  let o = mix(a, b, fa) + [dirn.x * r, dirn.y * r, dirn.z * r]
+  let dx = tg * (length(ab) / 8.0)
+  let dv = e_ph * (r * 0.26179939)
+  frame_axes(o, [dx.x, dx.y, dx.z]@World - zero, [dirn.x, dirn.y, dirn.z]@World - zero, [dv.x, dv.y, dv.z]@World - zero)
+}
+
+pub build fn tail_fur(t0: p3@World, t1: p3@World, t2: p3@World, t3: p3@World, t4: p3@World, density: f, wet: f) {
+  build for k in 0..768 {
+    let cell = tail_cell(k, t0, t1, t2, t3, t4)
+    let u = (f32(k / 192u) + (f32((k % 192u) / 24u) + 0.5) / 8.0) / 4.0
+    let w = mix(0.35, wet, smoothstep(0.1, 0.9, u))
+    let flow = normalize((t4 - t0).xyz)
+    groom(cell, flow, density, w, mix([0.075, 0.048, 0.03], [0.055, 0.04, 0.03], w))
+  }
+}
+
+pub build fn raft(at: p3@World, mode: f) {
+  emit Log(x0: at.x - 0.34, x1: at.x + 0.26, y: at.y - 0.040, z: at.z - 0.160, r: 0.038, mode: mode)
+  emit Log(x0: at.x - 0.31, x1: at.x + 0.29, y: at.y - 0.039, z: at.z - 0.082, r: 0.041, mode: mode)
+  emit Log(x0: at.x - 0.36, x1: at.x + 0.24, y: at.y - 0.041, z: at.z + 0.000, r: 0.042, mode: mode)
+  emit Log(x0: at.x - 0.32, x1: at.x + 0.28, y: at.y - 0.039, z: at.z + 0.083, r: 0.040, mode: mode)
+  emit Log(x0: at.x - 0.35, x1: at.x + 0.25, y: at.y - 0.040, z: at.z + 0.162, r: 0.037, mode: mode)
+  # two rope lashings across the logs
+  emit Bit(a: at_v(at, [-0.20, -0.002, -0.20]), b: at_v(at, [-0.20, -0.002, 0.20]), ra: 0.005, rb: 0.005, mat: 2.0, mode: mode)
+  emit Bit(a: at_v(at, [0.17, -0.002, -0.20]), b: at_v(at, [0.17, -0.002, 0.20]), ra: 0.005, rb: 0.005, mat: 2.0, mode: mode)
+  # a stub mast with a lantern: pole, arm, cord, iron cap, glass, iron base
+  emit Bit(a: at_v(at, [0.22, -0.01, -0.135]), b: at_v(at, [0.22, 0.19, -0.135]), ra: 0.007, rb: 0.006, mat: 0.0, mode: mode)
+  emit Bit(a: at_v(at, [0.22, 0.19, -0.135]), b: at_v(at, [0.22, 0.19, -0.10]), ra: 0.005, rb: 0.005, mat: 0.0, mode: mode)
+  emit Bit(a: at_v(at, [0.22, 0.19, -0.10]), b: at_v(at, [0.22, 0.167, -0.10]), ra: 0.0015, rb: 0.0015, mat: 2.0, mode: mode)
+  emit Bit(a: at_v(at, [0.22, 0.167, -0.10]), b: at_v(at, [0.22, 0.158, -0.10]), ra: 0.011, rb: 0.012, mat: 1.0, mode: mode)
+  emit Bit(a: at_v(at, [0.22, 0.156, -0.10]), b: at_v(at, [0.22, 0.128, -0.10]), ra: 0.013, rb: 0.013, mat: 7.0, mode: mode)
+  emit Bit(a: at_v(at, [0.22, 0.126, -0.10]), b: at_v(at, [0.22, 0.120, -0.10]), ra: 0.014, rb: 0.012, mat: 1.0, mode: mode)
+}
+
+# The whole figure from a pose. Lengths in metres, angles in radians, standing on y = 0 of `at`, facing +x, his
+# right toward +z. lean: chest forward of the hips. sway: hips thrown out to his right. crouch: hips lowered.
+# nod / turn / tilt: head chin-up, toward his right, ear toward his right shoulder. head: unused (see form).
+# fat: girth. leg: leg length scale. tail: 0 flat on the raft, 1 curled high. gaff: lean of the pole, forward.
+# form: head construction 0 flat and sly, 1 round and soft, 2 wide and heavy-browed, 3 flat at 1.15 size.
+# fur: 1 plants dry soft strands over the head (fur.loft; add Strand to the schedule), 0 none.
+# mode: -1 clay, 0 beauty, 1 to 6 one material channel alone (see mat.loft).
+# expr: the face, 0 smirk 1 laugh 2 mock surprise 3 threat 4 sly sideways look 5 bow of defeat (see face.loft; or
+# face_of(mood)); its head nod, turn and tilt are added to the pose's.
+pub build fn marrow(at: p3@World, lean: f, sway: f, crouch: f, nod: f, turn: f, tilt: f, head: f, fat: f, leg: f, tail: f, gaff: f, form: f, expr: f, mode: f, fur: f) {
+  let s = form_s(form)
+  let hd = s.z
+  let ml = form_ml(form)
+  let pel = [-0.030, 0.125 * leg - crouch, sway]
+  let che = [pel.x + 0.095 * sin(lean) + 0.018, pel.y + 0.095 * cos(lean), pel.z - 0.6 * sway]
+  let hea = [che.x + 0.040, che.y + 0.130 + form_up(form), che.z]
+  let nek = [hea.x - 0.030, hea.y - 0.055, hea.z]
+  let foot_l = [-0.010, 0.0155, -0.050]
+  let foot_r = [0.045, 0.0155, 0.066]
+  let hip_l = [pel.x + 0.005, pel.y - 0.045, pel.z - 0.045 * fat]
+  let hip_r = [pel.x + 0.005, pel.y - 0.045, pel.z + 0.045 * fat]
+  let ank_l = [foot_l.x - 0.012, foot_l.y + 0.024, foot_l.z]
+  let ank_r = [foot_r.x - 0.012, foot_r.y + 0.024, foot_r.z]
+  let knee_l = (hip_l + ank_l) * 0.5 + [0.022, 0.0, -0.022]
+  let knee_r = (hip_r + ank_r) * 0.5 + [0.022, 0.0, 0.022]
+  let gb = [0.070, 0.0, 0.098]
+  let gd = [sin(gaff), cos(gaff), 0.0]
+  let hand_r = gb + gd * 0.19
+  let hand_l = [pel.x + 0.050, pel.y + 0.065, pel.z - 0.082]
+  let sh_l = [che.x - 0.005, che.y + 0.040, che.z - 0.050]
+  let sh_r = [che.x - 0.005, che.y + 0.040, che.z + 0.050]
+  let elb_r = bend(sh_r, hand_r, 0.078, 0.078, [0.3, -0.6, 0.8])
+  let elb_l = bend(sh_l, hand_l, 0.078, 0.078, [-0.3, -0.5, -0.8])
+  let hc = at_v(at, hea)
+  let fbl = face_bl(expr)
+  let fbr = face_br(expr)
+  let ftl = face_tl(expr)
+  let ftr = face_tr(expr)
+  let fll = face_ll(expr)
+  let flr = face_lr(expr)
+  let fkl = face_kl(expr)
+  let fkr = face_kr(expr)
+  let fjw = face_jw(expr)
+  let fpf = face_pf(expr)
+  let fer = face_er(expr)
+  let hnod = nod + face_dn(expr)
+  let hyaw = turn + face_dt(expr)
+  let htilt = tilt + face_dl(expr)
+  build for i in 0..select(0u, 1u, form < 0.5) { emit Head0(c: hc, nod: hnod, turn: hyaw, tilt: htilt, bl: fbl, br: fbr, tl: ftl, tr: ftr, ll: fll, lr: flr, kl: fkl, kr: fkr, jw: fjw, pf: fpf, er: fer, mode: mode) }
+  build for i in 0..select(0u, 1u, form > 0.5 && form < 1.5) { emit Head1(c: hc, nod: hnod, turn: hyaw, tilt: htilt, bl: fbl, br: fbr, tl: ftl, tr: ftr, ll: fll, lr: flr, kl: fkl, kr: fkr, jw: fjw, pf: fpf, er: fer, mode: mode) }
+  build for i in 0..select(0u, 1u, form > 1.5 && form < 2.5) { emit Head2(c: hc, nod: hnod, turn: hyaw, tilt: htilt, bl: fbl, br: fbr, tl: ftl, tr: ftr, ll: fll, lr: flr, kl: fkl, kr: fkr, jw: fjw, pf: fpf, er: fer, mode: mode) }
+  build for i in 0..select(0u, 1u, form > 2.5 && form < 3.5) { emit Head3(c: hc, nod: hnod, turn: hyaw, tilt: htilt, bl: fbl, br: fbr, tl: ftl, tr: ftr, ll: fll, lr: flr, kl: fkl, kr: fkr, jw: fjw, pf: fpf, er: fer, mode: mode) }
+  build for i in 0..select(0u, 1u, form > 3.5) { emit Head4(c: hc, nod: hnod, turn: hyaw, tilt: htilt, bl: fbl, br: fbr, tl: ftl, tr: ftr, ll: fll, lr: flr, kl: fkl, kr: fkr, jw: fjw, pf: fpf, er: fer, mode: mode) }
+  build for i in 0..select(0u, 1u, form < 0.5 && fur > 0.5) { head_fur0(hc, hnod, hyaw, htilt, fbl, fbr, ftl, ftr, fll, flr, fkl, fkr, fjw, fpf, fer, 35000.0, 0.0) }
+  build for i in 0..select(0u, 1u, form > 0.5 && form < 1.5 && fur > 0.5) { head_fur1(hc, hnod, hyaw, htilt, fbl, fbr, ftl, ftr, fll, flr, fkl, fkr, fjw, fpf, fer, 35000.0, 0.0) }
+  build for i in 0..select(0u, 1u, form > 1.5 && form < 2.5 && fur > 0.5) { head_fur2(hc, hnod, hyaw, htilt, fbl, fbr, ftl, ftr, fll, flr, fkl, fkr, fjw, fpf, fer, 35000.0, 0.0) }
+  build for i in 0..select(0u, 1u, form > 2.5 && form < 3.5 && fur > 0.5) { head_fur3(hc, hnod, hyaw, htilt, fbl, fbr, ftl, ftr, fll, flr, fkl, fkr, fjw, fpf, fer, 35000.0, 0.0) }
+  build for i in 0..select(0u, 1u, form > 3.5 && fur > 0.5) { head_fur4(hc, hnod, hyaw, htilt, fbl, fbr, ftl, ftr, fll, flr, fkl, fkr, fjw, fpf, fer, 35000.0, 0.0) }
+  let gaze = hturn([cos(0.6 * face_gx(expr)) * cos(0.5 * face_gy(expr)), sin(0.5 * face_gy(expr)), sin(0.6 * face_gx(expr)) * cos(0.5 * face_gy(expr))], hnod, hyaw, htilt)
+  emit Eye(c: at_v(at, q_to_body(form_eye(form), hea, hnod, hyaw, htilt, s)), r: form_eye_r(form), pdx: gaze.x, pdy: gaze.y, pdz: gaze.z, mode: mode)
+  emit Eye(c: at_v(at, q_to_body([form_eye(form).x, form_eye(form).y, 0.0 - form_eye(form).z], hea, hnod, hyaw, htilt, s)), r: form_eye_r(form), pdx: gaze.x, pdy: gaze.y, pdz: gaze.z, mode: mode)
+  whiskers(hea, at, s, ml, hnod, hyaw, htilt, mode)
+  emit Torso(pelvis: at_v(at, pel), chest: at_v(at, che), hd: hd, foot_l: at_v(at, foot_l), foot_r: at_v(at, foot_r),
+    knee_l: at_v(at, knee_l), knee_r: at_v(at, knee_r), elbow_l: at_v(at, elb_l), elbow_r: at_v(at, elb_r),
+    hand_l: at_v(at, hand_l), hand_r: at_v(at, hand_r), fat: fat, mode: mode)
+  emit Coat(pelvis: at_v(at, pel), chest: at_v(at, che), neck: at_v(at, nek), hd: hd,
+    elbow_l: at_v(at, elb_l), elbow_r: at_v(at, elb_r), hand_l: at_v(at, hand_l), hand_r: at_v(at, hand_r), fat: fat, mode: mode)
+  emit Belt(pelvis: at_v(at, pel), chest: at_v(at, che), fat: fat, mode: mode)
+  let tp0 = at_v(at, pel + [-0.055, -0.035, 0.0])
+  let tp1 = at_v(at, [-0.150, 0.050, 0.0])
+  let tp2 = at_v(at, [-0.260, 0.030, 0.008])
+  let tp3 = at_v(at, [-0.370, 0.035 + 0.05 * tail, -0.012])
+  let tp4 = at_v(at, [-0.470, 0.060 + 0.20 * tail, -0.025])
+  build for i in 0..select(0u, 1u, fur > 1.5) { tail_fur(tp0, tp1, tp2, tp3, tp4, 14500.0, 0.85) }
+  emit Tail(t0: at_v(at, pel + [-0.055, -0.035, 0.0]), t1: at_v(at, [-0.150, 0.050, 0.0]), t2: at_v(at, [-0.260, 0.030, 0.008]),
+    t3: at_v(at, [-0.370, 0.035 + 0.05 * tail, -0.012]), t4: at_v(at, [-0.470, 0.060 + 0.20 * tail, -0.025]), mode: mode)
+  belt_things(at, pel, che, fat, mode)
+  let top = gb + gd * 0.52
+  emit Bit(a: at_v(at, gb), b: at_v(at, top), ra: 0.0085, rb: 0.0085, mode: mode)
+  emit Bit(a: at_v(at, top), b: at_v(at, top + [0.020, 0.012, 0.0]), ra: 0.0085, rb: 0.007, mode: mode)
+  emit Bit(a: at_v(at, top + [0.020, 0.012, 0.0]), b: at_v(at, top + [0.045, 0.010, 0.0]), ra: 0.007, rb: 0.0055, mode: mode)
+  emit Bit(a: at_v(at, top + [0.045, 0.010, 0.0]), b: at_v(at, top + [0.060, -0.012, 0.0]), ra: 0.0055, rb: 0.004, mode: mode)
+  emit Bit(a: at_v(at, top + [0.060, -0.012, 0.0]), b: at_v(at, top + [0.054, -0.040, 0.0]), ra: 0.004, rb: 0.002, mode: mode)
+}
+
+pub fn flat_sky(rd: rgb, sun: rgb) -> rgb {
+  [0.72, 0.70, 0.66]
+}
+
+# ---- dark water: a ground plane with rings around the raft and a slow swell. The raft sits with its logs half in it.
+fn ripple(x: f, z: f) -> f {
+  let dx = max(abs(x + 0.04) - 0.37, 0.0)
+  let dz = max(abs(z) - 0.19, 0.0)
+  let d = sqrt(dx * dx + dz * dz)
+  let ring = sin(d * 80.0) * (1.0 - smoothstep(0.0, 0.55, d)) * smoothstep(0.0, 0.03, d)
+  0.5 * (vnoise([x * 5.0, 0.0, z * 3.2]) + 0.5 * vnoise([x * 13.0, 3.0, z * 8.0])) + 0.9 * ring
+}
+
+pub kind Water @World (mode: f = 0.0) {
+  visible(ro, rd) = ray_ground(ro, rd, 40m)
+  trace(p) = box_sdf(p - [0, -0.5, 0]@World, [40, 0.5, 40])
+  material(p, n) {
+    let e = 0.003
+    let h0 = ripple(p.x, p.z)
+    let tilt = [ripple(p.x + e, p.z) - h0, 0.0, ripple(p.x, p.z + e) - h0] * 1.1
+    let patch = vnoise([p.x * 1.3, 0.0, p.z * 0.9])
+    water_surface(mode, mix([0.010, 0.018, 0.014], [0.030, 0.030, 0.020], smoothstep(0.3, 0.8, patch) * 0.7), tilt)
+  }
+}
+
+pub build fn water(mode: f) {
+  emit Water(mode: mode)
+}

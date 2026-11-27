@@ -1,0 +1,44 @@
+{
+  "check-ball": {
+    "identical": true,
+    "bytes": 690,
+    "sha256": "197864c27c7ef70bc9fa2fb8c8376019a5b19155720c6459ab5b7b63965b01fc",
+    "rows": 2
+  },
+  "check-h02_hero_q3": {
+    "identical": true,
+    "bytes": 13041,
+    "sha256": "1cb4f3edfbb5f3de2cb7ae58b2f88780b05765b5d263ff09ea9a21683a1c9b12",
+    "rows": 35
+  },
+  "check-hero_q3": {
+    "identical": true,
+    "bytes": 1791048,
+    "sha256": "eee332a7e5f2d874268d2fd49e1bca7439620932fb6da255a85fffe08beaa305",
+    "rows": 3814
+  },
+  "check-otter": {
+    "identical": true,
+    "bytes": 22039,
+    "sha256": "7a49206c90f42baae5ae83a8284e1c5221d2ee50021a38f32775695cdeafc91d",
+    "rows": 64
+  },
+  "check-tq": {
+    "identical": true,
+    "bytes": 378713,
+    "sha256": "41312a79f0c17e711a1546bc4b7106fbe0e832af7ddc082c3ac25192161ec30f",
+    "rows": 1127
+  },
+  "warm_check_seconds_in_order_walrus_heron_otter_base_ball": [
+    "0.336",
+    "0.147",
+    "4.245",
+    "0.077",
+    "0.032"
+  ],
+  "build_sha256": {
+    "original/loft": "98c549038a2649be9e11f76a4d5708abcc6cab85bc1a2fe0fc366cc71f2efeb7",
+    "revised/loft": "c3f4c3d01fa9b19fed14b735974825c246aa63b9b43ebcdfeb71345ead307328",
+    "revised/proxy-study": "98725d38ff563fc7fd9486380f7b6797050fb37f3f040dc6dfb1dcf493d1222b"
+  }
+}

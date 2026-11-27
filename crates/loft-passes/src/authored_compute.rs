@@ -31,6 +31,49 @@ pub(crate) fn compute_extent(
 }
 
 impl AuthoredCompute {
+    pub(super) fn append_to(
+        &self, bundle: &mut loft_ir::Bundle, baked_tables: &BTreeMap<&str, loft_ir::TableId>,
+    ) -> impl Iterator<Item = (usize, loft_ir::PassDecl)> + use<'_> {
+        use loft_ir::{DispatchExtent, ElemFormat, ModuleId, PassRun, TableId, execution::DESCRIPTOR};
+        let layouts = bundle.struct_layouts.len() as u32;
+        bundle.struct_layouts.extend(self.bundle.struct_layouts.iter().cloned());
+        let aliases: BTreeMap<_, _> = baked_tables.iter()
+            .filter_map(|(name, id)| Some((*self.tables.get(*name)?, *id)))
+            .collect();
+        // Execution metadata is rebuilt for the destination graph. Resource IDs
+        // still refer to the source declarations, even if the descriptor was interleaved.
+        let tables: BTreeMap<_, _> = self.bundle.tables.iter().filter(|table| table.id != DESCRIPTOR)
+            .cloned().map(|mut table| {
+                let source = table.id;
+                if let Some(&id) = aliases.get(&source) { return (source, id); }
+                table.id = TableId(bundle.tables.len() as u32);
+                if let ElemFormat::Struct(index) = &mut table.format { *index += layouts; }
+                let id = table.id;
+                bundle.tables.push(table);
+                (source, id)
+            }).collect();
+        bundle.resources.resets.extend(self.bundle.resources.resets.iter().map(|table| tables[table]));
+        let modules = bundle.modules.len() as u32;
+        bundle.modules.extend(self.bundle.modules.iter().cloned().map(|mut module| {
+            module.id.0 += modules;
+            module
+        }));
+        self.positions.iter().copied().zip(self.bundle.passes.iter().cloned().map(move |mut pass| {
+            let PassRun::Compute { module, dispatch, .. } = &mut pass.run else { unreachable!("authored compute") };
+            *module = ModuleId(module.0 + modules);
+            match dispatch {
+                DispatchExtent::Fixed(_) => {}
+                DispatchExtent::FromRowCount { table, .. } | DispatchExtent::Indirect { buf: table, .. } => {
+                    *table = tables[&*table];
+                }
+            }
+            for binding in &mut pass.bindings {
+                binding.resource = tables[&binding.resource];
+            }
+            pass
+        }))
+    }
+
     pub(super) fn declare_table<'a>(
         &mut self, p: &Prog<'a>, types: &mut Vec<Ty>, overrides: &[(String, f64)], decl: &'a PassDecl,
     ) -> Res<(&'a str, &'a str)> {

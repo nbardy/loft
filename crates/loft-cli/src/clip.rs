@@ -3,7 +3,7 @@ use crate::{
     budget::{self, Failure},
     flag, sources,
 };
-use loft_cli::{check_records, native::{self, Loaded}, write_png};
+use loft_cli::{check_records, native::{self, Loaded}, percentile_nearest_rank, write_png};
 use loft_ir::Verdict;
 use loft_passes::{emit::Aov, program::Pass};
 use serde_json::json;
@@ -92,12 +92,8 @@ fn frame_name(i: u32) -> String {
     format!("frame_{i:03}.png")
 }
 
-// Nearest rank. Once more than floor(N/20) samples exceed the limit, even
-// zero-time remaining frames could not rescue this rollout's p95.
-fn rank(n: usize, percent: usize) -> usize {
-    (n as u64 * percent as u64).div_ceil(100) as usize - 1
-}
-
+// Once more than floor(N/20) samples exceed the limit, even zero-time
+// remaining frames could not rescue this rollout's nearest-rank p95.
 fn observe_frame(ms: f64, cap: f64, frames: u32, slow: &mut u32) -> Result<(), Failure> {
     if !ms.is_finite() || ms < 0. {
         return Err(Failure::Device("invalid GPU timestamp interval".into()));
@@ -196,7 +192,7 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
         write_png(&stage.path().join(frame_name(i)), c.size, &pixels).map_err(Failure::Parity)?;
     }
     times.sort_by(f64::total_cmp);
-    let quantile = |percent| (!times.is_empty()).then(|| times[rank(times.len(), percent)]);
+    let quantile = |p| (!times.is_empty()).then(|| percentile_nearest_rank(&times, p));
     let mut hash = blake3::Hasher::new();
     serde_json::to_writer(
         &mut hash,
@@ -219,7 +215,7 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
         // GPU ms of each frame's motion: the fixed-step dispatches from tick 0 to the frame's tick.
         "motion_gpu_ms": motion,
         "build_cpu_ms": build_ms, "load_gpu_ms": load_ms,
-        "frame_gpu_p50_ms": quantile(50), "frame_gpu_p95_ms": quantile(95),
+        "frame_gpu_p50_ms": quantile(0.5), "frame_gpu_p95_ms": quantile(0.95),
         "modules": p.modules.len(), "pipelines": pipelines, "commands": commands,
         "verdicts": verdicts, "identity_hash": hash.finalize().to_hex().as_str(),
     });
@@ -306,7 +302,8 @@ mod tests {
                 observe_frame(51., 50., n, &mut slow).unwrap();
             }
             assert_eq!(observe_frame(51., 50., n, &mut slow).unwrap_err().exit().0, 7);
-            assert_eq!(rank(n as usize, 95), (n - slow) as usize);
+            let samples = (1..=n).map(f64::from).collect::<Vec<_>>();
+            assert_eq!(percentile_nearest_rank(&samples, 0.95), f64::from(n - slow + 1));
         }
         assert_eq!(budget::timestamps(false).unwrap_err().exit().0, 6);
     }

@@ -35,7 +35,7 @@ fn_body:     "=" (expr | block) | block
 
 scan_decl:   "scan" LIDENT LIDENT "in" expr ".." expr "by" INT "on" LIDENT "{" _NL? "init" "=" expr _sep "step" LIDENT "=" expr _sep? "}"
 
-kind_decl:   "kind" UIDENT var_params? "@" kind_ref "(" col_list? ")" "{" (_NL? kind_item (_sep kind_item)* _sep?)? "}"
+kind_decl:   "kind" UIDENT var_params? "@" kind_ref ("(" col_list? ")")? "{" (_NL? kind_item (_sep kind_item)* _sep?)? "}"
 var_params:  "[" var_param ("," var_param)* ","? "]"
 var_param:   LIDENT ":" type_expr ("in" expr ".." expr)?
 col_list:    col ("," col)* ","?
@@ -53,16 +53,18 @@ write_set:   LIDENT ("." "{" ident_list "}")?
 check_decl:  "check" LIDENT "(" params ")" "->" type_expr block
 
 world_decl:  "world" UIDENT "{" field_inits "}"
-build_fn:    "build" "fn" LIDENT "(" params? ")" ("->" type_expr)? fn_body
+build_fn:    "build" "fn" LIDENT "(" build_params? ")" ("->" type_expr)? (fn_body | "=" if_stmt)
+build_params: build_param ("," build_param)* ","?
+build_param: param ("=" expr)?
 build_blk:   "build" block
 sched_decl:  "schedule" IDENT ("(" sched_params? ")")? "{" (_NL? sched_stmt (_sep sched_stmt)* _sep?)? "}"
 sched_params: sched_param ("," sched_param)* ","?
-sched_param: ".." LIDENT | param
+sched_param: ".." LIDENT | build_param
 sched_stmt:  "pass" LIDENT ("reads" "[" resource_list "]")? ("writes" "[" resource_list "]")? block step_clock?
            | "type" "Radiance" "=" type_expr
            | expr block? step_clock?
 step_clock:  "on" ("load" | "dirty" "(" resource_list ")")
-resource_list: IDENT ("," IDENT)* ","?
+resource_list: name_ref ("," name_ref)* ","?
 
 // --- Types (only after ':' or '->') ---
 type_expr:   unit_expr
@@ -75,13 +77,14 @@ type_expr:   unit_expr
 
 gen_params:  "[" UIDENT ("," UIDENT)* ","? "]"
 params:      param ("," param)* ","?
-param:       LIDENT (":" type_expr)? ("=" expr)?
+param:       LIDENT (":" type_expr)?
 ident_list:  LIDENT ("," LIDENT)* ","?
 field_inits: (_NL? field_init (("," | _sep) field_init)* ("," | _sep)?)?
 field_init:  LIDENT ":" expr
 
 // --- Statements & Blocks ---
-block:       "{" (_NL? stmt (_sep stmt)* _sep?)? "}"
+// A comment on its own line leaves a newline before the first statement.
+block:       "{" _NL* (stmt (_sep stmt)* _sep?)? "}"
 stmt:        "let" LIDENT (":" type_expr)? "=" expr
            | "var" LIDENT (":" type_expr)? "=" expr
            | "map" LIDENT "=" expr
@@ -89,8 +92,11 @@ stmt:        "let" LIDENT (":" type_expr)? "=" expr
            | build_for_stmt
            | "for" LIDENT "in" expr ".." expr block
            | "return" expr
+           | if_stmt
            | lhs "=" expr
            | expr
+
+if_stmt:     "if" expr block ("else" (if_stmt | block))?
 
 build_for_stmt: "build" "for" for_bind ("," for_bind)* block
 for_bind:    LIDENT "in" (expr ".." expr | "[" expr_list "]")
@@ -102,7 +108,11 @@ pipe_expr:   or_expr ("|>" pipe_rhs)*
 pipe_rhs:    LIDENT ("(" call_args? ")")?
 or_expr:     and_expr ("||" and_expr)*
 and_expr:    cmp_expr ("&&" cmp_expr)*
-cmp_expr:    add_expr (("==" | "!=" | "<" | "<=" | ">" | ">=") add_expr)?
+cmp_expr:    bit_or_expr (("==" | "!=" | "<" | "<=" | ">" | ">=") bit_or_expr)*
+bit_or_expr: bit_xor_expr ("|" bit_xor_expr)*
+bit_xor_expr: bit_and_expr ("^" bit_and_expr)*
+bit_and_expr: shift_expr ("&" shift_expr)*
+shift_expr:  add_expr (("<<" | ">>") add_expr)*
 add_expr:    mul_expr (("+" | "-") mul_expr)*
 mul_expr:    unary_expr (("*" | "/" | "%") unary_expr)*
 unary_expr:  ("-" | "!") unary_expr | postfix_expr
@@ -112,10 +122,15 @@ postfix_expr: primary ( "." LIDENT | "(" call_args? ")" | "[" expr "]" | "'" )*
 primary:     unit_number | NUMBER | STRING | "true" | "false" | name_ref
            | "(" expr ")"
            | "[" expr_list? "]" ("@" name_ref)?
-           | "if" expr block ("else" "if" expr block)* ("else" block)?
+           | ("v3" | "p3") "(" expr_list ")" "@" name_ref
+           | "if" expr block ("else" "if" expr block)* "else" block
+           | "match" expr "{" _NL* match_case ("," match_case)* "," "_" "=>" _NL? expr ","? _NL? "}"
            | "emit" kind_ref ("[" expr_list "]")? "(" named_args? ")"
            | "unproved" "(" ("step_scale" ":")? expr ")" block
            | "wgsl" "(" params? ")" "->" type_expr RAW_WGSL_BLOCK
+
+match_case:  "-"? MATCH_INT "=>" _NL? expr
+MATCH_INT:   /0x[0-9a-fA-F]+|[0-9]+[ui]?/
 
 // mix_bsdf(a, b, t) uses ordinary call syntax; its arguments are checked as Bsdf, Bsdf, f.
 call_args:   arg ("," arg)* ","?
@@ -133,13 +148,13 @@ unit_atom: (UNIT_SYM | "1") ("^" "-"? INT)?
 UNIT_SYM: "mm" | "m" | "rad" | "deg" | "s" | "kg" | "N" | "J" | "Hz"
 unit_number: NUM_UNIT ("^" "-"? INT)? (("*" | "/") unit_atom)*
 NUM_UNIT: /[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?(mm|m|rad|deg|s|kg|N|J|Hz)/
-NUMBER:      /0x[0-9a-fA-F]+|[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?/
+NUMBER:      /0x[0-9a-fA-F]+|[0-9]+([ui]|(\.[0-9]+)?([eE][+-]?[0-9]+)?)/
 UIDENT:      /[A-Z][a-zA-Z0-9_]*/
 LIDENT:      /[a-z_][a-zA-Z0-9_]*/
 IDENT:       UIDENT | LIDENT
 RAW_WGSL_BLOCK: /\{[^{}]*(\{[^{}]*\}[^{}]*)*\}/
 
-_NL:         /(\r?\n)+/
+_NL:         /(\r?\n[ \t]*)+/
 _sep:        (_NL | ";")+
 COMMENT:     /#[^\n]*/
 %ignore /[ \t]+/

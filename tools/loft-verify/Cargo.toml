@@ -1,6 +1,6 @@
 [package]
 name = "loft-verify"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
@@ -8,11 +8,16 @@ description = "Loft's verification and benchmarking instruments."
 
 [dependencies]
 blake3 = "1"
+loft-abi = { path = "../../crates/loft-abi" }
+loft-check = { path = "../../crates/loft-check" }
 loft-cli = { path = "../../crates/loft-cli" }
+loft-eval = { path = "../../crates/loft-eval" }
+loft-format = { path = "../../crates/loft-format" }
 loft-ir = { path = "../../crates/loft-ir" }
 loft-parse = { path = "../../crates/loft-parse" }
 loft-passes = { path = "../../crates/loft-passes" }
 loft-runner = { path = "../../crates/loft-runner" }
+loft-std = { path = "../../crates/loft-std" }
 naga.workspace = true
 png.workspace = true
 pollster.workspace = true
@@ -21,6 +26,9 @@ serde_json.workspace = true
 sha2.workspace = true
 tempfile = "3"
 wgpu.workspace = true
+
+[dev-dependencies]
+loft-native = { path = "../../crates/loft-native" }
 
 [lints]
 workspace = true

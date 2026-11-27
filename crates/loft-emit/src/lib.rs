@@ -7,6 +7,10 @@ mod mesh;
 pub mod provenance;
 pub mod quant;
 
+const BVH_TRAVERSAL: &str = concat!(include_str!("slab.wgsl"), include_str!("bvh.wgsl"));
+
 /// Traversal shared by nearest-hit and segment any-hit. Supply the two arrays and
 /// `loft_bvh_intersect(leaf: LoftLeafRef, ray: LoftRay) -> f32` in the consuming module.
-pub const BVH_WGSL: &str = include_str!("bvh.wgsl");
+pub const BVH_WGSL: &str = concat!(
+    include_str!("slab.wgsl"), include_str!("bvh.wgsl"), include_str!("../../../stdlib/render/bvh_storage.wgsl"),
+);

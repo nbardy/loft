@@ -10,8 +10,6 @@ pub mod outbox;
 pub mod pick;
 pub mod schedule;
 pub mod storage;
-#[cfg(all(target_arch = "wasm32", feature = "web-sys"))]
-pub mod web;
 
 pub mod command;
 pub mod readback;

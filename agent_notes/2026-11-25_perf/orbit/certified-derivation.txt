@@ -1,0 +1,45 @@
+kind loft_m_6f75742f66726573682f736f757263652f66697874757265732f77616c7275732f77616c7275735f6c312e6c6f6674_Hide Traced  rows    1  shapes   1  derived L 1.0000..1.0000  bound evals 26847  derive 1.01 s
+kind loft_m_6f75742f66726573682f736f757263652f66697874757265732f77616c7275732f77616c7275735f6c312e6c6f6674_Cap Traced  rows    1  shapes   1  derived L 1.1456..1.1456  bound evals 7027  derive 0.05 s
+kind loft_m_6f75742f66726573682f736f757263652f66697874757265732f77616c7275732f77616c7275735f6c312e6c6f6674_Rod Analytic  rows 1113  shapes 1113  derived L 1.0000..1.0000  bound evals 0  derive 0.06 s
+kind loft_m_6f75742f66726573682f736f757263652f66697874757265732f77616c7275732f77616c7275735f6c312e6c6f6674_Bead Analytic  rows    2  shapes   2  derived L 1.0000..1.0000  bound evals 0  derive 0.00 s
+kind loft_m_6f75742f66726573682f736f757263652f66697874757265732f77616c7275732f77616c7275735f6c312e6c6f6674_Coat Traced  rows    1  shapes   1  derived L 1.2780..1.2780  bound evals 9392  derive 0.26 s
+kind loft_m_6f75742f66726573682f736f757263652f66697874757265732f77616c7275732f77616c7275735f6c312e6c6f6674_Props Traced  rows    1  shapes   1  derived L 1.0000..1.0000  bound evals 646  derive 0.01 s
+kind loft_m_6f75742f66726573682f736f757263652f66697874757265732f77616c7275732f77616c7275735f6c312e6c6f6674_Pier Traced  rows    1  shapes   1  derived L 1.0000..1.0000  bound evals 24374  derive 0.03 s
+kind loft_m_6f75742f66726573682f736f757263652f66697874757265732f77616c7275732f77616c7275735f6c312e6c6f6674_Water Analytic  rows    1  shapes   1  derived L 1.0000..1.0000  bound evals 0  derive 0.00 s
+kind loft_m_6f75742f66726573682f736f757263652f66697874757265732f77616c7275732f77616c7275735f6c312e6c6f6674_Floe Traced  rows    6  shapes   6  derived L 1.0000..1.0000  bound evals 18058  derive 0.04 s
+modules 12  passes [cull, Vis([0, 1, 2, 3, 4, 5, 6, 7, 8]), Shadow([0, 1, 4, 5]), classify, Shade([0, 1, 2, 3, 4, 5, 6, 7, 8]), present]
+out/fresh/revised/loft check "$scene"  12.62s user 0.37s system 123% cpu 10.494 total
+kind loft_m_6f75742f66726573682f736f757263652f66697874757265732f6865726f6e2f6865726f6e2e6c6f6674_HeronCloak Traced  rows    1  shapes   1  derived L 1.0000..1.0000  bound evals 1124  derive 0.03 s
+kind loft_m_6f75742f66726573682f736f757263652f66697874757265732f6865726f6e2f6865726f6e2e6c6f6674_HeronHead Traced  rows    1  shapes   1  derived L 1.0500..1.0500  bound evals 3965  derive 0.24 s
+kind loft_m_6f75742f66726573682f736f757263652f66697874757265732f6865726f6e2f6865726f6e2e6c6f6674_HeronLeg Traced  rows    1  shapes   1  derived L 1.0000..1.0000  bound evals 462  derive 0.02 s
+kind loft_m_6f75742f66726573682f736f757263652f66697874757265732f6865726f6e2f6865726f6e2e6c6f6674_HeronStole Traced  rows    1  shapes   1  derived L 1.0007..1.0007  bound evals 664  derive 0.00 s
+kind loft_m_6f75742f66726573682f736f757263652f66697874757265732f6865726f6e2f6865726f6e2e6c6f6674_HeronBell Traced  rows    1  shapes   1  derived L 1.0000..1.0000  bound evals 1213  derive 0.03 s
+kind loft_m_6f75742f66726573682f736f757263652f66697874757265732f6865726f6e2f6865726f6e2e6c6f6674_HeronWeight Traced  rows   10  shapes  10  derived L 1.0000..1.0000  bound evals 2046  derive 0.01 s
+kind loft_m_6f75742f66726573682f736f757263652f66697874757265732f6865726f6e2f6865726f6e2e6c6f6674_HeronTatter Traced  rows   16  shapes  16  derived L 1.0000..1.0000  bound evals 4151  derive 0.03 s
+kind loft_m_6f75742f66726573682f736f757263652f66697874757265732f6865726f6e2f6865726f6e2e6c6f6674_Post Traced  rows    1  shapes   1  derived L 1.0500..1.0500  bound evals 1830  derive 0.02 s
+kind loft_m_6f75742f66726573682f736f757263652f66697874757265732f6865726f6e2f6865726f6e2e6c6f6674_Marsh Analytic  rows    1  shapes   1  derived L 1.0000..1.0000  bound evals 0  derive 0.00 s
+kind loft_m_6f75742f66726573682f736f757263652f66697874757265732f6865726f6e2f6865726f6e2e6c6f6674_Snag Traced  rows    2  shapes   2  derived L 1.5000..1.5000  bound evals 3478  derive 0.02 s
+modules 13  passes [cull, Vis([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]), Shadow([0, 1, 3, 5, 6, 7]), classify, Shade([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]), present]
+out/fresh/revised/loft check "$scene"  2.81s user 0.08s system 112% cpu 2.574 total
+kind loft_m_6f75742f66726573682f736f757263652f66697874757265732f6f747465722f666f726d732e6c6f6674_Head4 Traced  rows    1  shapes   1  derived L 5.1962..5.1962  bound evals 6884  derive 0.19 s
+kind loft_m_6f75742f66726573682f736f757263652f66697874757265732f6f747465722f6f747465722e6c6f6674_Eye Analytic  rows    2  shapes   2  derived L 1.0000..1.0000  bound evals 0  derive 0.00 s
+kind loft_m_6f75742f66726573682f736f757263652f66697874757265732f6f747465722f6f747465722e6c6f6674_Torso Traced  rows    1  shapes   1  derived L 3.7420..3.7420  bound evals 9008  derive 0.27 s
+kind loft_m_6f75742f66726573682f736f757263652f66697874757265732f6f747465722f6f747465722e6c6f6674_Coat Traced  rows    1  shapes   1  derived L 3.2692..3.2692  bound evals 1262  derive 0.04 s
+kind loft_m_6f75742f66726573682f736f757263652f66697874757265732f6f747465722f6f747465722e6c6f6674_Belt Traced  rows    1  shapes   1  derived L 1.9795..1.9795  bound evals 1269  derive 0.02 s
+kind loft_m_6f75742f66726573682f736f757263652f66697874757265732f6f747465722f6f747465722e6c6f6674_Tail Traced  rows    1  shapes   1  derived L 2.2335..2.2335  bound evals 3721  derive 0.04 s
+kind loft_m_6f75742f66726573682f736f757263652f66697874757265732f6f747465722f6f747465722e6c6f6674_Bit Analytic  rows   72  shapes  72  derived L 2.0000..3.2761  bound evals 0  derive 0.01 s
+kind loft_m_6f75742f66726573682f736f757263652f66697874757265732f6f747465722f6f747465722e6c6f6674_Log Traced  rows    5  shapes   5  derived L 2.8284..2.8284  bound evals 8666  derive 0.02 s
+kind loft_m_6f75742f66726573682f736f757263652f66697874757265732f6f747465722f6675722e6c6f6674_Strand Analytic  rows 3729  shapes 992  derived L 2.1056..2.2425  bound evals 0  derive 0.04 s
+kind loft_m_6f75742f66726573682f736f757263652f66697874757265732f6f747465722f6f747465722e6c6f6674_Water Analytic  rows    1  shapes   1  derived L 1.0000..1.0000  bound evals 0  derive 0.00 s
+modules 13  passes [cull, Vis([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]), Shadow([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]), classify, Shade([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]), present]
+out/fresh/revised/loft check "$scene"  8.18s user 0.32s system 128% cpu 6.596 total
+kind Otter        Traced  rows    1  shapes   1  derived L 3.4091..3.4091  bound evals 9588  derive 0.14 s
+kind Water        Analytic  rows    1  shapes   1  derived L 1.0000..1.0000  bound evals 0  derive 0.00 s
+kind Whisker      Analytic  rows   60  shapes  60  derived L 2.0107..2.0164  bound evals 0  derive 0.00 s
+kind Bead         Analytic  rows    2  shapes   2  derived L 1.0000..1.0000  bound evals 0  derive 0.00 s
+modules 7  passes [cull, Vis([0, 1, 2, 3]), Shadow([0]), classify, Shade([0, 1, 2, 3]), present]
+out/fresh/revised/loft check "$scene"  1.42s user 0.04s system 97% cpu 1.498 total
+kind Pelt         Traced  rows    1  shapes   1  derived L 1.6923..1.6923  bound evals 1058  derive 0.01 s
+kind Floor        Analytic  rows    1  shapes   1  derived L 1.0000..1.0000  bound evals 0  derive 0.00 s
+modules 5  passes [cull, Vis([0, 1]), Shadow([0]), classify, Shade([0, 1]), present]
+out/fresh/revised/loft check "$scene"  0.05s user 0.01s system 88% cpu 0.065 total

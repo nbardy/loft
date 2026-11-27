@@ -51,36 +51,6 @@ fn error(span: Span, name: &str) -> Diag {
     )
 }
 
-fn stock(path: &str) -> bool {
-    matches!(
-        path,
-        "stdlib/core.loft"
-            | "stdlib/engines/act.loft"
-            | "stdlib/engines/roam.loft"
-            | "stdlib/engines/reference.loft"
-            | "stdlib/engines/realtime.loft"
-            | "stdlib/engines/woodblock.loft"
-            | "stdlib/engines/spectral_caustic.loft"
-            | "stdlib/geometry/analytic.loft"
-            | "stdlib/geometry/layout.loft"
-            | "stdlib/geometry/mesh.loft"
-            | "stdlib/frames/transport.loft"
-            | "stdlib/sdf/solid.loft"
-            | "stdlib/noise/value.loft"
-            | "stdlib/motion/solve.loft"
-            | "stdlib/materials/bsdf.loft"
-            | "stdlib/sky/environment.loft"
-            | "stdlib/lighting/world.loft"
-            | "stdlib/lighting/emitters.loft"
-            | "stdlib/integrators/direct.loft"
-            | "stdlib/integrators/restir.loft"
-            | "stdlib/styles/woodblock.loft"
-            | "stdlib/post/display.loft"
-            | "stdlib/migration/bead_observation.loft"
-            | "stdlib/migration/trace_coverage.loft"
-    )
-}
-
 fn shared_space(n: &str) -> bool {
     matches!(n, "World" | "Local")
 }
@@ -100,30 +70,34 @@ struct Linker<'a> {
     names: Vec<Names>,
     bare: HashSet<String>,
     bare_spaces: HashSet<String>,
-    /// Public values of the stock library, which keep their bare names as keys and so are unique.
+    /// Unambiguous public values of the loaded standard library.
     stock_public: HashMap<String, Decl>,
 }
 
 impl<'a> Linker<'a> {
     fn new(graph: &'a Graph) -> Res<Self> {
         let mut names = Vec::with_capacity(graph.nodes.len());
-        let stock_names = graph
-            .nodes
-            .iter()
-            .enumerate()
-            .filter(|(id, _)| graph.stock(*id as u16).is_some_and(stock))
-            .flat_map(|(_, node)| node.module.items.iter().flat_map(Item::declarations))
-            .map(|n| n.name.as_str())
-            .collect::<HashSet<_>>();
+        let mut stock_names = HashMap::new();
+        for (_, node) in graph.nodes.iter().enumerate().filter(|(id, _)| graph.is_stdlib(*id)) {
+            for item in &node.module.items {
+                if matches!(item, Item::Camera(_)) {
+                    continue;
+                }
+                let space = matches!(item, Item::Space(_));
+                for n in item.declarations() {
+                    *stock_names.entry((space, n.name.as_str())).or_insert(0usize) += 1;
+                }
+            }
+        }
         let mut bare = HashSet::new();
         let mut bare_spaces = HashSet::new();
         for (id, node) in graph.nodes.iter().enumerate() {
             let mut scope = Names::default();
             let path = &graph.sources.files[id].0;
-            let stock = stock(path);
+            let stock = graph.is_stdlib(id);
             for item in &node.module.items {
                 if matches!(item, Item::Camera(_))
-                    || matches!(item, Item::Schedule(_)) && id == usize::from(graph.entry)
+                    || matches!(item, Item::Schedule(s) if s.params.is_empty()) && id == usize::from(graph.entry)
                 {
                     continue;
                 }
@@ -134,7 +108,10 @@ impl<'a> Linker<'a> {
                     }
                     let internal = n.name.starts_with('#');
                     let root = id == usize::from(graph.entry);
-                    let keep = stock || internal || root && !stock_names.contains(n.name.as_str());
+                    let count = stock_names.get(&(space, n.name.as_str())).copied().unwrap_or(0);
+                    // Keep the existing bare ABI for unique library names. Lexically
+                    // resolved imports still work when two stdlib modules share a name.
+                    let keep = internal || stock && count == 1 || root && count == 0;
                     let key = if keep {
                         n.name.clone()
                     } else {
@@ -157,9 +134,11 @@ impl<'a> Linker<'a> {
             }
             names.push(scope);
         }
-        let stock_public = graph.nodes.iter().enumerate()
-            .filter(|(id, _)| graph.stock(*id as u16).is_some_and(stock))
-            .flat_map(|(id, _)| names[id].values.iter().filter(|(_, d)| d.public).map(|(n, d)| (n.clone(), d.clone())))
+        let stock_public = names.iter().enumerate()
+            .filter(|(id, _)| graph.is_stdlib(*id))
+            .flat_map(|(_, scope)| scope.values.iter()
+                .filter(|(n, d)| d.public && d.key.as_str() == n.as_str())
+                .map(|(n, d)| (n.clone(), d.clone())))
             .collect();
         Ok(Self {
             graph,
@@ -425,13 +404,6 @@ impl Scope<'_> {
             // Renderer recipes bind this ABI type when the complete program is linked.
             TyExpr::Name(n) if n.name == "Radiance" => Ok(()),
             TyExpr::Name(n) | TyExpr::Table(n) => self.ident(n),
-            TyExpr::Generic(n, args) => {
-                self.ident(n)?;
-                for ty in args {
-                    self.ty(ty, locals)?;
-                }
-                Ok(())
-            }
             TyExpr::Array(ty, _, _) => self.ty(ty, locals),
             TyExpr::Geo(_, n) | TyExpr::Field(n) | TyExpr::Frame(n) => self.space(n, locals),
             TyExpr::Xform(a, b) => {
@@ -470,8 +442,14 @@ impl Scope<'_> {
                 condition,
                 then,
                 otherwise,
+                cases,
             } => {
                 self.expr(condition, locals)?;
+                if let Some(cases) = cases {
+                    for (_, value) in &mut cases.rest {
+                        self.expr(value, locals)?;
+                    }
+                }
                 self.arm(then, locals)?;
                 self.arm(otherwise, locals)?;
             }
@@ -615,6 +593,9 @@ impl Scope<'_> {
             .map(|p| p.name.name.clone())
             .collect::<Vec<_>>();
         for p in &mut f.params {
+            if let Some(default) = &mut p.default {
+                self.expr(default, &[])?;
+            }
             if let Some(ty) = &mut p.ty {
                 self.ty(ty, &[])?;
             }
@@ -657,7 +638,7 @@ impl Scope<'_> {
 
     fn item(&self, item: &mut Item) -> Res<()> {
         match item {
-            Item::Use(_) | Item::Space(_) | Item::Unit(_) => {}
+            Item::Use(_) | Item::Space(_) | Item::Target(_) => {}
             Item::Fn(f) | Item::Check(f) | Item::Build(f) => self.function(f)?,
             Item::Law(l) => self.function(&mut l.f)?,
             Item::Kernel(k) => self.function(&mut k.f)?,
@@ -695,13 +676,6 @@ impl Scope<'_> {
                     }
                 }
                 self.columns(&mut k.row)?;
-                let custom = &self.own.values[&k.name.name].key;
-                for f in &mut k.fns {
-                    self.function(f)?;
-                    if let Some((_, tail)) = f.name.name.split_once('#') {
-                        f.name.name = format!("{custom}#{tail}");
-                    }
-                }
                 for (_, f) in &mut k.queries {
                     self.function(f)?;
                 }
@@ -738,12 +712,18 @@ impl Scope<'_> {
                         self.ident(&mut pass.verb)?;
                     }
                     self.args(&mut pass.args, &params)?;
+                    if let Some(BakeClock::Dirty(names)) = &mut pass.clock {
+                        for n in names.iter_mut().filter(|n| !params.contains(&n.name)) { self.ident(n)?; }
+                    }
                     for (name, args) in &mut pass.body {
                         self.ident(name)?;
                         self.args(args, &params)?;
                     }
                     if let Some(resources) = &mut pass.resources {
                         for texture in resources.reads.iter_mut().filter(|t| !params.contains(&t.name)) {
+                            self.ident(texture)?;
+                        }
+                        for texture in resources.writes.iter_mut().filter(|t| !params.contains(&t.name)) {
                             self.ident(texture)?;
                         }
                         self.block(&mut resources.body, &mut params.clone())?;
@@ -768,7 +748,6 @@ impl Scope<'_> {
             }
             Item::Struct(n, _)
             | Item::TypeAlias(n, _)
-            | Item::Unit(n)
             | Item::World(n, _) => n,
             Item::Const(x) => &mut x.name,
             Item::Fn(x) | Item::Check(x) => &mut x.name,
@@ -778,6 +757,7 @@ impl Scope<'_> {
             Item::Law(x) => &mut x.f.name,
             Item::Kernel(x) => &mut x.f.name,
             Item::Camera(x) => &mut x.name,
+            Item::Target(x) => &mut x.name,
             Item::Bake(x) => &mut x.texel.name,
         };
         if let Some(d) = self.own.values.get(&name.name) {
@@ -843,11 +823,11 @@ pub(super) fn link(graph: &Graph) -> Res<(Vec<Module>, u32)> {
             });
         }
         // Stable ABI order is separate from the traversal and diagnostic file IDs.
-        let rank = match graph.stock(id) {
-            Some("stdlib/core.loft") => 0,
-            Some("stdlib/geometry/mesh.loft") => 1,
-            Some("stdlib/lighting/emitters.loft") => 2,
-            Some("stdlib/lighting/world.loft") => 3,
+        let rank = match graph.sources.files[usize::from(id)].0.as_str() {
+            _ if id == graph.core => 0,
+            "stdlib/geometry/mesh.loft" => 1,
+            "stdlib/lighting/emitters.loft" => 2,
+            "stdlib/lighting/world.loft" => 3,
             _ if id == graph.entry => 5,
             _ => 4,
         };

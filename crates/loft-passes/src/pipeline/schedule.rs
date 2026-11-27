@@ -1,5 +1,5 @@
 use crate::{AuthoredCompute, CompileOptions, GPU_ORDER, Prog, arg, as_v3, check, emit, kind_args, shade_schedule};
-use crate::frame_pass::FramePass;
+use crate::frame_pass::{FramePass, stock_store};
 use crate::eval::Tables;
 use crate::program::{Orbit, Pass, StepClock, abi};
 use crate::source::Graph;
@@ -59,35 +59,77 @@ pub(super) fn resolve<'a>(
     let mut rows_fns: Vec<&FnDecl> = modules.iter().flat_map(|m| &m.items)
         .filter_map(|item| if let Item::Build(f) = item { Some(f) } else { None }).collect();
     let mut draft = Draft::default();
-    let has_shadow_pass = sched.passes.iter().any(|p| p.verb.name == "find_shadow_map");
-    let mut emitted_passes = HashSet::new();
     let mut compute = AuthoredCompute { standalone: src.compute_only(), ..AuthoredCompute::default() };
+    let entry_passes = || sched.passes.iter().filter(|pass| pass.scheduled_from().file == src.entry());
+    let has_graph_resources = |pass: &PassDecl| pass.resources.as_ref().is_some_and(|r| {
+        FramePass::draws(r) || r.reads.iter().chain(&r.writes).any(|name| p.targets.contains_key(name.name.as_str()))
+    });
+    let explicit_graph = entry_passes().any(has_graph_resources)
+        && !entry_passes().any(|pass| pass.resources.is_none() && matches!(pass.verb.name.as_str(),
+            "render_bundle" | "shade_tiles" | "screen_pass" | "woodblock" | "realtime"));
+    let screen_only = sched.implicit
+        && sched.passes.iter().any(|pass| pass.verb.name == "screen_pass" && pass.scheduled_from().file == src.entry())
+        && !p.kinds.values().any(|kind| !kind.queries.is_empty() || kind.name.name == "Mesh");
+    // The source linker supplies a realtime recipe for partial schedules. Preserve its implicit drawable selection
+    // for paths with geometry, and skip the recipe where there are no raster drawables to select.
+    let standalone = compute.standalone;
+    let passes = || sched.passes.iter().filter(|pd| {
+        !(standalone || screen_only || explicit_graph) || pd.scheduled_from().file == src.entry()
+    });
+    let has_shadow_pass = passes().any(|p| p.verb.name == "find_shadow_map");
+    let mut emitted_passes = HashSet::new();
     let mut compute_rows = BTreeMap::new();
     let mut available: HashSet<&str> = ["FrameUniform", "InputsBuf", "ParamsBuf", "RowTables", "LutTables", "BodyTables", "StateBuf", "PoseBuf"].into_iter().collect();
     available.extend(p.bakes.keys().copied());
+    if let Some(&name) = p.targets.keys().find(|&&name| {
+        stock_store(name) || available.contains(name) || matches!(name, "Drawables" | "Casters")
+    }) {
+        return Err(Diag::new(Code::E011, sched.name.span, format!("`{name}` is a stock frame store"),
+            "choose a distinct target name"));
+    }
     let mut labels = HashSet::new();
-    for pd in &sched.passes {
+    let mut path_position = None;
+    for pd in passes() {
         if let Some(resources) = &pd.resources {
             if pd.clock.is_some() {
                 return Err(Diag::new(Code::E520, pd.label.span, "`on` is lowered for `find_shadow_map` only in this build",
                     "remove the clause; the pass runs every frame"));
             }
-            if let Some(frame) = FramePass::classify(p, types, src, overrides, pd, resources)? {
+            let custom = resources.reads.iter().chain(&resources.writes)
+                .all(|r| compute_rows.contains_key(r.name.as_str()) || p.bakes.contains_key(r.name.as_str()));
+            if (!custom || FramePass::draws(resources))
+                && let Some(frame) = FramePass::classify(p, types, src, overrides, pd, resources, &compute)?
+            {
                 if let Some(read) = frame.reads.iter().find(|r| !available.contains(**r)) {
                     return Err(Diag::new(Code::E505, pd.label.span, format!("{read} read before it was written"), "schedule its producer before this pass"));
                 }
-                if !labels.insert(pd.label.name.as_str()) || p.kinds.contains_key(pd.label.name.as_str()) {
+                if !labels.insert(pd.label.name.as_str()) || compute.truth.contains_key(&pd.label.name)
+                    || p.kinds.contains_key(pd.label.name.as_str())
+                {
                     return Err(Diag::new(Code::E505, pd.label.span, format!("duplicate render pass {}", pd.label.name),
                         "give each frame pass its own label and schedule one producer per renderer resource"));
+                }
+                for name in &frame.writes {
+                    if let Some(&id) = compute.tables.get(*name) {
+                        // Raw WGSL has no Det proof, even when it also writes a frame target.
+                        compute.producers.entry(id).or_insert(pd.label.span);
+                        compute.determinism.insert(id, Determinism::NonDet);
+                    }
                 }
                 available.extend(frame.writes.iter().copied());
                 draft.steps.push(Step::Frame(frame));
                 continue;
             }
+            if labels.contains(pd.label.name.as_str()) {
+                return Err(Diag::new(Code::E505, pd.label.span, format!("duplicate pass {}", pd.label.name),
+                    "give each pass its own label"));
+            }
             if let Some(read) = resources.reads.iter().find(|r| !available.contains(r.name.as_str())) {
                 return Err(Diag::new(Code::E505, read.span, format!("{} read before it was written", read.name), "schedule its producer before this pass"));
             }
             compute.lower(p, types, src, overrides, (pd, resources, &compute_rows), features)?;
+            let position = if path_position.is_some() { 1 } else { draft.steps.len() };
+            compute.positions.resize(compute.bundle.passes.len(), position);
             available.extend(resources.writes.iter().map(|r| r.name.as_str()));
             continue;
         }
@@ -102,6 +144,10 @@ pub(super) fn resolve<'a>(
         match verb {
             "table" => {
                 let (name, row) = compute.declare_table(p, types, overrides, pd)?;
+                if p.targets.contains_key(name) {
+                    return Err(Diag::new(Code::E011, pd.label.span, format!("`{name}` already names a target"),
+                        "choose a distinct table name"));
+                }
                 compute_rows.insert(name, row);
                 available.insert(name);
             }
@@ -111,7 +157,10 @@ pub(super) fn resolve<'a>(
                 }
                 rows_fns.push(p.fns[v]);
             }
-            _ => draft.lower_pass(p, modules, types, overrides, sched, pd)?,
+            _ => draft.lower_pass(p, modules, types, overrides, pd)?,
+        }
+        if verb == "screen_pass" {
+            path_position = Some(compute.positions.len());
         }
         let (reads, writes) = renderer_effects(verb, has_shadow_pass);
         if let Some(read) = reads.iter().find(|r| !available.contains(**r)) {
@@ -121,17 +170,38 @@ pub(super) fn resolve<'a>(
     }
     let Draft { camera, sun, light, steps, drawn, casters, shadow_size, shadow_clock,
         path, path_entry, paper } = draft;
-    let camera = camera.ok_or_else(|| Diag::new(Code::E520, sched.name.span, "no camera", "add `pass camera: orbit(at: ..., radius: ..., height: ..., period: ..., fov: ...);`"))?;
+    let generic_frame = steps.iter().any(|step| matches!(step, Step::Frame(_)))
+        && !steps.iter().any(|step| matches!(step, Step::Stock(_)));
+    if let Some(position) = path_position {
+        // Path lowering replaces all raster steps with one draw at screen_pass.
+        compute.positions[..position].fill(0);
+    }
+    let camera = match camera {
+        Some(camera) => camera,
+        None if compute.standalone || generic_frame => Orbit {
+            at: [0.0; 3], radius: 4.0, height: 0.5, period: 24.0, fov: 40_f32.to_radians(), fixed_eye: None,
+        },
+        None => return Err(Diag::new(Code::E520, sched.name.span, "no camera",
+            "add `orbit(at: ..., radius: ..., height: ..., period: ..., fov: ...)`")),
+    };
     // The frame's sky is the present pass's `sky` hole: World shading's edge rays call the same function.
     let sky = steps.iter().find_map(|step| match step {
         Step::Frame(frame) => frame.sky(p),
         Step::Stock(_) => None,
     });
-    let (Some(light), Some(sky), Some(sun)) = (light, sky, sun) else {
-        return Err(Diag::new(Code::E520, sched.name.span, "incomplete raster schedule",
-            "schedule shade_tiles and a tonemap pass"));
+    let world_lighting = matches!(light, Some(Lighting::World { .. }));
+    let (light, sky, sun) = match (light, sky, sun) {
+        (Some(light), Some(sky), Some(sun)) => (light, sky, sun),
+        (light, _, sun) if path.is_some() || compute.standalone || generic_frame => (
+            // The path emitter needs kind queries but does not call a raster lighting callback.
+            light.unwrap_or(Lighting::World { callback: "", visibility: Visibility::Center }),
+            "",
+            sun.unwrap_or([0.5, 0.75, 0.35]),
+        ),
+        _ => return Err(Diag::new(Code::E520, sched.name.span, "incomplete raster schedule",
+            "schedule shade_tiles and a tonemap pass")),
     };
-    if matches!(light, Lighting::World { .. }) && path.is_some()
+    if world_lighting && path.is_some()
         || matches!(light, Lighting::World { visibility: Visibility::SubpixelEdges | Visibility::Coverage, .. }
             | Lighting::Bsdf(_, Visibility::Coverage)) && paper.is_some()
     {
@@ -139,7 +209,7 @@ pub(super) fn resolve<'a>(
             "use one shade and film recipe for the raster schedule"));
     }
     let lighting = light;
-    let tiled_world = (matches!(lighting, Lighting::World { .. }) && aov == emit::Aov::Beauty).then(|| emit::paths::PathTrace {
+    let tiled_world = (world_lighting && aov == emit::Aov::Beauty).then(|| emit::paths::PathTrace {
         integrator: emit::paths::Integrator::Reference, bounces: 0, lens: [0.0, 1.0],
         lamps: vec![], worlds: vec![], media: vec![],
     });
@@ -152,7 +222,7 @@ pub(super) fn resolve<'a>(
 impl<'a> Draft<'a> {
     fn lower_pass(
         &mut self, p: &Prog<'a>, modules: &'a [Module], types: &mut Vec<Ty>,
-        overrides: &[(String, f64)], sched: &ScheduleDecl, pd: &'a PassDecl,
+        overrides: &[(String, f64)], pd: &'a PassDecl,
     ) -> Res<()> {
         let verb = pd.verb.name.as_str();
         match verb {
@@ -167,7 +237,7 @@ impl<'a> Draft<'a> {
                     if call.name != "draw_indirect" {
                         return Err(Diag::new(Code::E520, call.span, format!("`{}` in a render bundle", call.name), "write `draw_indirect(Kind, ...)`"));
                     }
-                    let fake = PassDecl { label: pd.label.clone(), verb: call.clone(), args: args.iter().map(|a| Arg { name: None, value: clone_name(&a.value) }).collect(), body: vec![], resources: None, clock: None };
+                    let fake = PassDecl { label: pd.label.clone(), verb: call.clone(), call_site: pd.call_site, args: args.iter().map(|a| Arg { name: None, value: clone_name(&a.value) }).collect(), body: vec![], resources: None, clock: None };
                     for k in kind_args(p, &fake)? {
                         self.drawn.push(k);
                     }
@@ -178,8 +248,8 @@ impl<'a> Draft<'a> {
                 self.casters = kind_args(p, pd)?;
                 let e = arg(pd, "size")?;
                 self.shadow_size = as_f32(stage0(p, types, e, overrides)?, e.span)? as u32;
-                if !(64..=8192).contains(&self.shadow_size) || (!sched.implicit && self.casters.is_empty()) {
-                    return Err(Diag::new(Code::E520, pd.verb.span, "a shadow map needs casters and a size of 64 to 8192 texels", "write `find_shadow_map(Kind, ..., size: 1024u)`"));
+                if !(64..=8192).contains(&self.shadow_size) {
+                    return Err(Diag::new(Code::E520, pd.verb.span, "a shadow map needs a size of 64 to 8192 texels", "write `find_shadow_map(Kind, ..., size: 1024u)`"));
                 }
                 self.shadow_clock = shadow_clock(pd, &self.casters)?;
                 self.steps.push(Step::Stock(Pass::Shadow(vec![])));
@@ -332,14 +402,27 @@ fn screen_pass<'a>(
 impl Schedule<'_> {
     pub(super) fn select_drawables(&mut self, p: &Prog<'_>, tables: &Tables) -> Res<()> {
         let sched = self.decl;
-        let Self { drawn, casters, shadow_size, steps, path, tiled_world, .. } = self;
+        let Self { drawn, casters, shadow_size, steps, path, tiled_world, compute, .. } = self;
         let populated = |k: &&str| !tables[p.kind_index(k)].is_empty();
-        if sched.implicit {
-            drawn.retain(populated);
-            casters.retain(populated);
-            if casters.is_empty() {
-                *shadow_size = 0;
-                steps.retain(|step| !matches!(step, Step::Stock(Pass::Shadow(_))));
+        // Compact all three lists before assigning GPU kind IDs. An omitted part has no slot.
+        drawn.retain(populated);
+        casters.retain(populated);
+        // A repeated caster is drawn into the shadow map twice for the same picture. With exported worlds it is
+        // easy to list a kind both directly and through a group, so refuse it as the draw list does.
+        let mut c = casters.clone();
+        c.sort_unstable();
+        if c.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Err(Diag::new(Code::E520, sched.name.span, format!("the shadow map lists {casters:?}"), "cast each kind's shadow once"));
+        }
+        if casters.is_empty() {
+            *shadow_size = 0;
+            if let Some(shadow) = steps.iter().position(|step| matches!(step, Step::Stock(Pass::Shadow(_)))) {
+                steps.remove(shadow);
+                if path.is_none() {
+                    for position in &mut compute.positions {
+                        if *position > shadow { *position -= 1; }
+                    }
+                }
             }
         }
         let mut b = drawn.clone();
@@ -351,7 +434,7 @@ impl Schedule<'_> {
         for step in steps.iter_mut() {
             let Step::Frame(frame) = step else { continue };
             if !frame.reads_kinds { continue; }
-            if sched.implicit { frame.kinds.retain(populated); }
+            frame.kinds.retain(populated);
             let mut a = frame.kinds.clone();
             a.sort_unstable();
             if a != b {

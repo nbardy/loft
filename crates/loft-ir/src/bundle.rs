@@ -7,7 +7,7 @@ macro_rules! ids {
         pub struct $name(pub u32);
     )+};
 }
-ids!(InstanceId, SymId, ValId);
+ids!(InstanceId);
 
 macro_rules! record {
     ($(#[$attr:meta])* $name:ident {
@@ -127,12 +127,3 @@ pub struct Bundle {
     pub params: Vec<ParamMeta>,
     pub passes: Vec<PassDecl>,
 }
-#[derive(Clone, Debug)]
-pub enum Op {
-    Intrinsic { name: SymId, args: Box<[ValId]> },
-}
-#[derive(Default)]
-pub struct IrModule {
-    pub ops: Vec<Op>,
-}
-pub type PassRegistry = BTreeMap<SymId, fn(&mut IrModule) -> crate::Res<()>>;

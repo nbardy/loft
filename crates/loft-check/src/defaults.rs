@@ -4,81 +4,121 @@ use loft_parse::ast::*;
 
 pub const ENV_DEFAULTS: [&str; 3] = ["DEFAULT_SUN_COLOR", "DEFAULT_ZENITH", "DEFAULT_HORIZON"];
 
-/// Compose the render schedule (the scene's own, or the selected recipe around it), then inline every call to a
-/// schedule function from `library` (parametrised schedules of every module).
+/// Inline authored schedule calls and fill in a default recipe when needed.
 pub fn schedule(modules: &mut Vec<Module>, next: &mut u32, recipe: Option<ScheduleDecl>, library: &[ScheduleDecl]) -> Res<()> {
-    compose(modules, next, recipe)?;
+    compose(modules, next, recipe, library)?;
+    let worlds: std::collections::BTreeMap<_, _> = modules.iter().flat_map(|m| &m.items)
+        .filter_map(|item| match item {
+            Item::World(name, members) => Some((name.name.clone(), members.clone())),
+            _ => None,
+        }).collect();
+    let data_kinds = modules.iter().flat_map(|m| &m.items).filter_map(|item| match item {
+        Item::Kind(kind) if kind.queries.is_empty() && kind.name.name != "Mesh" => Some(kind.name.name.clone()),
+        _ => None,
+    }).collect::<std::collections::BTreeSet<_>>();
     if let Some(s) = modules.iter_mut().flat_map(|m| &mut m.items).find_map(|i| {
         if let Item::Schedule(s) = i { Some(s) } else { None }
     }) {
-        s.passes = expand(std::mem::take(&mut s.passes), library, 0)?;
-    }
-    Ok(())
-}
-
-fn compose(modules: &mut Vec<Module>, next: &mut u32, recipe: Option<ScheduleDecl>) -> Res<()> {
-    let items = || modules.iter().flat_map(|m| &m.items);
-    let mut cameras = items().filter_map(|i| if let Item::Camera(c) = i { Some(c) } else { None });
-    let camera = cameras.next();
-    if let Some(c) = cameras.next() {
-        return Err(Diag::new(Code::E520, c.name.span, "multiple default cameras", "declare one camera"));
-    }
-    let authored = items().find_map(|i| if let Item::Schedule(s) = i { Some(s) } else { None });
-    let woodblock = authored.and_then(|s| s.passes.iter().find(|p| p.verb.name == "woodblock"));
-    let complete = authored.is_some_and(|s| s.passes.iter().any(|p| p.verb.name == "render_bundle"));
-    if complete { return Ok(()); }
-    let mut schedule = recipe.ok_or_else(|| Diag::new(Code::E520, Span::NONE,
-        "no render schedule was selected", "import an engine or write a complete schedule"))?;
-    if let Some(call) = woodblock {
-        let bad = || Diag::new(Code::E520, call.verb.span, "invalid two-world woodblock schedule",
-            "write woodblock(PrimaryWorld, SolidShadow, MainCam) with declared worlds and camera");
-        let [primary, shadow, cam] = call.args.as_slice() else { return Err(bad()); };
-        let names = [primary, shadow, cam].map(|a| match &a.value.kind { ExprKind::Name(n) => Some(n.as_str()), _ => None });
-        let [Some(primary), Some(shadow), Some(cam)] = names else { return Err(bad()); };
-        if !camera.is_some_and(|c| c.name.name == cam) { return Err(bad()); }
-        let index = crate::Prog::index(modules)?;
-        let geometry = |name| -> Res<Vec<Arg>> {
-            let kinds = index.worlds.get(name).ok_or_else(bad)?;
-            Ok(kinds.iter().filter(|k| !index.kinds[k.name.as_str()].queries.is_empty()).map(|k| Arg {
-                name: None, value: Expr { id: 0, span: k.span, kind: ExprKind::Name(k.name.clone()) },
-            }).collect())
+        // Expand only at kind-list boundaries. A world passed to a lighting function stays a World value.
+        let expand_names = |names: &mut Vec<Ident>, geometry: bool| {
+            *names = std::mem::take(names).into_iter().flat_map(|n| {
+                match worlds.get(&n.name) {
+                    Some(members) if geometry && members.iter().any(|k| !data_kinds.contains(&k.name)) => {
+                        members.iter().filter(|k| !data_kinds.contains(&k.name)).cloned().collect()
+                    }
+                    Some(members) => members.clone(),
+                    None => vec![n],
+                }
+            }).collect();
         };
-        let primary = geometry(primary)?;
-        let shadow = geometry(shadow)?;
-        for pass in &mut schedule.passes {
+        let mut expand_args = |args: &mut Vec<Arg>| {
+            let mut expanded = Vec::new();
+            for arg in std::mem::take(args) {
+                if arg.name.is_none() && let ExprKind::Name(n) = &arg.value.kind
+                    && let Some(members) = worlds.get(n)
+                {
+                    let filter_data = members.iter().any(|k| !data_kinds.contains(&k.name));
+                    for member in members.iter().filter(|k| !filter_data || !data_kinds.contains(&k.name)) {
+                        expanded.push(Arg { name: None, value: Expr {
+                            id: *next, span: arg.value.span, kind: ExprKind::Name(member.name.clone()),
+                        } });
+                        *next += 1;
+                    }
+                } else { expanded.push(arg); }
+            }
+            *args = expanded;
+        };
+        for pass in &mut s.passes {
+            if let Some(resources) = &mut pass.resources {
+                // An indirect draw list contains geometry. Other frame passes may read a world's data kinds.
+                let geometry = resources.writes.iter().any(|n| n.name == "IndirectBuf");
+                expand_names(&mut resources.reads, geometry);
+            }
             match pass.verb.name.as_str() {
-                "cull_indirect" => pass.args = primary.clone(),
-                "render_bundle" => pass.body[0].1 = primary.clone(),
                 "find_shadow_map" => {
-                    pass.args.retain(|a| a.name.is_some());
-                    pass.args.extend(shadow.clone());
+                    expand_args(&mut pass.args);
+                    if let Some(BakeClock::Dirty(names)) = &mut pass.clock { expand_names(names, true); }
+                }
+                "render_bundle" => {
+                    for (verb, args) in &mut pass.body {
+                        if verb.name == "draw_indirect" { expand_args(args); }
+                    }
                 }
                 _ => {}
             }
         }
     }
-    schedule.implicit = true;
-    let mut before = vec![];
-    if let Some(camera) = camera.filter(|_| {
-        !authored.is_some_and(|s| s.passes.iter().any(|p| matches!(p.verb.name.as_str(), "orbit" | "use_camera")))
-    }) {
+    Ok(())
+}
+
+fn compose(
+    modules: &mut Vec<Module>, next: &mut u32, recipe: Option<ScheduleDecl>, library: &[ScheduleDecl],
+) -> Res<()> {
+    let mut cameras = modules.iter().flat_map(|m| &m.items)
+        .filter_map(|i| if let Item::Camera(c) = i { Some(c) } else { None });
+    let camera = cameras.next();
+    if let Some(c) = cameras.next() {
+        return Err(Diag::new(Code::E520, c.name.span, "multiple default cameras", "declare one camera"));
+    }
+    let mut authored = modules.iter().flat_map(|m| &m.items)
+        .find_map(|i| if let Item::Schedule(s) = i { Some(s.clone()) } else { None });
+    let passes = authored.as_mut().map_or_else(Vec::new, |s| std::mem::take(&mut s.passes));
+    let mut before = expand(passes, library, 0)?;
+    // A called template can already provide the present step without any stock render_bundle.
+    // Appending the fallback in that case supplies a second cull and present.
+    let stock_bundle = before.iter().any(|p| p.verb.name == "render_bundle");
+    let template_present = before.iter().any(|p| p.call_site.is_some()
+        && p.resources.as_ref().is_some_and(|r| r.writes.iter().any(|n| n.name == "Swapchain")));
+    let has_camera = |p: &PassDecl| matches!(p.verb.name.as_str(), "orbit" | "use_camera");
+    if let Some(camera) = camera.filter(|_| !stock_bundle && !before.iter().any(has_camera)) {
         let name = Ident { name: "use_camera".into(), span: camera.name.span };
         let args = vec![Arg { name: None, value: Expr {
             id: *next, span: camera.name.span, kind: ExprKind::Name(camera.name.name.clone()),
         } }];
         *next += 1;
-        before.push(PassDecl { label: name.clone(), verb: name, args, body: vec![], resources: None, clock: None });
+        before.insert(0, PassDecl { label: name.clone(), verb: name, call_site: None, args, body: vec![], resources: None, clock: None });
     }
-    if let Some(s) = authored {
-        schedule.name = s.name.clone();
-        if s.radiance.is_some() { schedule.radiance = s.radiance.clone(); }
-        before.extend(s.passes.iter().filter(|p| (p.verb.name != "realtime" || !p.args.is_empty()) && p.verb.name != "woodblock").cloned());
-    }
-    if before.iter().any(|p| matches!(p.verb.name.as_str(), "orbit" | "use_camera")) {
-        schedule.passes.retain(|p| p.verb.name != "orbit");
-    }
-    before.append(&mut schedule.passes);
-    schedule.passes = before;
+    let schedule = if stock_bundle || template_present {
+        let mut schedule = authored.expect("expanded authored schedule");
+        schedule.passes = before;
+        schedule
+    } else {
+        let mut schedule = recipe.ok_or_else(|| Diag::new(Code::E520, Span::NONE,
+            "no render schedule was selected", "import an engine or write a complete schedule"))?;
+        schedule.implicit = true;
+        if let Some(s) = authored {
+            schedule.name = s.name;
+            if s.radiance.is_some() { schedule.radiance = s.radiance; }
+        }
+        before.retain(|p| p.verb.name != "realtime" || !p.args.is_empty());
+        schedule.passes = expand(schedule.passes, library, 0)?;
+        if before.iter().any(has_camera) {
+            schedule.passes.retain(|p| p.verb.name != "orbit");
+        }
+        before.append(&mut schedule.passes);
+        schedule.passes = before;
+        schedule
+    };
     if let Some(slot) = modules.iter_mut().flat_map(|m| &mut m.items).find_map(|i| {
         if let Item::Schedule(s) = i { Some(s) } else { None }
     }) {
@@ -119,6 +159,7 @@ fn expand(passes: Vec<PassDecl>, library: &[ScheduleDecl], depth: u32) -> Res<Ve
         let mut steps = Vec::with_capacity(function.passes.len());
         for step in &function.passes {
             let mut step = substitute(step, &env)?;
+            step.call_site = Some(call.scheduled_from());
             // `name(...) on load` puts every step of the function at that stage, unless the step names its own.
             if step.clock.is_none() { step.clock.clone_from(&call.clock); }
             steps.push(step);
@@ -163,7 +204,16 @@ fn bind(function: &ScheduleDecl, call: &PassDecl) -> Res<Env> {
 
 fn substitute(step: &PassDecl, env: &Env) -> Res<PassDecl> {
     let mut step = step.clone();
+    if step.resources.is_none() && lookup(env, &step.verb.name).is_some() {
+        let names = stores(std::slice::from_ref(&step.verb), env)?;
+        let [name] = names.as_slice() else {
+            return Err(Diag::new(Code::E520, step.verb.span, "expected one schedule function name",
+                "pass a single name as the schedule callee"));
+        };
+        step.verb = name.clone();
+    }
     step.args = arguments(&step.args, env)?;
+    if let Some(BakeClock::Dirty(names)) = &mut step.clock { *names = stores(names, env)?; }
     for (_, args) in &mut step.body {
         *args = arguments(args, env)?;
     }
@@ -239,8 +289,13 @@ fn expression(e: &mut Expr, env: &Env) -> Res<()> {
     }
     match &mut e.kind {
         ExprKind::Name(_) => Ok(()),
-        ExprKind::If { condition, then, otherwise } => {
+        ExprKind::If { condition, then, otherwise, cases } => {
             expression(condition, env)?;
+            if let Some(cases) = cases {
+                for (_, value) in &mut cases.rest {
+                    expression(value, env)?;
+                }
+            }
             for arm in [then, otherwise] {
                 for stmt in &mut arm.body.stmts { statement(stmt, env)?; }
                 expression(&mut arm.value, env)?;

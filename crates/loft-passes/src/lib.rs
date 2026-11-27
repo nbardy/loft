@@ -7,7 +7,7 @@
 mod cache;
 mod authored_compute;
 mod frame_pass;
-mod motion;
+pub mod motion;
 mod pipeline;
 pub use pipeline::param_key;
 mod provenance;
@@ -115,6 +115,8 @@ pub struct KindReport {
     pub l_max: f64,
     pub evals: u64,
     pub cache_hits: usize,
+    /// Packed LUT words owned by this kind's primary visibility certificates.
+    pub guard_words: std::ops::Range<usize>,
     /// This kind's share of the wall seconds spent deriving bounds: its shapes' seconds over the worker count
     /// (near 0 when every shape was cached).
     pub derive_s: f64,
@@ -139,10 +141,11 @@ pub struct Compiled {
     pub compute: AuthoredCompute,
 }
 
-/// The standalone pass-derived representation of source-authored compute.
+/// Source-authored compute declarations and their placement among frame passes.
 #[derive(Default)]
 pub struct AuthoredCompute {
     standalone: bool,
+    positions: Vec<usize>,
     pub bundle: loft_ir::Bundle,
     pub tables: BTreeMap<String, loft_ir::TableId>,
     pub determinism: BTreeMap<loft_ir::TableId, Determinism>,
@@ -446,33 +449,14 @@ pub fn compile_for_device(src: &Graph, overrides: &[(String, f64)], aov: emit::A
 }
 
 pub mod program;
-pub mod sexp;
 pub mod telemetry;
-pub mod fusion;
-pub mod bvh;
+// Native sampling still uses this import path until the runtime lanes are combined.
+#[doc(hidden)]
+pub use motion as fusion;
 pub mod quant;
 pub mod bake_tex;
 #[path = "bundle.rs"]
 mod renderer_bundle;
 pub mod bundle {
-    use super::{Compiled, Program};
-    use loft_ir::Bundle;
-
-    pub use super::renderer_bundle::{Options, lower_program, lower_twin, parameters, replacement};
-
-    pub fn lower(
-        program: &Program, compiled: &Compiled, size: (u32, u32),
-        frame: impl Fn(bool, Option<([f32; 3], [f32; 3], u32)>) -> Vec<u8>,
-    ) -> Result<Bundle, String> {
-        if compiled.compute.bundle.passes.is_empty() {
-            return super::renderer_bundle::lower(program, compiled, size, frame);
-        }
-        if !compiled.compute.standalone || program.path.is_some() || !program.dispatches.is_empty() {
-            return Err("the portable artifact needs a standalone authored compute schedule".into());
-        }
-        let mut bundle = compiled.compute.bundle.clone();
-        bundle.params = parameters(program, compiled)?;
-        super::renderer_bundle::compute_bakes(program, &compiled.compute.tables, &mut bundle)?;
-        Ok(bundle)
-    }
+    pub use super::renderer_bundle::{Options, SEGMENT_TILE_SIDE, lower, lower_program, lower_twin, parameters, replacement};
 }

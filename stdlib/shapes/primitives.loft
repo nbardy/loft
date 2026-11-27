@@ -1,0 +1,15 @@
+use stdlib::geometry::analytic::{ray_capsule}
+use stdlib::materials::bsdf::{ggx}
+use stdlib::sdf::solid::{capsule}
+
+pub kind Capsule @World (a: p3@World, b: p3@World, r: m, albedo: rgb) {
+  visible(ro, rd) = ray_capsule(ro, rd, a, b, r)
+  trace(p) = capsule(p, a, b, r)
+  material(p, n) = ggx(albedo, 0.55, 0)
+}
+
+pub kind GlossBead @World (c: p3@World, r: m, albedo: rgb) {
+  visible(ro, rd) = ray_capsule(ro, rd, c, c, r)
+  trace(p) = capsule(p, c, c, r)
+  material(p, n) = ggx(albedo, 0.12, 0)
+}

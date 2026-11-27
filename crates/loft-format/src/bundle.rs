@@ -212,6 +212,14 @@ fn read_bulk<T: SplitRecord>(entries: Vec<T::Fields>, bytes: &[u8]) -> Result<Ve
 
 /// Validate the portable shader payload without creating a device or a pipeline.
 pub fn validate_wgsl(bundle: &Bundle) -> Result<(), BundleError> {
+    use naga::valid::{Capabilities, ValidationFlags, Validator};
+
+    // Bundle validation checks portable shader structure independently of device support.
+    let capabilities = Capabilities::default()
+        | Capabilities::SUBGROUP
+        | Capabilities::SHADER_FLOAT32_ATOMIC
+        | Capabilities::RAY_QUERY
+        | Capabilities::SHADER_FLOAT16;
     for module in &bundle.modules {
         if module.target != ShaderTarget::Wgsl {
             return Err(BundleError::Shader(
@@ -221,10 +229,7 @@ pub fn validate_wgsl(bundle: &Bundle) -> Result<(), BundleError> {
         }
         let shader = |reason: String| BundleError::Shader(module.id, reason);
         let source = std::str::from_utf8(&module.bytes).map_err(|e| shader(e.to_string()))?;
-        crate::wgsl::validate(source, &mut naga::valid::Validator::new(
-            naga::valid::ValidationFlags::all(),
-            naga::valid::Capabilities::default(),
-        ))
+        crate::wgsl::validate(source, &mut Validator::new(ValidationFlags::all(), capabilities))
         .map_err(|e| shader(e.emit_to_string(source)))?;
     }
     Ok(())
@@ -306,3 +311,36 @@ macro_rules! record {
 }
 
 loft_ir::bundle_schema!(ids, record, sum);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validates_wgsl_with_loft_capabilities() {
+        for source in [
+            "@compute @workgroup_size(1) fn main() { let sum = subgroupAdd(1u); }",
+            "enable f16; @compute @workgroup_size(1) fn main() { let value = 1.0h; }",
+            "@group(0) @binding(0) var<storage, read_write> sum: atomic<f32>;
+             @compute @workgroup_size(1) fn main() { atomicAdd(&sum, 1.0); }",
+            "enable wgpu_ray_query;
+             @group(0) @binding(0) var scene: acceleration_structure;
+             @compute @workgroup_size(1) fn main() {
+                 var query: ray_query;
+                 rayQueryInitialize(&query, scene, RayDesc(0u, 255u, 0.0, 1.0, vec3f(0.0), vec3f(0.0, 0.0, 1.0)));
+                 let hit = rayQueryProceed(&query);
+             }",
+        ] {
+            let bundle = Bundle {
+                modules: vec![ModuleBlob {
+                    id: ModuleId(0),
+                    hash: *blake3::hash(source.as_bytes()).as_bytes(),
+                    target: ShaderTarget::Wgsl,
+                    bytes: source.as_bytes().into(),
+                }],
+                ..Bundle::default()
+            };
+            validate_wgsl(&bundle).unwrap_or_else(|err| panic!("{source}\n{err:?}"));
+        }
+    }
+}

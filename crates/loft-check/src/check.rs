@@ -6,10 +6,10 @@
 #[path = "kernel_units.rs"]
 mod kernel_units;
 use crate::Prog;
-use loft_builtins::{ArgShape, Builtin, BuiltinSpec, PolyRule, RetShape, SigRule, lookup};
+use loft_builtins::{ArgShape, Builtin, BuiltinSpec, MotionClass, PolyRule, RetShape, SigRule, lookup};
 use loft_parse::ast::*;
-use loft_ir::{Code, Diag, Res, Span};
-use std::collections::{BTreeMap, HashMap};
+use loft_ir::{Code, Diag, ImageFormat, Res, Span};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 #[derive(Clone)]
 struct Local {
@@ -48,6 +48,46 @@ pub const VARIANT_BUDGET: u64 = 8;
 pub struct CheckedEffects {
     pub kernels: BTreeMap<String, BTreeMap<String, Determinism>>,
     pub pending_lowering: Option<Span>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Target {
+    pub format: ImageFormat,
+    pub extent: TargetExtent,
+    pub samples: u8,
+}
+
+impl PartialEq for Target {
+    fn eq(&self, other: &Self) -> bool {
+        std::mem::discriminant(&self.format) == std::mem::discriminant(&other.format)
+            && self.extent == other.extent && self.samples == other.samples
+    }
+}
+
+pub(crate) fn target(decl: &TargetDecl) -> Res<Target> {
+    let format = match decl.format.name.as_str() {
+        "rg32uint" => ImageFormat::Rg32Uint,
+        "rgba16f" | "rgba16float" => ImageFormat::Rgba16Float,
+        "rgba32f" | "rgba32float" => ImageFormat::Rgba32Float,
+        "depth32f" | "depth32float" => ImageFormat::Depth32Float,
+        _ => return Err(Diag::new(Code::E003, decl.format.span, "unknown target format",
+            "use rg32uint, rgba16f, rgba32f or depth32f")),
+    };
+    match decl.extent {
+        TargetExtent::Fixed(w, h) if w == 0 || h == 0 => {
+            return Err(Diag::new(Code::E602, decl.span, "target sides must be positive", "write a nonzero width and height"));
+        }
+        TargetExtent::View(scale) if !scale.is_finite() || scale <= 0.0 => {
+            return Err(Diag::new(Code::E602, decl.span, "target scale must be finite and positive", "write `view` or `view * scale`"));
+        }
+        TargetExtent::Fixed(..) | TargetExtent::View(_) => {}
+    }
+    let samples = match decl.samples {
+        1 => 1,
+        4 => 4,
+        _ => return Err(Diag::new(Code::E602, decl.span, "unsupported target sample count", "use `msaa 1` or `msaa 4`")),
+    };
+    Ok(Target { format, extent: decl.extent, samples })
 }
 
 pub fn check(p: &Prog, types: &mut Vec<Ty>) -> Res<CheckedEffects> {
@@ -101,20 +141,22 @@ pub fn check(p: &Prog, types: &mut Vec<Ty>) -> Res<CheckedEffects> {
         }
         for f in &law.writes{if let Some(prev)=owners.insert((&k.name,&f.name),f.span){return Err(Diag::new(Code::E502,f.span,format!("conflicting writes on {}.{}",k.name,f.name),"give one scheduled law ownership of this field").note(prev,"first writer declared here"));}}
     }
-    for law in p.laws.values().filter(|law| law.tier.is_det()) {
-        let (reachable, constants) = crate::references::reachable(p, &[&law.f], &[]);
+    let det_laws = p.laws.values().filter(|law| law.tier.is_det()).map(|law| &law.f);
+    let det_kernels = p.kernels.values().filter(|kernel| kernel.tier.is_det()).map(|kernel| &kernel.f);
+    for root in det_laws.chain(det_kernels) {
+        let (reachable, constants) = crate::references::reachable(p, &[root], &[]);
         let mut calls = crate::references::References::default();
         for name in constants {
             calls.expr(&p.consts[name.as_str()].value, &[]);
         }
-        for f in std::iter::once(&law.f).chain(reachable) {
+        for f in std::iter::once(root).chain(reachable) {
             if f.refuses_unverified_raw() {
-                return Err(Diag::new(Code::E504, f.name.span, "motion reaches unverified raw WGSL", "mark the law nondet, or write the operation in Loft"));
+                return Err(Diag::new(Code::E504, f.name.span, "deterministic operation reaches unverified raw WGSL", "mark the law or kernel nondet, or write the operation in Loft"));
             }
             calls.calls.extend(crate::references::References::function(f).calls);
         }
         if let Some(call) = calls.calls.into_iter().find(|c| !p.fns.contains_key(c.name.as_str())
-            && matches!(crate::references::motion_math(&c.name), crate::references::MotionMath::Unavailable)) {
+            && lookup(&c.name).is_some_and(|spec| spec.motion_math == MotionClass::Unavailable)) {
             return Err(Diag::new(Code::E504, call.span, "no deterministic motion implementation for this operation", "rewrite it using deterministic operations"));
         }
     }
@@ -222,6 +264,37 @@ pub fn motion_schedule<'a>(p: &Prog<'a>) -> Res<Vec<Scheduled<'a>>> {
     Ok(out)
 }
 
+/// One slot per formal parameter. Supplied operands keep their source evaluation order.
+pub enum BuildArgument<'a> {
+    Supplied(usize),
+    Default(&'a Param, &'a Expr),
+}
+
+pub fn build_arguments<'a>(f: &'a FnDecl, args: &[Arg], span: Span) -> Res<Vec<BuildArgument<'a>>> {
+    let mut slots = vec![None; f.params.len()];
+    let mut named = false;
+    for (i, arg) in args.iter().enumerate() {
+        let slot = match &arg.name {
+            Some(label) => {
+                named = true;
+                f.params.iter().position(|p| p.name.name == label.name).ok_or_else(||
+                    e003(label.span, format!("unknown build parameter `{}`", label.name), "use a name from the build fn signature"))?
+            }
+            None if named => return Err(e003(arg.value.span, "positional argument after a named argument", "move positional arguments first")),
+            None if i >= slots.len() => return Err(e003(arg.value.span, "extra positional build argument", "remove the extra argument")),
+            None => i,
+        };
+        if slots[slot].replace(i).is_some() {
+            return Err(e003(arg.value.span, format!("build parameter `{}` was supplied twice", f.params[slot].name.name), "supply each parameter once"));
+        }
+    }
+    f.params.iter().zip(slots).map(|(p, supplied)| match (supplied, &p.default) {
+        (Some(i), _) => Ok(BuildArgument::Supplied(i)),
+        (None, Some(e)) => Ok(BuildArgument::Default(p, e)),
+        (None, None) => Err(e003(span, format!("missing build argument `{}`", p.name.name), format!("supply `{}: ...`", p.name.name))),
+    }).collect()
+}
+
 fn e003(span: Span, msg: impl Into<String>, fix: impl Into<String>) -> Diag {
     Diag::new(Code::E003, span, msg, fix)
 }
@@ -242,8 +315,41 @@ impl<'p,'a> Ck<'p,'a> {
         if self.types.len() <= i {
             self.types.resize(i + 1, Ty::Void);
         }
+        if matches!(t, Ty::F32 | Ty::I32 | Ty::U32) {
+            match &e.kind {
+                ExprKind::If { then, otherwise, cases: Some(cases), .. } => {
+                    for arm in cases.arms(&then.value).map(|(_, arm)| arm).chain([otherwise.value.as_ref()]) {
+                        if self.types.get(arm.id as usize) == Some(&Ty::AbstractInt) {
+                            self.set(arm, t.clone());
+                        }
+                    }
+                }
+                // Context can reach the match through an otherwise abstract arithmetic expression.
+                ExprKind::Unary(..) | ExprKind::Binary(..) => self.coerce_match_int(e, &t),
+                _ => {}
+            }
+        }
         self.types[i] = t.clone();
         t
+    }
+
+    // A match materializes a local in WGSL, so its abstract integer
+    // result must take the expected type before that local is emitted.
+    fn coerce_match_int(&mut self, e: &Expr, want: &Ty) {
+        if !matches!(want, Ty::F32 | Ty::I32 | Ty::U32)
+            || self.types.get(e.id as usize) != Some(&Ty::AbstractInt)
+        {
+            return;
+        }
+        match &e.kind {
+            ExprKind::If { cases: Some(_), .. } => { self.set(e, want.clone()); }
+            ExprKind::Unary(UnOp::Neg, value) if *want != Ty::U32 => self.coerce_match_int(value, want),
+            ExprKind::Binary(BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem, a, b) => {
+                self.coerce_match_int(a, want);
+                self.coerce_match_int(b, want);
+            }
+            _ => {}
+        }
     }
 
     /// Resolves written type syntax. `sig`: a `'s` is a signature variable; otherwise it names a map in scope.
@@ -307,7 +413,6 @@ impl<'p,'a> Ck<'p,'a> {
                     n if self.p.aliases.contains_key(n) || self.p.structs.contains_key(n) => self.resolve_named(i, sig, stack),
                     RADIANCE => Ok(Ty::VecN(3)),
                     n if self.p.kinds.contains_key(n) => Ok(Ty::Id(n.into())),
-                    n if self.p.units.contains(n) => Ok(Ty::F32),
                     n => Err(Diag::new(
                         Code::E011,
                         i.span,
@@ -316,17 +421,6 @@ impl<'p,'a> Ck<'p,'a> {
                     )),
                 }
             }
-            TyExpr::Generic(i, args) => match (i.name.as_str(), args.as_slice()) {
-                ("vec2" | "vec3" | "vec4", [TyExpr::Name(a)]) if a.name == "f32" => {
-                    Ok(Ty::VecN(i.name.as_bytes()[3] - b'0'))
-                }
-                _ => Err(Diag::new(
-                    Code::E405,
-                    i.span,
-                    format!("Phase 0 has no `{}<..>` of this element type", i.name),
-                    "use vec2<f32>, vec3<f32> or vec4<f32>",
-                )),
-            },
             TyExpr::Array(element, count, span) => {
                 if *count == 0 { return Err(e003(*span, "array length must be positive", "use a positive count")); }
                 Ok(Ty::Array(Box::new(self.resolve_type(element, sig, stack)?), *count))
@@ -361,9 +455,6 @@ impl<'p,'a> Ck<'p,'a> {
         if !matches!(elem, Ty::Frame(_)) {
             return Err(Diag::new(Code::E405, sc.init.span, "Phase 1 scans produce `Frame[S]` tables", "write `-> Table[Frame[S]]`"));
         }
-        self.bind(&sc.var.name, Local { ty: vt.clone(), mutable: false, map: None, span: sc.var.span });
-        let t = self.expr(&sc.init)?;
-        self.assignable(&t, &elem, sc.init.span)?;
         self.scopes.push(HashMap::new());
         self.bind(&sc.prev.name, Local { ty: elem.clone(), mutable: false, map: None, span: sc.prev.span });
         self.bind(&sc.at.name, Local { ty: vt, mutable: false, map: None, span: sc.at.span });
@@ -437,9 +528,24 @@ impl<'p,'a> Ck<'p,'a> {
         self.sig_vars.clear();
         let mut note = |t: &TyExpr| match t {
             TyExpr::Geo(_, s) | TyExpr::Field(s) | TyExpr::Frame(s) if s.var => self.sig_vars.push(s.name.clone()),
-            TyExpr::Name(_) | TyExpr::Generic(..) | TyExpr::Array(..) | TyExpr::Geo(..) | TyExpr::Field(_) | TyExpr::Frame(_) | TyExpr::Table(_) | TyExpr::Xform(..) => {}
+            TyExpr::Name(_) | TyExpr::Array(..) | TyExpr::Geo(..) | TyExpr::Field(_) | TyExpr::Frame(_) | TyExpr::Table(_) | TyExpr::Xform(..) => {}
         };
         f.params.iter().filter_map(|p| p.ty.as_ref()).chain(f.ret.as_ref()).for_each(&mut note);
+        // Defaults have the lexical scope of the declaration, before any parameter is bound.
+        for prm in &f.params {
+            if let Some(default) = &prm.default {
+                let actual = self.expr(default)?;
+                if let Some(annotation) = &prm.ty {
+                    let want = self.resolve(annotation, true)?;
+                    if !self.contextual(default, &actual, &want) {
+                        self.assignable(&actual, &want, default.span)?;
+                        if actual == Ty::AbstractInt { self.set(default, want); }
+                    }
+                } else if let Some(hints) = &mut self.hints {
+                    hints.defaults.insert(prm.name.span, actual);
+                }
+            }
+        }
         for prm in &f.params {
             let ty = match (&prm.ty, kind) {
                 (Some(t), _) => self.resolve(t, true)?,
@@ -740,7 +846,7 @@ impl<'p,'a> Ck<'p,'a> {
                 }
                 self.bind(&name.name, Local { ty: t, mutable: *mutable, map: None, span: name.span });
             }
-            Stmt::Assign { target, op: _, value } => {
+            Stmt::Assign { target, value, .. } => {
                 if let ExprKind::Member(base,field)=&target.kind {
                     let owned=self.ownership.as_ref().is_some_and(|(row,fields)|matches!(&base.kind,ExprKind::Name(n) if n==row) && fields.contains(&field.name));
                     if !owned{return Err(Diag::new(Code::E501,field.span,"field assignment outside its declared writes set","declare the target field in the owning law’s writes clause"))}
@@ -771,6 +877,7 @@ impl<'p,'a> Ck<'p,'a> {
                 let t = self.expr(value)?;
                 self.assignable(&t, &l.ty, value.span)?;
                 if self.kernel.is_some() { self.expect_unit(value, self.local_units[&l.span])?; }
+                self.coerce_match_int(value, &l.ty);
             }
             Stmt::Map { name, head, stages } => self.map(name, head, stages)?,
             Stmt::Return(v, span) => {
@@ -963,6 +1070,14 @@ impl<'p,'a> Ck<'p,'a> {
         Ok(())
     }
 
+    fn expr_arm(&mut self, arm: &ExprBlock) -> Res<Ty> {
+        self.scopes.push(HashMap::new());
+        for s in &arm.body.stmts { self.stmt(s)?; }
+        let t = self.expr(&arm.value);
+        self.scopes.pop();
+        t
+    }
+
     fn expr(&mut self, e: &Expr) -> Res<Ty> {
         let t = self.expr_inner(e)?;
         if self.kernel.is_some() {
@@ -970,14 +1085,6 @@ impl<'p,'a> Ck<'p,'a> {
             self.expr_units.insert(e.id, dim);
         }
         Ok(self.set(e, t))
-    }
-
-    fn expr_arm(&mut self, arm: &ExprBlock) -> Res<Ty> {
-        self.scopes.push(HashMap::new());
-        for s in &arm.body.stmts { self.stmt(s)?; }
-        let t = self.expr(&arm.value);
-        self.scopes.pop();
-        t
     }
 
     fn expr_inner(&mut self, e: &Expr) -> Res<Ty> {
@@ -1004,7 +1111,9 @@ impl<'p,'a> Ck<'p,'a> {
                     _ => Err(e003(function.span, "finite differences require a floating result", "differentiate a scalar or vector function")),
                 }
             }
-            ExprKind::If { condition, then, otherwise } => {
+            ExprKind::If { condition, then, otherwise, cases: Some(cases) } =>
+                self.match_expr(condition, cases, &then.value, &otherwise.value),
+            ExprKind::If { condition, then, otherwise, cases: None } => {
                 let actual = self.expr(condition)?;
                 self.assignable(&actual, &Ty::Bool, condition.span)?;
                 let a = self.expr_arm(then)?;
@@ -1016,7 +1125,7 @@ impl<'p,'a> Ck<'p,'a> {
             }
             ExprKind::Num { suffix, float, .. } => Ok(match suffix {
                 NumSuffix::None if !float => Ty::AbstractInt,
-                NumSuffix::None | NumSuffix::Deg | NumSuffix::Unit => Ty::F32,
+                NumSuffix::None | NumSuffix::Unit => Ty::F32,
             }),
             ExprKind::Bool(_) => Ok(Ty::Bool),
             ExprKind::String(_) => Err(Diag::new(Code::E403, e.span, "string outside an asset call", "pass it to a Stage 0 asset call")),
@@ -1096,7 +1205,7 @@ impl<'p,'a> Ck<'p,'a> {
                 {
                     return Ok(Ty::F32);
                 }
-                binary(*op, &ta, &tb, a.span, b.span, e.span).map_err(|d| {
+                let result = binary(*op, &ta, &tb, a.span, b.span, e.span).map_err(|d| {
                     // A value from a map space used outside it (the draft's gaze bug): quote the author's transform
                     // and point at the map that made the space.
                     let Ty::Geo(_, Space::Fresh(m, _)) = &tb else { return d };
@@ -1109,7 +1218,15 @@ impl<'p,'a> Ck<'p,'a> {
                         _ => d,
                     };
                     d.note(l.span, format!("space `'{m}` introduced here"))
-                })
+                })?;
+                for (value, opposite) in [(a, &tb), (b, &ta)] {
+                    match opposite {
+                        Ty::F32 | Ty::U32 | Ty::I32 => self.coerce_match_int(value, opposite),
+                        Ty::VecN(_) | Ty::Geo(..) => self.coerce_match_int(value, &Ty::F32),
+                        _ => {}
+                    }
+                }
+                Ok(result)
             }
             ExprKind::Ctor { ty, args } => {
                 let target = self.resolve(ty, false)?;
@@ -1133,10 +1250,45 @@ impl<'p,'a> Ck<'p,'a> {
                     other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::F32 | other @ Ty::AbstractInt | other @ Ty::Xform(..) | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Frame(_) | other @ Ty::Table(_) | other @ Ty::Verdict | other @ Ty::Struct(_) | other @ Ty::Array(..) | other @ Ty::Id(_) | other @ Ty::Bsdf => return Err(e003(e.span, format!("cannot construct `{other}`"), "construct a vector or point")),
                 };
                 components(&ts, n, e.span)?;
+                for arg in args {
+                    self.coerce_match_int(&arg.value, &Ty::F32);
+                }
                 Ok(target)
             }
             ExprKind::Call { callee, args } => self.call(callee, args, e.span),
         }
+    }
+
+    fn match_expr(&mut self, selector: &Expr, cases: &MatchCases, first: &Expr, fallback: &Expr) -> Res<Ty> {
+        let ty = self.expr(selector)?;
+        if !num(&ty) {
+            return Err(e003(selector.span, format!("cannot match on {ty}"), "match on a scalar number"));
+        }
+        let mut seen = HashSet::new();
+        for ((key, span), _) in cases.arms(first) {
+            let fits = match ty {
+                Ty::F32 => (key as f32) as i64 == key,
+                Ty::U32 => u32::try_from(key).is_ok(),
+                _ => i32::try_from(key).is_ok(),
+            };
+            if !fits {
+                return Err(e003(span, format!("match pattern {key} is outside the exact range of {ty}"),
+                    "use an integer representable in the selector's type"));
+            }
+            if !seen.insert(key) {
+                return Err(e003(span, format!("duplicate match pattern {key}"), "list each pattern once"));
+            }
+        }
+        let mut result = self.expr(fallback)?;
+        for (_, arm) in cases.arms(first) {
+            let actual = self.expr(arm)?;
+            result = meet(&result, &actual).ok_or_else(|| e003(arm.span,
+                format!("match arms have different types {result} and {actual}"), "return a single type from all arms"))?;
+        }
+        if matches!(result, Ty::Void | Ty::Map(..) | Ty::Table(_)) {
+            return Err(e003(fallback.span, format!("match cannot return {result}"), "return a value from each arm"));
+        }
+        Ok(result)
     }
 
     fn member(&mut self, base: &Expr, m: &Ident) -> Res<Ty> {
@@ -1192,8 +1344,10 @@ impl<'p,'a> Ck<'p,'a> {
     }
 
     fn call(&mut self, callee: &Ident, args: &[Arg], span: Span) -> Res<Ty> {
-        if let Some(a) = args.iter().find_map(|a| a.name.as_ref()) {
-            return Err(Diag::new(Code::E405, a.span, "named arguments are schedule-only in Phase 0", "pass arguments by position"));
+        if let Some(a) = args.iter().find_map(|a| a.name.as_ref())
+            && !self.p.fns.get(callee.name.as_str()).is_some_and(|f| f.comptime)
+        {
+            return Err(Diag::new(Code::E405, a.span, "this function takes positional arguments", "pass by position, or use named arguments in a build function call"));
         }
         let spec = lookup(&callee.name);
         if let Some(spec) = spec.filter(|spec| spec.sig == SigRule::Poly(PolyRule::TextureSample))
@@ -1297,29 +1451,41 @@ impl<'p,'a> Ck<'p,'a> {
                 )
                 .note(f.name.span, "declared `build fn` here"));
             }
-            if f.params.len() != ts.len() {
+            let mut operands: Vec<(&Expr, Ty)> = args.iter().zip(&ts).map(|(arg, t)| (&arg.value, t.clone())).collect();
+            if f.comptime {
+                operands = build_arguments(f, args, span)?.into_iter().map(|binding| match binding {
+                    BuildArgument::Supplied(i) => Ok(operands[i].clone()),
+                    BuildArgument::Default(prm, expr) => {
+                        let ty = prm.ty.as_ref().ok_or_else(|| e003(prm.name.span,
+                            "an omitted parameter needs a type", "annotate the defaulted parameter"))?;
+                        Ok((expr, self.resolve(ty, true)?))
+                    }
+                }).collect::<Res<_>>()?;
+            }
+            if f.params.len() != operands.len() {
                 return Err(e003(span, format!("`{}` takes {} argument(s), got {}", callee.name, f.params.len(), ts.len()), "match the signature")
                     .note(f.name.span, "declared here"));
             }
             if f.params.iter().any(|p|p.ty.is_none()){
-                if let Some(h)=&mut self.hints {h.args.entry(f.name.name.clone()).or_insert_with(||ts.clone());}
+                if let Some(h)=&mut self.hints {h.args.entry(f.name.name.clone()).or_insert_with(||operands.iter().map(|(_, t)| t.clone()).collect());}
                 return Err(e003(f.name.span,"parameter type has not been inferred","annotate the parameter or call the helper with a typed argument"));
             }
             let mut vars: HashMap<String, Space> = HashMap::new();
             // Space variables a space-less offset was accepted for: `sphere(local, r)` where `local` was computed
             // without spaces (3 of 19 first attempts). The offset is in whatever space the call is in.
             let mut loose: Vec<(String, Span)> = vec![];
-            for (index, ((prm, t), s)) in f.params.iter().zip(&ts).zip(&sp).enumerate() {
+            for (prm, (value, t)) in f.params.iter().zip(&operands) {
+                let s = value.span;
                 let want = self.resolve(prm.ty.as_ref().expect("free fns type every parameter"), true)?;
                 let want=if let (Ty::Id(k),Ty::Row(_))=(&want,t){Ty::Row(k.clone())}else{want};
-                let want = self.unify(&want, t, &mut vars, *s, &prm.name)?;
+                let want = self.unify(&want, t, &mut vars, s, &prm.name)?;
                 let want=subst(&want,&vars);
-                if self.contextual(&args[index].value,t,&want){continue;}
+                if self.contextual(value,t,&want){continue;}
                 if let (Ty::VecN(3), Ty::Geo(g, Space::Var(v))) = (t, &want) && vec_like(*g) {
-                    loose.push((v.clone(), *s));
+                    loose.push((v.clone(), s));
                     continue;
                 }
-                self.assignable(t, &want, *s)?; if *t==Ty::AbstractInt {self.set(&args[index].value,want);}
+                self.assignable(t, &want, s)?; if *t==Ty::AbstractInt {self.set(value,want);}
             }
             let ret = match &f.ret {
                 Some(r) => self.resolve(r, true)?,
@@ -1460,6 +1626,8 @@ impl<'p,'a> Ck<'p,'a> {
                         || (spec.id == Builtin::MixBsdf && *shape == ArgShape::Float)
                     {
                         self.set(&arg.value, expected);
+                    } else if *shape == ArgShape::Float {
+                        self.coerce_match_int(&arg.value, &Ty::F32);
                     }
                 }
                 Ok(match result {
@@ -1474,7 +1642,21 @@ impl<'p,'a> Ck<'p,'a> {
                     RetShape::Bsdf => Ty::Bsdf,
                 })
             }
-            SigRule::Poly(rule) => builtin_poly(spec.name, rule, &ts, &sp, span),
+            SigRule::Poly(rule) => {
+                let result = builtin_poly(spec.name, rule, &ts, &sp, span)?;
+                let scalar = match (rule, &result) {
+                    (PolyRule::Place | PolyRule::VectorConstructor(_), _) => Some(&Ty::F32),
+                    (PolyRule::Componentwise | PolyRule::Mix | PolyRule::Select, Ty::VecN(_) | Ty::Geo(..)) => Some(&Ty::F32),
+                    (PolyRule::Componentwise | PolyRule::Mix | PolyRule::Select, t @ (Ty::F32 | Ty::I32 | Ty::U32)) => Some(t),
+                    _ => None,
+                };
+                if let Some(scalar) = scalar {
+                    for arg in args {
+                        self.coerce_match_int(&arg.value, scalar);
+                    }
+                }
+                Ok(result)
+            }
         }
     }
 
@@ -1616,8 +1798,11 @@ fn binary(op: BinOp, a: &Ty, b: &Ty, _sa: Span, sb: Span, span: Span) -> Res<Ty>
     };
     match (op, a, b) {
         (And | Or, Ty::Bool, Ty::Bool) => Ok(Ty::Bool),
-        (Lt | Le | Gt | Ge | Eq | Ne, x, y) if meet(x, y).is_some() => Ok(Ty::Bool),
-        (Eq | Ne, Ty::Bool, Ty::Bool) => Ok(Ty::Bool),
+        (Lt | Le | Gt | Ge, x, y) if num(x) && num(y) && meet(x, y).is_some() => Ok(Ty::Bool),
+        (Eq | Ne, x, y) if matches!(meet(x, y), Some(
+            Ty::F32 | Ty::U32 | Ty::I32 | Ty::AbstractInt | Ty::Bool
+            | Ty::Id(_) | Ty::Row(_) | Ty::VecN(_) | Ty::Geo(..)
+        )) => Ok(Ty::Bool),
         (BitAnd | BitOr | BitXor | Shl | Shr, x, y) if matches!(meet(x, y), Some(Ty::U32 | Ty::I32 | Ty::AbstractInt)) => {
             Ok(meet(x, y).expect("checked"))
         }
@@ -1851,3 +2036,7 @@ fn always_returns(b: &Block) -> bool {
         | Stmt::Each { .. } | Stmt::For { .. } | Stmt::Emit { .. } | Stmt::ImportTable { .. } | Stmt::Expr(_) => false,
     })
 }
+
+#[cfg(test)]
+#[path = "../tests/support/soundness.rs"]
+mod soundness_tests;

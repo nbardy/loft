@@ -87,8 +87,9 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
     } else {
         sources(&opts.scene)
     }.map_err(Failure::Usage)?;
-    let (program, _, compiled) = loft_passes::compile_aov(&src, set, opts.aov)
+    let (mut program, _, compiled) = loft_passes::compile_aov(&src, set, opts.aov)
         .map_err(|d| Failure::Compile(d.render(&src)))?;
+    native::motion_layout(&program).map_err(Failure::Compile)?;
     if let Some(limit) = opts.max_build {
         let ms = began.elapsed().as_secs_f64() * 1000.0;
         if ms > limit { return Err(Failure::Budget(format!("CPU build {ms:.3} ms exceeds {limit:.3} ms"))); }
@@ -110,6 +111,14 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
     }).collect::<Result<Vec<_>, Failure>>()?;
     let g = native::gpu().map_err(Failure::Device)?;
     if opts.max_frame.is_some() { budget::timestamps(g.timestamps)?; }
+    if !program.dispatches.is_empty() {
+        let sampled = native::sample_motion(&g, &program, opts.start).map_err(Failure::Device)?;
+        if sampled.iter().any(|sample| !sample.fields.is_empty()) {
+            // Rebuild bounds and row data for the sampled pose before rendering.
+            program = loft_passes::compile_snapshot_aov(&src, set, &sampled, opts.aov)
+                .map_err(|d| Failure::Compile(d.render(&src)))?.0;
+        }
+    }
     let loaded = Loaded::with_aov(&g, &program, opts.size, None, opts.aov).map_err(Failure::Device)?;
     for (word, value) in live { loaded.set_param_word(word, value).map_err(Failure::Usage)?; }
     if let Some(ms) = loaded.stats.load_bake_gpu_ms {
@@ -119,7 +128,7 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
 }
 
 fn frame(g: &Gpu, loaded: &Loaded, opts: &Options, t: f32) -> Result<(Vec<u8>, Option<f64>), Failure> {
-    loaded.frame_samples(g, t, opts.samples);
+    loaded.try_frame_samples(g, t, opts.samples).map_err(Failure::Device)?;
     let time = if opts.max_frame.is_some() {
         Some(loaded.gpu_ms(g).map_err(Failure::Device)?.ok_or_else(|| Failure::Device("GPU timestamps are unavailable".into()))?.0)
     } else { None };

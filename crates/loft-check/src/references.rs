@@ -3,17 +3,6 @@ use loft_ir::Span;
 use loft_parse::ast::*;
 use std::collections::BTreeSet;
 
-#[derive(Clone, Copy)]
-pub enum MotionMath { Native, Fixed, Unavailable }
-
-pub fn motion_math(name: &str) -> MotionMath {
-    match name {
-        "sin" | "cos" | "atan2" | "acos" | "exp" | "log" => MotionMath::Fixed,
-        "tan" | "asin" | "atan" | "exp2" | "log2" | "pow" => MotionMath::Unavailable,
-        _ => MotionMath::Native,
-    }
-}
-
 pub fn fn_symbol(n: &str) -> String {
     match n.split_once('#') {
         Some(("", internal)) => format!("loft_internal_{internal}"),
@@ -32,6 +21,8 @@ pub struct References<'a> {
     pub step_scales: Vec<&'a Expr>,
     pub texture_names: BTreeSet<&'a str>,
     pub atomic_targets: Vec<&'a Expr>,
+    pub has_match: bool,
+    pub assigns: bool,
 }
 impl<'a> References<'a> {
     pub fn function(f: &'a FnDecl) -> Self {
@@ -40,6 +31,9 @@ impl<'a> References<'a> {
 
     fn from_body(f: &'a FnDecl, proof_only: bool) -> Self {
         let mut refs = Self { proof_only, ..Self::default() };
+        for default in f.params.iter().filter_map(|p| p.default.as_ref()) {
+            refs.expr(default, &[]);
+        }
         let mut locals = f.params.iter().map(|p| p.name.name.as_str()).collect();
         refs.block(&f.body, &mut locals);
         if let Some(raw) = &f.raw { refs.calls.extend(&raw.references); }
@@ -61,8 +55,14 @@ impl<'a> References<'a> {
                 self.calls.push(function);
                 self.args(args, locals);
             }
-            ExprKind::If { condition, then, otherwise } => {
+            ExprKind::If { condition, then, otherwise, cases } => {
                 self.expr(condition, locals);
+                if let Some(cases) = cases {
+                    self.has_match = true;
+                    for (_, value) in &cases.rest {
+                        self.expr(value, locals);
+                    }
+                }
                 for arm in [then, otherwise] {
                     let mut arm_locals = locals.to_vec();
                     self.statements(&arm.body, &mut arm_locals);
@@ -121,6 +121,7 @@ impl<'a> References<'a> {
                     locals.push(&name.name);
                 }
                 Stmt::Assign { target, value, .. } => {
+                    self.assigns = true;
                     if self.row_reads.is_none() { self.expr(target, locals); }
                     self.expr(value, locals);
                 }

@@ -6,7 +6,7 @@ mod stage0;
 use crate::{CompileOptions, Compiled, Prog, Report, check_modules, eval, gltf, parse_all};
 use crate::program::Program;
 use crate::source::Graph;
-use loft_eval::{as_f32, refine};
+use loft_eval::as_f32;
 use loft_ir::{Code, Diag, Res, Span};
 use loft_parse::ast::*;
 use std::time::Instant;
@@ -107,10 +107,10 @@ fn check_scene(p: &Prog<'_>, types: &[Ty], overrides: &[(String, f64)], pending_
             ev.validate_range(&c.name,range,x,c.value.span)?;
         }
     }
-    refine::check(p,types,overrides)?;
     if let Some(span) = pending_lowering {
         return Err(Diag::new(Code::E405, span, "Phase 4 lowering is pending for this checked program",
             "use the typed front end to inspect the Phase 4 contract"));
     }
+    loft_eval::refine::check(p, types, overrides)?;
     Ok(())
 }

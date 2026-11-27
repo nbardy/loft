@@ -1,5 +1,20 @@
 use super::*;
 
+/// A direct evaluator in a light loop can share the BSDF work independent of its incident ray.
+pub(super) fn uses_bsdf_loop(em: &Emitter<'_, '_>, light: &FnDecl) -> bool {
+    let Some(params) = light.params.get(..3) else { return false };
+    light.raw.is_none()
+        && !em.p.fns.contains_key("eval_bsdf")
+        && params.iter().zip([Ty::Bsdf, Ty::VecN(3), Ty::VecN(3)])
+            .all(|(param, ty)| param.ty.as_ref().is_some_and(|t| em.resolve(t) == ty))
+        && light.body.stmts.iter().any(|stmt| {
+            let Stmt::For { body, .. } = stmt else { return false };
+            let mut refs = References::default();
+            refs.block(body, &mut Vec::new());
+            refs.calls.iter().any(|call| call.name == "eval_bsdf")
+        })
+}
+
 /// Split lobe lets that depend only on the material, normal and outgoing ray.
 /// The first mutable or control-flow statement ends the portion we can move.
 pub(super) fn invariant_lets<'a>(p: &Prog<'a>, lobe: &'a FnDecl) -> Vec<usize> {

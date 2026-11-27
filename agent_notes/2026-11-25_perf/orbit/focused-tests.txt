@@ -1,0 +1,36 @@
+agent-build: waiting for pid 90937, which is ahead in the queue for light+gpu (caffeinate in /Users/nicholasbardy/git/_wt/reefstarter-card-20261125/studio/apps/web-workbench).
+agent-build: it gives up after 240 minutes (--max-wait MIN). See the queue with `agent-build --status`.
+agent-build: light acquired after 11m18s.
+   Compiling loft-passes v0.1.0 (/Users/nicholasbardy/git/_wt/loft-perf/crates/loft-passes)
+    Finished `lab` profile [optimized] target(s) in 11.64s
+────────────
+ Nextest run ID 5348fcab-5ec2-4bcb-889e-296de1ae0195 with nextest profile: default
+    Starting 6 tests across 3 binaries
+        PASS [   0.136s] (1/6) loft-passes::primary_guard cancelled_coordinate_keeps_gpu_hits_outside_the_real_field
+        PASS [   0.159s] (2/6) loft-passes::primary_guard positive_hit_band_and_original_proxy_are_both_preserved
+        PASS [   4.717s] (3/6) loft-passes::lipschitz_rotations four_fold_ifs_keeps_unit_bound
+        PASS [   5.459s] (4/6) loft-passes::lipschitz_rotations rotations_projections_and_scales_compose
+        PASS [   5.678s] (5/6) loft-passes::lipschitz_inverse_trig inverse_trig_squares_and_time_branches_bound_the_twin
+        PASS [   9.595s] (6/6) loft-passes::lipschitz_rotations coupled_rows_and_distinct_folds_keep_sound_bounds
+────────────
+     Summary [   9.607s] 6 tests run: 6 passed, 0 skipped
+   Compiling loft-eval v0.1.0 (/Users/nicholasbardy/git/_wt/loft-perf/crates/loft-eval)
+    Finished `lab` profile [optimized] target(s) in 5.65s
+────────────
+ Nextest run ID 61b55987-d9e3-4eb1-b81f-92d50bca9b8f with nextest profile: default
+    Starting 3 tests across 2 binaries
+        PASS [   0.018s] (1/3) loft-eval import_table::tests::rejects_corrupt_sample_tables_and_preserves_sparse_defaults
+        PASS [   0.019s] (2/3) loft-eval::interval_rules atan2_is_bounded_away_from_the_origin_and_the_cut_and_refused_across_them
+        PASS [   0.019s] (3/3) loft-eval::interval_rules inverse_trig_log_and_powers_bound_value_and_slope
+────────────
+     Summary [   0.020s] 3 tests run: 3 passed, 0 skipped
+   Compiling loft-native v0.1.0 (/Users/nicholasbardy/git/_wt/loft-perf/crates/loft-native)
+    Finished `lab` profile [optimized] target(s) in 3.41s
+────────────
+ Nextest run ID afa755b9-cac4-4bb9-84c1-83041310979b with nextest profile: default
+    Starting 3 tests across 1 binary
+        PASS [   0.026s] (1/3) loft-native timestamp_tests::replay_coverage_rejects_missing_required_samples
+        PASS [   0.026s] (2/3) loft-native reuse::tests::changed_geometry_inputs_invalidate_retained_depth
+        PASS [   0.027s] (3/3) loft-native reuse::tests::only_caster_stages_must_ignore_frame_time_and_samples
+────────────
+     Summary [   0.027s] 3 tests run: 3 passed, 0 skipped

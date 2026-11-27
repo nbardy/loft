@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, HashMap};
 #[derive(Default)]
 pub(crate) struct Hints {
     pub args: BTreeMap<String, Vec<Ty>>,
+    pub defaults: HashMap<Span, Ty>,
     pub returns: BTreeMap<String, Ty>,
     pub current: Option<String>,
 }
@@ -95,6 +96,12 @@ pub fn run(modules: &mut [Module]) -> Res<()> {
         for item in modules.iter_mut().flat_map(|m| &mut m.items) {
             let Item::Fn(f) = item else { continue };
             let mut spaces = HashMap::new();
+            for param in &mut f.params {
+                if param.ty.is_none() && let Some(t) = hints.defaults.get(&param.name.span) {
+                    param.ty = syntax(t, param.name.span, &mut spaces, false);
+                    progress |= param.ty.is_some();
+                }
+            }
             if let Some(args) = hints.args.get(&f.name.name) {
                 for (p, t) in f.params.iter_mut().zip(args) {
                     if p.ty.is_none() {

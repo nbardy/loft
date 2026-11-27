@@ -1,7 +1,7 @@
 use super::{Timings, schedule::{Schedule, Step}, stage0::Stage0Scene};
 use crate::{CompileOptions, Prog, bake_tex, emit, shader::naga_module};
 use crate::frame_pass::{Facts, FramePass};
-use crate::program::{Dispatch, Draw, Pass, ShaderModule, abi};
+use crate::program::{Dispatch, Pass, ShaderModule, abi};
 use crate::source::Graph;
 use loft_eval::pack;
 use loft_eval::eval::{RowVal, Tables};
@@ -29,18 +29,26 @@ pub(super) fn lower(
     opts: &CompileOptions<'_>, schedule: &mut Schedule<'_>, scene: &mut Stage0Scene, timings: &mut Timings,
 ) -> Res<LoweredPasses> {
     let CompileOptions { aov, features, .. } = *opts;
-    let Schedule { drawn, lighting, .. } = schedule;
+    let Schedule { drawn, lighting, .. } = &*schedule;
     let Stage0Scene { kinds, lut_refs, .. } = &*scene;
-    let light = match *lighting {
-        Lighting::Bsdf(name, _) => Some(name),
-        Lighting::World { .. } => None,
-    };
+    let lighting = *lighting;
+    let world_shading = matches!(lighting, Lighting::World { .. });
+    // The paper presentation recipe uses the split normal/AO loops on analytic draws.
+    let split_ao = schedule.paper.is_some() && !world_shading;
     let fixed = fixed_parameters(p, &scene.tables)?;
-    let mut texts = Vec::new();
-    for (name, kt) in drawn.iter().zip(kinds) {
-        let shader = emit::emit_kind_module(p, types, p.kinds[*name], light, lut_refs, kt.draw, aov, &fixed)?;
-        texts.push((name.to_string(), shader));
+    let mut kind_modules = Vec::with_capacity(kinds.len());
+    let mut tiled = vec![];
+    for (module, ((name, kt), guard)) in drawn.iter().zip(kinds).zip(&scene.guard_table).enumerate() {
+        if emit::tile_form(p, p.kinds[*name], kt.draw, aov, src) { tiled.push(module as u32); }
+        let shader = emit::emit_kind_module(
+            p, types, p.kinds[*name], lighting, lut_refs, kt.draw, aov, &fixed,
+            guard.map(|base| (base, loft_eval::guard::EYE_REACH)), split_ao, src,
+        )?;
+        kind_modules.push(shader);
     }
+    // Stage 0 collects endpoint rows for every stock segment kind whatever the aov. Only kinds whose module was just
+    // emitted in tile form keep them, so a bundle cannot build tile lists for a shader that ignores them.
+    scene.segments.retain(|module, _| tiled.contains(module));
     // Rows a kind's queries read (`K[i]`) bind to the read kind's table in the vis, shadow and shade passes. The tiled
     // World and the path tracer compile every kind into one module, which has no such binding.
     for (i, name) in drawn.iter().enumerate() {
@@ -49,7 +57,7 @@ pub(super) fn lower(
         for read in emit::kind_reads(p, k) {
             let index = drawn.iter().position(|d| *d == read).ok_or_else(|| Diag::new(Code::E405, k.name.span,
                 format!("`{}` reads rows of `{read}`, which is not drawn", k.name.name), format!("draw `{read}`, or copy the column into `{}`", k.name.name)))?;
-            if light.is_none() || schedule.path.is_some() {
+            if world_shading || schedule.path.is_some() {
                 return Err(Diag::new(Code::E405, k.name.span, format!("`{}` reads another kind's rows under World shading", k.name.name),
                     "shade with a BSDF light (`shade_tiles(Vis64, light: ...)`), or copy the column into the kind"));
             }
@@ -57,7 +65,8 @@ pub(super) fn lower(
         }
         scene.kinds[i].reads = reads;
     }
-    let visibility = lower_world(p, types, opts, schedule, scene, &mut texts)?;
+    let (visibility, sources) = lower_world(p, types, opts, schedule, scene, &kind_modules, &fixed)?;
+    let mut texts = schedule.drawn.iter().map(|name| name.to_string()).zip(sources).collect::<Vec<_>>();
     let dispatches = lower_dispatches(p, types, opts, schedule, scene, &fixed, &mut texts)?;
     let Schedule { path, steps, shadow_size, path_entry, paper, ids, .. } = schedule;
     let Stage0Scene { kinds, lut_refs, .. } = scene;
@@ -66,7 +75,7 @@ pub(super) fn lower(
         // The path integrator draws the whole frame; the raster steps and the present template are not lowered.
         *shadow_size = 0;
         order.push(Lowered::Stock(Pass::Path(texts.len())));
-        texts.push(("present".into(), emit::paths::module(p, types, kinds, &texts, lut_refs, path, path_entry.expect("checked path entry"))?));
+        texts.push(("present".into(), emit::paths::module(p, types, kinds, &kind_modules, lut_refs, &fixed, path, path_entry.expect("checked path entry"))?));
     } else {
         let facts = Facts { drawn: ids.len() as u32, edges: visibility, aov, paper: *paper };
         for step in steps.iter() {
@@ -79,6 +88,7 @@ pub(super) fn lower(
             }
         }
     }
+    drop(kind_modules);
     let mut bakes = Vec::new();
     for item in modules.iter().flat_map(|m| &m.items) {
         if let Item::Bake(decl) = item {
@@ -105,8 +115,8 @@ pub(super) fn lower(
 
 fn lower_world(
     p: &Prog<'_>, types: &[Ty], opts: &CompileOptions<'_>, schedule: &mut Schedule<'_>,
-    scene: &mut Stage0Scene, texts: &mut [(String, String)],
-) -> Res<Visibility> {
+    scene: &mut Stage0Scene, kind_modules: &[emit::KindModule], fixed: &BTreeMap<(String, String), String>,
+) -> Res<(Visibility, Vec<String>)> {
     let Schedule { lighting, tiled_world, drawn, ids, sky, decl: sched, .. } = schedule;
     let Stage0Scene { kinds, instances, lut_words, lut_refs, .. } = scene;
     let samples = opts.samples;
@@ -126,24 +136,16 @@ fn lower_world(
             };
             let span = p.fns[callback].name.span;
             loft_eval::bvh::pack_world(kinds, instances, world, lut_words)?;
-            let wgsl = emit::shade_tiles::world_source(p, types, kinds, texts, span)?;
-            for (_, source) in texts {
-                *source = emit::shade_tiles::module(p, types, lut_refs, source, &wgsl, callback, sky, visibility, primary_world);
-            }
-            visibility
+            let wgsl = emit::shade_tiles::world_source(p, types, kinds, kind_modules, fixed, span)?;
+            let sources = kind_modules.iter().map(|kind| {
+                emit::shade_tiles::module(p, types, lut_refs, kind, &wgsl, callback, sky, visibility, primary_world)
+            }).collect();
+            return Ok((visibility, sources));
         }
-        // Surface grids and meshes have no field to measure a closest approach, so their modules keep the centre path.
-        (Lighting::Bsdf(_, Visibility::Coverage), _) if opts.aov == emit::Aov::Beauty => {
-            for ((_, source), kind) in texts.iter_mut().zip(kinds.iter()) {
-                if matches!(kind.draw, Draw::Analytic | Draw::Traced) {
-                    *source = emit::shade_tiles::bsdf_coverage(source);
-                }
-            }
-            Visibility::Coverage
-        }
+        (Lighting::Bsdf(_, Visibility::Coverage), _) if opts.aov == emit::Aov::Beauty => Visibility::Coverage,
         _ => Visibility::Center,
     };
-    Ok(visibility)
+    Ok((visibility, kind_modules.iter().map(|kind| kind.source(p)).collect()))
 }
 
 /// Each kind parameter as a WGSL literal: the one value every row of its kind was emitted with.
@@ -251,30 +253,32 @@ fn lower_dispatches(
     let mut dispatches = vec![];
     if samples.is_empty() {
         use crate::program::DispatchRows;
-        let packed = |name: &str, span| -> Res<DispatchRows> {
+        let packed = |name: &str| -> Res<DispatchRows> {
             let table = &tables[p.kind_index(name)];
-            if table.is_empty() {
-                return Err(Diag::new(Code::E602, span, "scheduled table has no rows", "emit a row or remove its scheduled operation"));
-            }
+            let stride = p.kinds[name].row.iter().try_fold(abi::HIDDEN_WORDS, |stride, field| {
+                let ty = crate::check::Ck::new(p, &mut vec![]).resolve(&field.ty, false)?;
+                Ok::<_, Diag>(stride + ty.words().expect("checked storable column"))
+            })?;
             let mut words = vec![];
             for row in table {
                 pack(row, &mut words);
                 words.extend([0.; abi::HIDDEN_WORDS as usize]);
             }
-            Ok(DispatchRows::Table { name: name.into(), n_rows: table.len() as u32, stride: (words.len() / table.len()) as u32, words })
+            Ok(DispatchRows::Table { name: name.into(), n_rows: table.len() as u32, stride, words })
         };
-        let rows_of = |name: &str, span| match drawn.iter().position(|&n| n == name) {
+        let rows_of = |name: &str, _| match drawn.iter().position(|&n| n == name) {
             Some(draw) => Ok(DispatchRows::Drawable(draw)),
-            None => packed(name, span),
+            None => packed(name),
         };
         for &name in &p.kind_order {
+            if tables[p.kind_index(name)].is_empty() { continue; }
             let kind = p.kinds[name];
             let draw = drawn.iter().position(|&n| n == name);
             let output = || {
                 if let Some(draw) = draw {
                     return Ok((texts.len(), DispatchRows::Drawable(draw)));
                 }
-                Ok((texts.len(), packed(name, kind.name.span)?))
+                Ok((texts.len(), packed(name)?))
             };
             if let Some((entry, dispatch)) = emit::motion_module(p, types, kind, fixed, output, &rows_of)? {
                 texts.push((format!("{name}.advance"), entry));

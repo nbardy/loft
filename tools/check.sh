@@ -19,6 +19,10 @@ static_checks() {
     esac
   done
   tools/check_core_words.sh
+  if command -v cargo-machete >/dev/null 2>&1; then
+    cargo-machete --skip-target-dir
+  fi
+  uv run --no-project python -m py_compile tools/*.py tools/gates/*.py tools/parity/d1d/*.py
   if ! test -f "${KEEL_LOCK:-$HOME/git/room-runners-arena-lib/keel/Cargo.lock}"; then
     echo 'pins: skipped (no host lock available)'
   else
@@ -62,7 +66,7 @@ plan() {
 }
 
 wasm() {
-  tools/dev.sh check loft-runner --target wasm32-unknown-unknown --features web-sys
+  tools/dev.sh check loft-runner --target wasm32-unknown-unknown
 }
 
 parity() {
@@ -79,7 +83,7 @@ full_gate() {
   : "${LOFT_TIMING_MARGIN:?full gate requires an allowed paired delta as a fraction of the timing budget}"
   baseline_root="$(git -C "$(dirname "$LOFT_BASELINE_BIN")" rev-parse --show-toplevel)"
   out="$(mktemp -d "$root/out/check.XXXXXX")"
-  tools/dev.sh check --workspace --target wasm32-unknown-unknown --features loft-runner/web-sys
+  tools/dev.sh check --workspace --target wasm32-unknown-unknown
   tools/dev.sh test --workspace --doc --profile "$profile" || failed=$?
   tools/dev.sh build --workspace --profile "$profile" --bins --tests --examples --message-format=json-render-diagnostics >"$out/build.jsonl"
   corpus_lint "$CARGO_TARGET_DIR/$profile/loft" || failed=$?
@@ -126,6 +130,7 @@ case "${1:-}" in
     wasm
     plan
     for crate in ${scope[@]+"${scope[@]}"}; do
+      tools/dev.sh lint "$crate"
       tools/gpu_lock.sh --heavy tools/dev.sh test "$crate" --test-threads 1
     done ;;
   full) static_checks; mkdir -p "$root/out"; full_gate ;;

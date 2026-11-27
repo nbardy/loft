@@ -15,11 +15,11 @@ pub struct Prog<'a> {
     pub spaces: HashSet<&'a str>,
     pub structs: BTreeMap<&'a str, (&'a Ident, &'a [RowField])>,
     pub aliases: BTreeMap<&'a str, (&'a Ident, &'a TyExpr)>,
-    pub units: HashSet<&'a str>,
     pub scans: BTreeMap<&'a str, &'a ScanDecl>,
     pub schedule: Option<&'a ScheduleDecl>,
     pub kernels: BTreeMap<&'a str, &'a KernelDecl>,
     pub bakes: BTreeMap<&'a str, &'a BakeDecl>,
+    pub targets: BTreeMap<&'a str, crate::check::Target>,
     pub laws:BTreeMap<&'a str,&'a LawDecl>,
     pub checks:BTreeMap<&'a str,&'a FnDecl>,
 }
@@ -39,10 +39,10 @@ impl<'a> Prog<'a> {
             spaces: HashSet::new(),
             structs: BTreeMap::new(),
             aliases: BTreeMap::new(),
-            units: HashSet::new(),
             scans: BTreeMap::new(),
             kernels: BTreeMap::new(),
             bakes: BTreeMap::new(),
+            targets: BTreeMap::new(),
             schedule: None,laws:BTreeMap::new(),checks:BTreeMap::new(),
         };
         let mut seen: BTreeMap<&str, Span> = BTreeMap::new();
@@ -65,6 +65,10 @@ impl<'a> Prog<'a> {
                 }
                 Item::Use(_) => {}
                 Item::Camera(_) => {}
+                Item::Target(t) => {
+                    name(&t.name)?;
+                    p.targets.insert(&t.name.name, crate::check::target(t)?);
+                }
                 Item::World(n, kinds) => {
                     name(n)?;
                     let mut seen = HashSet::new();
@@ -93,10 +97,6 @@ impl<'a> Prog<'a> {
                 Item::TypeAlias(n, ty) => {
                     name(n)?;
                     p.aliases.insert(&n.name, (n, ty));
-                }
-                Item::Unit(n) => {
-                    name(n)?;
-                    p.units.insert(&n.name);
                 }
                 Item::Const(c) => {
                     name(&c.name)?;
@@ -168,7 +168,7 @@ impl<'a> Prog<'a> {
             if !known.insert(name) { continue; }
             let mut refs = crate::references::References::default();
             refs.expr(&self.consts[name].value, &[]);
-            if matches!(self.consts[name].value.kind, ExprKind::If { .. }) || !refs.calls.is_empty()
+            if matches!(self.consts[name].value.kind, ExprKind::If { .. }) || refs.has_match || !refs.calls.is_empty()
                 || refs.names.iter().any(|(n, _)| *n == "time" || self.param_slot(n).is_some())
             {
                 return true;

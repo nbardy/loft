@@ -56,3 +56,12 @@ pub fn round_cone[S](p: p3@S, a: p3@S, b: p3@S, ra: m, rb: m) -> m {
   let station = clamp(y - rho * s / max(c, 1e-6), 0, len)
   length(pa - axis * station) - (ra - s * station)
 }
+
+# Signed distance bound for an ellipsoid with positive semiaxes. Scaling
+# the unit-sphere field by the smallest radius makes it 1-Lipschitz.
+pub fn ellipsoid[S](v: v3@S, r: v3) -> f {
+  (length(v.xyz / r) - 1.0) * min(r.x, min(r.y, r.z))
+}
+
+# Polynomial smooth intersection with blend width k > 0.
+pub fn smax(a: f, b: f, k: f) -> f = -smin(-a, -b, k)

@@ -1,5 +1,6 @@
 //! Path schedule records shared by the compiler passes.
-#[path = "path_twin.rs"]
+// Keep the existing verification imports while the CPU oracles live with the instruments.
+#[path = "../../../tools/loft-verify/src/path_twin.rs"]
 pub mod cpu;
 
 #[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]

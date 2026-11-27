@@ -1,5 +1,5 @@
 use stdlib::motion::body::{walker, planted}
-use self::gait::{step, present}
+use stdlib::motion::gait::{step, present}
 use stdlib::materials::bsdf::{ggx}
 use stdlib::sdf::solid::{box_sdf}
 
@@ -19,7 +19,7 @@ camera Main { at: [0.07, 0.27, 0.0]@World, radius: 3.65m, height: 1.62m, period:
 build {
   build for actor in 0..actors {
     walker([2.5 * f32(actor % 32), 0.0, 2.1 * f32(actor / 32)]@World,
-      0.0, 1.0, 0.0, [0.88, 0.20, 0.068], 0.45m, 0.58m, link)
+      0.0, 1.0, 0.0, [0.88, 0.20, 0.068], 0.45m, 0.58m, link, swing_lift: 0.185m)
   }
   emit Sand()
   emit Sun(dir: dir([0.55, 0.79, 0.21]@World), color: [2.7, 2.45, 2.05])

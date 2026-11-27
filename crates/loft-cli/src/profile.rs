@@ -1,5 +1,5 @@
 use crate::{budget::Failure, flag, sources};
-use loft_cli::{shader_hashes, write_json};
+use loft_cli::{percentile_nearest_rank, shader_hashes, write_json};
 use loft_cli::native::{self, FrameTiming, Loaded};
 use loft_passes::program::Program;
 use loft_passes::telemetry::{self, ModuleTelemetry};
@@ -62,17 +62,8 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
             "usage: loft profile SCENE --size WxH [--frames N] [--nonce N] [--loads N] [--timestamps immediate|ring|ab] [--json OUT]".into(),
         ));
     };
-    let path = Path::new(scene);
-    let program = if path.extension().is_some_and(|ext| ext == "sexp") {
-        if !set.is_empty() {
-            return Err(Failure::Usage("--set requires an authored scene".into()));
-        }
-        let data = std::fs::read_to_string(path).map_err(|e| Failure::Usage(e.to_string()))?;
-        loft_passes::sexp::read(&data).map_err(Failure::Compile)?
-    } else {
-        let src = sources(path).map_err(Failure::Usage)?;
-        loft_passes::compile(&src, set).map_err(|d| Failure::Compile(d.render(&src)))?.0
-    };
+    let src = sources(Path::new(scene)).map_err(Failure::Usage)?;
+    let program = loft_passes::compile(&src, set).map_err(|d| Failure::Compile(d.render(&src)))?.0;
     let gpu = native::gpu().map_err(Failure::Device)?;
     crate::budget::timestamps(gpu.timestamps)?;
     // Keep the device and driver compilation key fixed across the warm loads.
@@ -132,8 +123,8 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
         println!(
             "{} frames, GPU p50 {:.3} ms, p95 {:.3} ms ({}), load control p50 {c0:.3} before / {c1:.3} after{}",
             frames,
-            times[(times.len() * 50).div_ceil(100) - 1],
-            times[(times.len() * 95).div_ceil(100) - 1],
+            percentile_nearest_rank(&times, 0.5),
+            percentile_nearest_rank(&times, 0.95),
             report.adapter,
             if contended { ": CONTENDED, do not trust these times" } else { "" }
         );

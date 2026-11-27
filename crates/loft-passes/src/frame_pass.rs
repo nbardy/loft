@@ -7,16 +7,20 @@
 //! A named argument fills the template hole of the same name in capitals. Holes are evaluated after the frame's
 //! compile-time facts are known (`drawn`, `edges`, `aov`, `paper`), which is when the compiler filled them itself.
 use crate::{Prog, authored_compute::compute_extent, emit};
-use crate::program::{AuthoredPass, AuthoredRun, Extent, FrameView, ShaderModule, ViewStore, abi};
+use crate::program::{AuthoredPass, AuthoredRun, DrawTargets, Extent, FrameView, ShaderModule, ViewStore, abi};
 use crate::source::Graph;
 use emit::{Aov, shade_tiles::Visibility};
-use loft_ir::{Code, Diag, Res};
+use loft_check::check::Target;
+use loft_ir::{Code, Diag, ImageFormat, Res, execution::{BlendMode, CullMode}};
 use loft_parse::ast::*;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-/// The stores a render frame owns, named as schedules name them.
-const FRAME_STORES: [&str; 13] = ["FrameUniform", "CameraSlot", "IndirectBuf", "Vis64", "DepthBuf", "ShadowMap", "TileLists",
-    "ColorHdr", "Swapchain", "RowTables", "LutTables", "PoseBuf", "VerdictBuf"];
+/// Logical resources supplied by existing frame recipes.
+pub(crate) fn stock_store(name: &str) -> bool {
+    matches!(name, "FrameUniform" | "CameraSlot" | "IndirectBuf" | "Vis64" | "DepthBuf" | "ShadowMap" | "TileLists"
+        | "ColorHdr" | "Swapchain" | "RowTables" | "LutTables" | "PoseBuf" | "VerdictBuf")
+}
 const EDGES: [&str; 3] = ["none", "taps", "coverage"];
 const AOVS: [&str; 8] = ["beauty", "albedo", "normal", "depth", "id", "sdf_steps", "lipschitz_ratio", "overdraw"];
 /// Fragments may name holes of their own; this bounds a fragment that names itself.
@@ -30,21 +34,30 @@ pub(crate) struct FramePass<'a> {
     holes: Vec<(String, &'a Expr)>,
     pub(crate) reads: Vec<&'a str>,
     pub(crate) writes: Vec<&'a str>,
+    named: BTreeMap<String, (&'a str, Resource)>,
     /// The kinds the pass reads. A pass that reads kinds binds the instance table, which holds every drawn kind.
     pub(crate) kinds: Vec<&'a str>,
     /// Whether `reads` names kinds at all: `Drawables` in a scene that emits no drawable rows lists none.
     pub(crate) reads_kinds: bool,
 }
 
+#[derive(Clone, Copy)]
+enum Resource {
+    Target(Target),
+    Table(u32),
+    Bake,
+}
+
 enum Form {
     Compute { entry: String, extent: ExtentSpec },
-    FullScreen { vertex: String, fragment: String },
+    FullScreen { vertex: String, fragment: String, targets: Option<DrawTargets> },
 }
 
 enum ExtentSpec {
     Groups([u32; 3]),
     Instances,
     Pixels,
+    Target(String),
 }
 
 /// What the frame knows when its passes are lowered.
@@ -77,9 +90,15 @@ fn read(path: &Path, at: &Expr) -> Res<String> {
 }
 
 impl<'a> FramePass<'a> {
+    pub(crate) fn draws(resources: &PassResources) -> bool {
+        matches!(resources.body.stmts.as_slice(),
+            [Stmt::Expr(Expr { kind: ExprKind::Call { callee, .. }, .. })] if callee.name == "draw")
+    }
+
     /// `None`: the pass names no frame store, so it is an authored compute pass over its own tables.
     pub(crate) fn classify(
-        p: &Prog<'a>, types: &mut Vec<Ty>, src: &Graph, overrides: &[(String, f64)], decl: &'a PassDecl, resources: &'a PassResources,
+        p: &Prog<'a>, types: &mut Vec<Ty>, src: &Graph, overrides: &[(String, f64)],
+        decl: &'a PassDecl, resources: &'a PassResources, compute: &crate::AuthoredCompute,
     ) -> Res<Option<Self>> {
         let implicit = p.schedule.is_some_and(|s| s.implicit);
         let kinds_named = |n: &str| -> Option<Vec<&'a str>> {
@@ -91,28 +110,54 @@ impl<'a> FramePass<'a> {
             }
             p.kinds.get_key_value(n).map(|(&k, _)| vec![k])
         };
-        let names = resources.reads.iter().chain(&resources.writes).collect::<Vec<&Ident>>();
-        let frame = |n: &Ident| FRAME_STORES.contains(&n.name.as_str()) || kinds_named(n.name.as_str()).is_some();
-        if !names.iter().any(|&n| frame(n)) {
+        let names = || resources.reads.iter().chain(&resources.writes);
+        if !Self::draws(resources) && !names().any(|n| {
+            stock_store(&n.name) || kinds_named(&n.name).is_some() || p.targets.contains_key(n.name.as_str())
+        }) {
             return Ok(None);
         }
-        if let Some(n) = names.iter().find(|&&n| !frame(n)) {
-            return Err(Diag::new(Code::E520, n.span, format!("`{}` is not a frame store", n.name),
-                format!("a pass in a render frame names frame stores ({}) and kinds", FRAME_STORES.join(", "))));
+        let mut named = BTreeMap::new();
+        for n in names() {
+            let name = n.name.as_str();
+            let resource = if let Some(&target) = p.targets.get(name) {
+                Resource::Target(target)
+            } else if let Some(id) = compute.tables.get(name).filter(|_| !p.bakes.contains_key(name)) {
+                Resource::Table(compute.bundle.tables[id.0 as usize].stride_bytes)
+            } else if p.bakes.contains_key(name) {
+                Resource::Bake
+            } else if stock_store(name) || kinds_named(name).is_some() {
+                continue;
+            } else {
+                return Err(Diag::new(Code::E520, n.span, format!("unknown frame resource `{name}`"),
+                    "list a declared target, table, bake, kind or stock frame store"));
+            };
+            // The linker gives imported resources unique keys. WGSL uses the spelling in the pass.
+            let written = src.files.get(usize::from(n.span.file))
+                .and_then(|(_, source)| source.get(n.span.lo as usize..n.span.hi as usize))
+                .unwrap_or(name);
+            let global = written.rsplit("::").next().unwrap_or(written).trim();
+            let global = if global.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') && !global.is_empty() { global } else { name };
+            if named.insert(global.to_owned(), (name, resource)).is_some_and(|(old, _)| old != name) {
+                return Err(Diag::new(Code::E520, n.span, format!("two resources use WGSL name `{global}`"),
+                    "list resources with distinct binding names"));
+            }
         }
         let err = |message: String, fix: &str| Diag::new(Code::E520, decl.label.span, message, fix.to_owned());
         let mut reads = vec![];
         let mut kinds = vec![];
         let mut reads_kinds = false;
         for n in &resources.reads {
-            match kinds_named(n.name.as_str()) {
+            match kinds_named(n.name.as_str()).filter(|_| !compute.tables.contains_key(n.name.as_str())) {
                 Some(found) => { kinds.extend(found); reads_kinds = true; }
                 None => reads.push(n.name.as_str()),
             }
         }
         let writes = resources.writes.iter().map(|n| n.name.as_str()).collect::<Vec<_>>();
-        if writes.iter().any(|&w| kinds_named(w).is_some()) {
+        if writes.iter().any(|&w| kinds_named(w).is_some() && !compute.tables.contains_key(w)) {
             return Err(err("a frame pass cannot write a kind's rows".into(), "write rows with a law"));
+        }
+        if writes.iter().any(|&w| p.bakes.contains_key(w)) {
+            return Err(err("a frame pass cannot write a baked image".into(), "write the bake through its initializer"));
         }
         let [Stmt::Expr(Expr { kind: ExprKind::Call { callee, args }, .. })] = resources.body.stmts.as_slice() else {
             return Err(err("a frame pass body is one dispatch(...) or draw(...) call".into(),
@@ -120,41 +165,99 @@ impl<'a> FramePass<'a> {
         };
         let positional = args.iter().filter(|a| a.name.is_none()).map(|a| &a.value).collect::<Vec<_>>();
         let text = |e: &Expr| literal(e).unwrap_or_else(|| Err(Diag::new(Code::E003, e.span, "expected a quoted string", "quote the file or entry name")));
-        let (template, form) = match (callee.name.as_str(), positional.as_slice()) {
-            ("dispatch", [file, entry, extent]) => {
-                let word = if let ExprKind::Name(n) = &extent.kind { n.as_str() } else { "" };
-                let extent = match word {
-                    "Instances" => ExtentSpec::Instances,
-                    "Pixels" => ExtentSpec::Pixels,
-                    _ => ExtentSpec::Groups(compute_extent(p, types, overrides, extent)?),
-                };
-                (*file, Form::Compute { entry: text(*entry)?, extent })
-            }
-            ("draw", [file, vertex, fragment]) => {
-                if !writes.contains(&"Swapchain") {
-                    return Err(err("a full-screen draw writes the swapchain".into(), "add `writes [Swapchain]`"));
-                }
-                (*file, Form::FullScreen { vertex: text(*vertex)?, fragment: text(*fragment)? })
-            }
-            _ => return Err(err(format!("`{}` with {} positional arguments in a frame pass", callee.name, positional.len()),
-                "write dispatch(template, entry, extent, ...) or draw(template, vertex, fragment, ...)")),
-        };
-        let path = src.source_path(template.span.file).with_file_name(text(template)?);
         let mut holes: Vec<(String, &'a Expr)> = vec![];
+        let mut cull = None;
+        let mut blend = None;
         for arg in args {
             let Some(name) = &arg.name else { continue };
+            if callee.name == "draw" {
+                let word = match &arg.value.kind { ExprKind::Name(word) => word.as_str(), _ => "" };
+                match name.name.as_str() {
+                    "cull" => {
+                        let mode = match word {
+                            "none" => CullMode::None, "front" => CullMode::Front, "back" => CullMode::Back,
+                            _ => return Err(err("invalid cull mode".into(), "use cull: none, front or back")),
+                        };
+                        if cull.replace(mode).is_some() {
+                            return Err(err("cull is specified twice".into(), "specify cull once"));
+                        }
+                        continue;
+                    }
+                    "blend" => {
+                        let mode = match word {
+                            "opaque" => BlendMode::Opaque, "additive" => BlendMode::Additive, "alpha" => BlendMode::Alpha,
+                            _ => return Err(err("invalid blend mode".into(), "use blend: opaque, additive or alpha")),
+                        };
+                        if blend.replace(mode).is_some() {
+                            return Err(err("blend is specified twice".into(), "specify blend once"));
+                        }
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
             let key = name.name.to_ascii_uppercase();
             if holes.iter().any(|(k, _)| *k == key) {
                 return Err(Diag::new(Code::E520, name.span, format!("hole `{}` is filled twice", name.name), "fill each hole once"));
             }
             holes.push((key, &arg.value));
         }
-        Ok(Some(Self { decl, template: path, form, holes, reads, writes, kinds, reads_kinds }))
+        let (template, form) = match (callee.name.as_str(), positional.as_slice()) {
+            ("dispatch", [file, entry, extent]) => {
+                let word = if let ExprKind::Name(n) = &extent.kind { n.as_str() } else { "" };
+                let extent = match word {
+                    "Instances" => ExtentSpec::Instances,
+                    "Pixels" => ExtentSpec::Pixels,
+                    name if p.targets.contains_key(name) => {
+                        if !reads.contains(&name) && !writes.contains(&name) {
+                            return Err(err(format!("dispatch extent target {name} is absent from the pass"),
+                                "list the target in reads or writes"));
+                        }
+                        ExtentSpec::Target(name.to_owned())
+                    }
+                    _ => ExtentSpec::Groups(compute_extent(p, types, overrides, extent)?),
+                };
+                (*file, Form::Compute { entry: text(*entry)?, extent })
+            }
+            ("draw", [file, vertex, fragment]) => {
+                let mut colors = vec![];
+                let mut depth = None;
+                for &name in &writes {
+                    if let Some(t) = p.targets.get(name) {
+                        if matches!(t.format, ImageFormat::Depth32Float) {
+                            if depth.replace(name.to_owned()).is_some() {
+                                return Err(err("a draw has at most one depth target".into(), "list one depth target in writes"));
+                            }
+                        } else {
+                            if colors.iter().any(|color| color == name) {
+                                return Err(err(format!("draw lists target `{name}` twice"), "list each attachment once"));
+                            }
+                            colors.push(name.to_owned());
+                        }
+                    } else if name == "Swapchain" {
+                        colors.push(name.to_owned());
+                    }
+                }
+                if colors.is_empty() && depth.is_none() {
+                    return Err(err("draw needs a render target".into(), "list color or depth targets in writes"));
+                }
+                let raster = (cull.is_some() || blend.is_some()).then(|| (cull.unwrap_or_default(), blend.unwrap_or_default()));
+                let stock = matches!(colors.as_slice(), [color] if color == "Swapchain");
+                let targets = (!stock || depth.is_some() || raster.is_some())
+                    .then_some(DrawTargets { colors, depth, raster });
+                (*file, Form::FullScreen { vertex: text(*vertex)?, fragment: text(*fragment)?, targets })
+            }
+            _ => return Err(err(format!("`{}` with {} positional arguments in a frame pass", callee.name, positional.len()),
+                "write dispatch(template, entry, extent, ...) or draw(template, vertex, fragment, ...)")),
+        };
+        let path = src.source_path(template.span.file).with_file_name(text(template)?);
+        Ok(Some(Self { decl, template: path, form, holes, reads, writes, named, kinds, reads_kinds }))
     }
 
     /// The function this pass's `sky` hole names, when it presents.
     pub(crate) fn sky(&self, p: &Prog<'a>) -> Option<&'a str> {
-        if !matches!(self.form, Form::FullScreen { .. }) { return None; }
+        if !matches!(&self.form, Form::FullScreen { targets, .. }
+            if targets.as_ref().is_none_or(|t| t.colors.iter().any(|name| name == "Swapchain"))) { return None; }
         let (_, e) = self.holes.iter().find(|(key, _)| key == "SKY")?;
         let ExprKind::Name(n) = &e.kind else { return None };
         p.fns.get_key_value(n.as_str()).map(|(&k, _)| k)
@@ -224,12 +327,25 @@ impl<'a> FramePass<'a> {
                 Some(Fact::Drawn(_) | Fact::Edges(_) | Fact::Aov(_)) => Err(bad(format!("`{n}` is a frame fact; compare it in an `if`"))),
                 None => p.fns.get_key_value(n.as_str()).map(|(&k, _)| Fragment::Function(k)).ok_or_else(|| bad(format!("`{n}` is not a library fn"))),
             },
-            ExprKind::If { condition, then, otherwise } => {
+            ExprKind::If { condition, then, otherwise, cases: None } => {
                 let arm = if self.truth(condition, facts)? { then } else { otherwise };
                 if !arm.body.stmts.is_empty() {
                     return Err(bad("a hole's `if` arm is one value".into()));
                 }
                 self.value(p, src, &arm.value, facts)
+            }
+            ExprKind::If { condition, then, otherwise, cases: Some(cases) } => {
+                let number = match &condition.kind {
+                    ExprKind::Num { value, .. } => Some(*value),
+                    ExprKind::Name(name) => match fact(name, facts) {
+                        Some(Fact::Drawn(value)) => Some(f64::from(value)),
+                        _ => None,
+                    },
+                    _ => None,
+                }.ok_or_else(|| bad("a match in a template hole needs a numeric selector".into()))?;
+                let selected = cases.arms(&then.value).find(|((key, _), _)| *key as f64 == number)
+                    .map_or(otherwise.value.as_ref(), |(_, value)| value);
+                self.value(p, src, selected, facts)
             }
             ExprKind::Unproved { .. } | ExprKind::FiniteDiff { .. } | ExprKind::Bool(_) | ExprKind::Member(..) | ExprKind::Index(..)
             | ExprKind::Call { .. } | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => Err(bad("this is not a hole value".into())),
@@ -259,14 +375,65 @@ impl<'a> FramePass<'a> {
     pub(crate) fn lowered(&self, module: &ShaderModule, index: usize) -> Res<AuthoredPass> {
         let label = &self.decl.label.name;
         let ir = &module.naga;
+        let entry = |name: &str, stage: naga::ShaderStage| ir.entry_points.iter().enumerate()
+            .find(|(_, e)| e.name == name && e.stage == stage)
+            .ok_or_else(|| self.error(format!("the template has no {stage:?} entry `{name}`"), "name an entry the template declares"));
+        let mut entries = vec![];
+        let run = match &self.form {
+            Form::Compute { entry: name, extent } => {
+                let (i, entry) = entry(name, naga::ShaderStage::Compute)?;
+                entries.push(i);
+                let [x, y, _] = entry.workgroup_size;
+                let extent = match extent {
+                    ExtentSpec::Groups(groups) => Extent::Groups(*groups),
+                    ExtentSpec::Instances => Extent::Instances { width: x },
+                    ExtentSpec::Pixels => Extent::Pixels { tile: [x, y] },
+                    ExtentSpec::Target(name) => Extent::Target { name: name.clone(), tile: [x, y] },
+                };
+                AuthoredRun::Compute { entry: name.clone(), extent }
+            }
+            Form::FullScreen { vertex, fragment, targets } => {
+                entries.push(entry(vertex, naga::ShaderStage::Vertex)?.0);
+                entries.push(entry(fragment, naga::ShaderStage::Fragment)?.0);
+                AuthoredRun::FullScreen { vertex: vertex.clone(), fragment: fragment.clone(), targets: targets.clone() }
+            }
+        };
+        let usage = if self.named.is_empty() && !matches!(&run, AuthoredRun::FullScreen { targets: Some(_), .. }) {
+            None
+        } else {
+            Some(naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all())
+                .validate(ir).map_err(|e| self.error(e.to_string(), "correct the WGSL module"))?)
+        };
         let mut bindings = vec![];
-        for (_, global) in ir.global_variables.iter() {
+        let mut named_bindings = vec![];
+        for (handle, global) in ir.global_variables.iter() {
             let Some(binding) = &global.binding else { continue };
-            if binding.group == 0 { continue; }
+            if binding.group == 0 || usage.as_ref().is_some_and(|info| {
+                entries.iter().all(|&i| info.get_entry_point(i)[handle].is_empty())
+            }) { continue; }
             let name = global.name.as_deref().unwrap_or_default();
-            let (view, store, writes) = FrameView::named(name).ok_or_else(|| self.error(
+            if let Some(&(resource, kind)) = self.named.get(name) {
+                if matches!(&run, AuthoredRun::FullScreen { targets: Some(t), .. }
+                    if t.colors.iter().any(|n| n == resource) || t.depth.as_deref() == Some(resource))
+                {
+                    return Err(self.error(format!("draw binds its own attachment `{resource}`"),
+                        "bind an image produced by another pass"));
+                }
+                let writes = resource_access(kind, global.space, &ir.types[global.ty].inner).ok_or_else(|| self.error(
+                    format!("WGSL binding `{name}` has the wrong type for `{resource}`"),
+                    "match the image format and samples or the table row stride"))?;
+                let listed = if writes { self.writes.contains(&resource) } else { self.reads.contains(&resource) };
+                if !listed {
+                    let list = if writes { "writes" } else { "reads" };
+                    return Err(self.error(format!("WGSL binding `{name}` requires `{resource}` in {list}"),
+                        "declare the resource access on the pass"));
+                }
+                named_bindings.push((binding.group, binding.binding, resource.to_owned()));
+                continue;
+            }
+            let (view, store, writes) = FrameView::stock(name).ok_or_else(|| self.error(
                 format!("`{label}` binds `{name}`, which is not a frame resource"),
-                "bind vis_tex, hdr, hdr_tex, tiles, shade_args, draw_args, visible, insts or bases"))?;
+                "name a resource listed in the pass or use a stock frame binding"))?;
             let listed = match store {
                 ViewStore::Kinds => self.reads_kinds,
                 ViewStore::Named(s) => self.writes.contains(&s) || !writes && self.reads.contains(&s),
@@ -280,31 +447,48 @@ impl<'a> FramePass<'a> {
             }
             bindings.push((binding.group, binding.binding, view));
         }
-        let entry = |name: &str, stage: naga::ShaderStage| ir.entry_points.iter().find(|e| e.name == name && e.stage == stage)
-            .ok_or_else(|| self.error(format!("the template has no {stage:?} entry `{name}`"), "name an entry the template declares"));
-        let run = match &self.form {
-            Form::Compute { entry: name, extent } => {
-                let [x, y, _] = entry(name, naga::ShaderStage::Compute)?.workgroup_size;
-                let extent = match extent {
-                    ExtentSpec::Groups(groups) => Extent::Groups(*groups),
-                    ExtentSpec::Instances => Extent::Instances { width: x },
-                    ExtentSpec::Pixels => Extent::Pixels { tile: [x, y] },
-                };
-                AuthoredRun::Compute { entry: name.clone(), extent }
-            }
-            Form::FullScreen { vertex, fragment } => {
-                entry(vertex, naga::ShaderStage::Vertex)?;
-                entry(fragment, naga::ShaderStage::Fragment)?;
-                AuthoredRun::FullScreen { vertex: vertex.clone(), fragment: fragment.clone() }
-            }
-        };
         // Shade modules decode a tile id as an 8x8 tile (`abi::TILE`), so the TileLists producer has that shape.
-        let tiled = matches!(run, AuthoredRun::Compute { extent: Extent::Pixels { tile }, .. } if tile == [abi::TILE; 2]);
+        let tiled = matches!(&run, AuthoredRun::Compute { extent: Extent::Pixels { tile }, .. } if *tile == [abi::TILE; 2]);
         if self.writes.contains(&"TileLists") && !tiled {
             return Err(self.error(format!("TileLists holds {0}x{0} tiles", abi::TILE),
                 &format!("dispatch `{label}` over Pixels with @workgroup_size({0}, {0})", abi::TILE)));
         }
-        Ok(AuthoredPass { label: label.clone(), module: index, run, bindings })
+        let targets = self.named.values().filter_map(|&(name, kind)| match kind {
+            Resource::Target(target) => Some((name.to_owned(), target)),
+            Resource::Table(_) | Resource::Bake => None,
+        }).collect();
+        Ok(AuthoredPass { label: label.clone(), module: index, run, bindings, named_bindings, targets })
+    }
+}
+
+/// Match the declared resource's allocation to the template's binding type and access.
+fn resource_access(resource: Resource, space: naga::AddressSpace, ty: &naga::TypeInner) -> Option<bool> {
+    use naga::{AddressSpace, ImageClass, ImageDimension, ScalarKind, StorageAccess, StorageFormat, TypeInner};
+    match resource {
+        Resource::Table(row) => match (space, ty) {
+            (AddressSpace::Storage { access }, TypeInner::Array { stride, .. }) if *stride == row =>
+                Some(access.intersects(StorageAccess::STORE | StorageAccess::ATOMIC)),
+            _ => None,
+        },
+        Resource::Bake => matches!((space, ty), (AddressSpace::Handle, TypeInner::Image {
+            class: ImageClass::Sampled { kind: ScalarKind::Float, multi: false }, ..
+        })).then_some(false),
+        Resource::Target(target) => {
+            let (AddressSpace::Handle, TypeInner::Image { dim: ImageDimension::D2, arrayed: false, class }) = (space, ty) else {
+                return None;
+            };
+            let multi = target.samples > 1;
+            match (target.format, *class) {
+                (ImageFormat::Depth32Float, ImageClass::Depth { multi: actual })
+                | (ImageFormat::Rg32Uint, ImageClass::Sampled { kind: ScalarKind::Uint, multi: actual })
+                | (ImageFormat::Rgba16Float | ImageFormat::Rgba32Float, ImageClass::Sampled { kind: ScalarKind::Float, multi: actual })
+                    if multi == actual => Some(false),
+                (ImageFormat::Rgba16Float, ImageClass::Storage { format: StorageFormat::Rgba16Float, access })
+                | (ImageFormat::Rgba32Float, ImageClass::Storage { format: StorageFormat::Rgba32Float, access })
+                    if !multi => Some(access.intersects(StorageAccess::STORE | StorageAccess::ATOMIC)),
+                _ => None,
+            }
+        }
     }
 }
 

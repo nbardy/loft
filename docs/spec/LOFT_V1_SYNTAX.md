@@ -34,7 +34,7 @@ E+ combines the bakeoff's expression notation, explicit build stage and field-le
 - **Identifiers**: `UIDENT` `[A-Z][A-Za-z0-9_]*` names spaces, kinds, cameras, schedules and `unknown` reasons;
   `LIDENT` `[a-z_][A-Za-z0-9_]*` names everything else.
 - **Numbers**: `12`, `0.5`, `1e-6`, `0xff`. A number with a fraction or exponent is a float; otherwise an integer that
-  takes its type from context (§4). A decimal point needs a digit after it, so `0..6` is a range.
+  takes its type from context (§4). A decimal point needs a digit after it, so `0..6` is a range. An integer may end in `u` or `i` (`192u`, `3i`, WGSL's suffixes): it is still an integer typed by context, as `192` is.
 - **Unit suffixes** touch the digits: `m`, `mm`, `rad`, `deg`, `s`, `kg`, `N`, optionally `/unit` (`0.42rad/s`).
   `deg` and `mm` convert to radians and metres; the Phase 1.5 compiler stores the resulting value as `f`. The v1 dimensional checking rules are in 06 §11. An
   unknown suffix (`0.5cm`) is E001. To divide by a variable named `s`, write a space: `2m / s`.

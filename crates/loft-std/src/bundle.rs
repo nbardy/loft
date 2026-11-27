@@ -56,6 +56,7 @@ impl Resources {
                     assign(&tables, &mut roles, *texture, Role::Texture)?;
                 }
                 PassRun::RenderBundle {
+                    draws,
                     color_targets,
                     depth,
                     ..
@@ -65,6 +66,9 @@ impl Resources {
                     }
                     if let Some(depth) = depth {
                         attachment(&tables, &mut roles, &mut host_depth, depth.table)?;
+                    }
+                    for id in draws.iter().filter_map(|draw| draw.vertex) {
+                        assign(&tables, &mut roles, id, Role::Buffer)?;
                     }
                 }
             }

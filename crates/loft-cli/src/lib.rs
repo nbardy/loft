@@ -101,7 +101,15 @@ pub fn authored_checks(g: &Gpu, p: &Program, t: f32) -> Result<Vec<(String, Verd
 pub fn quantile(xs: &[f64], q: f64) -> f64 {
     let mut s = xs.to_vec();
     s.sort_by(f64::total_cmp);
-    s[((s.len() - 1) as f64 * q).round() as usize]
+    percentile_nearest_rank(&s, q)
+}
+
+/// Select the one-based rank ceil(p * N) from a nonempty, ascending sample.
+/// A fraction of zero selects the minimum.
+pub fn percentile_nearest_rank(sorted: &[f64], p: f64) -> f64 {
+    assert!(!sorted.is_empty() && (0.0..=1.0).contains(&p));
+    let rank = (p * sorted.len() as f64).ceil() as usize;
+    sorted[rank.saturating_sub(1)]
 }
 
 pub fn write(path: &Path, bytes: &[u8]) -> Result<(), Failure> {
@@ -127,6 +135,17 @@ pub fn live_names<'a>(prog: &'a loft_passes::Prog<'_>) -> impl Iterator<Item = &
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nearest_rank_uses_the_lower_median_and_exact_p95_boundary() {
+        let samples = std::array::from_fn::<_, 21, _>(|i| (i + 1) as f64);
+        assert_eq!(percentile_nearest_rank(&samples[..20], 0.5), 10.0);
+        assert_eq!(percentile_nearest_rank(&samples[..20], 0.95), 19.0);
+        assert_eq!(percentile_nearest_rank(&samples, 0.95), 20.0);
+        assert_eq!(percentile_nearest_rank(&samples, 0.0), 1.0);
+        assert_eq!(percentile_nearest_rank(&samples, 1.0), 21.0);
+        assert_eq!(percentile_nearest_rank(&samples[..1], 0.95), 1.0);
+    }
 
     #[test]
     fn authored_verdicts_require_a_record_and_finite_evidence() {

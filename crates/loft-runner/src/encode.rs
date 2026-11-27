@@ -31,19 +31,17 @@ impl Group {
     }
 }
 
-struct Kernel { pipeline: wgpu::ComputePipeline, layout: wgpu::PipelineLayout, module: ModuleId, entry: String }
-
 enum Operation {
-    Dispatch(Kernel, DispatchExtent),
-    Ticks(Kernel, stepping::Fused),
+    Dispatch(wgpu::ComputePipeline, DispatchExtent),
+    Ticks(wgpu::ComputePipeline, stepping::Fused),
     Draw(embed::Render),
     Mips(TableId, Option<(u64, mips::Mips)>),
 }
 struct Command { groups: Vec<Group>, op: Operation }
 impl Command {
-    fn dispatch(&self, fixed: &wgpu::BindGroup, k: &Kernel, work: Work) -> Pass {
+    fn dispatch(&self, fixed: &wgpu::BindGroup, pipeline: &wgpu::ComputePipeline, work: Work) -> Pass {
         let groups = std::iter::once(fixed).chain(self.groups.iter().map(Group::bound)).cloned().collect();
-        Pass::Compute(vec![Dispatch { pipeline: k.pipeline.clone(), groups, work }])
+        Pass::Compute(vec![Dispatch { pipeline: pipeline.clone(), groups, work }])
     }
 }
 pub(super) struct ComputeCache {
@@ -96,7 +94,7 @@ impl ComputeCache {
         adapter: Option<&wgpu::Adapter>, cache: Option<&wgpu::PipelineCache>,
         canvas: Option<(&embed::Target<'_>, &Tables)>, clock: Option<fn() -> Duration>) -> Result<Self> {
         use wgpu::{BufferBindingType::{Storage, Uniform}, BufferUsages as U};
-        let schedule = schedule::Schedule::new(b, d.features())?;
+        let schedule = schedule::Schedule::with_execution(b, d.features(), exec)?;
         let mut ranges = BTreeMap::new();
         for range in &exec.ranges {
             if ranges.insert((range.pass, range.group, range.slot), (range.offset, range.size)).is_some() {
@@ -193,12 +191,12 @@ impl ComputeCache {
                         recipes.push((module, entry.clone(), layout.clone()));
                         index
                     });
-                    linked.push((id, groups, module, entry, layout, work, index));
+                    linked.push((id, groups, work, index));
                 }
                 schedule::Pass::Draw(spec, _) => {
                     let shaders = spec.draws.iter().map(|draw| modules[&draw.decl.module].clone()).collect();
                     let draw = embed::Render { spec, shaders, layout: layout.expect("raster layout"), cached: None,
-                        additive: exec.additive.contains(&id), override_pipeline: None };
+                        additive: exec.additive.contains(&id) };
                     if let Some((target, tables)) = canvas {
                         draw.misses(target, |id| tables.get(&id)?.attachment(), &mut renders)?;
                     }
@@ -242,11 +240,11 @@ impl ComputeCache {
                 }
             }
         }
-        for (id, groups, module, entry, layout, work, index) in linked {
-            let k = Kernel { pipeline: kernels[index].clone(), layout, module, entry };
+        for (id, groups, work, index) in linked {
+            let pipeline = kernels[index].clone();
             let op = match work {
-                schedule::Work::Dispatch(extent) => Operation::Dispatch(k, extent),
-                schedule::Work::Ticks(fused) => Operation::Ticks(k, fused),
+                schedule::Work::Dispatch(extent) => Operation::Dispatch(pipeline, extent),
+                schedule::Work::Ticks(fused) => Operation::Ticks(pipeline, fused),
             };
             passes.insert(id, Command { groups, op });
         }
@@ -271,17 +269,6 @@ impl ComputeCache {
     pub fn fused(&self, id: PassId) -> Option<&stepping::Fused> {
         if let Operation::Ticks(_, f) = &self.passes.get(&id)?.op { Some(f) } else { None }
     }
-    #[cfg(test)]
-    pub fn pipeline(&self, id: PassId) -> Result<&wgpu::ComputePipeline> {
-        match &self.passes.get(&id).ok_or(RunnerError::UnknownResource)?.op {
-            Operation::Dispatch(k,_) | Operation::Ticks(k,_) => Ok(&k.pipeline),
-            Operation::Draw(_) | Operation::Mips(..) => Err(RunnerError::UnknownResource),
-        }
-    }
-    #[cfg(test)]
-    pub fn bound_groups(&self, id: PassId) -> Vec<wgpu::BindGroup> {
-        self.passes[&id].groups.iter().map(|g| g.bound().clone()).collect()
-    }
 }
 pub(super) use loft_wgpu::frame::Clock;
 
@@ -292,6 +279,9 @@ pub struct FrameOptions<'a> {
     pub timestamp_start: u32,
     /// Omit a prepared wave whose output the submitting host has kept valid.
     pub omit_wave: Option<u16>,
+    /// Additional waves with retained outputs. Each omitted wave leaves its attachments intact.
+    pub omit_waves: &'a [u16],
+    pub scissors: Option<&'a dyn Fn(u16, ModuleId) -> Option<([u32; 2], u32)>>,
 }
 
 #[derive(Default)]
@@ -392,6 +382,7 @@ impl Instance {
         self.record_frame(d, enc, clock, target, FrameOptions::default()).map(|_| ())
     }
 
+    /// On `Err` the encoder holds the passes recorded before the failure; the caller must drop it, not submit it.
     pub fn record_frame(&mut self, d: &wgpu::Device, enc: &mut wgpu::CommandEncoder, clock: Clock<'_>,
         target: Option<&embed::Target<'_>>, options: FrameOptions<'_>) -> Result<FrameRecord> {
         let result = self.record_uploaded_frame(d, enc, clock, target, options);
@@ -445,8 +436,10 @@ impl Instance {
             Order::Run(_) | Order::Repeat(..) => clock.to,
         }).collect();
         // `lockstep`: the tick this call advances to, and whether it is the group's first and last dispatch.
+        let mut raster_error = None;
         let mut record = |id, lockstep: Option<(u32, bool, bool)>| {
-            if initializers.contains(&id) || options.omit_wave == Some(c.waves[&id]) { return; }
+            let wave = c.waves[&id];
+            if raster_error.is_some() || initializers.contains(&id) || options.omit_wave == Some(wave) || options.omit_waves.contains(&wave) { return; }
             if let Some(bytes) = c.templates.change(id, &mut template, clock.time as f32) {
                 batch.flush();
                 let bytes = options.uniform.map_or(bytes, |f| f(template.expect("selected frame table")));
@@ -459,8 +452,9 @@ impl Instance {
                     batch.push(c.waves[&id], cmd.dispatch(&c.fixed,k,work));
                 }
                 Operation::Draw(draw) => {
-                    let pass = draw.pass(target.expect("validated targets"),tables,&mut written);
-                    batch.push(c.waves[&id], pass);
+                    let pass = draw.pass(target.expect("validated targets"), tables, &mut written,
+                        &c.fixed, &cmd.groups, |module| options.scissors.and_then(|f| f(wave, module)));
+                    match pass { Ok(pass) => batch.push(wave, pass), Err(error) => raster_error = Some(error) }
                 }
                 Operation::Mips(_, chain) => {
                     batch.flush();
@@ -509,6 +503,7 @@ impl Instance {
                 Order::Run(_) | Order::Repeat(..) => item.visit(&mut |id| record(id, None)),
             }
         }
+        if let Some(error) = raster_error { return Err(error); }
         batch.flush();
         if batch.stamp_error { return Err(RunnerError::Capacity); }
         if let (Some(buf), Some(events)) = (event_buffer.as_ref(), &mut self.outbox) { events.end(batch.encoder,buf); }
@@ -553,55 +548,5 @@ fn resolve(d: &wgpu::Device, tables: &Tables, extent: &DispatchExtent) -> Result
 fn upload(belt: &mut wgpu::util::StagingBelt, enc: &mut wgpu::CommandEncoder, bytes: &[u8], dst: &wgpu::Buffer, offset: u64) {
     if let Some(size) = wgpu::BufferSize::new(bytes.len() as u64) {
         belt.write_buffer(enc, dst, offset, size).copy_from_slice(bytes);
-    }
-}
-
-#[derive(Clone)]
-pub struct ModulePipelines {
-    pub render: wgpu::RenderPipeline,
-    pub shade: wgpu::ComputePipeline,
-}
-
-#[derive(Clone)]
-pub struct ModuleRecipe {
-    raster: embed::RasterRecipe,
-    layout: wgpu::PipelineLayout,
-    entry: String,
-}
-
-impl ModuleRecipe {
-    pub fn compile(&self, d: &wgpu::Device, source: &str) -> ModulePipelines {
-        let module = d.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: None, source: wgpu::ShaderSource::Wgsl(source.into()),
-        });
-        ModulePipelines { render: self.raster.create(d, &module, None), shade: pipeline(d, &self.layout, &module, &self.entry, None) }
-    }
-}
-
-impl ComputeCache {
-    pub(super) fn recipe(&self, id: ModuleId) -> Result<(ModuleRecipe, ModulePipelines)> {
-        let (raster, render) = self.passes.values().find_map(|cmd| match &cmd.op {
-            Operation::Draw(draw) if draw.spec.draws.iter().any(|d| d.decl.module == id) => draw.recipe(),
-            _ => None,
-        }).ok_or(RunnerError::UnknownResource)?;
-        let k = self.passes.values().find_map(|cmd| match &cmd.op {
-            Operation::Dispatch(k, DispatchExtent::Indirect { .. }) if k.module == id => Some(k),
-            _ => None,
-        }).ok_or(RunnerError::UnknownResource)?;
-        let shade = k.pipeline.clone();
-        Ok((ModuleRecipe { raster, layout: k.layout.clone(), entry: k.entry.clone() }, ModulePipelines { render, shade }))
-    }
-
-    pub(super) fn install(&mut self, id: ModuleId, pipes: &ModulePipelines) {
-        for cmd in self.passes.values_mut() {
-            match &mut cmd.op {
-                Operation::Draw(draw) if draw.spec.draws.iter().any(|d| d.decl.module == id) => {
-                    draw.override_pipeline = Some(pipes.render.clone());
-                    draw.cached = None;
-                }
-                Operation::Dispatch(k, DispatchExtent::Indirect { .. }) if k.module == id => k.pipeline = pipes.shade.clone(),
-                _ => (),
-            }
-        }
     }
 }

@@ -10,6 +10,34 @@ pub(super) struct Initializer {
     pub passes: Vec<PassId>,
 }
 
+impl Instance {
+    pub(super) fn new(device: &wgpu::Device, queue: &wgpu::Queue, decl: &Bundle, adapter: Option<&wgpu::Adapter>, pipeline_cache: Option<&wgpu::PipelineCache>, target: Option<&embed::Target<'_>>, clock: Option<fn() -> std::time::Duration>) -> Result<Self> {
+        let exec = loft_wgpu::schedule::descriptor(decl)?;
+        let mut decl = decl.clone();
+        // Initializers allocate IDs from the ordinary tables. Keep the descriptor out of that space
+        // and pass the decoded execution to both allocation and linking.
+        decl.tables.retain(|t| t.id != execution::DESCRIPTOR);
+        let mut tables = storage::allocations_with_execution(&decl, &device.limits(), &exec)?.into_iter().map(|(t,active,alloc)| {
+            let resource = storage::create(device, queue, t, alloc, interop::buffer_usage(&decl, t.id),
+                decl.resources.comparison_samplers.contains(&t.id))?;
+            Ok((t.id, Table { decl:t.clone(), resource, active, epoch:0 }))
+        }).collect::<Result<BTreeMap<_,_>>>()?;
+        let checkpoints = if let Some(s) = &decl.state {
+            let table = tables.get(&s.table).ok_or(RunnerError::UnknownResource)?;
+            let size = table.bytes()?.size();
+            (0..s.checkpoint_slots).map(|_| allocate(device, size, wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST)).collect()
+        } else {
+            Vec::new()
+        };
+        let initializers = Initializers::prepare(&exec, &mut decl, &mut tables, device, adapter)?;
+        let compute = encode::ComputeCache::prepare(device, &decl, &exec, adapter, pipeline_cache, target.map(|target| (target, &tables)), clock)?;
+        initializers.check_params(compute.params.bytes().len() / 4)?;
+        Ok(Self { tables, decl, execution: exec, compute, initializers, checkpoints, resource_epoch:0,
+            uploads: wgpu::util::StagingBelt::new(device.clone(), 4096),
+            history:Default::default(), outbox:None, pick_source:None })
+    }
+}
+
 #[derive(Default)]
 pub(super) struct Initializers {
     pub clocks: Vec<Initializer>,

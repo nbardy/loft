@@ -61,7 +61,16 @@ impl Ck<'_, '_> {
                 BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::Eq | BinOp::Ne => { common(a,b)?; SCALAR }
                 _ => SCALAR,
             },
-            If { then, otherwise, .. } => common(&then.value, &otherwise.value)?,
+            If { then, otherwise, cases, .. } => {
+                let mut d = common(&then.value, &otherwise.value)?;
+                if let Some(cases) = cases {
+                    for (_, value) in &cases.rest {
+                        self.expect_unit(value, d)?;
+                        if d == SCALAR { d = dim(value); }
+                    }
+                }
+                d
+            }
             Ctor { ty: TyExpr::Geo(g, _), .. } => if matches!(g, Geo::Pt | Geo::Vec) { LENGTH } else { SCALAR },
             Ctor { args, .. } => {
                 let d = args.first().map_or(SCALAR, |a| dim(&a.value));

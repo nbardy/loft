@@ -35,11 +35,10 @@ pub enum Item {
     Space(Vec<Ident>),
     Struct(Ident, Vec<RowField>),
     TypeAlias(Ident, TyExpr),
-    Unit(Ident),
     Const(ConstDecl),
     Fn(FnDecl),
     Kind(KindDecl),
-    Scan(ScanDecl),
+    Scan(Box<ScanDecl>),
     Schedule(ScheduleDecl),
     /// `build { ... }`: an anonymous build fn; the default engine runs every one in source order.
     Build(FnDecl),
@@ -48,6 +47,7 @@ pub enum Item {
     /// `check name(h: K, ...) -> unit { ... }`: `ret` is the verdict's unit.
     Check(FnDecl),
     Camera(CameraDecl),
+    Target(TargetDecl),
     World(Ident, Vec<Ident>),
     Bake(BakeDecl),
 }
@@ -71,7 +71,7 @@ impl Item {
         let name = match self {
             Self::Use(_) | Self::Build(_) => return &[],
             Self::Space(names) => return names,
-            Self::Struct(n, _) | Self::TypeAlias(n, _) | Self::Unit(n) | Self::World(n, _) => n,
+            Self::Struct(n, _) | Self::TypeAlias(n, _) | Self::World(n, _) => n,
             Self::Const(x) => &x.name,
             Self::Fn(x) | Self::Check(x) => &x.name,
             Self::Kind(x) => &x.name,
@@ -80,10 +80,26 @@ impl Item {
             Self::Law(x) => &x.f.name,
             Self::Kernel(x) => &x.f.name,
             Self::Camera(x) => &x.name,
+            Self::Target(x) => &x.name,
             Self::Bake(x) => &x.texel.name,
         };
         std::slice::from_ref(name)
     }
+}
+
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct TargetDecl {
+    pub name: Ident,
+    pub format: Ident,
+    pub extent: TargetExtent,
+    pub samples: u32,
+    pub span: Span,
+}
+
+#[derive(serde::Serialize, Clone, Copy, Debug, PartialEq)]
+pub enum TargetExtent {
+    Fixed(u32, u32),
+    View(f64),
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -204,6 +220,9 @@ pub struct FnDecl {
 #[derive(serde::Serialize, Clone, Debug)]
 pub struct Param {
     pub name: Ident,
+    // Keep the serialized form of existing functions (including geometry certificates) stable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default: Option<Expr>,
     /// `None` for a query's `self`, and for an unannotated parameter until elaboration infers it.
     pub ty: Option<TyExpr>,
 }
@@ -278,11 +297,20 @@ pub struct ScheduleDecl {
 pub struct PassDecl {
     pub label: Ident,
     pub verb: Ident,
+    /// Outermost schedule call, separate from the template's diagnostic and resource paths.
+    #[serde(skip)]
+    pub call_site: Option<Span>,
     pub args: Vec<Arg>,
     pub body: Vec<(Ident, Vec<Arg>)>,
     pub resources: Option<PassResources>,
     /// `on load` / `on dirty(...)`: the stage the step runs at. `None` runs it every frame.
     pub clock: Option<BakeClock>,
+}
+
+impl PassDecl {
+    pub fn scheduled_from(&self) -> Span {
+        self.call_site.unwrap_or(self.verb.span)
+    }
 }
 
 /// A schedule function's parameter: `name`, `name = default`, or `..name` (every remaining positional argument).
@@ -330,10 +358,7 @@ pub struct Expr {
 #[derive(serde::Serialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NumSuffix {
     None,
-    /// Degrees: the value converts to radians where it is used.
-    Deg,
-    /// Any other unit (`m`, `rad`, `s`, `kg`, `N`, `rad/s`, and `mm`, already converted to metres). Units are tags in
-    /// v1.0: they make the literal a float and are kept in `text`.
+    /// A unit-bearing float, already scaled to base units. The original suffix is kept in `text`.
     Unit,
 }
 
@@ -341,6 +366,19 @@ pub enum NumSuffix {
 pub struct ExprBlock {
     pub body: Block,
     pub value: Box<Expr>,
+}
+
+/// An integer dispatch shares the conditional node's first arm and fallback.
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct MatchCases {
+    pub first: (i64, Span),
+    pub rest: Vec<((i64, Span), Expr)>,
+}
+
+impl MatchCases {
+    pub fn arms<'a>(&'a self, first: &'a Expr) -> impl Iterator<Item = ((i64, Span), &'a Expr)> {
+        std::iter::once((self.first, first)).chain(self.rest.iter().map(|(key, value)| (*key, value)))
+    }
 }
 
 #[derive(serde::Serialize, Clone, Debug)]
@@ -353,6 +391,8 @@ pub enum ExprKind {
         condition: Box<Expr>,
         then: ExprBlock,
         otherwise: ExprBlock,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cases: Option<Box<MatchCases>>,
     },
     Num { value: f64, suffix: NumSuffix, text: String, float: bool },
     Bool(bool),
@@ -447,8 +487,6 @@ impl FnDecl {
 pub enum TyExpr {
     /// `f32`, `u32`, `bool`, `vec3f`, a unit alias like `Meters`.
     Name(Ident),
-    /// `vec3<f32>`.
-    Generic(Ident, Vec<TyExpr>),
     Array(Box<TyExpr>, u32, Span),
     Geo(Geo, SpaceRef),
     Xform(SpaceRef, SpaceRef),
@@ -463,7 +501,7 @@ impl TyExpr {
     pub fn span(&self) -> Span {
         match self {
             TyExpr::Array(_, _, span) => *span,
-            TyExpr::Name(i) | TyExpr::Generic(i, _) | TyExpr::Table(i) => i.span,
+            TyExpr::Name(i) | TyExpr::Table(i) => i.span,
             TyExpr::Geo(_, s) | TyExpr::Field(s) | TyExpr::Frame(s) => s.span,
             TyExpr::Xform(a, b) => a.span.to(b.span),
         }

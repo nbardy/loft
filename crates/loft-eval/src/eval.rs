@@ -10,6 +10,9 @@ use loft_ir::{Code, Diag, Res, Span};
 
 /// A scalar domain. `lip` is the scalar's Lipschitz bound in the traced point (always 0 for `f32`).
 pub trait Scalar: Clone + std::fmt::Debug {
+    /// A GPU enclosure covers both permitted evaluation orders of linear interpolation.
+    const ENCLOSE_MIX_FORMS: bool = false;
+
     fn c(x: f64) -> Self;
     fn frame_time()->Self;
     fn add(&self, o: &Self) -> Self;
@@ -267,6 +270,7 @@ pub struct Eval<'p, 'a, S> {
     pub tables: Tables,
     pub overrides: &'p [(String, f64)],
     /// Names borrow the source: no allocation per binding.
+    evaluating_defaults: Vec<u32>,
     env: Vec<(&'a str, Slot<S>)>,
     /// The first expression that made a Lipschitz bound unbounded: where, and why.
     pub cause: Option<(Span, String)>,
@@ -298,7 +302,7 @@ fn norm<S: Scalar>(v: &[S]) -> f64 {
 
 impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
     pub fn new(p: &'p Prog<'a>, types: &'p [Ty], tables: Tables, overrides: &'p [(String, f64)]) -> Self {
-        Eval { p, types, tables, overrides, env: vec![], cause: None, steps: 0, vector_bound_changed: false, time:S::frame_time(), luts: &[], source: None, imports: Default::default(), forked: None, views: Default::default(), snapshots: vec![] }
+        Eval { p, types, tables, overrides, evaluating_defaults: vec![], env: vec![], cause: None, steps: 0, vector_bound_changed: false, time:S::frame_time(), luts: &[], source: None, imports: Default::default(), forked: None, views: Default::default(), snapshots: vec![] }
     }
 
     /// Binds a name for the expressions evaluated next (a scan's parameter); `unbind` drops the latest.
@@ -501,7 +505,8 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 let (a, b, unsigned) = match (a, b) {
                     (Val::U(a), Val::U(b)) => (i64::from(a), i64::from(b), true),
                     (Val::I(a), Val::I(b)) => (i64::from(a), i64::from(b), false),
-                    (Val::U(a), Val::I(b)) | (Val::I(b), Val::U(a)) => (i64::from(a), i64::from(b), true),
+                    (Val::U(a), Val::I(b)) => (i64::from(a), i64::from(b), true),
+                    (Val::I(a), Val::U(b)) => (i64::from(a), i64::from(b), true),
                     _ => return Err(err(lo.span, "loop bounds are not known integers", "bound the loop with integers")),
                 };
                 for i in a..b {
@@ -686,6 +691,72 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
         join_val(a, b, span)
     }
 
+    fn match_expr(&mut self, selector: &'a Expr, cases: &'a MatchCases, first: &'a Expr, fallback: &'a Expr) -> Res<Val<S>> {
+        let subject = self.expr(selector)?;
+        let scalar = if let Val::U(key) = subject {
+            return self.match_integer(i64::from(key), cases, first, fallback);
+        } else if let Val::I(key) = subject {
+            return self.match_integer(i64::from(key), cases, first, fallback);
+        } else if let Val::S(scalar) = subject {
+            scalar
+        } else {
+            unreachable!("checked numeric match selector")
+        };
+        let mut possible = Vec::new();
+        for ((key, _), arm) in cases.arms(first) {
+            match scalar.cmp(BinOp::Eq, &S::c(key as f64)) {
+                Some(true) => return self.expr(arm),
+                Some(false) => {}
+                None => possible.push(arm),
+            }
+        }
+        if possible.is_empty() { return self.expr(fallback); }
+        possible.push(fallback);
+        let spatial = scalar.lip() != 0.0;
+        let span = selector.span;
+        // A per-point fork can enclose the result, but merging writes would also need
+        // a discontinuity bound for each variable that survives the arms.
+        if spatial && possible.iter().any(|arm| {
+            let mut refs = loft_check::references::References::default();
+            refs.expr(arm, &[]);
+            refs.assigns
+        }) {
+            return Err(Diag::new(Code::E211, span, "point-dependent match arm assigns a value",
+                "return the value from the arm and assign the match result"));
+        }
+        let before = self.env.clone();
+        let mut arms = possible.into_iter();
+        let first = arms.next().expect("at least one possible case");
+        let mut result = self.expr(first)?;
+        let mut after = std::mem::replace(&mut self.env, before.clone());
+        for arm in arms {
+            let value = self.expr(arm)?;
+            let env = std::mem::replace(&mut self.env, before.clone());
+            result = join_val(result, value, span)?;
+            if !spatial {
+                after = join_env(after, env, span)?;
+            }
+        }
+        if spatial {
+            // Equality with a literal can introduce a jump even though each arm is smooth.
+            result = match result {
+                Val::S(value) => Val::S(value.with_lip(f64::INFINITY)),
+                Val::V(values, _) => Val::V(values, f64::INFINITY),
+                Val::B(Truth::PerFrame) => Val::B(Truth::PerPoint),
+                other => other,
+            };
+        } else {
+            self.env = after;
+        }
+        Ok(result)
+    }
+
+    fn match_integer(&mut self, key: i64, cases: &'a MatchCases, first: &'a Expr, fallback: &'a Expr) -> Res<Val<S>> {
+        let arm = cases.arms(first).find(|((pattern, _), _)| *pattern == key)
+            .map_or(fallback, |(_, arm)| arm);
+        self.expr(arm)
+    }
+
     fn expr_inner(&mut self, e: &'a Expr) -> Res<Val<S>> {
         match &e.kind {
             ExprKind::Unproved { body, .. } => self.expr_arm(body),
@@ -710,7 +781,9 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                     _ => unreachable!("checked floating result"),
                 })
             }
-            ExprKind::If { condition, then, otherwise } => {
+            ExprKind::If { condition, then, otherwise, cases: Some(cases) } =>
+                self.match_expr(condition, cases, &then.value, &otherwise.value),
+            ExprKind::If { condition, then, otherwise, cases: None } => {
                 match self.expr(condition)? {
                     Val::B(Truth::Known(true)) => self.expr_arm(then),
                     Val::B(Truth::Known(false)) => self.expr_arm(otherwise),
@@ -734,8 +807,8 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                     _ => Err(Diag::new(Code::E211, condition.span, "conditional block cannot be bounded over both paths", "use a continuous field expression")),
                 }
             }
-            ExprKind::Num { value, suffix, .. } => {
-                let v = if *suffix == NumSuffix::Deg { value.to_radians() } else { *value };
+            ExprKind::Num { value, .. } => {
+                let v = *value;
                 Ok(match self.ty(e) {
                     Ty::U32 => Val::U(v as u32),
                     Ty::I32 | Ty::AbstractInt => Val::I(v as i32),
@@ -906,6 +979,23 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 if let Some(f) = function {
                     if f.attrs.iter().any(|a| a.name.name == "lobe") {
                         return Ok(Val::Bsdf(vec![Layer::Lobe(callee.name.clone(), vals)]));
+                    }
+                    if f.comptime && (args.len() != f.params.len() || args.iter().any(|a| a.name.is_some())) {
+                        use loft_check::check::{build_arguments, BuildArgument};
+                        let bound = build_arguments(f, args, e.span)?.into_iter().map(|slot| match slot {
+                            BuildArgument::Supplied(i) => Ok(vals[i].clone()),
+                            BuildArgument::Default(prm, default) => {
+                                if self.evaluating_defaults.contains(&default.id) {
+                                    return Err(Diag::new(Code::E403, default.span, format!("cyclic default for `{}`", prm.name.name),
+                                        "supply the argument explicitly or remove the recursive default"));
+                                }
+                                self.evaluating_defaults.push(default.id);
+                                let value = self.module_expr(default);
+                                self.evaluating_defaults.pop();
+                                value
+                            }
+                        }).collect::<Res<_>>()?;
+                        return self.call_fn(f, bound, e.span);
                     }
                     return self.call_fn(f, vals, e.span);
                 }
@@ -1215,8 +1305,8 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
             Floor => map1(&v[0], Un::Floor),
             Fract => map1(&v[0], Un::Fract),
             Sign => map1(&v[0], Un::Sign),
-            Min => map2(&v[0], &v[1], S::min),
-            Max => map2(&v[0], &v[1], S::max),
+            Min => map2_extrema(&v[0], &v[1], S::min),
+            Max => map2_extrema(&v[0], &v[1], S::max),
             Pow => map2(&v[0], &v[1], S::pow),
             Step => map2(&v[0], &v[1], |e, x| {
                 let d = x.sub(e);
@@ -1229,13 +1319,23 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
             Mix => {
                 // a + (b - a) * t, through the same rules.
                 let (a, b, t) = (v[0].clone(), v[1].clone(), v[2].clone());
-                let d = self.arith(BinOp::Sub, b, a.clone());
-                let dt = self.arith(BinOp::Mul, d, t);
-                self.arith(BinOp::Add, a, dt)
+                let d = self.arith(BinOp::Sub, b.clone(), a.clone());
+                let dt = self.arith(BinOp::Mul, d, t.clone());
+                let result = self.arith(BinOp::Add, a.clone(), dt);
+                if S::ENCLOSE_MIX_FORMS {
+                    let u = self.arith(BinOp::Sub, Val::S(S::c(1.0)), t.clone());
+                    let left = self.arith(BinOp::Mul, a, u);
+                    let right = self.arith(BinOp::Mul, b, t);
+                    join_val(result, self.arith(BinOp::Add, left, right), e.span)?
+                } else { result }
             }
             Select | Conditional => match &v[2] {
                 Val::B(Truth::Known(true)) => v[1].clone(),
                 Val::B(Truth::Known(false)) => v[0].clone(),
+                Val::B(_) if matches!(self.ty(e), Ty::Bsdf) => {
+                    let [Val::Bsdf(a), Val::Bsdf(b), _] = v.as_slice() else { unreachable!("checked Bsdf select") };
+                    Val::Bsdf(vec![Layer::Mix(a.clone(), b.clone(), S::c(0.0).join(&S::c(1.0)))])
+                }
                 // F2: one arm everywhere at each frame, so the larger arm's L.
                 Val::B(Truth::PerFrame) => join_val(v[0].clone(), v[1].clone(), e.span)?,
                 Val::Void | Val::S(_) | Val::V(..) | Val::B(_) | Val::U(_) | Val::I(_) | Val::X(_) | Val::Row(..) | Val::MapRef(..) | Val::Bsdf(_) => match (&v[0], &v[1]) {
@@ -1385,26 +1485,44 @@ fn map1<S: Scalar>(x: &Val<S>, f: Un) -> Val<S> {
 }
 
 fn map2<S: Scalar>(x: &Val<S>, y: &Val<S>, f: impl Fn(&S, &S) -> S) -> Val<S> {
+    // Project each input lane from its vector proof. Some vector operations carry
+    // spatial dependence only in the aggregate bound.
+    let components: Vec<S> = match (x, y) {
+        (Val::S(a), Val::S(b)) => return Val::S(f(a, b)),
+        (Val::V(a, la), Val::V(b, lb)) => a.iter().zip(b)
+            .map(|(p, q)| f(&p.clone().project(*la), &q.clone().project(*lb))).collect(),
+        (Val::V(a, la), Val::S(b)) => a.iter().map(|p| f(&p.clone().project(*la), b)).collect(),
+        (Val::S(a), Val::V(b, lb)) => b.iter().map(|q| f(a, &q.clone().project(*lb))).collect(),
+        other => unreachable!("checked binary builtin on {other:?}"),
+    };
+    let l = components.iter().map(S::lip).fold(0.0_f64, |norm, lane| {
+        norm.hypot(if lane.is_finite() { lane } else { f64::INFINITY })
+    });
+    Val::V(components, l)
+}
+
+fn map2_extrema<S: Scalar>(x: &Val<S>, y: &Val<S>, f: impl Fn(&S, &S) -> S) -> Val<S> {
+    // Componentwise min/max are 1-Lipschitz on the concatenated vectors.
+    // A scalar broadcast repeats the same change in every output lane.
     match (x, y) {
         (Val::S(a), Val::S(b)) => Val::S(f(a, b)),
         (Val::V(a, la), Val::V(b, lb)) => Val::V(a.iter().zip(b).map(|(p, q)| f(p, q)).collect(), la.hypot(*lb)),
-        (Val::V(a, la), Val::S(b)) => Val::V(a.iter().map(|p| f(p, b)).collect(), la.hypot(b.lip())),
-        (Val::S(a), Val::V(b, lb)) => Val::V(b.iter().map(|q| f(a, q)).collect(), lb.hypot(a.lip())),
+        (Val::V(a, la), Val::S(b)) => Val::V(a.iter().map(|p| f(p, b)).collect(), la.hypot((a.len() as f64).sqrt() * b.lip())),
+        (Val::S(a), Val::V(b, lb)) => Val::V(b.iter().map(|q| f(a, q)).collect(), lb.hypot((b.len() as f64).sqrt() * a.lip())),
         other => unreachable!("checked binary builtin on {other:?}"),
     }
 }
 
-// Keep both binary stages so mixed scalar/vector args retain the original
-// intermediate Lipschitz bound and hypot order.
+// Keep both extrema stages to carry the intermediate vector bound.
 fn map3<S: Scalar>(
     x: &Val<S>, y: &Val<S>, z: &Val<S>,
     first: impl Fn(&S, &S) -> S, second: impl Fn(&S, &S) -> S,
 ) -> Val<S> {
-    map2(&map2(x, y, first), z, second)
+    map2_extrema(&map2_extrema(x, y, first), z, second)
 }
 
 fn saturate<S: Scalar>(x: &Val<S>) -> Val<S> {
-    map2(x, &Val::S(S::c(0.0)), |a, z| a.max(z).min(&S::c(1.0)))
+    map2_extrema(x, &Val::S(S::c(0.0)), |a, z| a.max(z).min(&S::c(1.0)))
 }
 
 fn max_mag<S: Scalar>(v: &[S]) -> f64 {
@@ -1778,5 +1896,67 @@ fn texel_store(x: f64, format: &str) -> f64 {
             (x / unit).round_ties_even() * unit
         }
         _ => x,
+    }
+}
+
+#[cfg(test)]
+mod soundness_tests {
+    use super::*;
+    use crate::lip::Iv;
+
+    fn vector_lip(value: Val<Iv>) -> f64 {
+        let Val::V(_, l) = value else { panic!("expected a vector") };
+        l
+    }
+
+    #[test]
+    fn componentwise_binary_bounds_include_discontinuities_and_broadcast() {
+        let moving = Iv { lo: -1.0, hi: 1.0, l: 1.0 };
+        // The vector can be spatially varying even when its lanes carry stale bounds.
+        let v = Val::V(vec![moving.with_lip(0.0), Iv::c(1.0)], 1.0);
+        let zero = Val::S(Iv::c(0.0));
+        let step = map2(&zero, &v, |edge, x| x.sub(edge).un(Un::Sign).max(&Iv::c(0.0)));
+        assert_eq!(vector_lip(step), f64::INFINITY);
+        assert_eq!(vector_lip(map2(&v, &Val::S(Iv::c(0.5)), Iv::pow)), f64::INFINITY);
+        assert_eq!(vector_lip(map2(&v, &Val::S(Iv::c(-1.0)), Iv::atan2)), f64::INFINITY);
+
+        let exponents = Val::V(vec![Iv::c(2.0); 3], 0.0);
+        let base = Val::S(Iv { lo: 1.0, hi: 2.0, l: 1.0 });
+        let bound = vector_lip(map2(&base, &exponents, Iv::pow));
+        let expected = 4.0 * 3.0_f64.sqrt();
+        assert!(bound.to_bits().abs_diff(expected.to_bits()) <= 1, "{bound}");
+
+        // The extrema of two vectors keep the tight aggregate proof.
+        assert_eq!(vector_lip(map2_extrema(&v, &v, Iv::min)), 1.0_f64.hypot(1.0));
+        assert_eq!(vector_lip(map2_extrema(&v, &zero, Iv::max)), 1.0);
+        assert_eq!(
+            vector_lip(map2_extrema(&base, &exponents, Iv::min)),
+            3.0_f64.sqrt()
+        );
+        assert!(matches!(map2_extrema(&base, &zero, Iv::max), Val::S(x) if x.l == 1.0));
+    }
+
+    #[test]
+    fn mixed_integer_range_preserves_bound_order() {
+        let modules = [loft_parse::parse(0, "
+            fn first(a: u, b: u) -> f {
+                for i in a..b { return f32(i) }
+                return -1.0
+            }
+        ", &mut 0).unwrap()];
+        let p = Prog::index(&modules).unwrap();
+        let mut types = vec![];
+        assert!(loft_check::check::check(&p, &mut types).is_ok());
+        let mut eval = Eval::<f32>::new(&p, &types, vec![], &[]);
+        // Exercise both runtime representations independently of type inference.
+        for (a, b, expected) in [
+            (Val::I(2), Val::U(5), 2.0),
+            (Val::U(2), Val::I(5), 2.0),
+            (Val::I(5), Val::U(2), -1.0),
+            (Val::U(5), Val::I(2), -1.0),
+        ] {
+            let result = eval.call_fn(p.fns["first"], vec![a, b], Span::NONE).unwrap();
+            assert!(matches!(result, Val::S(n) if n == expected), "{result:?}");
+        }
     }
 }
