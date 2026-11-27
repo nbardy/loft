@@ -30,8 +30,10 @@ class ByteVocabulary:
 TOKENIZER = LLTokenizer(TokenizerWrapper(ByteVocabulary()))
 DECODER_GRAMMAR = LLMatcher.grammar_from_lark(GRAMMAR_TEXT)
 DECODER_LIMITS = LLParserLimits(step_max_items=1_000_000, verbose_errors=False)
-TOKEN = re.compile(r'"(?:[^"\\]|\\.)*"|\#[^\n]*|\r?\n|[ \t]+|[\w]+|::|\|>|==|!=|<=|>=|&&|\|\||->|\.\.|\S')
-CONTINUE = set("+ - * / % == != < <= > >= && || , = |>".split())
+TOKEN = re.compile(r'"(?:[^"\\]|\\.)*"|\#[^\r\n]*|\r?\n|[ \t]+|[\w]+|::|\|>|==|!=|<=|>=|&&|\|\||<<|>>|->|\.\.|\S')
+CONTINUE_AFTER = set("+ - * / % == != < <= > >= && || , = |>".split())
+CONTINUE_BEFORE = set("|> else + * / % == != <= >= && ||".split())
+WGSL_PARAMS = re.compile(r"(?:[ \t\r\n]|#[^\r\n]*)*\(")
 
 
 def lexical_input(source):
@@ -67,7 +69,7 @@ def lexical_input(source):
                 raise ValueError("unterminated WGSL island")
             word = "{" + re.sub(r"[^\n]", " ", source[token.end():pos-1]) + "}"
             raw = False
-        elif word == "wgsl":
+        elif word == "wgsl" and WGSL_PARAMS.match(source, pos):
             raw = True
         tokens.append(word)
     significant = [t for t in tokens if not t.isspace() and not t.startswith("#")]
@@ -79,7 +81,9 @@ def lexical_input(source):
         elif t.isspace():
             prev = significant[i-1] if i else ""
             nxt = significant[i] if i < len(significant) else ""
-            result.append(" " * len(t) if depth or (prev in CONTINUE and significant[max(0,i-2):i] != ["::", "*"]) or nxt in {"|>", "else"} else t)
+            continued = depth > 0 or prev in CONTINUE_AFTER or nxt in CONTINUE_BEFORE
+            import_star = significant[max(0, i-2):i] == ["::", "*"]
+            result.append(" " * len(t) if continued and not import_star else t)
         else:
             depth += int(t in {"(", "["}) - int(t in {")", "]"})
             i += 1
@@ -151,6 +155,14 @@ def accepts(raw, generated=False):
 
 
 def main():
+    for source in (
+        "kind Sand @World {}\nconst mask = 0u | 3i ^ 6 & 7 << 1 + 2 >> 1",
+        "const test = 1\n + 2\n * 3\n / 4\n % 5\n == 6\n != 7\n <= 8\n >= 9\n && true\n || false",
+        "fn wgsl_value() { let wgsl = 1; if wgsl_value() == 1 { 2 } else { 3 } }",
+        "fn island(x: f) = wgsl (x: f) -> f { /* } */ return x; }",
+    ):
+        if accepts(source)[:2] != (True, True):
+            raise ValueError(f"grammar regression: {source!r}")
     files = list(map(Path, sys.argv[1:]))
     fixtures = ROOT / "crates/loft-parse/tests/fixtures"
     if not files:
