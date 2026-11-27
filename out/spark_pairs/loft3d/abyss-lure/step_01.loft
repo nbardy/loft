@@ -23,33 +23,39 @@ kind Capsule @World (a: p3@World, b: p3@World, r: m, albedo: rgb) {
   }
 }
 
-param step: u = 1 in 0..40
+param step: u = 1 in 0..8
 
 build fn axis_f(step: u) -> f {
-  f32(step) / 40.0
+  f32(step) / 8.0
 }
 
 build {
   let f = axis_f(step)
   let c = [0.0, 0.0, 0.0]@World
   let brass = [0.55, 0.42, 0.26]
+  let suit = [0.20, 0.35, 0.38]
+  # diver body: legs + torso suit, fixed (identity anchor)
+  emit Capsule(a: c + [-0.18, 0.60, 0], b: c + [-0.18, 0.05, 0], r: 0.13m, albedo: suit * 0.85)
+  emit Capsule(a: c + [0.18, 0.60, 0], b: c + [0.18, 0.05, 0], r: 0.13m, albedo: suit * 0.85)
+  emit Capsule(a: c + [0.0, 0.55, 0], b: c + [0.0, 1.10, 0], r: 0.34m, albedo: suit)
   # helmet dome + collar, fixed (identity anchor)
   emit Capsule(a: c + [-0.42, 1.55, 0], b: c + [0.42, 1.55, 0], r: 0.42m, albedo: brass)
   emit Capsule(a: c + [-0.50, 1.05, 0], b: c + [0.50, 1.05, 0], r: 0.16m, albedo: brass * 0.85)
   # glowing porthole, fixed
   emit Capsule(a: c + [0.0, 1.55, 0.42], b: c + [0.0, 1.55, 0.42], r: 0.16m, albedo: [0.35, 0.75, 0.80])
-  # lure stalk: base rooted in the helmet crown, tip sweeps with f
+  # lure stalk: base rooted in the helmet crown, tip sweeps wide->tall with f
   let bx = 0.0
   let by = 1.93
-  let tx = -0.85 + 0.95 * f
-  let ty = 2.35 + 0.55 * f
-  let mx = (bx + tx) * 0.5 - 0.25 * (1.0 - f)
-  let my = (by + ty) * 0.5 + 0.35
+  let tx = -1.05 + 1.25 * f
+  let ty = 2.30 + 0.70 * f
+  let mx = (bx + tx) * 0.5 - 0.30 * (1.0 - f)
+  let my = (by + ty) * 0.5 + 0.40
   let m = [mx, my, 0.05]@World
-  emit Capsule(a: c + [bx, by, 0], b: m, r: 0.035m, albedo: brass * 0.9)
-  emit Capsule(a: m, b: c + [tx, ty, 0.05], r: 0.03m, albedo: brass * 0.9)
-  # lure bulb, fixed glow
-  emit Capsule(a: c + [tx, ty, 0.05], b: c + [tx, ty, 0.05], r: 0.09m, albedo: [0.59, 0.92, 0.94])
+  emit Capsule(a: c + [bx, by, 0], b: m, r: 0.04m, albedo: brass * 0.9)
+  emit Capsule(a: m, b: c + [tx, ty, 0.05], r: 0.035m, albedo: brass * 0.9)
+  # lure bulb swells a lot as it centres: the readability payoff
+  let br = 0.08m + 0.09m * f
+  emit Capsule(a: c + [tx, ty, 0.05], b: c + [tx, ty, 0.05], r: br, albedo: [0.59, 0.92, 0.94])
 }
 
 schedule Main {

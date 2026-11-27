@@ -8,7 +8,7 @@ for c in golem-shape lantern-color golem-texture golem-expression \
          solar-material abyss-lure rune-legibility \
          golem-brute golem-librarian golem-titan; do
   mkdir -p "out/spark_pairs/loft3d/$c"
-  for t in $(seq 0 40); do
+  for t in $(seq 0 8); do
     n=$(printf %02d "$t")
     sed "s/param step: u = [0-9]* in/param step: u = $t in/" \
       "out/spark_pairs/chains/$c/chain.loft" \

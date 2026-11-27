@@ -25,10 +25,10 @@ kind Capsule @World (a: p3@World, b: p3@World, r: m, albedo: rgb) {
   }
 }
 
-param step: u = 2 in 0..40
+param step: u = 2 in 0..8
 
 build fn axis_f(step: u) -> f {
-  f32(step) / 40.0
+  f32(step) / 8.0
 }
 
 build fn shell_roll(slot: u) -> u {
@@ -38,12 +38,14 @@ build fn shell_roll(slot: u) -> u {
 build {
   let f = axis_f(step)
   let c = [0.0, 1.6, 0.0]@World
-  # paper body: warm cream -> cool moon-paper, per-channel lerp (mid-tones
+  # paper body: warm cream -> deep moon blue, per-channel lerp (mid-tones
   # so the sun does not wash it white)
-  let paper = [0.88 - 0.26 * f, 0.74 - 0.04 * f, 0.55 + 0.27 * f]
+  let paper = [0.92 - 0.47 * f, 0.76 - 0.16 * f, 0.52 + 0.33 * f]
   emit Capsule(a: c + [0.0, -0.30, 0], b: c + [0.0, 0.30, 0], r: 0.30m, albedo: paper)
   # warm core glow sits proud of the paper front, always on (identity anchor)
-  emit Capsule(a: c + [0.0, -0.05, 0.26], b: c + [0.0, -0.05, 0.26], r: 0.12m, albedo: [1.0, 0.62, 0.20])
+  emit Capsule(a: c + [0.0, -0.05, 0.26], b: c + [0.0, -0.05, 0.26], r: 0.12m + 0.04m * f, albedo: [1.0, 0.62, 0.20])
+  # cool veil grows over the core: the takeover reads even at thumbnail
+  emit Capsule(a: c + [0.0, -0.05, 0.30], b: c + [0.0, -0.05, 0.30], r: 0.04m + 0.13m * f, albedo: [0.55, 0.70, 1.0])
   # cool shell ribs ring the paper and take over with f
   let keep = u32(100.0 * f)
   build for slot in 0..8 {
@@ -51,7 +53,7 @@ build {
       let a = f32(slot) * 0.785
       let x = 0.52 * cos(a)
       let z = 0.52 * sin(a)
-      emit Capsule(a: c + [x, -0.24, z], b: c + [x, 0.24, z], r: 0.045m, albedo: [0.55, 0.70, 1.0])
+      emit Capsule(a: c + [x, -0.24, z], b: c + [x, 0.24, z], r: 0.06m, albedo: [0.55, 0.70, 1.0])
     }
   }
   # cap + tassel cord, fixed

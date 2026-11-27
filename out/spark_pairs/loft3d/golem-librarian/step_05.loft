@@ -1,0 +1,89 @@
+use stdlib::geometry::analytic::{ray_capsule}
+use stdlib::integrators::direct::{sun_sky}
+use stdlib::materials::bsdf::{ggx}
+use stdlib::sdf::solid::{capsule}
+use stdlib::sky::environment::{sky_color}
+
+# golem-librarian chain: robed scholar absorbed in a book. As steps progress
+# the book rises and the head lowers to meet it: peering closer. Steps 0..8.
+
+space World
+
+kind Capsule @World (a: p3@World, b: p3@World, r: m, albedo: rgb) {
+
+  visible(ro, rd) {
+    ray_capsule(ro, rd, a, b, r)
+  }
+  trace(p) {
+    capsule(p, a, b, r)
+  }
+  material(p, n) {
+    ggx(albedo, 0.55, 0)
+  }
+}
+
+kind GlossBead @World (c: p3@World, r: m, albedo: rgb) {
+
+  visible(ro, rd) {
+    ray_capsule(ro, rd, c, c, r)
+  }
+  trace(p) {
+    capsule(p, c, c, r)
+  }
+  material(p, n) {
+    ggx(albedo, 0.12, 0)
+  }
+}
+
+param step: u = 5 in 0..8
+
+build fn axis_f(step: u) -> f {
+  f32(step) / 8.0
+}
+
+build {
+  let f = axis_f(step)
+  let c = [0.0, 0.0, 0.0]@World
+  let robe = [0.38, 0.34, 0.42]
+  # robe skirt to the ground (no legs: robed), slim torso
+  emit Capsule(a: c + [0.0, 0.65, 0], b: c + [0.0, 0.05, 0], r: 0.34m, albedo: robe * 0.85)
+  emit Capsule(a: c + [0.0, 0.60, 0], b: c + [0.0, 1.50, 0], r: 0.36m, albedo: robe)
+  emit Capsule(a: c + [-0.28, 1.55, 0], b: c + [0.28, 1.55, 0], r: 0.20m, albedo: robe * 1.1)
+  # scholar cap: one low dome + wide brim, dark slate (never snowman tiers)
+  emit Capsule(a: c + [-0.34, 2.30, 0], b: c + [0.34, 2.30, 0], r: 0.07m, albedo: [0.22, 0.24, 0.32])
+  emit GlossBead(c: c + [0.0, 2.32, 0], r: 0.19m, albedo: [0.22, 0.24, 0.32])
+  # head lowers well toward the book as curiosity grows
+  let hy = 2.02 - 0.34 * f
+  emit Capsule(a: c + [-0.24, hy, 0], b: c + [0.24, hy, 0], r: 0.24m, albedo: [0.58, 0.54, 0.48])
+  # spectacles: large dark glass orbs + bridge, riding the head
+  emit GlossBead(c: c + [-0.13, hy + 0.02, 0.22], r: 0.095m, albedo: [0.15, 0.16, 0.20])
+  emit GlossBead(c: c + [0.13, hy + 0.02, 0.22], r: 0.095m, albedo: [0.15, 0.16, 0.20])
+  emit Capsule(a: c + [-0.13, hy + 0.02, 0.22], b: c + [0.13, hy + 0.02, 0.22], r: 0.02m, albedo: [0.35, 0.28, 0.20])
+  # tiny amber eyes glinting through the glass
+  emit GlossBead(c: c + [-0.13, hy + 0.02, 0.26], r: 0.028m, albedo: [1.0, 0.62, 0.15])
+  emit GlossBead(c: c + [0.13, hy + 0.02, 0.26], r: 0.028m, albedo: [1.0, 0.62, 0.15])
+  # the book rises to meet the gaze: pages + covers opening wider
+  let by = 1.10 + 0.55 * f
+  let spread = 0.10 + 0.14 * f
+  emit Capsule(a: c + [-0.11, by - 0.08, 0.42], b: c + [0.11, by - 0.08, 0.42], r: 0.08m, albedo: [0.90, 0.86, 0.74])
+  emit Capsule(a: c + [-0.14, by - 0.10, 0.42], b: c + [-0.20 - spread, by + 0.14, 0.42], r: 0.035m, albedo: [0.45, 0.25, 0.18])
+  emit Capsule(a: c + [0.14, by - 0.10, 0.42], b: c + [0.20 + spread, by + 0.14, 0.42], r: 0.035m, albedo: [0.45, 0.25, 0.18])
+  # arms reach further as absorption deepens; finger nubs grip the book
+  let gx = 0.30 + 0.06 * f
+  emit Capsule(a: c + [-0.36, 1.45, 0.05], b: c + [-gx, by - 0.05, 0.38], r: 0.09m, albedo: robe * 0.9)
+  emit Capsule(a: c + [0.36, 1.45, 0.05], b: c + [gx, by - 0.05, 0.38], r: 0.09m, albedo: robe * 0.9)
+  emit GlossBead(c: c + [-gx, by + 0.02, 0.42], r: 0.05m, albedo: robe)
+  emit GlossBead(c: c + [gx, by + 0.02, 0.42], r: 0.05m, albedo: robe)
+  # ground cross so the scholar stands in a world
+  emit Capsule(a: [-2.5, -0.02, -0.5]@World, b: [2.5, -0.02, -0.5]@World, r: 0.12m, albedo: [0.34, 0.31, 0.27])
+  emit Capsule(a: [0.0, -0.02, -2.5]@World, b: [0.0, -0.02, 2.5]@World, r: 0.12m, albedo: [0.34, 0.31, 0.27])
+}
+
+schedule Main {
+  orbit(at: [0, 1.2, 0]@World, radius: 4.4m, height: 2.0m, period: 24.0s, fov: 40deg)
+  cull_indirect(Capsule, GlossBead)
+  render_bundle(Vis64) { draw_indirect(Capsule); draw_indirect(GlossBead) }
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: sun_sky, sun: [0.45, 0.8, 0.35])
+  tonemap_aces(ColorHdr, sky: sky_color)
+}

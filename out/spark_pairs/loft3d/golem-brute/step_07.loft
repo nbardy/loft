@@ -1,0 +1,103 @@
+use stdlib::geometry::analytic::{ray_capsule}
+use stdlib::integrators::direct::{sun_sky}
+use stdlib::materials::bsdf::{ggx}
+use stdlib::sdf::solid::{capsule}
+use stdlib::sky::environment::{sky_color}
+
+# golem-brute chain: scarred ogre, smoulder -> full rage. Brow crushes onto
+# glowing red eyes, jaw juts, fists climb overhead. Steps 0..8.
+
+space World
+
+kind Capsule @World (a: p3@World, b: p3@World, r: m, albedo: rgb) {
+
+  visible(ro, rd) {
+    ray_capsule(ro, rd, a, b, r)
+  }
+  trace(p) {
+    capsule(p, a, b, r)
+  }
+  material(p, n) {
+    ggx(albedo, 0.55, 0)
+  }
+}
+
+kind GlossBead @World (c: p3@World, r: m, albedo: rgb) {
+
+  visible(ro, rd) {
+    ray_capsule(ro, rd, c, c, r)
+  }
+  trace(p) {
+    capsule(p, c, c, r)
+  }
+  material(p, n) {
+    ggx(albedo, 0.12, 0)
+  }
+}
+
+param step: u = 7 in 0..8
+
+build fn axis_f(step: u) -> f {
+  f32(step) / 8.0
+}
+
+build {
+  let f = axis_f(step)
+  let c = [0.0, 0.0, 0.0]@World
+  let skin = [0.42, 0.40, 0.38]
+  # thick legs, fixed stance
+  emit Capsule(a: c + [-0.28, 0.60, 0], b: c + [-0.28, 0.05, 0], r: 0.18m, albedo: skin * 0.8)
+  emit Capsule(a: c + [0.28, 0.60, 0], b: c + [0.28, 0.05, 0], r: 0.18m, albedo: skin * 0.8)
+  # massive torso + scar slash across the belly
+  emit Capsule(a: c + [0.0, 0.55, 0], b: c + [0.0, 1.50, 0], r: 0.55m, albedo: skin)
+  emit Capsule(a: c + [-0.30, 1.20, 0.50], b: c + [0.25, 0.85, 0.50], r: 0.03m, albedo: [0.22, 0.18, 0.16])
+  emit Capsule(a: c + [-0.55, 1.55, 0], b: c + [0.55, 1.55, 0], r: 0.30m, albedo: skin * 1.05)
+  # cranium behind the face
+  emit GlossBead(c: c + [0.0, 1.95, -0.05], r: 0.34m, albedo: skin * 1.1)
+  # jaw juts forward and down with rage
+  let jx = 0.30 + 0.12 * f
+  let jy = 1.62 - 0.10 * f
+  emit Capsule(a: c + [-0.22, jy, 0.10], b: c + [0.22, jy, 0.10], r: 0.16m, albedo: skin * 0.9)
+  emit Capsule(a: c + [-0.22, jy, 0.10], b: c + [-0.22, jy, jx], r: 0.15m, albedo: skin * 0.9)
+  emit Capsule(a: c + [0.22, jy, 0.10], b: c + [0.22, jy, jx], r: 0.15m, albedo: skin * 0.9)
+  # teeth: three white nubs along the jaw rim
+  emit GlossBead(c: c + [-0.12, jy + 0.13, jx - 0.02], r: 0.045m, albedo: [0.92, 0.90, 0.84])
+  emit GlossBead(c: c + [0.02, jy + 0.14, jx - 0.02], r: 0.045m, albedo: [0.92, 0.90, 0.84])
+  emit GlossBead(c: c + [0.16, jy + 0.13, jx - 0.02], r: 0.045m, albedo: [0.92, 0.90, 0.84])
+  # brow slab crushes down onto the eyes
+  let brow = 2.28 - 0.30 * f
+  emit Capsule(a: c + [-0.40, brow, 0.22], b: c + [0.40, brow, 0.22], r: 0.09m, albedo: skin * 0.7)
+  # glowing red slit eyes
+  emit GlossBead(c: c + [-0.15, 1.98, 0.30], r: 0.055m, albedo: [0.90, 0.15, 0.10])
+  emit GlossBead(c: c + [0.15, 1.98, 0.30], r: 0.055m, albedo: [0.90, 0.15, 0.10])
+  # bull horns rake sideways and back, thick at the root (never antennae)
+  emit Capsule(a: c + [-0.30, 2.10, -0.02], b: c + [-0.72, 2.22, -0.30], r: 0.10m, albedo: [0.80, 0.76, 0.68])
+  emit Capsule(a: c + [-0.72, 2.22, -0.30], b: c + [-0.95, 2.18, -0.52], r: 0.06m, albedo: [0.80, 0.76, 0.68])
+  emit Capsule(a: c + [0.30, 2.10, -0.02], b: c + [0.72, 2.22, -0.30], r: 0.10m, albedo: [0.80, 0.76, 0.68])
+  emit Capsule(a: c + [0.72, 2.22, -0.30], b: c + [0.95, 2.18, -0.52], r: 0.06m, albedo: [0.80, 0.76, 0.68])
+  # two-segment arms: fists swing forward and up, menacing the viewer
+  let fx = 0.78 + 0.08 * f
+  let fy = 0.90 + 0.90 * f
+  let fz = 0.10 + 0.35 * f
+  emit Capsule(a: c + [-0.72, 1.45, 0], b: c + [-0.95, 1.00, 0.05], r: 0.15m, albedo: skin * 0.9)
+  emit Capsule(a: c + [-0.95, 1.00, 0.05], b: c + [-fx, fy, fz], r: 0.13m, albedo: skin * 0.9)
+  emit Capsule(a: c + [0.72, 1.45, 0], b: c + [0.95, 1.00, 0.05], r: 0.15m, albedo: skin * 0.9)
+  emit Capsule(a: c + [0.95, 1.00, 0.05], b: c + [fx, fy, fz], r: 0.13m, albedo: skin * 0.9)
+  emit GlossBead(c: c + [-fx, fy, fz], r: 0.19m, albedo: skin)
+  emit GlossBead(c: c + [fx, fy, fz], r: 0.19m, albedo: skin)
+  # knuckle studs on the front face of each fist
+  emit GlossBead(c: c + [-fx, fy + 0.02, fz + 0.18], r: 0.05m, albedo: [0.70, 0.68, 0.62])
+  emit GlossBead(c: c + [fx, fy + 0.02, fz + 0.18], r: 0.05m, albedo: [0.70, 0.68, 0.62])
+  # ground cross so the brute stands in a world
+  emit Capsule(a: [-2.5, -0.02, -0.5]@World, b: [2.5, -0.02, -0.5]@World, r: 0.12m, albedo: [0.34, 0.31, 0.27])
+  emit Capsule(a: [0.0, -0.02, -2.5]@World, b: [0.0, -0.02, 2.5]@World, r: 0.12m, albedo: [0.34, 0.31, 0.27])
+}
+
+schedule Main {
+  orbit(at: [0, 1.2, 0]@World, radius: 4.8m, height: 2.2m, period: 24.0s, fov: 40deg)
+  cull_indirect(Capsule, GlossBead)
+  render_bundle(Vis64) { draw_indirect(Capsule); draw_indirect(GlossBead) }
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: sun_sky, sun: [0.45, 0.8, 0.35])
+  tonemap_aces(ColorHdr, sky: sky_color)
+}
