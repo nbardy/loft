@@ -1,18 +1,23 @@
-use loft_ir::{ElemFormat, PassRun, execution::{DESCRIPTOR, Execution}};
+use loft_ir::{DispatchExtent, ElemFormat, PassId, PassRun, execution::{DESCRIPTOR, Execution}};
 use loft_passes::source::Graph;
 use std::{collections::BTreeSet, path::Path};
 
-fn compile(text: &str) -> (loft_passes::program::Program, loft_ir::Bundle) {
+fn checked(text: &str) -> (loft_passes::program::Program, loft_passes::Compiled) {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let src = Graph::text(&root, Path::new("scenes/pass_graph_test.loft"), text);
     let (program, _, compiled) = loft_passes::compile(&src, &[]).unwrap_or_else(|d| panic!("{}", d.render(&src)));
+    (program, compiled)
+}
+
+fn compile(text: &str) -> (loft_passes::program::Program, loft_ir::Bundle) {
+    let (program, compiled) = checked(text);
     let bundle = loft_passes::bundle::lower(&program, &compiled, (64, 64), |_, _| vec![0; 256]).unwrap();
     (program, bundle)
 }
 
 #[test]
 fn compute_passes_keep_their_position_among_raster_passes() {
-    let (_, bundle) = compile(r"
+    let (program, mut compiled) = checked(r"
         use stdlib::integrators::direct::{sun_sky}
         use stdlib::sky::environment::{sky_color}
         space World
@@ -26,6 +31,7 @@ fn compute_passes_keep_their_position_among_raster_passes() {
         build { emit Ball() }
         schedule Main {
             table(Output, row: Word, capacity: 2)
+            table(DispatchArgs, row: Word, capacity: 3)
             orbit(at: [0, 0, 0], radius: 4, fov: 40deg)
             cull_indirect(Ball)
             pass stamp_before writes [Output] {
@@ -40,6 +46,10 @@ fn compute_passes_keep_their_position_among_raster_passes() {
             tonemap_aces(ColorHdr, sky: sky_color)
         }
     ");
+    let lower = |compiled: &loft_passes::Compiled| {
+        loft_passes::bundle::lower(&program, compiled, (64, 64), |_, _| vec![0; 256]).unwrap()
+    };
+    let bundle = lower(&compiled);
     assert_eq!(bundle.modules.iter().map(|m| m.id).collect::<BTreeSet<_>>().len(), bundle.modules.len());
     assert_eq!(bundle.tables.iter().map(|t| t.id).collect::<BTreeSet<_>>().len(), bundle.tables.len());
     assert_eq!(bundle.passes.iter().map(|p| p.id).collect::<BTreeSet<_>>().len(), bundle.passes.len());
@@ -62,6 +72,31 @@ fn compute_passes_keep_their_position_among_raster_passes() {
         assert_eq!(table.capacity, 2);
         assert!(execution.ranges.iter().any(|range| range.pass == pass.id && range.size == 8));
     }
+
+    // Extents and resets can refer to a table the shader never binds.
+    let args = compiled.compute.tables["DispatchArgs"];
+    let source = &mut compiled.compute.bundle;
+    let descriptor = Execution { additive: vec![PassId(0)], ..Default::default() }.table().unwrap();
+    source.tables.insert(0, descriptor);
+    source.resources.resets.push(args);
+    for (pass, extent) in source.passes.iter_mut().zip([
+        DispatchExtent::FromRowCount { table: args, workgroup_x: 32 },
+        DispatchExtent::Indirect { buf: args, offset_bytes: 0 },
+    ]) {
+        let PassRun::Compute { dispatch, .. } = &mut pass.run else { panic!("expected authored compute") };
+        *dispatch = extent;
+    }
+
+    let remapped = lower(&compiled);
+    let args = remapped.tables.iter().find(|t| t.capacity == 3 && matches!(t.format, ElemFormat::Struct(_))).unwrap().id;
+    assert!(matches!(remapped.passes[1].run,
+        PassRun::Compute { dispatch: DispatchExtent::FromRowCount { table, workgroup_x: 32 }, .. } if table == args));
+    assert!(matches!(remapped.passes[3].run,
+        PassRun::Compute { dispatch: DispatchExtent::Indirect { buf, offset_bytes: 0 }, .. } if buf == args));
+    assert_eq!(remapped.tables.len(), bundle.tables.len());
+    assert_eq!(remapped.tables.iter().filter(|t| t.id == DESCRIPTOR).count(), 1);
+    assert!(remapped.resources.resets.contains(&args));
+    assert!(bundle.resources.resets.iter().all(|id| remapped.resources.resets.contains(id)));
 }
 
 #[test]

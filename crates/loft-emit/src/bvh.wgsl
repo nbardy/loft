@@ -9,27 +9,15 @@ struct LoftLeafRef { kind_id: u32, row_id: u32 }
 struct LoftRay { o: vec3<f32>, d: vec3<f32>, t0: f32, t1: f32 }
 struct LoftBvhHit { leaf: LoftLeafRef, t: f32 }
 
-// An empty world binds a dummy node and supplies node_count = 0.
-fn loft_bvh_span(ray: LoftRay, lo: vec3<f32>, hi: vec3<f32>) -> vec2<f32> {
-  var near = ray.t0;
-  var far = ray.t1;
-  for (var axis = 0u; axis < 3u; axis++) {
-    let o = ray.o[axis];
-    let d = ray.d[axis];
-    if d == 0.0 {
-      if o < lo[axis] || o > hi[axis] { return vec2<f32>(1.0, -1.0); }
-    } else {
-      let a = (lo[axis] - o) / d;
-      let b = (hi[axis] - o) / d;
-      near = max(near, min(a, b));
-      far = min(far, max(a, b));
-    }
-  }
-  return vec2<f32>(near, far);
+fn loft_bvh_span(ray: LoftRay, lo: vec3f, hi: vec3f) -> vec2f {
+  let parallel = ray.d == vec3f(0.0);
+  let inv_d = 1.0 / select(ray.d, vec3f(1.0), parallel);
+  return loft_box_span(ray.o, inv_d, parallel, lo, hi, vec2f(ray.t0, ray.t1));
 }
 
 // The kind switch supplies a forward distance, -1 for a miss, or a value below
 // -1 for an unresolved query. The result preserves that failure in either mode.
+// An empty world binds a dummy node and supplies node_count = 0.
 fn loft_bvh_trace(ray: LoftRay, node_count: u32, any_hit: bool) -> LoftBvhHit {
   return loft_bvh_trace_at(ray, select(0xffffffffu, 0u, node_count != 0u), any_hit);
 }
@@ -38,7 +26,10 @@ fn loft_bvh_trace_at(ray: LoftRay, root_id: u32, any_hit: bool) -> LoftBvhHit {
   var best = LoftBvhHit(LoftLeafRef(0xffffffffu, 0xffffffffu), -1.0);
   if root_id == 0xffffffffu { return best; }
   var node = loft_bvh_nodes[root_id];
-  let span = loft_bvh_span(ray, node.lo, node.hi);
+  let parallel = ray.d == vec3f(0.0);
+  // Substitute a finite divisor on parallel axes before multiplying distances.
+  let inv_d = 1.0 / select(ray.d, vec3f(1.0), parallel);
+  let span = loft_box_span(ray.o, inv_d, parallel, node.lo, node.hi, vec2f(ray.t0, ray.t1));
   if span.x > span.y { return best; }
 
   // `node` is the node being visited. An interior step keeps the nearer child in hand and pushes only the farther
@@ -54,8 +45,8 @@ fn loft_bvh_trace_at(ray: LoftRay, root_id: u32, any_hit: bool) -> LoftBvhHit {
     if node.count == 0u {
       let a = loft_bvh_nodes[first];
       let b = loft_bvh_nodes[first + 1u];
-      let sa = loft_bvh_span(active_ray, a.lo, a.hi);
-      let sb = loft_bvh_span(active_ray, b.lo, b.hi);
+      let sa = loft_box_span(ray.o, inv_d, parallel, a.lo, a.hi, vec2f(ray.t0, active_ray.t1));
+      let sb = loft_box_span(ray.o, inv_d, parallel, b.lo, b.hi, vec2f(ray.t0, active_ray.t1));
       let hit_a = sa.x <= sa.y;
       let hit_b = sb.x <= sb.y;
       if hit_a && hit_b {
@@ -90,7 +81,7 @@ fn loft_bvh_trace_at(ray: LoftRay, root_id: u32, any_hit: bool) -> LoftBvhHit {
     while !descend && depth > 0u {
       depth -= 1u;
       let popped = loft_bvh_nodes[stack[depth]];
-      let popped_span = loft_bvh_span(active_ray, popped.lo, popped.hi);
+      let popped_span = loft_box_span(ray.o, inv_d, parallel, popped.lo, popped.hi, vec2f(ray.t0, active_ray.t1));
       if popped_span.x <= popped_span.y {
         node = popped;
         descend = true;

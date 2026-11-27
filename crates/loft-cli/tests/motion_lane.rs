@@ -1,7 +1,7 @@
 use loft_ir::*;
 use loft_passes::source::Graph;
 use std::path::Path;
-use loft_passes::fusion::{self, RESULTS, ROWS};
+use loft_passes::motion::{self, RESULTS, ROWS};
 use loft_runner::Runner;
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -26,7 +26,7 @@ fn fixture(source: &str, overrides: &[(String, f64)]) -> Bundle {
         .unwrap_or_else(|d| panic!("{}", d.render(&src)))
         .0;
     assert_eq!(program.dispatches.len(), 1);
-    fusion::motion_bundle(&program, &program.dispatches[0], 3)
+    motion::motion_bundle(&program, &program.dispatches[0], 3)
 }
 
 fn tables(bundle: &Bundle) -> BTreeMap<TableId, Vec<u8>> {
@@ -52,7 +52,7 @@ fn step(b: &Bundle, tables: &mut BTreeMap<TableId, Vec<u8>>, from: u32, to: u32)
         tables,
         InstanceId(0),
         0..count,
-        fusion::advance(from, to, 0).unwrap(),
+        motion::advance(from, to, 0).unwrap(),
     )
     .unwrap();
 }
@@ -105,9 +105,9 @@ fn motion_cpu_tick_grouping_and_event_payloads() {
         .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
         .collect();
     assert_eq!(&words[..4], &[2, 511, 0, 0]);
-    assert_eq!(&words[4..8], &[fusion::event_tag("ClawHit"), 0, 1, 3]);
+    assert_eq!(&words[4..8], &[motion::event_tag("ClawHit"), 0, 1, 3]);
     assert_eq!(&words[8..12], &[0.5_f32, 1., 0.25, 2.].map(f32::to_bits));
-    assert_eq!(&words[12..16], &[fusion::event_tag("FootSlip"), 0, 3, 4]);
+    assert_eq!(&words[12..16], &[motion::event_tag("FootSlip"), 0, 3, 4]);
     assert_eq!(&words[16..20], &[0.25_f32, 0., 0.5, 0.02].map(f32::to_bits));
 }
 
@@ -204,9 +204,9 @@ fn motion_gpu_alternates_cpu_and_gpu_ticks() {
             .map(|e| (e.tag, e.instance_id, e.site_id, e.tick, e.payload))
             .collect::<Vec<_>>(),
         [
-            (fusion::event_tag("ClawHit"), 0, 1, 3, [0.5, 1., 0.25, 2.]),
+            (motion::event_tag("ClawHit"), 0, 1, 3, [0.5, 1., 0.25, 2.]),
             (
-                fusion::event_tag("FootSlip"),
+                motion::event_tag("FootSlip"),
                 0,
                 3,
                 4,
@@ -398,7 +398,7 @@ fn motion_gpu_washer_picks_sample_zero() {
 
 #[test]
 fn motion_cpu_outbox_shader_for_generic_compute_entries() {
-    let mut wgsl = fusion::event_wgsl(2, 4, "60u");
+    let mut wgsl = motion::event_wgsl(2, 4, "60u");
     wgsl.push_str(
         r#"
         @compute @workgroup_size(1) fn kernel_tick() { emit_event(7u, 2u, 4u, vec4f(1.)); }
@@ -447,7 +447,7 @@ fn compile_peer(src: &Graph, overrides: &[(String, f64)]) -> Bundle {
         .unwrap_or_else(|d| panic!("{}", d.render(src)))
         .0;
     assert_eq!(p.dispatches.len(), 1);
-    fusion::motion_bundle(&p, &p.dispatches[0], 3)
+    motion::motion_bundle(&p, &p.dispatches[0], 3)
 }
 
 #[test]
@@ -481,7 +481,7 @@ fn motion_wave_cpu_boss_hit_one() {
     assert_eq!(&events[0..4], &2u32.to_le_bytes());
     assert_eq!(&events[8..12], &0u32.to_le_bytes());
     for (i, (site, payload)) in BOSS_PAYLOADS.into_iter().enumerate() {
-        let tag = fusion::event_tag(["ClawHit", "FootSlip"][i]);
+        let tag = motion::event_tag(["ClawHit", "FootSlip"][i]);
         let expected = [
             tag,
             0,
@@ -515,7 +515,7 @@ fn motion_gpu_boss_hit_one() {
     assert_eq!(dropped, 0);
     assert_eq!(emitted.len(), 2);
     for (i, (event, (site, payload))) in emitted.into_iter().zip(BOSS_PAYLOADS).enumerate() {
-        let tag = fusion::event_tag(["ClawHit", "FootSlip"][i]);
+        let tag = motion::event_tag(["ClawHit", "FootSlip"][i]);
         assert_eq!(
             (
                 event.tag,
@@ -530,43 +530,18 @@ fn motion_gpu_boss_hit_one() {
 }
 
 #[test]
-fn profile_json_counts_executed_fixture() {
-    let src = sources(include_str!("../../../stdlib/engines/capsules.loft"));
-    let mut p = loft_passes::compile(&src, &[]).unwrap().0;
-    let fixture = include_str!("../../../tests/fixtures/telemetry.wgsl");
-    let classify = p.module_named("classify").unwrap();
-    p.modules[classify].naga = naga::front::wgsl::parse_str(fixture).unwrap();
-    p.modules[classify].name = "fixture".into();
+fn profile_json_reports_requested_frames() {
+    let scene = concat!(env!("CARGO_MANIFEST_DIR"), "/../../stdlib/engines/capsules.loft");
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("profile.sexp");
     let json = dir.path().join("profile.json");
-    std::fs::write(&path, loft_passes::sexp::write(&p).unwrap()).unwrap();
     let status = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
-        .arg("profile")
-        .arg(path)
-        .args(["--frames", "3", "--size", "8x8", "--json"])
+        .args(["profile", scene, "--frames", "3", "--size", "8x8", "--json"])
         .arg(&json)
         .status()
         .unwrap();
     assert!(status.success());
     let report: serde_json::Value = serde_json::from_slice(&std::fs::read(json).unwrap()).unwrap();
-    let m = report["modules"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|m| m["module_id"] == "fixture")
-        .unwrap();
-    for (key, expected) in [
-        ("alu_ops", 2),
-        ("transcendentals", 1),
-        ("storage_loads", 1),
-        ("storage_stores", 1),
-        ("workgroup_bytes", 64),
-    ] {
-        assert_eq!(m[key], expected, "{key}");
-    }
     assert_eq!(report["gpu_frame_ms"].as_array().unwrap().len(), 3);
-    println!("profile fixture {m}");
 }
 
 fn mapped_bytes(device: &wgpu::Device, buffer: &wgpu::Buffer) -> Vec<u8> {
@@ -792,7 +767,7 @@ fn authored_gpu_heron_and_boss_verdicts() {
         let src = peer_sources(name);
         let p = loft_passes::compile(&src, &[]).unwrap().0;
         let step = &p.dispatches[0];
-        let b = fusion::motion_bundle(&p, step, 0);
+        let b = motion::motion_bundle(&p, step, 0);
         let capture = |interval: u32| {
             let mut r = Runner::attach(
                 Arc::new(g.device.clone()),

@@ -502,79 +502,56 @@ fn prepare(
         DispatchRows::Table { n_rows, stride, words, .. } =>
             b.table(stride * 4, *n_rows, words.iter().flat_map(|f| f.to_le_bytes()).collect(), TableLifetime::Static),
     };
-    for step in program.dispatches.iter().filter(|step| !opts.picture_only && !step.lockstep) {
-        let mut motion = crate::fusion::motion_bundle(program, step, 0);
-        let mut resources = Resources::new();
-        let mut row_table = None;
-        for table in motion.tables.drain(..) {
-            let id = match table.id.0 {
-                0 => {
-                    let rows = match &step.input {
-                        DispatchRows::Drawable(i) => kinds[*i].0,
-                        DispatchRows::Table { .. } => b.table(
-                            table.stride_bytes,
-                            table.capacity,
-                            table.initial.into_vec(),
-                            table.lifetime,
-                        ),
-                    };
-                    row_table = Some(rows);
-                    rows
+    let bind_motion = |b: &mut Builder, step: &crate::program::Dispatch, mut rows: Option<TableId>, live: &[(&str, TableId)]| {
+        use crate::program::DispatchResource as R;
+        let (_, n, stride, _) = step.input.view(&program.kinds).expect("validated dispatch");
+        let resources = step.bindings.iter().map(|binding| {
+            let id = match binding.resource {
+                R::Rows => *rows.get_or_insert_with(|| read_table(b, &step.input)),
+                R::Arguments => b.words(6, [0; 6]),
+                R::Results => b.transient(step.checks.len() as u32 * 32, n),
+                R::Outbox => b.transient(4, 4096),
+                R::Luts => luts,
+                R::Read(j) => {
+                    let read = &step.reads[j as usize];
+                    match live.iter().find(|(name, _)| *name == read.kind.as_str()) {
+                        Some(&(_, row)) => row,
+                        None => read_table(b, &read.input),
+                    }
                 }
-                1 => b.words(6, [0; 6]),
-                2 | 3 => b.transient(table.stride_bytes, table.capacity),
-                4 => luts,
-                // Reads of constant kinds; a row-local dispatch has no `previous`.
-                n if (n as usize) < 5 + step.reads.len() => read_table(&mut b, &step.reads[n as usize - 5].input),
-                _ => return Err("unknown fixed-step resource".into()),
+                R::Previous => b.transient(stride * 4, n),
             };
-            let original = motion.passes[0].bindings.iter().find(|entry| entry.resource == table.id)
-                .ok_or("fixed-step resource has no binding")?;
-            resources.insert((u32::from(original.group), original.slot), id);
-        }
+            ((binding.group, binding.slot), id)
+        }).collect::<Resources>();
+        (rows, resources)
+    };
+    for step in program.dispatches.iter().filter(|step| !opts.picture_only && !step.lockstep) {
+        let (rows, resources) = bind_motion(&mut b, step, None, &[]);
+        let rows = rows.ok_or("fixed-step rows are missing")?;
         let module = ModuleId(step.module as u32);
-        let rows = row_table.ok_or("fixed-step rows are missing")?;
         b.pass(
-            crate::fusion::tick_run(step, module, rows),
+            crate::motion::ticks_run(step.tier, module, &step.entry, rows),
             &[(module, &step.entry, ShaderStage::Compute)],
             &resources,
         )?;
         b.wave += 1;
     }
-    // Kinds that read each other's rows: one loop of tick passes, advanced one tick at a time (fusion::motion_group).
+    // Kinds that read each other's rows: one loop of tick passes, advanced one tick at a time.
     let group: Vec<&crate::program::Dispatch> = program.dispatches.iter().filter(|step| step.lockstep).collect();
     if !group.is_empty() && !opts.picture_only {
-        let names: Vec<&str> = group.iter().map(|step| step.input.view(&program.kinds).expect("validated dispatch").0).collect();
-        let rows: Vec<TableId> = group.iter().map(|step| read_table(&mut b, &step.input)).collect();
+        let live: Vec<_> = group.iter().map(|step| {
+            let (name, ..) = step.input.view(&program.kinds).expect("validated dispatch");
+            (name, read_table(&mut b, &step.input))
+        }).collect();
         let mut body = vec![];
-        for (k, step) in group.iter().enumerate() {
-            let (_, n, stride, _) = step.input.view(&program.kinds).expect("validated dispatch");
-            let mut resources = Resources::new();
-            for binding in &step.bindings {
-                use crate::program::DispatchResource as R;
-                let id = match binding.resource {
-                    R::Rows => rows[k],
-                    R::Arguments => b.words(6, [0; 6]),
-                    R::Results => b.transient(step.checks.len() as u32 * 32, n),
-                    R::Outbox => b.transient(4, 4096),
-                    R::Luts => luts,
-                    R::Read(j) => {
-                        let read = &step.reads[j as usize];
-                        match names.iter().position(|name| *name == read.kind) {
-                            Some(i) => rows[i],
-                            None => read_table(&mut b, &read.input),
-                        }
-                    }
-                    R::Previous => b.transient(stride * 4, n),
-                };
-                resources.insert((binding.group, binding.slot), id);
-            }
+        for (step, &(_, rows)) in group.iter().zip(&live) {
+            let (_, resources) = bind_motion(&mut b, step, Some(rows), &live);
             let module = ModuleId(step.module as u32);
             if step.reads.iter().any(|read| read.previous) {
-                let run = crate::fusion::ticks_run(step.tier, module, "snapshot", rows[k]);
+                let run = crate::motion::ticks_run(step.tier, module, "snapshot", rows);
                 body.push(b.decl(LOCKSTEP_PASSES + body.len() as u32, run, &[(module, "snapshot", ShaderStage::Compute)], &resources)?);
             }
-            let run = crate::fusion::tick_run(step, module, rows[k]);
+            let run = crate::motion::ticks_run(step.tier, module, &step.entry, rows);
             body.push(b.decl(LOCKSTEP_PASSES + body.len() as u32, run, &[(module, &step.entry, ShaderStage::Compute)], &resources)?);
         }
         let run = PassRun::PassLoop { max_iters: loft_abi::AdvanceArgs::MAX_TICKS, cond_buf: None, body: body.into() };

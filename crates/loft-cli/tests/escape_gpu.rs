@@ -280,7 +280,7 @@ fn nondet_law_matches_a_statistical_twin_and_refuses_cpu_stepping() {
             features: GpuFeatures::empty(),
         },
     );
-    let motion = loft_passes::fusion::motion_bundle(&program, &program.dispatches[0], 0);
+    let motion = loft_passes::motion::motion_bundle(&program, &program.dispatches[0], 0);
     let id = runner.load_bundle(&motion).unwrap();
     assert!(matches!(
         runner.step_pass_cpu(id, loft_ir::PassId(0), 0..4, 1),

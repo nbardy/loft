@@ -8,7 +8,7 @@
 //!
 //! Reference edges are RGB jumps larger than 32 codes to a four-connected neighbour.
 
-use crate::budget::Failure;
+use loft_cli::budget::Failure;
 
 const EDGE_JUMP: u8 = 32;
 

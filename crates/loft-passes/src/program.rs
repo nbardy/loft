@@ -4,15 +4,12 @@
 
 pub use loft_check::program::{Dispatch, DispatchBinding, DispatchRead, DispatchResource, DispatchRows, Draw, Instance, KindTable, abi};
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize)]
 pub struct ExpressionOrigin { pub function:usize,pub expression:usize,pub span:(String,usize,usize) }
 
-#[derive(serde::Serialize,serde::Deserialize)]
 pub struct ShaderModule {
-    #[serde(default)]
     pub origins:Vec<ExpressionOrigin>,
     pub name: String,
-    #[serde(skip)]
     pub wgsl: String,
     /// Author declaration (file, line, column); shared compiler modules have no source declaration.
     pub span: Option<(String, usize, usize)>,
@@ -21,14 +18,12 @@ pub struct ShaderModule {
 
 /// Perspective camera evaluated per frame at time t.
 #[derive(Clone, Copy, Debug)]
-#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Orbit {
     pub at: [f32; 3],
     pub radius: f32,
     pub height: f32,
     pub period: f32,
     pub fov: f32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fixed_eye: Option<[f32; 3]>,
 }
 
@@ -44,7 +39,7 @@ impl Orbit {
 
 /// The frame's passes in schedule order; one variant per pass kind, one handler each in the runner.
 #[derive(Clone, PartialEq, Eq)]
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize)]
 pub enum Pass {
     /// The RenderBundle: per kind, set pipeline and one `drawIndirect`, into Vis64 + depth.
     Vis(Vec<u32>),
@@ -84,7 +79,7 @@ impl std::fmt::Debug for Pass {
 
 /// A schedule-authored frame pass: its module, how it runs, and the frame resource behind each binding.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize)]
 pub struct AuthoredPass {
     pub label: String,
     pub module: usize,
@@ -94,7 +89,7 @@ pub struct AuthoredPass {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize)]
 pub enum AuthoredRun {
     Compute { entry: String, extent: Extent },
     /// One full-screen triangle into the swapchain.
@@ -103,7 +98,7 @@ pub enum AuthoredRun {
 
 /// Workgroups of a compute frame pass.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize)]
 pub enum Extent {
     Groups([u32; 3]),
     /// One invocation per instance, `width` per workgroup (the entry's `@workgroup_size`).
@@ -114,7 +109,7 @@ pub enum Extent {
 
 /// The frame ABI a template binds by WGSL global name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize)]
 pub enum FrameView {
     /// `insts`: every drawn row's World bounds, kind and row.
     Instances,
@@ -165,7 +160,6 @@ impl FrameView {
 
 /// When the shadow step redraws its map.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[derive(serde::Serialize, serde::Deserialize)]
 pub enum StepClock {
     /// When its casters or the light change. The host proves which casters are static; this is also the default.
     #[default]
@@ -184,16 +178,11 @@ pub struct MotionSample {
 /// Compiler-owned endpoint balls in world space, indexed by the native kind module.
 pub type SegmentRows = std::collections::BTreeMap<u32, Vec<[[f32; 4]; 2]>>;
 
-#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Program {
-    /// Recompiled for authored scenes. A serialized program has only its ordinary indirect draws.
-    #[serde(skip)]
+    /// Endpoint balls for per-tile segment draws.
     pub segments: SegmentRows,
-    #[serde(default)]
     pub bakes: Vec<crate::bake_tex::Bake>,
-    #[serde(default)]
     pub path: Option<crate::emit::paths::PathTrace>,
-    #[serde(default)]
     pub dispatches: Vec<Dispatch>,
     pub modules: Vec<ShaderModule>,
     pub kinds: Vec<KindTable>,
@@ -201,17 +190,14 @@ pub struct Program {
     pub camera: Orbit,
     pub sun: [f32; 3],
     /// Compiler-packed group 0 parameter storage.
-    #[serde(default, with = "loft_check::program::words")]
     pub params: Vec<f32>,
     /// Authored scalar parameters occupy one vec4 slot each after three environment slots.
-    #[serde(default)]
     pub param_ranges: Vec<(String, Option<[f32; 2]>)>,
     /// Shadow-map side in texels (0 without a shadow pass).
     pub shadow_size: u32,
     /// Baked scans share the word-addressed storage.
     pub luts: Vec<f32>,
     pub passes: Vec<Pass>,
-    #[serde(default)]
     pub shadow_clock: StepClock,
 }
 

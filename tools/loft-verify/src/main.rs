@@ -1,5 +1,6 @@
 //! Repository verification commands, also invoked by the legacy Loft CLI.
 mod controls;
+mod diff;
 mod suite;
 mod trace;
 
@@ -9,11 +10,12 @@ use std::process::ExitCode;
 fn command(mut args: Vec<String>) -> Result<(), Failure> {
     let set = overrides(&mut args).map_err(Failure::Usage)?;
     let usage = || Failure::Usage(
-        "usage: loft-verify controls|gate|score-pictures|trace-check|trace-render".into(),
+        "usage: loft-verify controls|diff|gate|score-pictures|trace-check|trace-render".into(),
     );
     let cmd = args.first().ok_or_else(usage)?.clone();
     match cmd.as_str() {
         "controls" => controls::run(&args[1..], &set),
+        "diff" => diff::run(&args[1..]),
         "trace-check" | "trace-render" => {
             args.retain(|a| a != "--trace");
             trace::run(&args[1..], &set, cmd == "trace-render")

@@ -1,20 +1,3 @@
-// Header: world and medium counts, then (BVH root, medium count) for each world.
-// The remaining words pack homogeneous field rows, five vec4s per row.
-@group(2) @binding(5) var<storage, read> world_data: array<u32>;
-
-fn world_root(world: u32) -> u32 {
-  return world_data[2u + 2u * world];
-}
-
-fn world_medium_count(world: u32) -> u32 {
-  return world_data[3u + 2u * world];
-}
-
-fn medium_row(i: u32, field: u32) -> vec4<f32> {
-  let start = 2u + 2u * world_data[0] + 20u * i + 4u * field;
-  return bitcast<vec4<f32>>(vec4(world_data[start], world_data[start+1u], world_data[start+2u], world_data[start+3u]));
-}
-
 struct WorldSigma { s: vec3<f32>, t: vec3<f32>, g: f32, emission: vec3<f32> }
 
 fn world_medium(world: u32, p: vec3<f32>) -> WorldSigma {
@@ -44,11 +27,14 @@ fn world_volume(world: u32, ray: LoftRay, steps: u32, illuminate: bool) -> LoftV
   let mu = dot(ray.d, sun);
   // Split at every bound crossing. Empty distance to the sky never dilutes
   // samples inside a finite slab, and coincident slabs share each integration step.
+  let parallel = ray.d == vec3f(0.0);
+  let inv_d = 1.0 / select(ray.d, vec3f(1.0), parallel);
+  let interval = vec2f(ray.t0, ray.t1);
   var begin = ray.t0;
   while begin < ray.t1 {
     var end = ray.t1;
     for (var i = 0u; i < count; i++) {
-      let span = loft_bvh_span(ray, medium_row(i, 0u).xyz, medium_row(i, 1u).xyz);
+      let span = loft_box_span(ray.o, inv_d, parallel, medium_row(i, 0u).xyz, medium_row(i, 1u).xyz, interval);
       if span.x < span.y {
         if span.x > begin { end = min(end, span.x); }
         if span.y > begin { end = min(end, span.y); }
