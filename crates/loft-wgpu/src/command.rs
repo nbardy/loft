@@ -173,7 +173,7 @@ fn record_render(enc: &mut CommandEncoder, colors: &[Color], depth: Option<&Dept
 }
 
 use crate::attachments::Canvas;
-use loft_ir::ModuleId;
+use loft_ir::{ModuleId, execution::{BlendMode, CullMode}};
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct RasterRecipe {
@@ -181,21 +181,35 @@ pub struct RasterRecipe {
     layout: PipelineLayout,
     vertex: String,
     fragment: String,
-    cull: bool,
-    additive: bool,
+    cull: CullMode,
+    blend: BlendMode,
     module: ModuleId,
 }
 impl RasterRecipe {
     pub fn new(canvas: &Canvas, layout: &PipelineLayout, draw: &crate::schedule::Draw, cull: bool, additive: bool) -> Self {
+        let (cull, blend) = draw.state.map_or_else(
+            || (if cull { CullMode::Front } else { CullMode::None },
+                if additive { BlendMode::Additive } else { BlendMode::Opaque }),
+            |state| (state.cull, state.blend),
+        );
         Self { canvas: canvas.clone(), layout: layout.clone(), vertex: draw.decl.vertex_entry.clone(),
-            fragment: draw.decl.fragment_entry.clone(), cull, additive, module: draw.decl.module }
+            fragment: draw.decl.fragment_entry.clone(), cull, blend, module: draw.decl.module }
     }
 
     pub fn create(&self, device: &Device, shader: &ShaderModule, cache: Option<&PipelineCache>) -> RenderPipeline {
-        let blend = self.additive.then(|| {
-            let component = BlendComponent { src_factor: BlendFactor::One, dst_factor: BlendFactor::One, operation: BlendOperation::Add };
-            BlendState { color: component, alpha: component }
-        });
+        let blend = match self.blend {
+            BlendMode::Opaque => None,
+            BlendMode::Alpha => Some(BlendState::ALPHA_BLENDING),
+            BlendMode::Additive => {
+                let component = BlendComponent { src_factor: BlendFactor::One, dst_factor: BlendFactor::One, operation: BlendOperation::Add };
+                Some(BlendState { color: component, alpha: component })
+            }
+        };
+        let cull_mode = match self.cull {
+            CullMode::None => None,
+            CullMode::Front => Some(Face::Front),
+            CullMode::Back => Some(Face::Back),
+        };
         let targets = self.canvas.colors.iter().map(|&format| Some(ColorTargetState {
             format, blend, write_mask: ColorWrites::ALL,
         })).collect::<Vec<_>>();
@@ -203,7 +217,7 @@ impl RasterRecipe {
             label: None, layout: Some(&self.layout),
             vertex: VertexState { module: shader, entry_point: Some(&self.vertex),
                 buffers: &[], compilation_options: Default::default() },
-            primitive: PrimitiveState { cull_mode: self.cull.then_some(Face::Front), ..Default::default() },
+            primitive: PrimitiveState { cull_mode, ..Default::default() },
             depth_stencil: self.canvas.depth_state(),
             multisample: MultisampleState { count: self.canvas.samples, ..Default::default() },
             fragment: (!self.fragment.is_empty()).then_some(FragmentState {
