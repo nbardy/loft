@@ -222,9 +222,9 @@ impl RasterRecipe {
         let targets = self.canvas.colors.iter().map(|&format| Some(ColorTargetState {
             format, blend, write_mask: ColorWrites::ALL,
         })).collect::<Vec<_>>();
-        let vertex_layout = self.vertex_layout.as_ref().map(|(stride, attributes)| VertexBufferLayout {
+        let vertex_layout = self.vertex_layout.as_ref().map(|(stride, attributes)| Some(VertexBufferLayout {
             array_stride: *stride, step_mode: VertexStepMode::Vertex, attributes,
-        });
+        }));
         device.create_render_pipeline(&RenderPipelineDescriptor {
             label: None, layout: Some(&self.layout),
             vertex: VertexState { module: shader, entry_point: Some(&self.vertex),

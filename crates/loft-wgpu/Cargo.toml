@@ -12,10 +12,10 @@ loft-std = { path = "../loft-std" }
 loft-format = { path = "../loft-format" }
 naga.workspace = true
 wgpu.workspace = true
+wgpu-naga-bridge = "=30.0.1"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wgpu = { workspace = true, features = ["webgpu"] }
-wgpu-naga-bridge = "=30.0.1"
 
 [lints]
 workspace = true

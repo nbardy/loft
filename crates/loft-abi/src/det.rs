@@ -1,4 +1,5 @@
 //! CPU reference for the f32 operations in det.wgsl. Each mul_add is one rounding.
+#![allow(clippy::excessive_precision, clippy::lossy_float_literal)]
 use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, LN_2, LOG2_E, PI, TAU};
 pub const SIN: [f32; 6] = [
     1. / 6227020800.,

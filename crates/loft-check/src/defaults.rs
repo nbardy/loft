@@ -23,7 +23,10 @@ pub fn schedule(modules: &mut Vec<Module>, next: &mut u32, recipe: Option<Schedu
         let expand_names = |names: &mut Vec<Ident>, geometry: bool| {
             *names = std::mem::take(names).into_iter().flat_map(|n| {
                 match worlds.get(&n.name) {
-                    Some(members) => members.iter().filter(|k| !geometry || !data_kinds.contains(&k.name)).cloned().collect(),
+                    Some(members) if geometry && members.iter().any(|k| !data_kinds.contains(&k.name)) => {
+                        members.iter().filter(|k| !data_kinds.contains(&k.name)).cloned().collect()
+                    }
+                    Some(members) => members.clone(),
                     None => vec![n],
                 }
             }).collect();
@@ -34,7 +37,8 @@ pub fn schedule(modules: &mut Vec<Module>, next: &mut u32, recipe: Option<Schedu
                 if arg.name.is_none() && let ExprKind::Name(n) = &arg.value.kind
                     && let Some(members) = worlds.get(n)
                 {
-                    for member in members.iter().filter(|k| !data_kinds.contains(&k.name)) {
+                    let filter_data = members.iter().any(|k| !data_kinds.contains(&k.name));
+                    for member in members.iter().filter(|k| !filter_data || !data_kinds.contains(&k.name)) {
                         expanded.push(Arg { name: None, value: Expr {
                             id: *next, span: arg.value.span, kind: ExprKind::Name(member.name.clone()),
                         } });

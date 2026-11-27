@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, HashSet};
 
 /// The program's items by name. Built from parsed modules; cheap to rebuild.
 pub struct Prog<'a> {
+    pub dimensions: std::collections::HashMap<Span, Dimension>,
     links: BTreeMap<(u16, &'a str), &'a str>,
     pub fns: BTreeMap<&'a str, &'a FnDecl>,
     pub kinds: BTreeMap<&'a str, &'a KindDecl>,
@@ -26,6 +27,7 @@ pub struct Prog<'a> {
 impl<'a> Prog<'a> {
     pub fn index(modules: &'a [Module]) -> Res<Prog<'a>> {
         let mut p = Prog {
+            dimensions: modules.iter().flat_map(|m| m.dimensions.iter().copied()).collect(),
             links: modules.iter().filter_map(|m| m.file.map(|file| (file, &m.links))).flat_map(|(file, links)| {
                 links.iter().map(move |(name, key)| ((file, name.as_str()), key.as_str()))
             }).collect(),

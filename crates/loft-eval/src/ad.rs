@@ -66,10 +66,10 @@ impl Ad<'_> {
                 condition: Box::new(self.cp(condition)),
                 then: self.cp_arm(then),
                 otherwise: self.cp_arm(otherwise),
-                cases: cases.as_ref().map(|cases| MatchCases {
+                cases: cases.as_ref().map(|cases| Box::new(MatchCases {
                     first: cases.first,
                     rest: cases.rest.iter().map(|(key, value)| (*key, self.cp(value))).collect(),
-                }),
+                })),
             },
             ExprKind::Num { value, suffix, text, float } => ExprKind::Num { value: *value, suffix: *suffix, text: text.clone(), float: *float },
             ExprKind::Bool(b) => ExprKind::Bool(*b),

@@ -223,7 +223,7 @@ fn shader_matches_frozen_math() {
 }
 #[test]
 fn reflected_texture_group_accepts_sparse_slots() {
-    let (mut r, d, q, view) = device();
+    let (mut r, d, _q, view) = device();
     let mut b = bundle();
     let src = format!(
         "@group(3) @binding(11) var img:texture_2d<u32>; {}",

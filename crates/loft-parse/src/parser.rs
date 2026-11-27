@@ -169,17 +169,24 @@ impl<'src> Parser<'src, '_> {
         }
         if unit(self.cur().text) || self.is("1") {
             let span = self.cur().span;
+            let mut dim = [0.; 4];
+            let mut sign = 1.;
             loop {
                 if !unit(self.cur().text) && !self.is("1") {
                     return self.err("a unit atom");
                 }
-                self.pop();
+                let atom = self.pop();
+                let mut power = sign;
                 if self.eat("^") {
-                    self.eat("-");
-                    self.integer()?;
+                    if self.eat("-") { power = -power; }
+                    power *= f64::from(self.integer()?);
                 }
-                if !self.eat("/") && !self.eat("*") { break; }
+                add_unit(&mut dim, atom.text, power);
+                if self.eat("/") { sign = -1.; }
+                else if self.eat("*") { sign = 1.; }
+                else { break; }
             }
+            self.module.dimensions.push((span, dim));
             return Ok(ty("f32", span));
         }
         let n = self.reference()?;
@@ -429,7 +436,7 @@ impl<'src> Parser<'src, '_> {
             let step = self.expr(0)?;
             self.end()?;
             self.expect("}")?;
-            return Ok(Item::Scan(ScanDecl {
+            return Ok(Item::Scan(Box::new(ScanDecl {
                 name,
                 at: var.clone(),
                 var_ty: ty("f32", var.span),
@@ -441,7 +448,7 @@ impl<'src> Parser<'src, '_> {
                 prev,
                 step,
                 elem: None,
-            }));
+            })));
         }
         if self.eat("kernel") {
             let name = self.ident()?;
@@ -1392,7 +1399,7 @@ impl<'src> Parser<'src, '_> {
         self.expect("}")?;
         let arm = |value| ExprBlock { body: Block { stmts: vec![] }, value: Box::new(value) };
         Ok(self.node(start.to(end), ExprKind::If {
-            condition, then: arm(then), otherwise: arm(otherwise), cases: Some(MatchCases { first, rest }),
+            condition, then: arm(then), otherwise: arm(otherwise), cases: Some(Box::new(MatchCases { first, rest })),
         }))
     }
 
@@ -1595,6 +1602,7 @@ impl<'src> Parser<'src, '_> {
         let suffix = if units.is_empty() {
             NumSuffix::None
         } else {
+            let mut dim = [0.; 4];
             let mut op = 1;
             let mut at = 0;
             while at < units.len() {
@@ -1621,6 +1629,7 @@ impl<'src> Parser<'src, '_> {
                     _ => 1.,
                 };
                 let exponent = power.checked_mul(op).ok_or_else(bad)?;
+                add_unit(&mut dim, sym, f64::from(exponent));
                 value *= factor.powi(exponent);
                 if at < units.len() {
                     op = match units.as_bytes()[at] {
@@ -1631,6 +1640,7 @@ impl<'src> Parser<'src, '_> {
                     at += 1;
                 }
             }
+            self.module.dimensions.push((sp, dim));
             NumSuffix::Unit
         };
         Ok(self.node(
@@ -1644,16 +1654,26 @@ impl<'src> Parser<'src, '_> {
         ))
     }
 }
+fn add_unit(dim: &mut Dimension, symbol: &str, power: f64) {
+    let base = match symbol {
+        "1" => [0, 0, 0, 0],
+        "m" | "mm" => [1, 0, 0, 0],
+        "s" => [0, 1, 0, 0],
+        "kg" => [0, 0, 1, 0],
+        "rad" | "deg" => [0, 0, 0, 1],
+        "Hz" => [0, -1, 0, 0],
+        "N" => [1, -2, 1, 0],
+        "J" => [2, -2, 1, 0],
+        _ => unreachable!("validated unit symbol"),
+    };
+    for (v, e) in dim.iter_mut().zip(base) { *v += power * f64::from(e); }
+}
+
 pub const TYPE_ALIASES: &[(&str, &str)] = &[
     ("f", "f32"), ("u", "u32"), ("i", "i32"),
     ("v2", "vec2f"), ("rgb", "vec3f"), ("v3", "vec3f"), ("v4", "vec4f"),
 ];
 
-pub const UNIT_SYMBOLS: &[&str] = &["m", "mm", "rad", "deg", "kg", "s", "N", "J", "Hz"];
-
-fn unit(s: &str) -> bool {
-    UNIT_SYMBOLS.contains(&s)
-}
 fn operator(s: &str) -> Option<(u8, BinOp)> {
     use BinOp::*;
     Some(match s {

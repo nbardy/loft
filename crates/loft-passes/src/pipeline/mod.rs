@@ -111,5 +111,6 @@ fn check_scene(p: &Prog<'_>, types: &[Ty], overrides: &[(String, f64)], pending_
         return Err(Diag::new(Code::E405, span, "Phase 4 lowering is pending for this checked program",
             "use the typed front end to inspect the Phase 4 contract"));
     }
+    loft_eval::refine::check(p, types, overrides)?;
     Ok(())
 }

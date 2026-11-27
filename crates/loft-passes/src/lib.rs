@@ -91,6 +91,7 @@ pub fn front(src: &Graph) -> Res<(Vec<Module>, Vec<Ty>)> {
     let mut modules = parse_all(src)?;
     let mut types = vec![];
     check_modules(&mut modules, &mut types)?;
+    loft_eval::refine::check(&Prog::index(&modules)?, &types, &[])?;
     Ok((modules, types))
 }
 

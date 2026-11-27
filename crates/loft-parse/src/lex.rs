@@ -14,7 +14,7 @@ pub enum Kind {
     Word,
     #[regex(r"[0-9]+x[0-9]+(?:x[0-9]+)?")]
     Grid,
-    #[regex(r"0x[0-9a-fA-F]+", priority = 5)]
+    #[regex(r"0x[0-9a-fA-F]+", priority = 10)]
     #[regex(r"[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?([a-zA-Z]+(\^-?[0-9]+)?)?")]
     Number,
     #[regex(r#""([^"\\\n]|\\.)*""#)]

@@ -466,10 +466,12 @@ impl<'p, 'a> Emitter<'p, 'a> {
         };
         self.line(1, &format!("switch {switch} {{"));
         for (i, ((pattern, _), arm)) in cases.arms(first).enumerate() {
-            let label = match selector_ty {
-                Ty::F32 => format!("{}u", i + 1),
-                Ty::U32 => format!("{pattern}u"),
-                _ => pattern.to_string(),
+            let label = if selector_ty == Ty::F32 {
+                format!("{}u", i + 1)
+            } else if selector_ty == Ty::U32 {
+                format!("{pattern}u")
+            } else {
+                pattern.to_string()
             };
             self.line(2, &format!("case {label}: {{"));
             let value = self.expr(arm);
@@ -548,7 +550,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 self.line(1, "}");
                 name
             }
-            ExprKind::Num { value, suffix, text, .. } => match self.ty_of(e) {
+            ExprKind::Num { value, text, .. } => match self.ty_of(e) {
                 Ty::U32 => format!("{}u", *value as u32),
                 Ty::I32 => format!("{}i", *value as i32),
                 Ty::AbstractInt => text.clone(),

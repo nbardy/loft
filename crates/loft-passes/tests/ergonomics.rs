@@ -131,8 +131,16 @@ fn matches_are_lazy_and_only_point_dependent_forks_lose_the_lipschitz_bound() {
         emitter.func(p.fns[name], name);
     }
     assert_eq!(emitter.out.matches("switch ").count(), 5);
-    let module = naga::front::wgsl::parse_str(&emitter.out).unwrap_or_else(|e| {
-        panic!("{}", e.emit_to_string(&emitter.out))
+    let mut clean = String::new();
+    let mut rest = emitter.out.as_str();
+    while let Some((head, tail)) = rest.split_once('\u{fdd0}') {
+        clean.push_str(head);
+        let (_, after) = tail.split_once('\u{fdd1}').expect("provenance marker");
+        rest = after;
+    }
+    clean.push_str(rest);
+    let module = naga::front::wgsl::parse_str(&clean).unwrap_or_else(|e| {
+        panic!("{}", e.emit_to_string(&clean))
     });
     naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all())
         .validate(&module).unwrap();

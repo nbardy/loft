@@ -6,8 +6,6 @@ use loft_ir::*;
 use loft_std::{error::Result, params::Params, stepping::{Error, Fused, arguments}};
 use std::{collections::BTreeMap, ops::Range};
 
-type Buffers = BTreeMap<(u32, u32), Vec<u8>>;
-
 fn key(b: PassBinding) -> (u32, u32) {
     (u32::from(b.group), b.slot)
 }

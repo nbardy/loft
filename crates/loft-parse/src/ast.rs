@@ -13,6 +13,8 @@ pub struct Ident {
 
 #[derive(serde::Serialize, Clone, Debug, Default)]
 pub struct Module {
+    /// Dimensions (length, time, mass, angle) on source types and literals. Their GPU representation is f32.
+    pub dimensions: Vec<(Span, Dimension)>,
     pub items: Vec<Item>,
     pub public: Vec<Span>,
     /// Authored declaration name to body range, including its opening delimiter.
@@ -25,6 +27,8 @@ pub struct Module {
     pub diffs: Vec<(Ident, Ident)>,
 }
 
+pub type Dimension = [f64; 4];
+
 #[derive(serde::Serialize, Clone, Debug)]
 pub enum Item {
     Use(Import),
@@ -34,7 +38,7 @@ pub enum Item {
     Const(ConstDecl),
     Fn(FnDecl),
     Kind(KindDecl),
-    Scan(ScanDecl),
+    Scan(Box<ScanDecl>),
     Schedule(ScheduleDecl),
     /// `build { ... }`: an anonymous build fn; the default engine runs every one in source order.
     Build(FnDecl),
@@ -388,7 +392,7 @@ pub enum ExprKind {
         then: ExprBlock,
         otherwise: ExprBlock,
         #[serde(skip_serializing_if = "Option::is_none")]
-        cases: Option<MatchCases>,
+        cases: Option<Box<MatchCases>>,
     },
     Num { value: f64, suffix: NumSuffix, text: String, float: bool },
     Bool(bool),

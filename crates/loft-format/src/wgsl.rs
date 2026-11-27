@@ -4,7 +4,7 @@ use naga::{Module, WithSpan, front::wgsl::ParseError, valid::{ModuleInfo, Valida
 #[derive(Debug)]
 pub enum Error {
     Parse(ParseError),
-    Validate(WithSpan<ValidationError>),
+    Validate(Box<WithSpan<ValidationError>>),
 }
 
 impl Error {
@@ -27,6 +27,6 @@ impl std::fmt::Display for Error {
 
 pub fn validate(source: &str, validator: &mut Validator) -> Result<(Module, ModuleInfo), Error> {
     let module = naga::front::wgsl::parse_str(source).map_err(Error::Parse)?;
-    let info = validator.validate(&module).map_err(Error::Validate)?;
+    let info = validator.validate(&module).map_err(|e| Error::Validate(Box::new(e)))?;
     Ok((module, info))
 }

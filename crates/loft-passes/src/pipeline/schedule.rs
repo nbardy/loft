@@ -425,7 +425,6 @@ impl Schedule<'_> {
                 }
             }
         }
-        }
         let mut b = drawn.clone();
         b.sort_unstable();
         if b.windows(2).any(|pair| pair[0] == pair[1]) || drawn.len() > abi::MAX_KINDS {

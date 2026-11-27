@@ -693,11 +693,14 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
 
     fn match_expr(&mut self, selector: &'a Expr, cases: &'a MatchCases, first: &'a Expr, fallback: &'a Expr) -> Res<Val<S>> {
         let subject = self.expr(selector)?;
-        let scalar = match subject {
-            Val::U(key) => return self.match_integer(i64::from(key), cases, first, fallback),
-            Val::I(key) => return self.match_integer(i64::from(key), cases, first, fallback),
-            Val::S(scalar) => scalar,
-            _ => unreachable!("checked numeric match selector"),
+        let scalar = if let Val::U(key) = subject {
+            return self.match_integer(i64::from(key), cases, first, fallback);
+        } else if let Val::I(key) = subject {
+            return self.match_integer(i64::from(key), cases, first, fallback);
+        } else if let Val::S(scalar) = subject {
+            scalar
+        } else {
+            unreachable!("checked numeric match selector")
         };
         let mut possible = Vec::new();
         for ((key, _), arm) in cases.arms(first) {

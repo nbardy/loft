@@ -3,11 +3,13 @@
 //! E401/E402 on kind parameters, E403 stage-0 statements outside `comptime fn`, E404 kind code reading stage 0.
 //! Output: the type of every expression, by id.
 
+#[path = "kernel_units.rs"]
+mod kernel_units;
 use crate::Prog;
 use loft_builtins::{ArgShape, Builtin, BuiltinSpec, MotionClass, PolyRule, RetShape, SigRule, lookup};
 use loft_parse::ast::*;
 use loft_ir::{Code, Diag, ImageFormat, Res, Span};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 #[derive(Clone)]
 struct Local {
@@ -23,6 +25,8 @@ pub struct Ck<'p, 'a> {
     kernel: Option<&'a KernelDecl>,
     atomic_writes: BTreeMap<String, Determinism>,
     pending_lowering: Option<Span>,
+    local_units: HashMap<Span, Dimension>,
+    expr_units: HashMap<u32, Dimension>,
     ownership: Option<(String,Vec<String>)>,
     /// A kind query is being checked: `K[i]` reads kind K's rows (laws declare `[K]` parameters instead).
     query: bool,
@@ -297,7 +301,7 @@ fn e003(span: Span, msg: impl Into<String>, fix: impl Into<String>) -> Diag {
 
 impl<'p,'a> Ck<'p,'a> {
     pub fn new(p:&'p Prog<'a>, types:&'p mut Vec<Ty>)->Self {
-        Self{p,types,scopes:vec![],comptime:false,ret:Ty::Void,fresh:0,sig_vars:vec![],hints:None,ownership:None,query:false,kernel:None,atomic_writes:BTreeMap::new(),pending_lowering:None}
+        Self{p,types,scopes:vec![],comptime:false,ret:Ty::Void,fresh:0,sig_vars:vec![],hints:None,ownership:None,query:false,kernel:None,atomic_writes:BTreeMap::new(),pending_lowering:None,local_units:HashMap::new(),expr_units:HashMap::new()}
     }
 
     fn lookup(&self, n: &str) -> Option<&Local> {
@@ -572,6 +576,14 @@ impl<'p,'a> Ck<'p,'a> {
     }
 
     pub(crate) fn kernel(&mut self, k: &'a KernelDecl) -> Res<BTreeMap<String, Determinism>> {
+        self.local_units.clear();
+        self.expr_units.clear();
+        for p in &k.f.params {
+            if let Some(t) = &p.ty {
+                self.resolve(t, true)?;
+                self.local_units.insert(p.name.span, self.declared_unit(t));
+            }
+        }
         self.kernel = Some(k);
         self.atomic_writes.clear();
         let result = self.func(&k.f, None);
@@ -822,6 +834,13 @@ impl<'p,'a> Ck<'p,'a> {
                     if t == Ty::AbstractInt { self.set(value, want.clone()); }
                     t = want;
                 }
+                if self.kernel.is_some() {
+                    let dim = match ty {
+                        Some(t) => { let d = self.declared_unit(t); self.expect_unit(value, d)?; d }
+                        None => self.expr_units[&value.id],
+                    };
+                    self.local_units.insert(name.span, dim);
+                }
                 if t == Ty::AbstractInt {
                     t = Ty::I32;
                 }
@@ -857,6 +876,7 @@ impl<'p,'a> Ck<'p,'a> {
                 self.set(target, l.ty.clone());
                 let t = self.expr(value)?;
                 self.assignable(&t, &l.ty, value.span)?;
+                if self.kernel.is_some() { self.expect_unit(value, self.local_units[&l.span])?; }
                 self.coerce_match_int(value, &l.ty);
             }
             Stmt::Map { name, head, stages } => self.map(name, head, stages)?,
@@ -1060,6 +1080,10 @@ impl<'p,'a> Ck<'p,'a> {
 
     fn expr(&mut self, e: &Expr) -> Res<Ty> {
         let t = self.expr_inner(e)?;
+        if self.kernel.is_some() {
+            let dim = self.kernel_unit(e)?;
+            self.expr_units.insert(e.id, dim);
+        }
         Ok(self.set(e, t))
     }
 
@@ -1998,6 +2022,7 @@ pub fn check_kernel_argument<'a>(
     let expected = ck.resolve(ty, true)?;
     let actual = ck.expr(value)?;
     ck.assignable(&actual, &expected, value.span)?;
+    ck.expect_unit(value, ck.declared_unit(ty))?;
     ck.set(value, expected);
     Ok(())
 }
