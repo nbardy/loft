@@ -1,6 +1,6 @@
 //! Convert the existing lowered schedule to the pass-derived bundle ABI.
 use crate::{
-    Compiled,
+    AuthoredCompute, Compiled,
     program::{AuthoredRun, DispatchRows, Draw, Extent, FrameView, Pass, Program},
 };
 use loft_ir::{*, execution::{self, Execution, Initializer, Image}, precision::{Precision, Resolved, Role}};
@@ -413,7 +413,14 @@ pub fn lower(
     size: (u32, u32),
     frame: impl Fn(bool, Option<([f32; 3], [f32; 3], u32)>) -> Vec<u8>,
 ) -> Result<Bundle> {
-    lower_program(program, parameters(program, compiled)?, size, Options::default(), frame).map(|p| p.bundle)
+    let params = parameters(program, compiled)?;
+    if compiled.compute.standalone && program.passes.is_empty() && program.dispatches.is_empty() {
+        let mut bundle = compiled.compute.bundle.clone();
+        bundle.params = params;
+        compute_bakes(program, &compiled.compute.tables, &mut bundle)?;
+        return Ok(bundle);
+    }
+    prepare(program, params, size, Options::default(), frame, &compiled.compute).map(|p| p.bundle)
 }
 
 #[derive(Default)]
@@ -444,6 +451,14 @@ pub struct Prepared {
 pub fn lower_program(
     program: &Program, params: Vec<ParamMeta>, size: (u32, u32), opts: Options,
     frame: impl Fn(bool, Option<([f32; 3], [f32; 3], u32)>) -> Vec<u8>,
+) -> Result<Prepared> {
+    prepare(program, params, size, opts, frame, &AuthoredCompute::default())
+}
+
+fn prepare(
+    program: &Program, params: Vec<ParamMeta>, size: (u32, u32), opts: Options,
+    frame: impl Fn(bool, Option<([f32; 3], [f32; 3], u32)>) -> Vec<u8>,
+    compute: &AuthoredCompute,
 ) -> Result<Prepared> {
     let indexed = |kind: &crate::program::KindTable| {
         !opts.overdraw && program.modules[kind.module].naga.entry_points.iter().any(|e| e.name == "vs_grid")
@@ -639,29 +654,40 @@ pub fn lower_program(
         let sampler = b.external();
         b.baked_inputs.insert((3, 2), sampler);
     }
+    let mut baked_tables = BTreeMap::new();
     for (slot, bake) in (3..).zip(bakes) {
         let texture = b.transient(4, 0);
         b.baked_inputs.insert((3, slot), texture);
+        baked_tables.insert(bake.name.as_str(), texture);
         execution.initializers.push(append_bake(&mut b.bundle, bake, texture, &mut b.wave)?);
     }
+    let mut authored = compute.append_to(&mut b.bundle, &baked_tables).peekable();
     let mut present = Resources::from([((1, 0), hdr), ((1, 1), vis)]);
+    let spectral = program.path.as_ref().is_some_and(|path| matches!(path.integrator, crate::emit::paths::Integrator::Spectral));
     if let Some(path) = &program.path {
         for (symbol, data) in path_words(program, path)? {
             present.insert(symbol, b.words(1, data));
         }
-        if matches!(path.integrator, crate::emit::paths::Integrator::Spectral) {
+        if spectral {
+            if !program.passes.iter().any(|pass| matches!(pass, Pass::Path(_))) {
+                return Err("a path-traced program has a path pass".into());
+            }
             let bins = b.transient(4, 4 * 128 * 128);
             present.insert((2, 5), bins);
             b.bundle.resources.resets.push(bins);
-            let module = program.passes.iter().find_map(|pass| if let Pass::Path(m) = pass { Some(*m) } else { None })
-                .ok_or("a path-traced program has a path pass")?;
-            b.compute(module, "photons", DispatchExtent::Fixed([1024, 1, 1]), &present)?;
-            b.wave += 1;
         }
     }
     b.bundle.resources.resets.extend([draw_args, shade_args]);
 
-    for pass in &program.passes {
+    for position in 0..=program.passes.len() {
+        while authored.peek().is_some_and(|(slot, _)| *slot == position) {
+            let (_, mut pass) = authored.next().expect("peeked authored pass");
+            pass.id = PassId(b.bundle.passes.len() as u32);
+            pass.wave = b.wave;
+            b.bundle.passes.push(pass);
+            b.wave = b.wave.checked_add(1).ok_or("too many pass waves")?;
+        }
+        let Some(pass) = program.passes.get(position) else { break };
         match pass {
             // The template's own (group, binding) addresses carry the frame views it bound by name.
             Pass::Authored(a) => {
@@ -763,16 +789,17 @@ pub fn lower_program(
                     }
                 }
             }
-            Pass::Path(module) => b.draw(
-                *module,
-                ("vs_present", "fs_present"),
-                (present_args, 0, None),
-                (target, None),
-                &present,
-            )?,
+            Pass::Path(module) => {
+                if spectral {
+                    b.compute(*module, "photons", DispatchExtent::Fixed([1024, 1, 1]), &present)?;
+                    b.wave = b.wave.checked_add(1).ok_or("too many pass waves")?;
+                }
+                b.draw(*module, ("vs_present", "fs_present"), (present_args, 0, None), (target, None), &present)?;
+            }
         }
-        b.wave += 1;
+        b.wave = b.wave.checked_add(1).ok_or("too many pass waves")?;
     }
+    if authored.next().is_some() { return Err("authored compute position is outside the frame schedule".into()); }
     let shadow_wave = variants.first().map(|(id, _)| b.bundle.passes[id.0 as usize].wave);
     b.bundle.resources.frame = Some(FrameData {
         main,
@@ -814,7 +841,7 @@ fn append_bake(bundle: &mut Bundle, bake: &crate::bake_tex::Bake, texture: Table
         image: Some(Image { table: texture, dimension, extent: bake.size(), levels: bake.mip_count(), format: bake.storage()? }) })
 }
 
-pub(super) fn compute_bakes(program: &Program, tables: &BTreeMap<String, TableId>, bundle: &mut Bundle) -> Result<()> {
+fn compute_bakes(program: &Program, tables: &BTreeMap<String, TableId>, bundle: &mut Bundle) -> Result<()> {
     let mut execution = Execution::default();
     let mut wave = bundle.passes.last().map_or(Ok(0), |pass| pass.wave.checked_add(1).ok_or("too many pass waves"))?;
     for bake in &program.bakes {

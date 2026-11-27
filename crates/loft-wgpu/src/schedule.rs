@@ -5,7 +5,7 @@ use crate::{
     error::*,
     stepping::Fused,
 };
-use loft_ir::*;
+use loft_ir::{*, execution::{self, Execution, RasterState}};
 use naga::ShaderStage;
 use std::collections::{BTreeMap, BTreeSet};
 use wgpu::{BindGroupLayoutEntry as Entry, BufferBindingType::Storage, ShaderStages as S};
@@ -18,6 +18,7 @@ pub enum Work {
 pub struct Draw {
     pub decl: IndirectDraw,
     pub index: Option<(TableId, wgpu::IndexFormat)>,
+    pub state: Option<RasterState>,
 }
 pub struct Raster {
     pub draws: Vec<Draw>,
@@ -71,11 +72,16 @@ struct Linker<'a> {
     tables: BTreeMap<TableId, &'a TableDecl>,
     shaders: BTreeMap<ModuleId, Shader>,
     culling: &'a [PassId],
+    raster: BTreeMap<PassId, RasterState>,
     passes: BTreeMap<PassId, Pass>,
     outbox: Option<TableId>,
 }
 impl Schedule {
     pub fn new(b: &Bundle, features: wgpu::Features) -> Result<Self> {
+        Self::with_execution(b, features, &descriptor(b)?)
+    }
+
+    pub fn with_execution(b: &Bundle, features: wgpu::Features, exec: &Execution) -> Result<Self> {
         if !crate::bundle::distinct_passes(&b.passes) {
             return Err(RunnerError::AbiMismatch);
         }
@@ -91,20 +97,31 @@ impl Schedule {
                 return Err(RunnerError::AbiMismatch);
             }
         }
+        let raster: BTreeMap<_, _> = exec.raster.iter().map(|state| (state.pass, *state)).collect();
+        if raster.len() != exec.raster.len() { return Err(RunnerError::AbiMismatch); }
         let mut link = Linker {
-            tables: b.tables.iter().map(|t| (t.id, t)).collect(),
+            tables: b.tables.iter().filter(|t| t.id != execution::DESCRIPTOR).map(|t| (t.id, t)).collect(),
             shaders,
             culling: &b.resources.cull_front,
+            raster,
             passes: BTreeMap::new(),
             outbox: None,
         };
         let order = b.passes.iter().map(|p| link.pass(p)).collect::<Result<_>>()?;
+        if !link.raster.is_empty() { return Err(RunnerError::AbiMismatch); }
         Ok(Self {
             passes: link.passes,
             order,
             outbox: link.outbox,
         })
     }
+}
+
+pub(crate) fn descriptor(b: &Bundle) -> Result<Execution> {
+    let mut descriptors = b.tables.iter().filter(|t| t.id == execution::DESCRIPTOR);
+    let Some(table) = descriptors.next() else { return Ok(Execution::default()) };
+    if descriptors.next().is_some() { return Err(RunnerError::AbiMismatch); }
+    Execution::read(table).ok_or(RunnerError::AbiMismatch)
 }
 
 impl Linker<'_> {
@@ -218,7 +235,7 @@ impl Linker<'_> {
         })
     }
     fn draw(
-        &self,
+        &mut self,
         p: &PassDecl,
         draws: &[IndirectDraw],
         colors: &[TargetDesc],
@@ -229,13 +246,13 @@ impl Linker<'_> {
             return Err(RunnerError::AbiMismatch);
         }
         let mut reflected = BTreeMap::new();
+        let state = self.raster.remove(&p.id);
         let draws = draws
             .iter()
             .map(|d| {
-                if d.vertex.is_some() {
-                    return Err(RunnerError::Unsupported(
-                        "vertex attributes require a layout; use storage vertex pulling",
-                    ));
+                if let Some(id) = d.vertex {
+                    let table = self.tables.get(&id).ok_or(RunnerError::UnknownResource)?;
+                    if table.stride_bytes == 0 { return Err(RunnerError::AbiMismatch); }
                 }
                 if !self.tables.contains_key(&d.args) {
                     return Err(RunnerError::UnknownResource);
@@ -267,7 +284,7 @@ impl Linker<'_> {
                 if !colors.is_empty() || !d.fragment_entry.is_empty() {
                     stage(ShaderStage::Fragment, &d.fragment_entry, S::FRAGMENT)?;
                 }
-                Ok(Draw { decl: d.clone(), index })
+                Ok(Draw { decl: d.clone(), index, state })
             })
             .collect::<Result<_>>()?;
         let targets = Attachments {

@@ -139,10 +139,11 @@ pub struct Compiled {
     pub compute: AuthoredCompute,
 }
 
-/// The standalone pass-derived representation of source-authored compute.
+/// Source-authored compute declarations and their placement among frame passes.
 #[derive(Default)]
 pub struct AuthoredCompute {
     standalone: bool,
+    positions: Vec<usize>,
     pub bundle: loft_ir::Bundle,
     pub tables: BTreeMap<String, loft_ir::TableId>,
     pub determinism: BTreeMap<loft_ir::TableId, Determinism>,
@@ -455,24 +456,5 @@ pub mod bake_tex;
 #[path = "bundle.rs"]
 mod renderer_bundle;
 pub mod bundle {
-    use super::{Compiled, Program};
-    use loft_ir::Bundle;
-
-    pub use super::renderer_bundle::{Options, lower_program, lower_twin, parameters, replacement};
-
-    pub fn lower(
-        program: &Program, compiled: &Compiled, size: (u32, u32),
-        frame: impl Fn(bool, Option<([f32; 3], [f32; 3], u32)>) -> Vec<u8>,
-    ) -> Result<Bundle, String> {
-        if compiled.compute.bundle.passes.is_empty() {
-            return super::renderer_bundle::lower(program, compiled, size, frame);
-        }
-        if !compiled.compute.standalone || program.path.is_some() || !program.dispatches.is_empty() {
-            return Err("the portable artifact needs a standalone authored compute schedule".into());
-        }
-        let mut bundle = compiled.compute.bundle.clone();
-        bundle.params = parameters(program, compiled)?;
-        super::renderer_bundle::compute_bakes(program, &compiled.compute.tables, &mut bundle)?;
-        Ok(bundle)
-    }
+    pub use super::renderer_bundle::{Options, lower, lower_program, lower_twin, parameters, replacement};
 }

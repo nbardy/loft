@@ -3,13 +3,45 @@
 use crate::{ElemFormat, PassId, TableDecl, TableId, TableLifetime};
 
 pub const DESCRIPTOR: TableId = TableId(u32::MAX);
-const VERSION: u32 = 2;
+const VERSION: u32 = 3;
 
 #[derive(Default)]
 pub struct Execution {
     pub initializers: Vec<Initializer>,
     pub additive: Vec<PassId>,
     pub ranges: Vec<BufferView>,
+    pub raster: Vec<RasterState>,
+    pub samplers: Vec<SamplerSpec>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RasterState {
+    pub pass: PassId,
+    pub cull: CullMode,
+    pub blend: BlendMode,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CullMode {
+    #[default]
+    None,
+    Front,
+    Back,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BlendMode {
+    #[default]
+    Opaque,
+    Additive,
+    Alpha,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SamplerSpec {
+    pub table: TableId,
+    pub nearest: bool,
+    pub repeat: bool,
 }
 pub struct BufferView {
     pub pass: PassId,
@@ -72,8 +104,13 @@ impl ImageStorage {
 impl Execution {
     #[allow(dead_code)]
     pub fn table(&self) -> Option<TableDecl> {
-        if self.initializers.is_empty() && self.additive.is_empty() && self.ranges.is_empty() { return None; }
-        let mut bytes = VERSION.to_le_bytes().to_vec();
+        let overrides = !self.raster.is_empty() || !self.samplers.is_empty();
+        if self.initializers.is_empty() && self.additive.is_empty() && self.ranges.is_empty() && !overrides {
+            return None;
+        }
+        // Keep the original descriptor bytes for bundles that only use v2 fields.
+        let version = if overrides { VERSION } else { 2 };
+        let mut bytes = version.to_le_bytes().to_vec();
         let put = |bytes: &mut Vec<u8>, word: u32| bytes.extend(word.to_le_bytes());
         put(&mut bytes, self.initializers.len() as u32);
         for init in &self.initializers {
@@ -110,6 +147,19 @@ impl Execution {
             bytes.extend(range.offset.to_le_bytes());
             bytes.extend(range.size.to_le_bytes());
         }
+        if overrides {
+            put(&mut bytes, self.raster.len() as u32);
+            for state in &self.raster {
+                put(&mut bytes, state.pass.0);
+                put(&mut bytes, match state.cull { CullMode::None => 0, CullMode::Front => 1, CullMode::Back => 2 });
+                put(&mut bytes, match state.blend { BlendMode::Opaque => 0, BlendMode::Additive => 1, BlendMode::Alpha => 2 });
+            }
+            put(&mut bytes, self.samplers.len() as u32);
+            for sampler in &self.samplers {
+                put(&mut bytes, sampler.table.0);
+                put(&mut bytes, u32::from(sampler.nearest) | (u32::from(sampler.repeat) << 1));
+            }
+        }
         Some(TableDecl { id: DESCRIPTOR, format: ElemFormat::U8, lifetime: TableLifetime::Static,
             stride_bytes: 1, capacity: bytes.len() as u32, initial: bytes.into() })
     }
@@ -134,11 +184,9 @@ impl Execution {
         if table.stride_bytes != 1 || table.capacity as usize != table.initial.len()
             || table.format != ElemFormat::U8 || table.lifetime != TableLifetime::Static { return None; }
         let mut rd = Reader(&table.initial);
-        let legacy = match rd.word()? {
-            1 => true,
-            VERSION => false,
-            _ => return None,
-        };
+        let version = rd.word()?;
+        if !(1..=VERSION).contains(&version) { return None; }
+        let legacy = version == 1;
         let initializers = rd.list(|r| {
             let len = r.word()? as usize;
             let name = std::str::from_utf8(r.take(len)?).ok()?.to_owned();
@@ -166,6 +214,26 @@ impl Execution {
             pass: PassId(r.word()?), group: r.word()?.try_into().ok()?, slot: r.word()?,
             offset: r.long()?, size: r.long()?,
         }))? };
-        rd.0.is_empty().then_some(Self { initializers, additive, ranges })
+        let (raster, samplers) = if version >= 3 {
+            let raster = rd.list(|r| {
+                let pass = PassId(r.word()?);
+                let cull = match r.word()? {
+                    0 => CullMode::None, 1 => CullMode::Front, 2 => CullMode::Back, _ => return None,
+                };
+                let blend = match r.word()? {
+                    0 => BlendMode::Opaque, 1 => BlendMode::Additive, 2 => BlendMode::Alpha, _ => return None,
+                };
+                Some(RasterState { pass, cull, blend })
+            })?;
+            let samplers = rd.list(|r| {
+                let table = TableId(r.word()?);
+                let flags = r.word()?;
+                (flags <= 3).then_some(SamplerSpec { table, nearest: flags & 1 != 0, repeat: flags & 2 != 0 })
+            })?;
+            (raster, samplers)
+        } else {
+            (vec![], vec![])
+        };
+        rd.0.is_empty().then_some(Self { initializers, additive, ranges, raster, samplers })
     }
 }

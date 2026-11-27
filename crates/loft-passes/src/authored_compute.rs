@@ -31,6 +31,38 @@ pub(crate) fn compute_extent(
 }
 
 impl AuthoredCompute {
+    pub(super) fn append_to(
+        &self, bundle: &mut loft_ir::Bundle, baked_tables: &BTreeMap<&str, loft_ir::TableId>,
+    ) -> impl Iterator<Item = (usize, loft_ir::PassDecl)> + use<'_> {
+        use loft_ir::{ElemFormat, ModuleId, PassRun, TableId};
+        let layouts = bundle.struct_layouts.len() as u32;
+        bundle.struct_layouts.extend(self.bundle.struct_layouts.iter().cloned());
+        let aliases: BTreeMap<_, _> = baked_tables.iter()
+            .filter_map(|(name, id)| Some((*self.tables.get(*name)?, *id)))
+            .collect();
+        let tables: Vec<_> = self.bundle.tables.iter().cloned().map(|mut table| {
+            if let Some(&id) = aliases.get(&table.id) { return id; }
+            table.id = TableId(bundle.tables.len() as u32);
+            if let ElemFormat::Struct(index) = &mut table.format { *index += layouts; }
+            let id = table.id;
+            bundle.tables.push(table);
+            id
+        }).collect();
+        let modules = bundle.modules.len() as u32;
+        bundle.modules.extend(self.bundle.modules.iter().cloned().map(|mut module| {
+            module.id.0 += modules;
+            module
+        }));
+        self.positions.iter().copied().zip(self.bundle.passes.iter().cloned().map(move |mut pass| {
+            let PassRun::Compute { module, .. } = &mut pass.run else { unreachable!("authored compute") };
+            *module = ModuleId(module.0 + modules);
+            for binding in &mut pass.bindings {
+                binding.resource = tables[binding.resource.0 as usize];
+            }
+            pass
+        }))
+    }
+
     pub(super) fn declare_table<'a>(
         &mut self, p: &Prog<'a>, types: &mut Vec<Ty>, overrides: &[(String, f64)], decl: &'a PassDecl,
     ) -> Res<(&'a str, &'a str)> {

@@ -59,20 +59,32 @@ pub(super) fn resolve<'a>(
     let mut rows_fns: Vec<&FnDecl> = modules.iter().flat_map(|m| &m.items)
         .filter_map(|item| if let Item::Build(f) = item { Some(f) } else { None }).collect();
     let mut draft = Draft::default();
-    let has_shadow_pass = sched.passes.iter().any(|p| p.verb.name == "find_shadow_map");
-    let mut emitted_passes = HashSet::new();
     let mut compute = AuthoredCompute { standalone: src.compute_only(), ..AuthoredCompute::default() };
+    let screen_only = sched.implicit
+        && sched.passes.iter().any(|pass| pass.verb.name == "screen_pass" && pass.verb.span.file == src.entry())
+        && !p.kinds.values().any(|kind| !kind.queries.is_empty() || kind.name.name == "Mesh");
+    // The source linker supplies a realtime recipe for partial schedules. Preserve its implicit drawable selection
+    // for paths with geometry, and skip the recipe where there are no raster drawables to select.
+    let standalone = compute.standalone;
+    let passes = || sched.passes.iter().filter(|pd| {
+        !(standalone || screen_only) || pd.verb.span.file == src.entry()
+    });
+    let has_shadow_pass = passes().any(|p| p.verb.name == "find_shadow_map");
+    let mut emitted_passes = HashSet::new();
     let mut compute_rows = BTreeMap::new();
     let mut available: HashSet<&str> = ["FrameUniform", "InputsBuf", "ParamsBuf", "RowTables", "LutTables", "BodyTables", "StateBuf", "PoseBuf"].into_iter().collect();
     available.extend(p.bakes.keys().copied());
     let mut labels = HashSet::new();
-    for pd in &sched.passes {
+    let mut path_position = None;
+    for pd in passes() {
         if let Some(resources) = &pd.resources {
             if pd.clock.is_some() {
                 return Err(Diag::new(Code::E520, pd.label.span, "`on` is lowered for `find_shadow_map` only in this build",
                     "remove the clause; the pass runs every frame"));
             }
-            if let Some(frame) = FramePass::classify(p, types, src, overrides, pd, resources)? {
+            let custom = resources.reads.iter().chain(&resources.writes)
+                .all(|r| compute_rows.contains_key(r.name.as_str()) || p.bakes.contains_key(r.name.as_str()));
+            if !custom && let Some(frame) = FramePass::classify(p, types, src, overrides, pd, resources)? {
                 if let Some(read) = frame.reads.iter().find(|r| !available.contains(**r)) {
                     return Err(Diag::new(Code::E505, pd.label.span, format!("{read} read before it was written"), "schedule its producer before this pass"));
                 }
@@ -88,6 +100,8 @@ pub(super) fn resolve<'a>(
                 return Err(Diag::new(Code::E505, read.span, format!("{} read before it was written", read.name), "schedule its producer before this pass"));
             }
             compute.lower(p, types, src, overrides, (pd, resources, &compute_rows), features)?;
+            let position = if path_position.is_some() { 1 } else { draft.steps.len() };
+            compute.positions.resize(compute.bundle.passes.len(), position);
             available.extend(resources.writes.iter().map(|r| r.name.as_str()));
             continue;
         }
@@ -113,6 +127,9 @@ pub(super) fn resolve<'a>(
             }
             _ => draft.lower_pass(p, modules, types, overrides, sched, pd)?,
         }
+        if verb == "screen_pass" {
+            path_position = Some(compute.positions.len());
+        }
         let (reads, writes) = renderer_effects(verb, has_shadow_pass);
         if let Some(read) = reads.iter().find(|r| !available.contains(**r)) {
             return Err(Diag::new(Code::E505, pd.verb.span, format!("{read} read before it was written"), "schedule its producer before this pass"));
@@ -121,17 +138,36 @@ pub(super) fn resolve<'a>(
     }
     let Draft { camera, sun, light, steps, drawn, casters, shadow_size, shadow_clock,
         path, path_entry, paper } = draft;
-    let camera = camera.ok_or_else(|| Diag::new(Code::E520, sched.name.span, "no camera", "add `pass camera: orbit(at: ..., radius: ..., height: ..., period: ..., fov: ...);`"))?;
+    if let Some(position) = path_position {
+        // Path lowering replaces all raster steps with one draw at screen_pass.
+        compute.positions[..position].fill(0);
+    }
+    let camera = match camera {
+        Some(camera) => camera,
+        None if compute.standalone => Orbit {
+            at: [0.0; 3], radius: 4.0, height: 0.5, period: 24.0, fov: 40_f32.to_radians(), fixed_eye: None,
+        },
+        None => return Err(Diag::new(Code::E520, sched.name.span, "no camera",
+            "add `orbit(at: ..., radius: ..., height: ..., period: ..., fov: ...)`")),
+    };
     // The frame's sky is the present pass's `sky` hole: World shading's edge rays call the same function.
     let sky = steps.iter().find_map(|step| match step {
         Step::Frame(frame) => frame.sky(p),
         Step::Stock(_) => None,
     });
-    let (Some(light), Some(sky), Some(sun)) = (light, sky, sun) else {
-        return Err(Diag::new(Code::E520, sched.name.span, "incomplete raster schedule",
-            "schedule shade_tiles and a tonemap pass"));
+    let world_lighting = matches!(light, Some(Lighting::World { .. }));
+    let (light, sky, sun) = match (light, sky, sun) {
+        (Some(light), Some(sky), Some(sun)) => (light, sky, sun),
+        (light, _, sun) if path.is_some() || compute.standalone => (
+            // The path emitter needs kind queries but does not call a raster lighting callback.
+            light.unwrap_or(Lighting::World { callback: "", visibility: Visibility::Center }),
+            "",
+            sun.unwrap_or([0.5, 0.75, 0.35]),
+        ),
+        _ => return Err(Diag::new(Code::E520, sched.name.span, "incomplete raster schedule",
+            "schedule shade_tiles and a tonemap pass")),
     };
-    if matches!(light, Lighting::World { .. }) && path.is_some()
+    if world_lighting && path.is_some()
         || matches!(light, Lighting::World { visibility: Visibility::SubpixelEdges | Visibility::Coverage, .. }
             | Lighting::Bsdf(_, Visibility::Coverage)) && paper.is_some()
     {
@@ -139,7 +175,7 @@ pub(super) fn resolve<'a>(
             "use one shade and film recipe for the raster schedule"));
     }
     let lighting = light;
-    let tiled_world = (matches!(lighting, Lighting::World { .. }) && aov == emit::Aov::Beauty).then(|| emit::paths::PathTrace {
+    let tiled_world = (world_lighting && aov == emit::Aov::Beauty).then(|| emit::paths::PathTrace {
         integrator: emit::paths::Integrator::Reference, bounces: 0, lens: [0.0, 1.0],
         lamps: vec![], worlds: vec![], media: vec![],
     });
@@ -332,14 +368,21 @@ fn screen_pass<'a>(
 impl Schedule<'_> {
     pub(super) fn select_drawables(&mut self, p: &Prog<'_>, tables: &Tables) -> Res<()> {
         let sched = self.decl;
-        let Self { drawn, casters, shadow_size, steps, path, tiled_world, .. } = self;
+        let Self { drawn, casters, shadow_size, steps, path, tiled_world, compute, .. } = self;
         let populated = |k: &&str| !tables[p.kind_index(k)].is_empty();
         if sched.implicit {
             drawn.retain(populated);
             casters.retain(populated);
             if casters.is_empty() {
                 *shadow_size = 0;
-                steps.retain(|step| !matches!(step, Step::Stock(Pass::Shadow(_))));
+                if let Some(shadow) = steps.iter().position(|step| matches!(step, Step::Stock(Pass::Shadow(_)))) {
+                    steps.remove(shadow);
+                    if path.is_none() {
+                        for position in &mut compute.positions {
+                            if *position > shadow { *position -= 1; }
+                        }
+                    }
+                }
             }
         }
         let mut b = drawn.clone();
