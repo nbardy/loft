@@ -60,7 +60,7 @@ pub(super) fn resolve<'a>(
         .filter_map(|item| if let Item::Build(f) = item { Some(f) } else { None }).collect();
     let mut draft = Draft::default();
     let mut compute = AuthoredCompute { standalone: src.compute_only(), ..AuthoredCompute::default() };
-    let entry_passes = || sched.passes.iter().filter(|pass| pass.verb.span.file == src.entry());
+    let entry_passes = || sched.passes.iter().filter(|pass| pass.scheduled_from().file == src.entry());
     let has_graph_resources = |pass: &PassDecl| pass.resources.as_ref().is_some_and(|r| {
         FramePass::draws(r) || r.reads.iter().chain(&r.writes).any(|name| p.targets.contains_key(name.name.as_str()))
     });
@@ -68,13 +68,13 @@ pub(super) fn resolve<'a>(
         && !entry_passes().any(|pass| pass.resources.is_none() && matches!(pass.verb.name.as_str(),
             "render_bundle" | "shade_tiles" | "screen_pass" | "woodblock" | "realtime"));
     let screen_only = sched.implicit
-        && sched.passes.iter().any(|pass| pass.verb.name == "screen_pass" && pass.verb.span.file == src.entry())
+        && sched.passes.iter().any(|pass| pass.verb.name == "screen_pass" && pass.scheduled_from().file == src.entry())
         && !p.kinds.values().any(|kind| !kind.queries.is_empty() || kind.name.name == "Mesh");
     // The source linker supplies a realtime recipe for partial schedules. Preserve its implicit drawable selection
     // for paths with geometry, and skip the recipe where there are no raster drawables to select.
     let standalone = compute.standalone;
     let passes = || sched.passes.iter().filter(|pd| {
-        !(standalone || screen_only || explicit_graph) || pd.verb.span.file == src.entry()
+        !(standalone || screen_only || explicit_graph) || pd.scheduled_from().file == src.entry()
     });
     let has_shadow_pass = passes().any(|p| p.verb.name == "find_shadow_map");
     let mut emitted_passes = HashSet::new();
@@ -237,7 +237,7 @@ impl<'a> Draft<'a> {
                     if call.name != "draw_indirect" {
                         return Err(Diag::new(Code::E520, call.span, format!("`{}` in a render bundle", call.name), "write `draw_indirect(Kind, ...)`"));
                     }
-                    let fake = PassDecl { label: pd.label.clone(), verb: call.clone(), args: args.iter().map(|a| Arg { name: None, value: clone_name(&a.value) }).collect(), body: vec![], resources: None, clock: None };
+                    let fake = PassDecl { label: pd.label.clone(), verb: call.clone(), call_site: pd.call_site, args: args.iter().map(|a| Arg { name: None, value: clone_name(&a.value) }).collect(), body: vec![], resources: None, clock: None };
                     for k in kind_args(p, &fake)? {
                         self.drawn.push(k);
                     }

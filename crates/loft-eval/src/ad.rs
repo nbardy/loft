@@ -62,10 +62,14 @@ impl Ad<'_> {
                 parameter: parameter.clone(),
                 args: self.cp_args(args),
             },
-            ExprKind::If { condition, then, otherwise } => ExprKind::If {
+            ExprKind::If { condition, then, otherwise, cases } => ExprKind::If {
                 condition: Box::new(self.cp(condition)),
                 then: self.cp_arm(then),
                 otherwise: self.cp_arm(otherwise),
+                cases: cases.as_ref().map(|cases| MatchCases {
+                    first: cases.first,
+                    rest: cases.rest.iter().map(|(key, value)| (*key, self.cp(value))).collect(),
+                }),
             },
             ExprKind::Num { value, suffix, text, float } => ExprKind::Num { value: *value, suffix: *suffix, text: text.clone(), float: *float },
             ExprKind::Bool(b) => ExprKind::Bool(*b),
@@ -161,7 +165,10 @@ impl Ad<'_> {
             ExprKind::Unproved { .. } | ExprKind::FiniteDiff { .. } => return Err(Diag::new(
                 Code::E307, sp, "automatic differentiation crosses a numerical derivative boundary",
                 "use finite differences inside unproved geometry")),
-            ExprKind::If { .. } => return Err(Diag::new(Code::E307, x.span, "conditional expression has no smooth derivative", "use a smooth blend")),
+            ExprKind::If { condition, cases: Some(_), .. } => return Err(Diag::new(
+                Code::E307, condition.span, "match may switch arms at the differentiated input",
+                "differentiate the smooth arm expressions or use a smooth blend")),
+            ExprKind::If { cases: None, .. } => return Err(Diag::new(Code::E307, x.span, "conditional expression has no smooth derivative", "use a smooth blend")),
             ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::String(_) => None,
             ExprKind::Name(n) => self.live.contains(n).then(|| self.name(&format!("{n}__t"), sp)),
             ExprKind::Member(b, m) => {
@@ -674,6 +681,7 @@ mod soundness_tests {
             condition: Box::new(condition),
             then: ExprBlock { body: Block { stmts: vec![] }, value: Box::new(unproved) },
             otherwise: ExprBlock { body: Block { stmts: vec![] }, value: Box::new(value) },
+            cases: None,
         });
         let original = ids(&expr);
         let copied = ids(&ad.cp(&expr));

@@ -691,6 +691,69 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
         join_val(a, b, span)
     }
 
+    fn match_expr(&mut self, selector: &'a Expr, cases: &'a MatchCases, first: &'a Expr, fallback: &'a Expr) -> Res<Val<S>> {
+        let subject = self.expr(selector)?;
+        let scalar = match subject {
+            Val::U(key) => return self.match_integer(i64::from(key), cases, first, fallback),
+            Val::I(key) => return self.match_integer(i64::from(key), cases, first, fallback),
+            Val::S(scalar) => scalar,
+            _ => unreachable!("checked numeric match selector"),
+        };
+        let mut possible = Vec::new();
+        for ((key, _), arm) in cases.arms(first) {
+            match scalar.cmp(BinOp::Eq, &S::c(key as f64)) {
+                Some(true) => return self.expr(arm),
+                Some(false) => {}
+                None => possible.push(arm),
+            }
+        }
+        if possible.is_empty() { return self.expr(fallback); }
+        possible.push(fallback);
+        let spatial = scalar.lip() != 0.0;
+        let span = selector.span;
+        // A per-point fork can enclose the result, but merging writes would also need
+        // a discontinuity bound for each variable that survives the arms.
+        if spatial && possible.iter().any(|arm| {
+            let mut refs = loft_check::references::References::default();
+            refs.expr(arm, &[]);
+            refs.assigns
+        }) {
+            return Err(Diag::new(Code::E211, span, "point-dependent match arm assigns a value",
+                "return the value from the arm and assign the match result"));
+        }
+        let before = self.env.clone();
+        let mut arms = possible.into_iter();
+        let first = arms.next().expect("at least one possible case");
+        let mut result = self.expr(first)?;
+        let mut after = std::mem::replace(&mut self.env, before.clone());
+        for arm in arms {
+            let value = self.expr(arm)?;
+            let env = std::mem::replace(&mut self.env, before.clone());
+            result = join_val(result, value, span)?;
+            if !spatial {
+                after = join_env(after, env, span)?;
+            }
+        }
+        if spatial {
+            // Equality with a literal can introduce a jump even though each arm is smooth.
+            result = match result {
+                Val::S(value) => Val::S(value.with_lip(f64::INFINITY)),
+                Val::V(values, _) => Val::V(values, f64::INFINITY),
+                Val::B(Truth::PerFrame) => Val::B(Truth::PerPoint),
+                other => other,
+            };
+        } else {
+            self.env = after;
+        }
+        Ok(result)
+    }
+
+    fn match_integer(&mut self, key: i64, cases: &'a MatchCases, first: &'a Expr, fallback: &'a Expr) -> Res<Val<S>> {
+        let arm = cases.arms(first).find(|((pattern, _), _)| *pattern == key)
+            .map_or(fallback, |(_, arm)| arm);
+        self.expr(arm)
+    }
+
     fn expr_inner(&mut self, e: &'a Expr) -> Res<Val<S>> {
         match &e.kind {
             ExprKind::Unproved { body, .. } => self.expr_arm(body),
@@ -715,7 +778,9 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                     _ => unreachable!("checked floating result"),
                 })
             }
-            ExprKind::If { condition, then, otherwise } => {
+            ExprKind::If { condition, then, otherwise, cases: Some(cases) } =>
+                self.match_expr(condition, cases, &then.value, &otherwise.value),
+            ExprKind::If { condition, then, otherwise, cases: None } => {
                 match self.expr(condition)? {
                     Val::B(Truth::Known(true)) => self.expr_arm(then),
                     Val::B(Truth::Known(false)) => self.expr_arm(otherwise),

@@ -156,6 +156,16 @@ pub(super) fn shape_of(p: &Prog, e: &Expr, local: &dyn Fn(&str) -> Option<Shape>
             Some(_) | None => Err(no_layout(e)),
         },
         ExprKind::Name(n) => local(n).ok_or_else(|| no_layout(e)),
+        ExprKind::If { then, otherwise, cases: Some(cases), .. } => {
+            let shape = shape_of(p, &otherwise.value, local, stack)?;
+            for (_, arm) in cases.arms(&then.value) {
+                if !shape.same_as(&shape_of(p, arm, local, stack)?) {
+                    return Err(Diag::new(Code::E405, arm.span, "match arms use different lobe layouts",
+                        "use the same lobes in each arm and vary their arguments"));
+                }
+            }
+            Ok(shape)
+        }
         ExprKind::Unproved { .. } | ExprKind::FiniteDiff { .. } | ExprKind::If { .. } | ExprKind::Num { .. }
         | ExprKind::Bool(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Ctor { .. }
         | ExprKind::Binary(..) | ExprKind::Unary(..) | ExprKind::String(_) => Err(no_layout(e)),

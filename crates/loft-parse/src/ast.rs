@@ -293,11 +293,20 @@ pub struct ScheduleDecl {
 pub struct PassDecl {
     pub label: Ident,
     pub verb: Ident,
+    /// Outermost schedule call, separate from the template's diagnostic and resource paths.
+    #[serde(skip)]
+    pub call_site: Option<Span>,
     pub args: Vec<Arg>,
     pub body: Vec<(Ident, Vec<Arg>)>,
     pub resources: Option<PassResources>,
     /// `on load` / `on dirty(...)`: the stage the step runs at. `None` runs it every frame.
     pub clock: Option<BakeClock>,
+}
+
+impl PassDecl {
+    pub fn scheduled_from(&self) -> Span {
+        self.call_site.unwrap_or(self.verb.span)
+    }
 }
 
 /// A schedule function's parameter: `name`, `name = default`, or `..name` (every remaining positional argument).
@@ -355,6 +364,19 @@ pub struct ExprBlock {
     pub value: Box<Expr>,
 }
 
+/// An integer dispatch shares the conditional node's first arm and fallback.
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct MatchCases {
+    pub first: (i64, Span),
+    pub rest: Vec<((i64, Span), Expr)>,
+}
+
+impl MatchCases {
+    pub fn arms<'a>(&'a self, first: &'a Expr) -> impl Iterator<Item = ((i64, Span), &'a Expr)> {
+        std::iter::once((self.first, first)).chain(self.rest.iter().map(|(key, value)| (*key, value)))
+    }
+}
+
 #[derive(serde::Serialize, Clone, Debug)]
 pub enum ExprKind {
     /// Geometry lowering reads the scale at this site and uses four-tap normals.
@@ -365,6 +387,8 @@ pub enum ExprKind {
         condition: Box<Expr>,
         then: ExprBlock,
         otherwise: ExprBlock,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cases: Option<MatchCases>,
     },
     Num { value: f64, suffix: NumSuffix, text: String, float: bool },
     Bool(bool),

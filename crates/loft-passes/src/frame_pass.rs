@@ -327,12 +327,25 @@ impl<'a> FramePass<'a> {
                 Some(Fact::Drawn(_) | Fact::Edges(_) | Fact::Aov(_)) => Err(bad(format!("`{n}` is a frame fact; compare it in an `if`"))),
                 None => p.fns.get_key_value(n.as_str()).map(|(&k, _)| Fragment::Function(k)).ok_or_else(|| bad(format!("`{n}` is not a library fn"))),
             },
-            ExprKind::If { condition, then, otherwise } => {
+            ExprKind::If { condition, then, otherwise, cases: None } => {
                 let arm = if self.truth(condition, facts)? { then } else { otherwise };
                 if !arm.body.stmts.is_empty() {
                     return Err(bad("a hole's `if` arm is one value".into()));
                 }
                 self.value(p, src, &arm.value, facts)
+            }
+            ExprKind::If { condition, then, otherwise, cases: Some(cases) } => {
+                let number = match &condition.kind {
+                    ExprKind::Num { value, .. } => Some(*value),
+                    ExprKind::Name(name) => match fact(name, facts) {
+                        Some(Fact::Drawn(value)) => Some(f64::from(value)),
+                        _ => None,
+                    },
+                    _ => None,
+                }.ok_or_else(|| bad("a match in a template hole needs a numeric selector".into()))?;
+                let selected = cases.arms(&then.value).find(|((key, _), _)| *key as f64 == number)
+                    .map_or(otherwise.value.as_ref(), |(_, value)| value);
+                self.value(p, src, selected, facts)
             }
             ExprKind::Unproved { .. } | ExprKind::FiniteDiff { .. } | ExprKind::Bool(_) | ExprKind::Member(..) | ExprKind::Index(..)
             | ExprKind::Call { .. } | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => Err(bad("this is not a hole value".into())),

@@ -30,8 +30,10 @@ pub fn supports_expr(types: &[Ty], e: &Expr) -> bool {
             condition,
             then,
             otherwise,
+            cases,
         } => {
             visit(condition)
+                && cases.as_ref().is_none_or(|cases| cases.rest.iter().all(|(_, value)| visit(value)))
                 && [then, otherwise]
                     .iter()
                     .all(|arm| supports_block(types, &arm.body) && visit(&arm.value))

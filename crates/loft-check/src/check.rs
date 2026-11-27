@@ -311,8 +311,41 @@ impl<'p,'a> Ck<'p,'a> {
         if self.types.len() <= i {
             self.types.resize(i + 1, Ty::Void);
         }
+        if matches!(t, Ty::F32 | Ty::I32 | Ty::U32) {
+            match &e.kind {
+                ExprKind::If { then, otherwise, cases: Some(cases), .. } => {
+                    for arm in cases.arms(&then.value).map(|(_, arm)| arm).chain([otherwise.value.as_ref()]) {
+                        if self.types.get(arm.id as usize) == Some(&Ty::AbstractInt) {
+                            self.set(arm, t.clone());
+                        }
+                    }
+                }
+                // Context can reach the match through an otherwise abstract arithmetic expression.
+                ExprKind::Unary(..) | ExprKind::Binary(..) => self.coerce_match_int(e, &t),
+                _ => {}
+            }
+        }
         self.types[i] = t.clone();
         t
+    }
+
+    // A match materializes a local in WGSL, so its abstract integer
+    // result must take the expected type before that local is emitted.
+    fn coerce_match_int(&mut self, e: &Expr, want: &Ty) {
+        if !matches!(want, Ty::F32 | Ty::I32 | Ty::U32)
+            || self.types.get(e.id as usize) != Some(&Ty::AbstractInt)
+        {
+            return;
+        }
+        match &e.kind {
+            ExprKind::If { cases: Some(_), .. } => { self.set(e, want.clone()); }
+            ExprKind::Unary(UnOp::Neg, value) if *want != Ty::U32 => self.coerce_match_int(value, want),
+            ExprKind::Binary(BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem, a, b) => {
+                self.coerce_match_int(a, want);
+                self.coerce_match_int(b, want);
+            }
+            _ => {}
+        }
     }
 
     /// Resolves written type syntax. `sig`: a `'s` is a signature variable; otherwise it names a map in scope.
@@ -824,6 +857,7 @@ impl<'p,'a> Ck<'p,'a> {
                 self.set(target, l.ty.clone());
                 let t = self.expr(value)?;
                 self.assignable(&t, &l.ty, value.span)?;
+                self.coerce_match_int(value, &l.ty);
             }
             Stmt::Map { name, head, stages } => self.map(name, head, stages)?,
             Stmt::Return(v, span) => {
@@ -1053,7 +1087,9 @@ impl<'p,'a> Ck<'p,'a> {
                     _ => Err(e003(function.span, "finite differences require a floating result", "differentiate a scalar or vector function")),
                 }
             }
-            ExprKind::If { condition, then, otherwise } => {
+            ExprKind::If { condition, then, otherwise, cases: Some(cases) } =>
+                self.match_expr(condition, cases, &then.value, &otherwise.value),
+            ExprKind::If { condition, then, otherwise, cases: None } => {
                 let actual = self.expr(condition)?;
                 self.assignable(&actual, &Ty::Bool, condition.span)?;
                 let a = self.expr_arm(then)?;
@@ -1145,7 +1181,7 @@ impl<'p,'a> Ck<'p,'a> {
                 {
                     return Ok(Ty::F32);
                 }
-                binary(*op, &ta, &tb, a.span, b.span, e.span).map_err(|d| {
+                let result = binary(*op, &ta, &tb, a.span, b.span, e.span).map_err(|d| {
                     // A value from a map space used outside it (the draft's gaze bug): quote the author's transform
                     // and point at the map that made the space.
                     let Ty::Geo(_, Space::Fresh(m, _)) = &tb else { return d };
@@ -1158,7 +1194,15 @@ impl<'p,'a> Ck<'p,'a> {
                         _ => d,
                     };
                     d.note(l.span, format!("space `'{m}` introduced here"))
-                })
+                })?;
+                for (value, opposite) in [(a, &tb), (b, &ta)] {
+                    match opposite {
+                        Ty::F32 | Ty::U32 | Ty::I32 => self.coerce_match_int(value, opposite),
+                        Ty::VecN(_) | Ty::Geo(..) => self.coerce_match_int(value, &Ty::F32),
+                        _ => {}
+                    }
+                }
+                Ok(result)
             }
             ExprKind::Ctor { ty, args } => {
                 let target = self.resolve(ty, false)?;
@@ -1182,10 +1226,45 @@ impl<'p,'a> Ck<'p,'a> {
                     other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::F32 | other @ Ty::AbstractInt | other @ Ty::Xform(..) | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Frame(_) | other @ Ty::Table(_) | other @ Ty::Verdict | other @ Ty::Struct(_) | other @ Ty::Array(..) | other @ Ty::Id(_) | other @ Ty::Bsdf => return Err(e003(e.span, format!("cannot construct `{other}`"), "construct a vector or point")),
                 };
                 components(&ts, n, e.span)?;
+                for arg in args {
+                    self.coerce_match_int(&arg.value, &Ty::F32);
+                }
                 Ok(target)
             }
             ExprKind::Call { callee, args } => self.call(callee, args, e.span),
         }
+    }
+
+    fn match_expr(&mut self, selector: &Expr, cases: &MatchCases, first: &Expr, fallback: &Expr) -> Res<Ty> {
+        let ty = self.expr(selector)?;
+        if !num(&ty) {
+            return Err(e003(selector.span, format!("cannot match on {ty}"), "match on a scalar number"));
+        }
+        let mut seen = HashSet::new();
+        for ((key, span), _) in cases.arms(first) {
+            let fits = match ty {
+                Ty::F32 => (key as f32) as i64 == key,
+                Ty::U32 => u32::try_from(key).is_ok(),
+                _ => i32::try_from(key).is_ok(),
+            };
+            if !fits {
+                return Err(e003(span, format!("match pattern {key} is outside the exact range of {ty}"),
+                    "use an integer representable in the selector's type"));
+            }
+            if !seen.insert(key) {
+                return Err(e003(span, format!("duplicate match pattern {key}"), "list each pattern once"));
+            }
+        }
+        let mut result = self.expr(fallback)?;
+        for (_, arm) in cases.arms(first) {
+            let actual = self.expr(arm)?;
+            result = meet(&result, &actual).ok_or_else(|| e003(arm.span,
+                format!("match arms have different types {result} and {actual}"), "return a single type from all arms"))?;
+        }
+        if matches!(result, Ty::Void | Ty::Map(..) | Ty::Table(_)) {
+            return Err(e003(fallback.span, format!("match cannot return {result}"), "return a value from each arm"));
+        }
+        Ok(result)
     }
 
     fn member(&mut self, base: &Expr, m: &Ident) -> Res<Ty> {
@@ -1523,6 +1602,8 @@ impl<'p,'a> Ck<'p,'a> {
                         || (spec.id == Builtin::MixBsdf && *shape == ArgShape::Float)
                     {
                         self.set(&arg.value, expected);
+                    } else if *shape == ArgShape::Float {
+                        self.coerce_match_int(&arg.value, &Ty::F32);
                     }
                 }
                 Ok(match result {
@@ -1537,7 +1618,21 @@ impl<'p,'a> Ck<'p,'a> {
                     RetShape::Bsdf => Ty::Bsdf,
                 })
             }
-            SigRule::Poly(rule) => builtin_poly(spec.name, rule, &ts, &sp, span),
+            SigRule::Poly(rule) => {
+                let result = builtin_poly(spec.name, rule, &ts, &sp, span)?;
+                let scalar = match (rule, &result) {
+                    (PolyRule::Place | PolyRule::VectorConstructor(_), _) => Some(&Ty::F32),
+                    (PolyRule::Componentwise | PolyRule::Mix | PolyRule::Select, Ty::VecN(_) | Ty::Geo(..)) => Some(&Ty::F32),
+                    (PolyRule::Componentwise | PolyRule::Mix | PolyRule::Select, t @ (Ty::F32 | Ty::I32 | Ty::U32)) => Some(t),
+                    _ => None,
+                };
+                if let Some(scalar) = scalar {
+                    for arg in args {
+                        self.coerce_match_int(&arg.value, scalar);
+                    }
+                }
+                Ok(result)
+            }
         }
     }
 

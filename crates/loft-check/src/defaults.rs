@@ -80,10 +80,21 @@ fn compose(
         .find_map(|i| if let Item::Schedule(s) = i { Some(s.clone()) } else { None });
     let passes = authored.as_mut().map_or_else(Vec::new, |s| std::mem::take(&mut s.passes));
     let mut before = expand(passes, library, 0)?;
-    // A schedule call can supply the entire render recipe. Check after expansion
-    // so its camera and render bundle take precedence over the implicit recipe.
-    let complete = before.iter().any(|p| p.verb.name == "render_bundle");
-    let schedule = if complete {
+    // A called template can already provide the present step without any stock render_bundle.
+    // Appending the fallback in that case supplies a second cull and present.
+    let stock_bundle = before.iter().any(|p| p.verb.name == "render_bundle");
+    let template_present = before.iter().any(|p| p.call_site.is_some()
+        && p.resources.as_ref().is_some_and(|r| r.writes.iter().any(|n| n.name == "Swapchain")));
+    let has_camera = |p: &PassDecl| matches!(p.verb.name.as_str(), "orbit" | "use_camera");
+    if let Some(camera) = camera.filter(|_| !stock_bundle && !before.iter().any(has_camera)) {
+        let name = Ident { name: "use_camera".into(), span: camera.name.span };
+        let args = vec![Arg { name: None, value: Expr {
+            id: *next, span: camera.name.span, kind: ExprKind::Name(camera.name.name.clone()),
+        } }];
+        *next += 1;
+        before.insert(0, PassDecl { label: name.clone(), verb: name, call_site: None, args, body: vec![], resources: None, clock: None });
+    }
+    let schedule = if stock_bundle || template_present {
         let mut schedule = authored.expect("expanded authored schedule");
         schedule.passes = before;
         schedule
@@ -97,15 +108,6 @@ fn compose(
         }
         before.retain(|p| p.verb.name != "realtime" || !p.args.is_empty());
         schedule.passes = expand(schedule.passes, library, 0)?;
-        let has_camera = |p: &PassDecl| matches!(p.verb.name.as_str(), "orbit" | "use_camera");
-        if let Some(camera) = camera.filter(|_| !before.iter().any(has_camera)) {
-            let name = Ident { name: "use_camera".into(), span: camera.name.span };
-            let args = vec![Arg { name: None, value: Expr {
-                id: *next, span: camera.name.span, kind: ExprKind::Name(camera.name.name.clone()),
-            } }];
-            *next += 1;
-            before.insert(0, PassDecl { label: name.clone(), verb: name, args, body: vec![], resources: None, clock: None });
-        }
         if before.iter().any(has_camera) {
             schedule.passes.retain(|p| p.verb.name != "orbit");
         }
@@ -153,6 +155,7 @@ fn expand(passes: Vec<PassDecl>, library: &[ScheduleDecl], depth: u32) -> Res<Ve
         let mut steps = Vec::with_capacity(function.passes.len());
         for step in &function.passes {
             let mut step = substitute(step, &env)?;
+            step.call_site = Some(call.scheduled_from());
             // `name(...) on load` puts every step of the function at that stage, unless the step names its own.
             if step.clock.is_none() { step.clock.clone_from(&call.clock); }
             steps.push(step);
@@ -197,6 +200,14 @@ fn bind(function: &ScheduleDecl, call: &PassDecl) -> Res<Env> {
 
 fn substitute(step: &PassDecl, env: &Env) -> Res<PassDecl> {
     let mut step = step.clone();
+    if step.resources.is_none() && lookup(env, &step.verb.name).is_some() {
+        let names = stores(std::slice::from_ref(&step.verb), env)?;
+        let [name] = names.as_slice() else {
+            return Err(Diag::new(Code::E520, step.verb.span, "expected one schedule function name",
+                "pass a single name as the schedule callee"));
+        };
+        step.verb = name.clone();
+    }
     step.args = arguments(&step.args, env)?;
     if let Some(BakeClock::Dirty(names)) = &mut step.clock { *names = stores(names, env)?; }
     for (_, args) in &mut step.body {
@@ -274,8 +285,13 @@ fn expression(e: &mut Expr, env: &Env) -> Res<()> {
     }
     match &mut e.kind {
         ExprKind::Name(_) => Ok(()),
-        ExprKind::If { condition, then, otherwise } => {
+        ExprKind::If { condition, then, otherwise, cases } => {
             expression(condition, env)?;
+            if let Some(cases) = cases {
+                for (_, value) in &mut cases.rest {
+                    expression(value, env)?;
+                }
+            }
             for arm in [then, otherwise] {
                 for stmt in &mut arm.body.stmts { statement(stmt, env)?; }
                 expression(&mut arm.value, env)?;
