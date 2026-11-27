@@ -1,3 +1,5 @@
+const LOFT_PRIMARY_WORLD = {{PRIMARY_WORLD}}u;
+fn loft_edge_sky(rd: vec3f) -> vec3f { return {{SKY}}(rd, normalize(frame.sun.xyz)); }
 // Refine coverage where the raster IDs disagree. Interiors reuse their
 // stored row. Match the standard four sample positions and shade unique rows.
 fn loft_shade_samples(center: LoftRay, px: vec2f, vis: vec2u, edge: bool) -> vec3f {

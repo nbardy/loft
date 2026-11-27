@@ -3,32 +3,25 @@ struct PathHit { t: f32, p: vec3<f32>, n: vec3<f32>, kind: u32, at: u32, enterin
 struct PathLamp { position: vec4<f32>, intensity: vec4<f32> }
 struct PathLight { wi: vec3<f32>, l: vec3<f32>, t: f32 }
 struct PathRay { o: vec3<f32>, d: vec3<f32> }
-@group(2) @binding(0) var<storage, read> world_words: array<f32>;
-@group(2) @binding(1) var<storage, read> loft_bvh_nodes: array<LoftBvhNode>;
-@group(2) @binding(2) var<storage, read> world_luts: array<f32>;
-@group(2) @binding(3) var<storage, read> world_lamps: array<PathLamp>;
-
-@group(2) @binding(4) var<storage, read> loft_bvh_leaves: array<LoftLeafRef>;
-
 // Word zero addresses the descriptor suffix. The kind headers and row
 // offsets keep their layout so the same arena serves intersection and media.
 fn world_descriptor_base() -> u32 {
-  return bitcast<u32>(world_words[0]);
+  return bitcast<u32>(world_word(0));
 }
 fn world_root(world: u32) -> u32 {
   let base = world_descriptor_base();
-  if world >= bitcast<u32>(world_words[base]) { return 0xffffffffu; }
-  return bitcast<u32>(world_words[base + 2u + 2u * world]) - 1u;
+  if world >= bitcast<u32>(world_word(base)) { return 0xffffffffu; }
+  return bitcast<u32>(world_word(base + 2u + 2u * world)) - 1u;
 }
 fn world_medium_count(world: u32) -> u32 {
   let base = world_descriptor_base();
-  if world >= bitcast<u32>(world_words[base]) { return 0u; }
-  return bitcast<u32>(world_words[base + 3u + 2u * world]);
+  if world >= bitcast<u32>(world_word(base)) { return 0u; }
+  return bitcast<u32>(world_word(base + 3u + 2u * world));
 }
 fn medium_row(i: u32, field: u32) -> vec4<f32> {
   let base = world_descriptor_base();
-  let start = base + 2u + 2u * bitcast<u32>(world_words[base]) + 20u * i + 4u * field;
-  return vec4(world_words[start], world_words[start+1u], world_words[start+2u], world_words[start+3u]);
+  let start = base + 2u + 2u * bitcast<u32>(world_word(base)) + 20u * i + 4u * field;
+  return vec4(world_word(start), world_word(start+1u), world_word(start+2u), world_word(start+3u));
 }
 
 fn path_hash(input: u32) -> u32 {
@@ -59,7 +52,7 @@ fn path_camera(px: vec2<f32>, seed: u32) -> PathRay {
 }
 fn world_at(leaf: LoftLeafRef) -> u32 {
   let i = 1u + 2u * leaf.kind_id;
-  return bitcast<u32>(world_words[i]) + leaf.row_id * bitcast<u32>(world_words[i+1u]);
+  return bitcast<u32>(world_word(i)) + leaf.row_id * bitcast<u32>(world_word(i+1u));
 }
 fn loft_bvh_field(leaf: LoftLeafRef, p: vec3<f32>) -> f32 {
   return world_field(leaf.kind_id, world_at(leaf), p);
@@ -100,42 +93,9 @@ fn world_hit(hit: LoftBvhHit, ray: LoftRay) -> PathHit {
 
 fn world_light(id: u32, point: vec3<f32>) -> PathLight {
   if id==0u { return PathLight(normalize(frame.sun.xyz), loft_params[0].xyz, 1e6); }
-  let lamp = world_lamps[id];
+  let lamp = world_lamp(id);
   let v = lamp.position.xyz - point;
   let d = length(v);
   if d==0.0 || d>lamp.position.w { return PathLight(vec3<f32>(0.0,1.0,0.0), vec3<f32>(0.0), 0.0); }
   return PathLight(v/d, lamp.intensity.xyz/(d*d), d);
-}
-
-fn world_direct(h: PathHit, wo: vec3<f32>, seed: u32, bounce: u32) -> vec3<f32> {
-  var r = vec4<f32>(0.0);
-  let lights = arrayLength(&world_lamps);
-  // Split independent proposals into adjacent reservoirs. Retargeting uses the
-  // selected target and count, so completing their merge preserves total mass.
-  let count = min(8u, lights);
-  var previous = vec4<f32>(0.0);
-  for (var i = 0u; i < count; i++) {
-    let j = bounce*16u + 2u + i;
-    let id = min(u32(path_random(seed ^ 0x80c910a9u, j)*f32(lights)), lights-1u);
-    let lt = world_light(id, h.p);
-    let value = world_eval(h, wo, lt.wi) * lt.l;
-    let target_value = max(dot(value, vec3<f32>(0.2126,0.7152,0.0722)),0.0);
-    let xi = path_random(seed ^ 0x71a77fc1u, j);
-    if (i & 1u)==0u {
-      r = loft_user_reservoir_add(r, id, target_value, target_value*f32(lights), 1.0, xi);
-    } else {
-      previous = loft_user_reservoir_add(previous, id, target_value, target_value*f32(lights), 1.0, xi);
-    }
-  }
-  r = loft_user_reservoir_reuse(r, previous, previous.y, path_random(seed ^ 0x0f6d2b79u, bounce));
-  let scale = loft_user_reservoir_scale(r);
-  if scale == 0.0 { return vec3<f32>(0.0); }
-  let lt = world_light(u32(r.w), h.p);
-  let start = h.p+h.n*0.0002;
-  let vis = world_visibility(0u, LoftRay(start, lt.wi, 0.0001, lt.t-0.0002));
-  return world_eval(h, wo, lt.wi) * lt.l * scale * vis;
-}
-
-fn path_aces(x: vec3<f32>) -> vec3<f32> {
-  return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14), vec3<f32>(0.0),vec3<f32>(1.0));
 }
