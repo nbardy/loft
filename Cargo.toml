@@ -22,6 +22,12 @@ unsafe_code = "deny"
 [workspace.lints.clippy]
 # One handler per variant is the compiler's check (Keel S8).
 wildcard_enum_match_arm = "deny"
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+lossy_float_literal = "deny"
+float_cmp_const = "deny"
+clone_on_ref_ptr = "warn"
 
 [profile.dev]
 opt-level = 0

@@ -7,7 +7,6 @@ publish.workspace = true
 
 [dependencies]
 blake3 = "1"
-loft-abi = { path = "../loft-abi" }
 loft-builtins = { path = "../loft-builtins" }
 loft-check = { path = "../loft-check" }
 loft-ir = { path = "../loft-ir" }

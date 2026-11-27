@@ -19,6 +19,10 @@ static_checks() {
     esac
   done
   tools/check_core_words.sh
+  if command -v cargo-machete >/dev/null 2>&1; then
+    cargo-machete --skip-target-dir
+  fi
+  uv run --no-project python -m py_compile tools/*.py tools/gates/*.py tools/parity/d1d/*.py
   if ! test -f "${KEEL_LOCK:-$HOME/git/room-runners-arena-lib/keel/Cargo.lock}"; then
     echo 'pins: skipped (no host lock available)'
   else
@@ -126,6 +130,7 @@ case "${1:-}" in
     wasm
     plan
     for crate in ${scope[@]+"${scope[@]}"}; do
+      tools/dev.sh lint "$crate"
       tools/gpu_lock.sh --heavy tools/dev.sh test "$crate" --test-threads 1
     done ;;
   full) static_checks; mkdir -p "$root/out"; full_gate ;;

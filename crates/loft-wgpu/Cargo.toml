@@ -7,7 +7,6 @@ publish.workspace = true
 description = "wgpu binding, resource and pipeline support for the Loft runner."
 
 [dependencies]
-loft-abi = { path = "../loft-abi" }
 loft-ir = { path = "../loft-ir" }
 loft-std = { path = "../loft-std" }
 loft-format = { path = "../loft-format" }
