@@ -1,0 +1,20 @@
+use stdlib::sdf::solid::{capsule, sphere}
+
+# Union the stock claws and eye stalks into a body field. q is trunk-local,
+# while here and trunk share the deck frame so the eyes can track gaze yaw.
+pub fn crab_outline[Q, D](base: f, q: p3@Q, here: p3@D, trunk: p3@D, yaw: rad, neck: rad) -> f {
+  var field = base
+  for i in 0..2 {
+    let side = select(-1.0, 1.0, i == 1)
+    let palm = [0.46, -0.07, side * 0.36]@Q
+    field = min(field, capsule(q, [0.25, -0.04, side * 0.20]@Q, palm, 0.075))
+    field = min(field, capsule(q, palm, [0.63, -0.09, side * 0.46]@Q, 0.078))
+    field = min(field, capsule(q, palm, [0.64, -0.06, side * 0.32]@Q, 0.066))
+    let eye_yaw = yaw + neck
+    let eye = trunk + [0.26 * cos(eye_yaw) + side * 0.15 * sin(eye_yaw), 0.28,
+                      -0.26 * sin(eye_yaw) + side * 0.15 * cos(eye_yaw)]
+    field = min(field, capsule(here, trunk + [0.18, 0.11, side * 0.12], eye, 0.032))
+    field = min(field, sphere(here - eye, 0.047))
+  }
+  field
+}

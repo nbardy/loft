@@ -1,27 +1,62 @@
 # Loft standard library
 
-`core.loft` supplies `TAU`, `Sun` and `Sky` to every source file. Import each other dependency where you use it.
+Every source file gets `TAU`, `Sun`, `Sky` and the schedule functions `cull_indirect`,
+`tile_classify`, `tonemap` and `tonemap_aces` from [core.loft](core.loft). The prelude also
+loads `lighting::emitters`, `sky::environment` and `post::display` for renderer defaults and callbacks,
+along with `sdf::solid`, `noise::value`, `materials::bsdf`, `geometry::analytic`, `geometry::layout`,
+`frames::transport`, `motion::solve`, `integrators::direct` and `styles::woodblock`. The current
+compiler resolves public stock names in loaded modules by bare name. Use explicit imports to record
+a file's dependencies or to choose a qualified implementation.
 
 ```loft
 use stdlib::engines::woodblock
-use stdlib::sdf::solid::{sphere}
-use stdlib::materials::bsdf as material
+use stdlib::shapes::primitives::{Capsule, GlossBead}
 
-kind Buoy @World (at: p3@World, radius: m, tint: rgb) {
-  trace(p) = sphere(p - at, radius)
-  material(p, n) = material::ggx(tint, 0.55, 0)
+build {
+  emit Capsule(a: [-0.4, 0, 0]@World, b: [0.4, 0, 0]@World, r: 0.16m, albedo: [0.43, 0.14, 0.05])
+  emit GlossBead(c: [0, 0.26, 0]@World, r: 0.14m, albedo: [0.82, 0.60, 0.24])
 }
-
-build { emit Buoy(at: [0, 0, 0]@World, radius: 0.7m, tint: [0.43, 0.14, 0.05]) }
 ```
 
-An unaliased module import uses the last segment as its qualifier. `as` gives it a local qualifier. Select named exports with `::{name, other}` or use `::*` for every public declaration in a file. `pub` marks exports. Helpers without `pub` are visible inside their declaring file. Imports stay in that file's scope. Use a qualifier when two modules export the same name.
+An unaliased module import uses the last path segment as its qualifier. Use `as` to choose a qualifier,
+`::{name, other}` to select named exports or `::*` for all public declarations in a module. `pub` marks
+exports. Private declarations and import bindings are scoped to their file.
 
-The compiler finds `stdlib/` at the nearest workspace ancestor with `Cargo.toml`. Each import resolves a single `.loft` file. A `self::` path starts beside the file containing that import. A module reached through multiple paths contributes one set of declarations. Only the entry file's anonymous `build` blocks run. A scene with a complete schedule uses that schedule. Otherwise it selects a directly imported public engine schedule or uses Realtime when there is no selection. The compiler diagnoses conflicting selections and import cycles at their source sites. A `schedule` with parameters is a schedule function: a call in any schedule inlines its steps. The stock frame passes `cull_indirect`, `tile_classify`, `tonemap` and `tonemap_aces` are schedule functions in `core.loft`, built from `pass` steps that fill a WGSL template's holes (`dispatch(template, entry, Instances | Pixels | n, hole: value)`, `draw(template, vertex, fragment, hole: value)`). Copy one into a scene to change it.
+The compiler finds `stdlib/` at the nearest workspace ancestor with `Cargo.toml`. Each modern import
+resolves a single `.loft` file. A `self::` path starts beside the importing file. Each module contributes
+its declarations once, and only the entry file's anonymous `build` blocks run. A scene with a complete
+schedule uses it. Otherwise a directly imported public engine schedule supplies the frame, with
+Realtime as the default. Conflicting engine selections and module cycles produce diagnostics.
 
-## Copy an engine and its ink
+A schedule with parameters inlines its steps at each call. Stock frame passes use `pass` blocks
+with `dispatch(template, entry, invocation_count, hole: value)` and
+`draw(template, vertex, fragment, hole: value)` to fill WGSL template holes.
 
-Save the scene above as `scenes/harbor/main.loft` and make these copies.
+## Directory map
+
+| Path | Contents |
+| --- | --- |
+| [engines/](engines/) | Render schedules such as Realtime, Woodblock, Reference and SpectralCaustic. Legacy gate scenes keep their paths for [engines/gates.json](../engines/gates.json), and Act and Roam retain compatibility exports here. |
+| [shapes/](shapes/) | Stock drawable kinds and reusable shape parts. |
+| [sdf/](sdf/) | Signed distance bounds, solids, marks and smooth composition. |
+| [geometry/](geometry/) | Analytic intersections, mesh assets, growth, shells, sweeps and layout. |
+| [materials/](materials/) | BSDF lobes and material recipes. |
+| [lighting/](lighting/) | Emitters and world query interfaces. |
+| [integrators/](integrators/) | Direct lighting and ReSTIR reservoir sampling. |
+| [sky/](sky/) | Environment light, sky colour and background. |
+| [post/](post/) | Display transforms and paper grain. |
+| [styles/](styles/) | Shading and pigment recipes. |
+| [motion/](motion/) | Act and Roam, body plans, gait laws, solvers, springs and audits. |
+| [noise/](noise/) | Value and cellular noise. |
+| [math/](math/) | Sampling utilities. |
+| [physics/](physics/) | Particle simulation and sorting kernels. |
+| [frames/](frames/) | Transport along frames. |
+| [core/](core/) | Shared WGSL pass templates and fragments. |
+| [migration/](migration/) | Legacy observation and coverage adapters. |
+
+## Fork a renderer or tune a gait
+
+Save the scene above as `scenes/harbor/main.loft` and copy the renderer and its pigment.
 
 ```sh
 mkdir -p scenes/harbor/ink
@@ -29,18 +64,24 @@ cp stdlib/engines/woodblock.loft scenes/harbor/render.loft
 cp stdlib/styles/woodblock.loft scenes/harbor/ink/woodblock.loft
 ```
 
-In `scenes/harbor/render.loft`, change `use stdlib::styles::woodblock as ink` to `use self::ink::woodblock as ink`. Change a band threshold or the wash pigment in the copied `woodblock_pigment`. In the scene change `use stdlib::engines::woodblock` to `use self::render`. Use `loft show` to inspect the linked shader.
+In `scenes/harbor/render.loft`, change `use stdlib::styles::woodblock as ink` to
+`use self::ink::woodblock as ink` and change the pigment in the copied `woodblock_pigment`.
+Select `use self::render` in the scene and inspect the linked shader with `loft show`.
 
-```sh
-tools/gpu_lock.sh target/lab/loft still scenes/harbor/main.loft out/harbor.png --t 0
-```
-
-The engine's import chooses its ink. Another scene can continue to select the stock Woodblock engine. Act and Roam follow the same source rules. Their public motion helpers are separate from the render schedule.
+For a different foot lift, pass `swing_lift: 0.185m` to `walker`, `walker_plan` or `trunk_plan`.
+The default is `0.115m`. Tidal Fork uses the higher lift with the stock `step` and `present`
+laws and the same planted check as Tidal. The single-row and split-row layouts share the
+touchdown and swing pose math while retaining their own laws, write sets and checks.
+Pass `crab_details: false` for a plain torso. The default silhouette comes from
+[shapes/crab.loft](shapes/crab.loft), which can be forked as a shape part.
+The added row fields and shared helpers change the motion module and may change cached check
+and trace identities.
 
 ## Migration aliases
 
-The loader maps `std::geom` to geometry, frames and solid SDF exports, `std::light` to the world, emitters, sky, direct lighting and BSDF exports, and `std::noise` to value noise. `std::math`, `std::color` and `std::quant` retain their intrinsic spellings. For new source, call language intrinsics such as `dot4_i8` directly. The old `engines::realtime`, `engines::woodblock`, `engines::reference` and `engines::spectral_caustic` imports resolve to their named recipes under `stdlib/engines/`.
-
-## Contract for lane D
-
-Lane D supplies the typed `Surface` and `Lighting` inputs, statically selected transport, style and preparation callbacks, and compiled schedule fragments for visibility, path, forward and post. The current Woodblock example uses the existing six-argument pigment function and pass list. See the proposed signatures and shared field layout. [Standard library design](../agent_notes/2026-11-20_v1/design/std1.md#module-interfaces) · [Tagged legacy source index](REFERENCE.md)
+The loader maps `std::geom` to geometry, frames and solid SDF exports, `std::light` to the world,
+emitters, sky, direct lighting and BSDF exports, and `std::noise` to value noise. `std::math`,
+`std::color` and `std::quant` retain their intrinsic spellings. For new source, call language
+intrinsics such as `dot4_i8` directly. The old `engines::realtime`, `engines::woodblock`,
+`engines::reference` and `engines::spectral_caustic` imports resolve to their recipes in
+`stdlib/engines/`. See [REFERENCE.md](REFERENCE.md) for the tagged legacy source index.

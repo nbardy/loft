@@ -1,5 +1,4 @@
-use stdlib::post::display::{agx_display}
-
+# Generated path WGSL calls these reservoir helpers. The core prelude loads the AgX display transform.
 use stdlib::integrators::restir::{reservoir_add, reservoir_scale, reservoir_reuse}
 use stdlib::lighting::world::{Hit}
 

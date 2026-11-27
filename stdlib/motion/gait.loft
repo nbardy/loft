@@ -1,8 +1,6 @@
 use stdlib::motion::body::{Walker, Deck, lane, put, nibble}
 use stdlib::motion::solve::{ik_reachable_end, quintic_plan, step_spring_exact}
-use stdlib::engines::roam::{default_turn}
-
-const swing_height = 0.115m
+use stdlib::motion::roam::{default_turn}
 
 # The row boundary uses a binary grid. Metal's native dot, divide and fused
 # arithmetic can differ by an ulp from the expression twin (first at CoP).
@@ -168,38 +166,6 @@ fn fits_stance(w: Walker, centre: v2, turn: v2, lean: rad, xa: v4, xb: v4, za: v
     }
   }
   true
-}
-
-# A landing is a new pin, so admit it inside the reach annulus of the same
-# sampled trunk that the pose law will read. Leave room for grid rounding.
-fn touchdown(w: Walker, root: p3@Deck, target: v2) -> v2 {
-  let delta = target - [root.x, root.z]
-  let hi = 0.98 * w.reach_hi
-  let lo = w.reach_lo + 1mm
-  let cap = sqrt(max(0.0, hi * hi - root.y * root.y))
-  let floor_radius = sqrt(max(0.0, lo * lo - root.y * root.y))
-  let span = length(delta)
-  let axis = if span > 1e-6 { delta / span } else { [1.0, 0.0] }
-  let offset = if span >= floor_radius && span <= cap { delta } else { axis * clamp(span, floor_radius, cap) }
-  [root.x, root.z] + offset
-}
-
-# Reach projection is a solver step, so the stored endpoint is the end of the
-# actual two-bone triangle. The planted check reads these same solved columns.
-fn pose(w: Walker, root: p3@Deck, anchor: v2, goal: v2, u: f, lift: m) -> p3@Deck {
-  let blend = quintic_plan(1m, 0.0, 1s, u).x
-  let at = anchor + (goal - anchor) * blend
-  let arch = 16.0 * u * u * (1.0 - u) * (1.0 - u)
-  let wanted = [at.x, lift * arch, at.y]@Deck
-  let span = dist(root, wanted)
-  if span >= w.reach_lo && span <= w.reach_hi { return if u == 0.0 { wanted } else {
-      let p = floor(wanted.xyz * row_scale + v3(0.5)) / row_scale
-      [p.x, p.y, p.z]@Deck
-    }
-  }
-  let end = ik_reachable_end(root, wanted, w.upper, w.lower, dir([0.0, 1.0, 0.0]@Deck))
-  let p = floor(end.xyz * row_scale + v3(0.5)) / row_scale
-  [p.x, p.y, p.z]@Deck
 }
 
 # Sole: the support is the hull dilated by the contact radius. The pressure point is q while q is within
@@ -433,7 +399,7 @@ pub law step(w: Walker, dt: s) writes w.{x, z, vx, vz, lean, lean_rate, last_bea
       let previous_goal = [lane(ga, gb, i), lane(ha, hb, i)]
       let retarget = if lifting { next } else { previous_goal + (next - previous_goal) * (1.0 - smoothstep(0.5, 0.85, u)) }
       # A landing is a new pin, admitted inside the reach annulus of the trunk the pose law reads.
-      let aim = floor(touchdown(w, root_at(w, i, centre, heading, tilt), retarget) * row_scale + v2(0.5)) / row_scale
+      let aim = floor(touchdown_at(root_at(w, i, centre, heading, tilt), retarget, w.reach_lo, w.reach_hi) * row_scale + v2(0.5)) / row_scale
       let landing = !lifting && elapsed >= duration
       let lands: u = select(8, i, landing)
       nxa = put(nxa, 0, lands, aim.x)
@@ -574,8 +540,9 @@ pub law present(w: Walker, dt: s) writes w.{toe_x0, toe_x1, toe_x2, toe_x3, toe_
       let anchor = [lane(xa, xb, i), lane(za, zb, i)]
       let aim = if span > 0.0 { [lane(ga, gb, i), lane(ha, hb, i)] } else { anchor }
       let u = if span > 0.0 { lane(ca, cb, i) / span } else { 0.0 }
-      let lift = swing_height * (w.rest_h / 0.45) * clamp(1.0 + 0.30 * length(aim - anchor), 0.5, 1.5)
-      let end = pose(w, root_at(w, i, centre, turn, w.lean), anchor, aim, u, lift)
+      let lift = w.swing_lift * (w.rest_h / 0.45) * clamp(1.0 + 0.30 * length(aim - anchor), 0.5, 1.5)
+      let end = swing_pose(root_at(w, i, centre, turn, w.lean), anchor, aim, u, lift,
+                           w.reach_lo, w.reach_hi, w.upper, w.lower)
       # Foot slide: travel of a toe planted on this tick and the last (a landing resets its age to 0).
       if span == 0.0 && lane(aa, ab, i) > 0.0 {
         slide = slide + dist(end, [lane(ox, ox2, i), lane(oy, oy2, i), lane(oz, oz2, i)]@Deck)
@@ -645,11 +612,43 @@ pub check support_cases(w: Walker) -> m {
   return if error > 1e-6m { missed(error) } else { held(1e-6m - error) }
 }
 
-# Supports for `stdlib::motion::legs`, kept below every other item: a span earlier in this file feeds the
-# check hash of the scenes that use it, so these private helpers stay where they are and are exported here.
+# Exports shared with `stdlib::motion::legs`. Keep additions below the check so they preserve its source span.
 pub fn support_hull(xa: v4, xb: v4, za: v4, zb: v4, count: u, out: u) -> u = hull(xa, xb, za, zb, count, out)
 pub fn split_links(links: u) -> v2 = split(links)
 pub fn wrap_phase(x: f) -> f = wrap(x)
 pub fn lift_phase_of(wave: f, lag: f) -> f = lift_phase(wave, lag)
 pub fn uncaught_spill(spill: v2, axis: v2) -> v2 = uncaught(spill, axis)
 pub fn scripted_bearing(t: s, scale: f) -> rad = bearing_at(t, scale)
+
+# A landing is a new pin, so admit it inside the reach annulus of the same
+# sampled trunk that the pose law will read. Leave room for grid rounding.
+pub fn touchdown_at(root: p3@Deck, target: v2, reach_lo: m, reach_hi: m) -> v2 {
+  let delta = target - [root.x, root.z]
+  let hi = 0.98 * reach_hi
+  let lo = reach_lo + 1mm
+  let cap = sqrt(max(0.0, hi * hi - root.y * root.y))
+  let floor_radius = sqrt(max(0.0, lo * lo - root.y * root.y))
+  let span = length(delta)
+  let axis = if span > 1e-6 { delta / span } else { [1.0, 0.0] }
+  let offset = if span >= floor_radius && span <= cap { delta } else { axis * clamp(span, floor_radius, cap) }
+  [root.x, root.z] + offset
+}
+
+# Reach projection is a solver step, so the stored endpoint is the end of the
+# actual two-bone triangle. The planted check reads these same solved columns.
+pub fn swing_pose(root: p3@Deck, anchor: v2, goal: v2, u: f, lift: m,
+                  reach_lo: m, reach_hi: m, upper: m, lower: m) -> p3@Deck {
+  let blend = quintic_plan(1m, 0.0, 1s, u).x
+  let at = anchor + (goal - anchor) * blend
+  let arch = 16.0 * u * u * (1.0 - u) * (1.0 - u)
+  let wanted = [at.x, lift * arch, at.y]@Deck
+  let span = dist(root, wanted)
+  if span >= reach_lo && span <= reach_hi { return if u == 0.0 { wanted } else {
+      let p = floor(wanted.xyz * row_scale + v3(0.5)) / row_scale
+      [p.x, p.y, p.z]@Deck
+    }
+  }
+  let end = ik_reachable_end(root, wanted, upper, lower, dir([0.0, 1.0, 0.0]@Deck))
+  let p = floor(end.xyz * row_scale + v3(0.5)) / row_scale
+  [p.x, p.y, p.z]@Deck
+}

@@ -1,17 +1,17 @@
 use stdlib::geometry::analytic::{ray_capsule, ray_sphere, hit_min}
 use stdlib::materials::bsdf::{ggx, coat}
 use stdlib::motion::body::{Deck, lane, put, nibble}
-use stdlib::motion::gait::{support_hull, hold, join, split_links, commanded, scripted_bearing, wrap_phase, uncaught_spill, lift_phase_of}
-use stdlib::motion::solve::{ik_reachable_end, quintic_plan, solve_2bone_ik, step_spring_exact}
-use stdlib::engines::roam::{default_turn}
+use stdlib::motion::gait::{support_hull, hold, link, join, split_links, commanded, scripted_bearing, wrap_phase, uncaught_spill, lift_phase_of, touchdown_at, swing_pose}
+use stdlib::motion::solve::{solve_2bone_ik, step_spring_exact}
+use stdlib::motion::roam::{default_turn}
 use stdlib::sdf::solid::{capsule, round_box, sphere}
+use stdlib::shapes::crab::{crab_outline}
 
 space Torso
 
-# As in the fat-row gait: the binary grid rows persist on, the least stride, and the swing height at a 0.45 m trunk.
+# As in the fat-row gait: the binary grid rows persist on and the least stride.
 const row_scale = 8192.0
 const least_stride = 0.12m
-const swing_height = 0.115m
 
 # Legs as rows (DESIGN §5.2). A `Trunk` owns the contiguous Leg rows first_leg..first_leg + leg_count; each `Leg`
 # names its trunk in `actor`. Per tick, `stride` (one thread per trunk) reads its legs as the last tick left them,
@@ -29,7 +29,8 @@ pub kind Trunk @World (
   last_bearing: rad = 0rad, unwrapped: rad = 0rad, yaw: rad = 0rad, neck: rad = 0rad, turn: f = 0.0,
   lifter: f = 8.0, drift_x: f = 0.0, drift_z: f = 0.0, spill_x: f = 0.0, spill_z: f = 0.0, urgency: f = 0.0,
   boundary_a: f in 0.0..65535.0, boundary_b: f in 0.0..65535.0, aloft: f = 0.0,
-  support_kind: f = 3.0, cop_margin: m = 0m, steps: f = 0.0, stalls: f = 0.0
+  support_kind: f = 3.0, cop_margin: m = 0m, steps: f = 0.0, stalls: f = 0.0,
+  swing_lift: m = 0.115m, crab_details: bool = true
 ) {
   trace(p) {
     let here = inv(deck_pose) * p
@@ -38,19 +39,8 @@ pub kind Trunk @World (
     let s = sin(yaw)
     let d = here - trunk
     let q = [c * d.x - s * d.z, d.y - lean * d.x, s * d.x + c * d.z]@Torso
-    var field = round_box(q - [0]@Torso, torso, 0.12)
-    for i in 0..2 {
-      let side = select(-1.0, 1.0, i == 1)
-      let palm = [0.46, -0.07, side * 0.36]@Torso
-      field = min(field, capsule(q, [0.25, -0.04, side * 0.20]@Torso, palm, 0.075))
-      field = min(field, capsule(q, palm, [0.63, -0.09, side * 0.46]@Torso, 0.078))
-      field = min(field, capsule(q, palm, [0.64, -0.06, side * 0.32]@Torso, 0.066))
-      let eye_yaw = yaw + neck
-      let eye = trunk + [0.26 * cos(eye_yaw) + side * 0.15 * sin(eye_yaw), 0.28,
-                        -0.26 * sin(eye_yaw) + side * 0.15 * cos(eye_yaw)]
-      field = min(field, capsule(here, trunk + [0.18, 0.11, side * 0.12], eye, 0.032))
-      field = min(field, sphere(here - eye, 0.047))
-    }
+    let field = round_box(q - [0]@Torso, torso, 0.12)
+    if crab_details { return crab_outline(field, q, here, trunk, yaw, neck) }
     field
   }
   material(p, n) {
@@ -132,7 +122,7 @@ fn leash(t: Trunk, sxa: v4, sxb: v4, sza: v4, szb: v4, start: v2, turn: v2, lean
   let cap = 0.96 * t.reach_hi
   for sweep in 0..2 {
     for i in 0..8 {
-      if i < t.leg_count && link_of(out, i) == 0 {
+      if i < t.leg_count && link(out, i) == 0 {
         let root = root_at(t, lane(sxa, sxb, i), lane(sza, szb, i), centre, turn, lean)
         let delta = [lane(xa, xb, i), lane(za, zb, i)] - [root.x, root.z]
         let horizontal = length(delta)
@@ -144,44 +134,14 @@ fn leash(t: Trunk, sxa: v4, sxb: v4, sza: v4, szb: v4, start: v2, turn: v2, lean
   centre
 }
 
-fn link_of(links: u, i: u) -> u = (links / nibble(i)) % 16
-
 fn fits_stance(t: Trunk, sxa: v4, sxb: v4, sza: v4, szb: v4, centre: v2, turn: v2, lean: rad, xa: v4, xb: v4, za: v4, zb: v4, out: u) -> bool {
   for i in 0..8 {
-    if i < t.leg_count && link_of(out, i) == 0 {
+    if i < t.leg_count && link(out, i) == 0 {
       let reach = dist(root_at(t, lane(sxa, sxb, i), lane(sza, szb, i), centre, turn, lean), [lane(xa, xb, i), 0.0, lane(za, zb, i)]@Deck)
       if reach < t.reach_lo || reach > t.reach_hi { return false }
     }
   }
   true
-}
-
-fn touchdown(t: Trunk, root: p3@Deck, target: v2) -> v2 {
-  let delta = target - [root.x, root.z]
-  let hi = 0.98 * t.reach_hi
-  let lo = t.reach_lo + 1mm
-  let cap = sqrt(max(0.0, hi * hi - root.y * root.y))
-  let floor_radius = sqrt(max(0.0, lo * lo - root.y * root.y))
-  let span = length(delta)
-  let axis = if span > 1e-6 { delta / span } else { [1.0, 0.0] }
-  let offset = if span >= floor_radius && span <= cap { delta } else { axis * clamp(span, floor_radius, cap) }
-  [root.x, root.z] + offset
-}
-
-fn pose(t: Trunk, root: p3@Deck, anchor: v2, aim: v2, u: f, lift: m) -> p3@Deck {
-  let blend = quintic_plan(1m, 0.0, 1s, u).x
-  let at = anchor + (aim - anchor) * blend
-  let arch = 16.0 * u * u * (1.0 - u) * (1.0 - u)
-  let wanted = [at.x, lift * arch, at.y]@Deck
-  let span = dist(root, wanted)
-  if span >= t.reach_lo && span <= t.reach_hi { return if u == 0.0 { wanted } else {
-      let p = floor(wanted.xyz * row_scale + v3(0.5)) / row_scale
-      [p.x, p.y, p.z]@Deck
-    }
-  }
-  let end = ik_reachable_end(root, wanted, t.upper, t.lower, dir([0.0, 1.0, 0.0]@Deck))
-  let p = floor(end.xyz * row_scale + v3(0.5)) / row_scale
-  [p.x, p.y, p.z]@Deck
 }
 
 # The veto of the fat-row gait (stride THEORY §4), over gathered lanes.
@@ -400,7 +360,7 @@ pub law swing(l: Leg, dt: s, trunks: [Trunk]) writes l.{anchor_x, anchor_z, age,
     let remaining = (1.0 - u) * duration
     let next = home + v * remaining + spill * (exp(remaining / tc) - 1.0)
     let retarget = if lifting { next } else { aim + (next - aim) * (1.0 - smoothstep(0.5, 0.85, u)) }
-    let target = floor(touchdown(t, root, retarget) * row_scale + v2(0.5)) / row_scale
+    let target = floor(touchdown_at(root, retarget, t.reach_lo, t.reach_hi) * row_scale + v2(0.5)) / row_scale
     let landing = !lifting && elapsed >= duration
     if landing {
       anchor = target
@@ -416,8 +376,8 @@ pub law swing(l: Leg, dt: s, trunks: [Trunk]) writes l.{anchor_x, anchor_z, age,
   }
   let goal_now = if span > 0.0 { aim } else { anchor }
   let u = if span > 0.0 { clock / span } else { 0.0 }
-  let lift = swing_height * (t.rest_h / 0.45) * clamp(1.0 + 0.30 * length(goal_now - anchor), 0.5, 1.5)
-  let toe = pose(t, root, anchor, goal_now, u, lift)
+  let lift = t.swing_lift * (t.rest_h / 0.45) * clamp(1.0 + 0.30 * length(goal_now - anchor), 0.5, 1.5)
+  let toe = swing_pose(root, anchor, goal_now, u, lift, t.reach_lo, t.reach_hi, t.upper, t.lower)
   let knee = leg_knee(root, toe, t.upper, t.lower, t.knee, heading.x, heading.y, select(-1.0, 1.0, l.socket_z > 0.0))
   let hip_w = t.deck_pose * root
   let knee_w = t.deck_pose * knee
@@ -459,7 +419,8 @@ pub check planted(l: Leg, trunks: [Trunk]) -> m {
 # scene emitted before this trunk (0 for one walker). Build has no way to ask the next row id, hence the argument.
 pub build fn trunk_plan(origin: p3@World, stick_scale: f, look_scale: f, paint: rgb, rest_h: m, upper: m, lower: m,
                         knee: v3, sole: m, sites: u, first_leg: u,
-                        rx: v4, rx2: v4, rz: v4, rz2: v4, hx: v4, hx2: v4, hz: v4, hz2: v4) -> Trunk {
+                        rx: v4, rx2: v4, rz: v4, rz2: v4, hx: v4, hx2: v4, hz: v4, hz2: v4,
+                        swing_lift: m = 0.115m, crab_details: bool = true) -> Trunk {
   var rank_a = v4(0.0)
   var rank_b = v4(0.0)
   var ring: u = 0
@@ -488,7 +449,8 @@ pub build fn trunk_plan(origin: p3@World, stick_scale: f, look_scale: f, paint: 
   let actor = emit Trunk(deck_pose: place(origin), stick_scale: stick_scale, look_scale: look_scale, paint: paint,
     rest_h: rest_h, upper: upper, lower: lower, reach_lo: abs(upper - lower), reach_hi: upper + lower, sweep: sweep,
     swing_time: 0.25 * sqrt(rest_h / 0.45), knee: knee, sole: sole, torso: [wide + 0.06, 0.19, deep + 0.07],
-    first_leg: first_leg, leg_count: sites, boundary_a: f32(ring % 65536), boundary_b: f32(ring / 65536))
+    first_leg: first_leg, leg_count: sites, boundary_a: f32(ring % 65536), boundary_b: f32(ring / 65536),
+    swing_lift: swing_lift, crab_details: crab_details)
   # Leader tree and wave (stride THEORY §3), as in `walker_plan`; then each leg in its rest pose.
   build for i in 0..sites {
     let packed = lane(rank_a, rank_b, i)
