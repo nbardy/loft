@@ -20,9 +20,9 @@ mkdir -p "$D/logs" "$HOME/git/_wt"
 
 if [ ! -d "$WT" ]; then
   if git -C "$REPO" show-ref --verify --quiet "refs/heads/$BRANCH"; then
-    git -C "$REPO" worktree add "$WT" "$BRANCH"
+    git -C "$REPO" cambium add -name "r27-$suffix" -ephemeral "$WT" "$BRANCH"
   else
-    git -C "$REPO" worktree add -b "$BRANCH" "$WT" "$base"
+    git -C "$REPO" cambium add -b "$BRANCH" -name "r27-$suffix" -ephemeral "$WT" "$base"
   fi
 fi
 
