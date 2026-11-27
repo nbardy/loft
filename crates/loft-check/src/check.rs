@@ -222,6 +222,37 @@ pub fn motion_schedule<'a>(p: &Prog<'a>) -> Res<Vec<Scheduled<'a>>> {
     Ok(out)
 }
 
+/// One slot per formal parameter. Supplied operands keep their source evaluation order.
+pub enum BuildArgument<'a> {
+    Supplied(usize),
+    Default(&'a Param, &'a Expr),
+}
+
+pub fn build_arguments<'a>(f: &'a FnDecl, args: &[Arg], span: Span) -> Res<Vec<BuildArgument<'a>>> {
+    let mut slots = vec![None; f.params.len()];
+    let mut named = false;
+    for (i, arg) in args.iter().enumerate() {
+        let slot = match &arg.name {
+            Some(label) => {
+                named = true;
+                f.params.iter().position(|p| p.name.name == label.name).ok_or_else(||
+                    e003(label.span, format!("unknown build parameter `{}`", label.name), "use a name from the build fn signature"))?
+            }
+            None if named => return Err(e003(arg.value.span, "positional argument after a named argument", "move positional arguments first")),
+            None if i >= slots.len() => return Err(e003(arg.value.span, "extra positional build argument", "remove the extra argument")),
+            None => i,
+        };
+        if slots[slot].replace(i).is_some() {
+            return Err(e003(arg.value.span, format!("build parameter `{}` was supplied twice", f.params[slot].name.name), "supply each parameter once"));
+        }
+    }
+    f.params.iter().zip(slots).map(|(p, supplied)| match (supplied, &p.default) {
+        (Some(i), _) => Ok(BuildArgument::Supplied(i)),
+        (None, Some(e)) => Ok(BuildArgument::Default(p, e)),
+        (None, None) => Err(e003(span, format!("missing build argument `{}`", p.name.name), format!("supply `{}: ...`", p.name.name))),
+    }).collect()
+}
+
 fn e003(span: Span, msg: impl Into<String>, fix: impl Into<String>) -> Diag {
     Diag::new(Code::E003, span, msg, fix)
 }
@@ -440,6 +471,21 @@ impl<'p,'a> Ck<'p,'a> {
             TyExpr::Name(_) | TyExpr::Generic(..) | TyExpr::Array(..) | TyExpr::Geo(..) | TyExpr::Field(_) | TyExpr::Frame(_) | TyExpr::Table(_) | TyExpr::Xform(..) => {}
         };
         f.params.iter().filter_map(|p| p.ty.as_ref()).chain(f.ret.as_ref()).for_each(&mut note);
+        // Defaults have the lexical scope of the declaration, before any parameter is bound.
+        for prm in &f.params {
+            if let Some(default) = &prm.default {
+                let actual = self.expr(default)?;
+                if let Some(annotation) = &prm.ty {
+                    let want = self.resolve(annotation, true)?;
+                    if !self.contextual(default, &actual, &want) {
+                        self.assignable(&actual, &want, default.span)?;
+                        if actual == Ty::AbstractInt { self.set(default, want); }
+                    }
+                } else if let Some(hints) = &mut self.hints {
+                    hints.defaults.insert(prm.name.span, actual);
+                }
+            }
+        }
         for prm in &f.params {
             let ty = match (&prm.ty, kind) {
                 (Some(t), _) => self.resolve(t, true)?,
@@ -1192,8 +1238,10 @@ impl<'p,'a> Ck<'p,'a> {
     }
 
     fn call(&mut self, callee: &Ident, args: &[Arg], span: Span) -> Res<Ty> {
-        if let Some(a) = args.iter().find_map(|a| a.name.as_ref()) {
-            return Err(Diag::new(Code::E405, a.span, "named arguments are schedule-only in Phase 0", "pass arguments by position"));
+        if let Some(a) = args.iter().find_map(|a| a.name.as_ref())
+            && !self.p.fns.get(callee.name.as_str()).is_some_and(|f| f.comptime)
+        {
+            return Err(Diag::new(Code::E405, a.span, "this function takes positional arguments", "pass by position, or use named arguments in a build function call"));
         }
         let spec = lookup(&callee.name);
         if let Some(spec) = spec.filter(|spec| spec.sig == SigRule::Poly(PolyRule::TextureSample))
@@ -1297,29 +1345,41 @@ impl<'p,'a> Ck<'p,'a> {
                 )
                 .note(f.name.span, "declared `build fn` here"));
             }
-            if f.params.len() != ts.len() {
+            let mut operands: Vec<(&Expr, Ty)> = args.iter().zip(&ts).map(|(arg, t)| (&arg.value, t.clone())).collect();
+            if f.comptime {
+                operands = build_arguments(f, args, span)?.into_iter().map(|binding| match binding {
+                    BuildArgument::Supplied(i) => Ok(operands[i].clone()),
+                    BuildArgument::Default(prm, expr) => {
+                        let ty = prm.ty.as_ref().ok_or_else(|| e003(prm.name.span,
+                            "an omitted parameter needs a type", "annotate the defaulted parameter"))?;
+                        Ok((expr, self.resolve(ty, true)?))
+                    }
+                }).collect::<Res<_>>()?;
+            }
+            if f.params.len() != operands.len() {
                 return Err(e003(span, format!("`{}` takes {} argument(s), got {}", callee.name, f.params.len(), ts.len()), "match the signature")
                     .note(f.name.span, "declared here"));
             }
             if f.params.iter().any(|p|p.ty.is_none()){
-                if let Some(h)=&mut self.hints {h.args.entry(f.name.name.clone()).or_insert_with(||ts.clone());}
+                if let Some(h)=&mut self.hints {h.args.entry(f.name.name.clone()).or_insert_with(||operands.iter().map(|(_, t)| t.clone()).collect());}
                 return Err(e003(f.name.span,"parameter type has not been inferred","annotate the parameter or call the helper with a typed argument"));
             }
             let mut vars: HashMap<String, Space> = HashMap::new();
             // Space variables a space-less offset was accepted for: `sphere(local, r)` where `local` was computed
             // without spaces (3 of 19 first attempts). The offset is in whatever space the call is in.
             let mut loose: Vec<(String, Span)> = vec![];
-            for (index, ((prm, t), s)) in f.params.iter().zip(&ts).zip(&sp).enumerate() {
+            for (prm, (value, t)) in f.params.iter().zip(&operands) {
+                let s = value.span;
                 let want = self.resolve(prm.ty.as_ref().expect("free fns type every parameter"), true)?;
                 let want=if let (Ty::Id(k),Ty::Row(_))=(&want,t){Ty::Row(k.clone())}else{want};
-                let want = self.unify(&want, t, &mut vars, *s, &prm.name)?;
+                let want = self.unify(&want, t, &mut vars, s, &prm.name)?;
                 let want=subst(&want,&vars);
-                if self.contextual(&args[index].value,t,&want){continue;}
+                if self.contextual(value,t,&want){continue;}
                 if let (Ty::VecN(3), Ty::Geo(g, Space::Var(v))) = (t, &want) && vec_like(*g) {
-                    loose.push((v.clone(), *s));
+                    loose.push((v.clone(), s));
                     continue;
                 }
-                self.assignable(t, &want, *s)?; if *t==Ty::AbstractInt {self.set(&args[index].value,want);}
+                self.assignable(t, &want, s)?; if *t==Ty::AbstractInt {self.set(value,want);}
             }
             let ret = match &f.ret {
                 Some(r) => self.resolve(r, true)?,

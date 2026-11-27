@@ -137,13 +137,16 @@ fn loft_authored_volume(world: u32, ray: loft_type_Ray, limit: f32, steps: u32, 
     }}"));
         if spectral {
             let layout = super::material_layout(p, decl)?;
-            if let Some(slot) = layout.lobes.iter().position(|(name, _)| *name == "spectral_dielectric") {
+            let field = |j, zero| layout.first_field(|i, name| (name == "spectral_dielectric").then(|| format!("b.l{i}_{j}")), zero);
+            if let Some(base) = field(0, "0.0") {
+                let dispersion = field(1, "0.0").expect("spectral lobe");
+                let absorb = field(2, "vec3<f32>(0.0)").expect("spectral lobe");
                 optics_cases.push(format!(r"
     case {i}u: {{
       let row = kind{i}_load_row(h.at);
       let xf = loft_xf_inv(kind{i}_loft_pose(row));
       let b = kind{i}_q_material(row, loft_xf_pt(xf, h.p), loft_xf_vec(xf, select(-h.n, h.n, h.entering)){uv});
-      return Optics(b.l{slot}_0, b.l{slot}_1, b.l{slot}_2);
+      return Optics({base}, {dispersion}, {absorb});
     }}"));
             }
         }

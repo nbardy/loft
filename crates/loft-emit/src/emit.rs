@@ -12,10 +12,12 @@ pub mod paths;
 #[path="material_shape.rs"]
 mod material_shape;
 mod surface;
+mod thin;
+pub use thin::segment_arguments;
 mod lighting;
 pub mod shade_tiles;
 mod column;
-use material_shape::{Shape, fn_shape, is_lobe, shape_of};
+use material_shape::{Combine, Shape, fn_shape, is_bsdf_select, is_lobe, shape_of};
 use loft_parse::ast::*;
 use loft_check::program::{abi, Draw};
 use loft_ir::{Code, Diag, Res};
@@ -358,7 +360,27 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 let ((sa, mut la, mut wa), (sb, lb, wb)) = (self.bsdf_fields(a), self.bsdf_fields(b));
                 la.extend(lb);
                 wa.extend(wb);
-                (Shape::join(sa, sb, false), la, wa)
+                (Shape::join(sa, sb, Combine::Layer), la, wa)
+            }
+            ExprKind::Call { callee, args } if is_bsdf_select(self.p, &callee.name) => {
+                let [a, b, cond] = args.as_slice() else { unreachable!("checked select arity") };
+                let ((sa, mut la, mut wa), (sb, lb, wb)) = (self.bsdf_fields(&a.value), self.bsdf_fields(&b.value));
+                let cond = self.expr(&cond.value);
+                if sa.same_as(&sb) {
+                    // WGSL select takes scalar/vector operands. A typed struct assignment also handles matrix lobe arguments.
+                    let name = format!("loft_choice_{}", self.temp);
+                    self.temp += 1;
+                    let ty = self.bsdf_struct(&sa);
+                    la.extend(wa);
+                    let b = lb.into_iter().chain(wb).collect::<Vec<_>>().join(", ");
+                    self.line(1, &format!("var {name} = {ty}({});", la.join(", ")));
+                    self.line(1, &format!("if ({cond}) {{ {name} = {ty}({b}); }}"));
+                    return Self::fields_of(sa, &name);
+                }
+                la.extend(lb);
+                wa.extend(wb);
+                wa.push(format!("select(0.0, 1.0, {cond})"));
+                (Shape::join(sa, sb, Combine::Select), la, wa)
             }
             ExprKind::Call { callee, args } if callee.name == "mix_bsdf" => {
                 let [a, b, w] = args.as_slice() else { unreachable!("checked mix_bsdf arity") };
@@ -366,7 +388,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 la.extend(lb);
                 wa.extend(wb);
                 wa.push(self.expr(&w.value));
-                (Shape::join(sa, sb, true), la, wa)
+                (Shape::join(sa, sb, Combine::Mix), la, wa)
             }
             ExprKind::Call { callee, args } if is_lobe(self.p, &callee.name) => {
                 (Shape::lobe(&callee.name, args.len()), args.iter().map(|a| self.expr(&a.value)).collect(), vec![])
@@ -381,13 +403,17 @@ impl<'p, 'a> Emitter<'p, 'a> {
                     self.line(1, &format!("let {name}: {ty} = {value};"));
                     value = name;
                 }
-                let lobes = shape.lobes.iter().enumerate()
-                    .flat_map(|(i, (_, arity))| (0..*arity).map(move |j| (i, j)))
-                    .map(|(i, j)| format!("{value}.l{i}_{j}")).collect();
-                let weights = (0..shape.weights).map(|k| format!("{value}.mix{k}")).collect();
-                (shape, lobes, weights)
+                Self::fields_of(shape, &value)
             }
         }
+    }
+
+    fn fields_of(shape: Shape, value: &str) -> (Shape, Vec<String>, Vec<String>) {
+        let lobes = shape.lobes.iter().enumerate()
+            .flat_map(|(i, (_, arity))| (0..*arity).map(move |j| (i, j)))
+            .map(|(i, j)| format!("{value}.l{i}_{j}")).collect();
+        let weights = (0..shape.weights).map(|k| format!("{value}.mix{k}")).collect();
+        (shape, lobes, weights)
     }
 
     fn map_apply(&self, name: &str, inverse: bool, x: String, point: bool) -> String {
@@ -413,7 +439,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
         }
         // A built Bsdf value is the struct of its lobes' bound arguments, then its mix weights (material_shape).
         if *self.ty_of(e) == Ty::Bsdf && (matches!(&e.kind, ExprKind::Binary(BinOp::Add, ..))
-            || matches!(&e.kind, ExprKind::Call { callee, .. } if callee.name == "mix_bsdf" || is_lobe(self.p, &callee.name))) {
+            || matches!(&e.kind, ExprKind::Call { callee, .. } if callee.name == "mix_bsdf" || is_bsdf_select(self.p, &callee.name) || is_lobe(self.p, &callee.name))) {
             let (shape, mut fields, weights) = self.bsdf_fields(e);
             fields.extend(weights);
             return format!("{}({})", self.bsdf_struct(&shape), fields.join(", "));
@@ -820,8 +846,21 @@ pub fn kind_reads(p: &Prog, k: &KindDecl) -> Vec<String> {
     reads
 }
 
-fn traced_march(count_steps: bool) -> String {
+/// Whether `emit_kind_module` writes this kind's vertex entry in tile form (a draw starting at vertex 36 * (tile + 1)
+/// reads that tile's row list). This is the only definition: the module text and `Program.segments` both follow it,
+/// so a tile draw can never meet a shader that does not know tiles.
+pub fn tile_form(p: &Prog, k: &KindDecl, draw: Draw, aov: Aov, sources: &loft_ir::Sources) -> bool {
+    draw == Draw::Analytic && aov == Aov::Beauty && segment_arguments(p, k, sources).is_some()
+}
+
+fn traced_march(count_steps: bool, guard: Option<(u32, f32)>) -> String {
+    let prefix = guard.map_or_else(String::new, |(base, reach)| {
+        render_template(include_str!("../../../stdlib/core/march_guard.wgsl"), &[
+            ("HEADER", &base.to_string()), ("EYE_REACH", &format!("{reach:?}")),
+        ])
+    });
     render_template(include_str!("../../../stdlib/core/march.wgsl"), &[
+        ("GUARD", &prefix),
         ("STEPS_INIT", if count_steps { "  var steps = 0u;\n" } else { "" }),
         ("STEPS_4", if count_steps { "    steps += 1u;\n" } else { "" }),
         ("STEPS_8", if count_steps { "        steps += 1u;\n" } else { "" }),
@@ -832,7 +871,7 @@ fn traced_march(count_steps: bool) -> String {
 /// `fixed` holds kind parameters as literals; the others are read from the row.
 pub fn emit_kind_module(
     p: &Prog, types: &[Ty], k: &KindDecl, light: Option<&str>, luts: &[LutRef],
-    draw: Draw, aov: Aov, fixed: &BTreeMap<(String, String), String>,
+    draw: Draw, aov: Aov, fixed: &BTreeMap<(String, String), String>, guard: Option<(u32, f32)>, sources: &loft_ir::Sources,
 ) -> Res<String> {
     let mut em = Emitter::new(p, types);
     em.luts = luts;
@@ -947,6 +986,14 @@ pub fn emit_kind_module(
             // near offset as traversal. Proxy interpolation rounds that ray
             // differently, which can move a secondary origin across a surface.
             let primary_direction = if uses_world_hit { "loft_ray(v.pos.xy)" } else { "normalize(v.wp - ro)" };
+            // Each disjoint native scissor retains the original compacted row order.
+            // first_vertex selects its list. Other hosts and shadows draw vertices 0..36.
+            // DX12: `vertex_index` there may not include `first_vertex` (it is relative to the draw), which would put
+            // every tile on list 0 and break this scheme; the native host runs on Metal.
+            let direct = tile_form(p, k, draw, aov, sources);
+            let (row_id, corner_id) = if direct {
+                ("var slot = kp.base + ii; if vi >= 36u { slot = (vi / 36u - 1u) * kp.n_rows + ii; } let r = visible[slot];", "vi % 36u")
+            } else { ("let r = visible[kp.base + ii];", "vi") };
             let (hit, split_ao) = match draw {
                 Draw::Analytic if uses_world_hit => (r"  let near = select(0.0001, 0.0, frame.cold.y == 1u);
   let local_t = q_visible(row, loft_xf_pt(xf, ro + near * rd), lrd);
@@ -955,14 +1002,14 @@ pub fn emit_kind_module(
 ".to_owned(), false),
                 Draw::Analytic => ("  // Closed form: the author's `visible` query, in the kind's space (a rigid pose keeps t).\n  let t = q_visible(row, lro, lrd);\n  if t < 0.0 { discard; }\n".to_owned(),
                     light == Some("woodblock_pigment") && aov == Aov::Beauty),
-                Draw::Traced => (traced_march(count_steps), false),
+                Draw::Traced => (traced_march(count_steps, guard), false),
                 Draw::Surface { .. } | Draw::Mesh { .. } => unreachable!("ray draw"),
             };
             // Diagnostic-only Vis word: 24 high distance bits and the 8-bit step count.
             let distance = if count_steps { "((bitcast<u32>(t) & 0xffffff00u) | steps)" } else { "bitcast<u32>(t)" };
             let visible_twin = if q(QueryKind::Visible) { "q_visible(row, pl, dl)" } else { "0.0" };
             (
-                render_template(include_str!("../../../stdlib/core/ray_vis.wgsl"), &[("PRIMARY_DIRECTION", primary_direction), ("HIT", &hit), ("DISTANCE", distance)]),
+                render_template(include_str!("../../../stdlib/core/ray_vis.wgsl"), &[("ROW_ID", row_id), ("CORNER_ID", corner_id), ("PRIMARY_DIRECTION", primary_direction), ("HIT", &hit), ("DISTANCE", distance)]),
                 if split_ao {
                     // The tetrahedral sum and the five AO taps keep their original
                     // order. Separate the loops to compute only the active sample.
@@ -1004,11 +1051,11 @@ pub fn emit_kind_module(
             // The tiled World module replaces this entry before validation.
             None => "vec3<f32>(0.0)".into(),
         },
-        Aov::Albedo => layout.lobes.iter().enumerate().find_map(|(i, (name, _))| {
-            let f = p.fns[name.as_str()];
+        Aov::Albedo => layout.first_field(|i, name| {
+            let f = p.fns[name];
             f.params.iter().take(f.params.len().saturating_sub(3))
                 .position(|p| p.name.name == "albedo").map(|j| format!("b.l{i}_{j}"))
-        }).unwrap_or_else(|| "vec3<f32>(0.0)".into()),
+        }, "vec3<f32>(0.0)").unwrap_or_else(|| "vec3<f32>(0.0)".into()),
         Aov::Normal => "n * 0.5 + 0.5".into(),
         Aov::Depth => "vec3<f32>(min(log2(1.0 + distance(p, frame.eye.xyz)) / 10.0, 254.0 / 255.0))".into(),
         Aov::Id => {

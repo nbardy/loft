@@ -37,10 +37,15 @@ pub(super) fn lower(
     };
     let fixed = fixed_parameters(p, &scene.tables)?;
     let mut texts = Vec::new();
-    for (name, kt) in drawn.iter().zip(kinds) {
-        let shader = emit::emit_kind_module(p, types, p.kinds[*name], light, lut_refs, kt.draw, aov, &fixed)?;
+    let mut tiled = vec![];
+    for (module, ((name, kt), guard)) in drawn.iter().zip(kinds).zip(&scene.guard_table).enumerate() {
+        if emit::tile_form(p, p.kinds[*name], kt.draw, aov, src) { tiled.push(module as u32); }
+        let shader = emit::emit_kind_module(p, types, p.kinds[*name], light, lut_refs, kt.draw, aov, &fixed, guard.map(|base| (base, loft_eval::guard::EYE_REACH)), src)?;
         texts.push((name.to_string(), shader));
     }
+    // Stage 0 collects endpoint rows for every stock segment kind whatever the aov. Only kinds whose module was just
+    // emitted in tile form keep them, so a bundle cannot build tile lists for a shader that ignores them.
+    scene.segments.retain(|module, _| tiled.contains(module));
     // Rows a kind's queries read (`K[i]`) bind to the read kind's table in the vis, shadow and shade passes. The tiled
     // World and the path tracer compile every kind into one module, which has no such binding.
     for (i, name) in drawn.iter().enumerate() {
@@ -251,30 +256,32 @@ fn lower_dispatches(
     let mut dispatches = vec![];
     if samples.is_empty() {
         use crate::program::DispatchRows;
-        let packed = |name: &str, span| -> Res<DispatchRows> {
+        let packed = |name: &str| -> Res<DispatchRows> {
             let table = &tables[p.kind_index(name)];
-            if table.is_empty() {
-                return Err(Diag::new(Code::E602, span, "scheduled table has no rows", "emit a row or remove its scheduled operation"));
-            }
+            let stride = p.kinds[name].row.iter().try_fold(abi::HIDDEN_WORDS, |stride, field| {
+                let ty = crate::check::Ck::new(p, &mut vec![]).resolve(&field.ty, false)?;
+                Ok::<_, Diag>(stride + ty.words().expect("checked storable column"))
+            })?;
             let mut words = vec![];
             for row in table {
                 pack(row, &mut words);
                 words.extend([0.; abi::HIDDEN_WORDS as usize]);
             }
-            Ok(DispatchRows::Table { name: name.into(), n_rows: table.len() as u32, stride: (words.len() / table.len()) as u32, words })
+            Ok(DispatchRows::Table { name: name.into(), n_rows: table.len() as u32, stride, words })
         };
-        let rows_of = |name: &str, span| match drawn.iter().position(|&n| n == name) {
+        let rows_of = |name: &str, _| match drawn.iter().position(|&n| n == name) {
             Some(draw) => Ok(DispatchRows::Drawable(draw)),
-            None => packed(name, span),
+            None => packed(name),
         };
         for &name in &p.kind_order {
+            if tables[p.kind_index(name)].is_empty() { continue; }
             let kind = p.kinds[name];
             let draw = drawn.iter().position(|&n| n == name);
             let output = || {
                 if let Some(draw) = draw {
                     return Ok((texts.len(), DispatchRows::Drawable(draw)));
                 }
-                Ok((texts.len(), packed(name, kind.name.span)?))
+                Ok((texts.len(), packed(name)?))
             };
             if let Some((entry, dispatch)) = emit::motion_module(p, types, kind, fixed, output, &rows_of)? {
                 texts.push((format!("{name}.advance"), entry));

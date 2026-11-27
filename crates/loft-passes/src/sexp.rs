@@ -87,6 +87,7 @@ mod tests {
         let shader =
             "// secret author comment\n@compute @workgroup_size(1) fn main() { let x = 2u; }";
         let p = Program {
+            segments: Default::default(),
             bakes: vec![],
             path: None,
             dispatches: vec![],

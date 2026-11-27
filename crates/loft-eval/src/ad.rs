@@ -437,11 +437,11 @@ impl Ad<'_> {
     fn jvp(&mut self, f: &FnDecl, active: &[bool]) -> Res<FnDecl> {
         if f.raw.is_some(){return Err(Diag::new(Code::E307,f.name.span,"raw WGSL has no symbolic derivative","write the differentiated function in Loft"))}
         self.live.clear();
-        let mut params: Vec<Param> = f.params.iter().map(|p| Param { name: p.name.clone(), ty: p.ty.clone() }).collect();
+        let mut params: Vec<Param> = f.params.clone();
         for (p, active) in f.params.iter().zip(active) {
             if *active && let Some(t) = &p.ty {
                 self.live.insert(p.name.name.clone());
-                params.push(Param { name: Ident { name: format!("{}__t", p.name.name), span: p.name.span }, ty: Some(tty(t)) });
+                params.push(Param { default: None, name: Ident { name: format!("{}__t", p.name.name), span: p.name.span }, ty: Some(tty(t)) });
             }
         }
         let body = self.block(&f.body)?;
@@ -498,7 +498,7 @@ pub fn run(modules: &mut Vec<Module>, next: &mut u32) -> Res<()> {
                 comptime: false,
                 attrs: vec![],
                 name: Ident { name: format!("{}__d_{}", f.name, x.name), span: sp },
-                params: decl.params.iter().map(|p| Param { name: p.name.clone(), ty: p.ty.clone() }).collect(),
+                params: decl.params.clone(),
                 ret: decl.ret.as_ref().map(tty),
                 body: Block { stmts: vec![Stmt::Return(Some(call), sp)] },
             });

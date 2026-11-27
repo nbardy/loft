@@ -305,7 +305,7 @@ impl<'src> Parser<'src, '_> {
         if self.eat(keyword) {
             self.expect("[")?;
             while !self.eat("]") {
-                names.push(self.ident()?);
+                names.push(self.reference()?);
                 if !self.eat(",") {
                     self.expect("]")?;
                     break;
@@ -681,9 +681,9 @@ impl<'src> Parser<'src, '_> {
         }
         self.expect("dirty")?;
         self.expect("(")?;
-        let mut names = vec![self.ident()?];
+        let mut names = vec![self.reference()?];
         while self.eat(",") {
-            names.push(self.ident()?);
+            names.push(self.reference()?);
         }
         self.expect(")")?;
         Ok(BakeClock::Dirty(names))
@@ -709,6 +709,9 @@ impl<'src> Parser<'src, '_> {
     }
 
     fn params(&mut self) -> Res<Vec<Param>> {
+        self.parameter_list(false)
+    }
+    fn parameter_list(&mut self, build: bool) -> Res<Vec<Param>> {
         self.expect("(")?;
         let mut out = vec![];
         while !self.eat(")") {
@@ -718,7 +721,11 @@ impl<'src> Parser<'src, '_> {
             } else {
                 None
             };
-            out.push(Param { name, ty });
+            let default = if build && self.eat("=") { Some(self.expr(0)?) } else { None };
+            if build && out.iter().any(|p: &Param| p.name.name == name.name) {
+                return Err(Diag::new(Code::E003, name.span, "duplicate build parameter", "give each parameter its own name"));
+            }
+            out.push(Param { name, ty, default });
             if !self.eat(",") {
                 self.expect(")")?;
                 break;
@@ -739,7 +746,7 @@ impl<'src> Parser<'src, '_> {
             }
             self.expect("]")?
         }
-        let params = self.params()?;
+        let params = self.parameter_list(build)?;
         let ret = if self.eat("->") {
             Some(self.ty()?)
         } else if lobe {
@@ -991,6 +998,7 @@ impl<'src> Parser<'src, '_> {
                     Param {
                         name: named("self", n.span),
                         ty: None,
+                        default: None,
                     },
                 );
                 queries.push((

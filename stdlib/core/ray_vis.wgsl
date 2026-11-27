@@ -5,10 +5,10 @@ struct FsOut { @location(0) vis: vec2<u32>, @builtin(frag_depth) depth: f32 }
 
 // The proxy: the row's derived AABB, back faces (the camera may be inside it).
 @vertex fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VsOut {
-  let r = visible[kp.base + ii];
+  {{ROW_ID}}
   if r == LOFT_EMPTY { return VsOut(vec4f(2.0, 2.0, 2.0, 1.0), vec3f(0.0), r); }
   let row = load_row(r);
-  let c = LOFT_CUBE[vi];
+  let c = LOFT_CUBE[{{CORNER_ID}}];
   let corner = vec3<f32>(f32(c & 1u), f32((c >> 1u) & 1u), f32((c >> 2u) & 1u));
   let wp = mix(row.loft_lo, row.loft_hi, corner);
   return VsOut(frame.view_proj * vec4<f32>(wp, 1.0), wp, r);

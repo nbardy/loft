@@ -1,0 +1,6 @@
+[
+  ["heron/heron.loft", "33750fba866b7c7d5f6424a85fee87f33ff4348d", "scenes/characters/heron/heron.loft", "b812d9714cf04beb8f5452dee9a06be64e4e29f1"],
+  ["heron/mask.loft", "33750fba866b7c7d5f6424a85fee87f33ff4348d", "scenes/characters/heron/rounds/r09/h11_mask_q3.loft", "f4503192eff30062fe8d80506a450a90851a3fce"],
+  ["walrus/walrus.loft", "e820526217a5e1624d2a3495f4aa02bac86d1274", "scenes/characters/walrus/walrus.loft", "948b8599ecc7b26541d29eb118ac79047341518c"],
+  ["walrus/odd.loft", "e820526217a5e1624d2a3495f4aa02bac86d1274", "scenes/characters/walrus/odd.loft", "2a41bce9fdab5a07886c5730f30e280eb753893b"]
+]

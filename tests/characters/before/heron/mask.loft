@@ -1,0 +1,18 @@
+# MASK three quarter
+# parent: r08/z10_mask_q3
+use self::heron::{heron, HeronCloak, HeronHead, HeronLeg, HeronStole, HeronBell, HeronWeight, HeronTatter, Post, Marsh, Snag, dusk, bleach}
+use stdlib::integrators::direct::{sun_sky}
+
+camera View { eye: [0.616, 0.398, 0.616]@World, at: [0.000, 0.300, 0.0]@World, fov: 40.0deg }
+build {
+  heron(place([0.0, 0.16, 0.0]@World), 0.6rad, 1.35rad, 0.2, 0.7, 0.15, 0.9, 0.3, 1.3, 0.0, 1.0, 0.0, 1.0)
+}
+schedule Main {
+  use_camera(View)
+  cull_indirect(HeronCloak, HeronHead, HeronLeg, HeronStole, HeronBell, HeronWeight, HeronTatter)
+  render_bundle(Vis64) { draw_indirect(HeronCloak, HeronHead, HeronLeg, HeronStole, HeronBell, HeronWeight, HeronTatter) }
+  find_shadow_map(HeronCloak, HeronHead, HeronStole, HeronWeight, HeronTatter, size: 512)
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: sun_sky, sun: [-0.166, 0.301, -0.939])
+  tonemap_aces(ColorHdr, sky: bleach)
+}
