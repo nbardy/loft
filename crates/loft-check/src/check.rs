@@ -101,15 +101,17 @@ pub fn check(p: &Prog, types: &mut Vec<Ty>) -> Res<CheckedEffects> {
         }
         for f in &law.writes{if let Some(prev)=owners.insert((&k.name,&f.name),f.span){return Err(Diag::new(Code::E502,f.span,format!("conflicting writes on {}.{}",k.name,f.name),"give one scheduled law ownership of this field").note(prev,"first writer declared here"));}}
     }
-    for law in p.laws.values().filter(|law| law.tier.is_det()) {
-        let (reachable, constants) = crate::references::reachable(p, &[&law.f], &[]);
+    let det_laws = p.laws.values().filter(|law| law.tier.is_det()).map(|law| &law.f);
+    let det_kernels = p.kernels.values().filter(|kernel| kernel.tier.is_det()).map(|kernel| &kernel.f);
+    for root in det_laws.chain(det_kernels) {
+        let (reachable, constants) = crate::references::reachable(p, &[root], &[]);
         let mut calls = crate::references::References::default();
         for name in constants {
             calls.expr(&p.consts[name.as_str()].value, &[]);
         }
-        for f in std::iter::once(&law.f).chain(reachable) {
+        for f in std::iter::once(root).chain(reachable) {
             if f.refuses_unverified_raw() {
-                return Err(Diag::new(Code::E504, f.name.span, "motion reaches unverified raw WGSL", "mark the law nondet, or write the operation in Loft"));
+                return Err(Diag::new(Code::E504, f.name.span, "deterministic operation reaches unverified raw WGSL", "mark the law or kernel nondet, or write the operation in Loft"));
             }
             calls.calls.extend(crate::references::References::function(f).calls);
         }
@@ -1676,8 +1678,11 @@ fn binary(op: BinOp, a: &Ty, b: &Ty, _sa: Span, sb: Span, span: Span) -> Res<Ty>
     };
     match (op, a, b) {
         (And | Or, Ty::Bool, Ty::Bool) => Ok(Ty::Bool),
-        (Lt | Le | Gt | Ge | Eq | Ne, x, y) if meet(x, y).is_some() => Ok(Ty::Bool),
-        (Eq | Ne, Ty::Bool, Ty::Bool) => Ok(Ty::Bool),
+        (Lt | Le | Gt | Ge, x, y) if num(x) && num(y) && meet(x, y).is_some() => Ok(Ty::Bool),
+        (Eq | Ne, x, y) if matches!(meet(x, y), Some(
+            Ty::F32 | Ty::U32 | Ty::I32 | Ty::AbstractInt | Ty::Bool
+            | Ty::Id(_) | Ty::Row(_) | Ty::VecN(_) | Ty::Geo(..)
+        )) => Ok(Ty::Bool),
         (BitAnd | BitOr | BitXor | Shl | Shr, x, y) if matches!(meet(x, y), Some(Ty::U32 | Ty::I32 | Ty::AbstractInt)) => {
             Ok(meet(x, y).expect("checked"))
         }
@@ -1910,4 +1915,56 @@ fn always_returns(b: &Block) -> bool {
         Stmt::Return(None, _) | Stmt::If { otherwise: None, .. } | Stmt::Let { .. } | Stmt::Assign { .. } | Stmt::Map { .. }
         | Stmt::Each { .. } | Stmt::For { .. } | Stmt::Emit { .. } | Stmt::ImportTable { .. } | Stmt::Expr(_) => false,
     })
+}
+
+#[cfg(test)]
+mod soundness_tests {
+    use super::*;
+
+    #[test]
+    fn comparison_checks_operand_types() {
+        let compare = |op, a: &Ty, b: &Ty| binary(op, a, b, Span::NONE, Span::NONE, Span::NONE);
+        for ty in [
+            Ty::Bsdf,
+            Ty::Xform(Space::Open, Space::Open),
+            Ty::Map(Space::Open, Space::Open),
+            Ty::Struct("World".into()),
+        ] {
+            for op in [BinOp::Lt, BinOp::Le, BinOp::Gt, BinOp::Ge, BinOp::Eq, BinOp::Ne] {
+                assert_eq!(compare(op, &ty, &ty).unwrap_err().code, Code::E003);
+            }
+        }
+        for ty in [Ty::Bool, Ty::VecN(3), Ty::Row("K".into()), Ty::Id("K".into())] {
+            assert_eq!(compare(BinOp::Lt, &ty, &ty).unwrap_err().code, Code::E003);
+            assert_eq!(compare(BinOp::Eq, &ty, &ty).unwrap(), Ty::Bool);
+        }
+        assert_eq!(compare(BinOp::Ge, &Ty::F32, &Ty::AbstractInt).unwrap(), Ty::Bool);
+        assert_eq!(compare(BinOp::Ge, &Ty::I32, &Ty::U32).unwrap_err().code, Code::E003);
+    }
+
+    #[test]
+    fn det_kernel_checks_transitive_helpers() {
+        for (operation, diagnostic) in [
+            ("pow(x, 2.0)", "no deterministic motion implementation"),
+            ("wgsl(x: f) -> f { return x; }", "unverified raw WGSL"),
+        ] {
+            for tier in ["", "nondet"] {
+                let source = format!(
+                    "fn leaf(x: f) -> f = {operation}\n\
+                     fn helper(x: f) -> f = leaf(x)\n\
+                     kernel probe(x: f) {tier} {{ let y = helper(x) }}"
+                );
+                let modules = [loft_parse::parse(0, &source, &mut 0).unwrap()];
+                let p = Prog::index(&modules).unwrap();
+                let result = check(&p, &mut vec![]);
+                if tier.is_empty() {
+                    let Err(err) = result else { panic!("Det accepted {operation}") };
+                    assert_eq!(err.code, Code::E504, "{err:?}");
+                    assert!(err.msg.contains(diagnostic), "{err:?}");
+                } else {
+                    assert!(result.is_ok(), "{:?}", result.err());
+                }
+            }
+        }
+    }
 }
