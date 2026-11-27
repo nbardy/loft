@@ -147,8 +147,13 @@ impl Graph {
         self.entry
     }
 
-    fn stock(&self, id: u16) -> Option<&str> {
-        Some(&self.sources.files[usize::from(id)].0)
+    fn is_stdlib(&self, id: usize) -> bool {
+        // A library file run as the entry still has the entry's lexical scope.
+        if id == usize::from(self.entry) && id != usize::from(self.core) {
+            return false;
+        }
+        let path = Path::new(&self.sources.files[id].0);
+        path.starts_with("stdlib") && path.extension().is_some_and(|ext| ext == "loft")
     }
 }
 

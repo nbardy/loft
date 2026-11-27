@@ -4,7 +4,6 @@ use std::collections::{BTreeMap, HashSet};
 
 /// The program's items by name. Built from parsed modules; cheap to rebuild.
 pub struct Prog<'a> {
-    pub dimensions: std::collections::HashMap<Span, Dimension>,
     links: BTreeMap<(u16, &'a str), &'a str>,
     pub fns: BTreeMap<&'a str, &'a FnDecl>,
     pub kinds: BTreeMap<&'a str, &'a KindDecl>,
@@ -15,7 +14,6 @@ pub struct Prog<'a> {
     pub spaces: HashSet<&'a str>,
     pub structs: BTreeMap<&'a str, (&'a Ident, &'a [RowField])>,
     pub aliases: BTreeMap<&'a str, (&'a Ident, &'a TyExpr)>,
-    pub units: HashSet<&'a str>,
     pub scans: BTreeMap<&'a str, &'a ScanDecl>,
     pub schedule: Option<&'a ScheduleDecl>,
     pub kernels: BTreeMap<&'a str, &'a KernelDecl>,
@@ -27,7 +25,6 @@ pub struct Prog<'a> {
 impl<'a> Prog<'a> {
     pub fn index(modules: &'a [Module]) -> Res<Prog<'a>> {
         let mut p = Prog {
-            dimensions: modules.iter().flat_map(|m| m.dimensions.iter().copied()).collect(),
             links: modules.iter().filter_map(|m| m.file.map(|file| (file, &m.links))).flat_map(|(file, links)| {
                 links.iter().map(move |(name, key)| ((file, name.as_str()), key.as_str()))
             }).collect(),
@@ -39,7 +36,6 @@ impl<'a> Prog<'a> {
             spaces: HashSet::new(),
             structs: BTreeMap::new(),
             aliases: BTreeMap::new(),
-            units: HashSet::new(),
             scans: BTreeMap::new(),
             kernels: BTreeMap::new(),
             bakes: BTreeMap::new(),
@@ -93,10 +89,6 @@ impl<'a> Prog<'a> {
                 Item::TypeAlias(n, ty) => {
                     name(n)?;
                     p.aliases.insert(&n.name, (n, ty));
-                }
-                Item::Unit(n) => {
-                    name(n)?;
-                    p.units.insert(&n.name);
                 }
                 Item::Const(c) => {
                     name(&c.name)?;

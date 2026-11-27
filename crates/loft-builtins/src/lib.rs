@@ -93,8 +93,6 @@ pub enum SigRule {
 pub enum WgslLowering {
     /// Call the named WGSL intrinsic or emitted helper.
     Direct(&'static str),
-    Prefix(&'static str),
-    Infix(&'static str),
     /// Lowering needs type, declaration, stage, or argument information.
     Custom,
 }
