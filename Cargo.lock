@@ -475,15 +475,15 @@ dependencies = [
 
 [[package]]
 name = "loft-abi"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "loft-builtins"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "loft-check"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "loft-abi",
  "loft-builtins",
@@ -494,7 +494,7 @@ dependencies = [
 
 [[package]]
 name = "loft-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "blake3",
  "loft-ir",
@@ -514,7 +514,7 @@ dependencies = [
 
 [[package]]
 name = "loft-emit"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "blake3",
  "loft-builtins",
@@ -526,7 +526,7 @@ dependencies = [
 
 [[package]]
 name = "loft-eval"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "loft-abi",
  "loft-builtins",
@@ -538,7 +538,7 @@ dependencies = [
 
 [[package]]
 name = "loft-format"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "blake3",
  "loft-ir",
@@ -547,7 +547,7 @@ dependencies = [
 
 [[package]]
 name = "loft-gltf"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "loft-abi",
  "loft-check",
@@ -560,7 +560,7 @@ dependencies = [
 
 [[package]]
 name = "loft-ir"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bitflags",
  "serde",
@@ -568,7 +568,7 @@ dependencies = [
 
 [[package]]
 name = "loft-native"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "blake3",
  "loft-ir",
@@ -583,7 +583,7 @@ dependencies = [
 
 [[package]]
 name = "loft-parse"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "loft-ir",
  "logos",
@@ -592,7 +592,7 @@ dependencies = [
 
 [[package]]
 name = "loft-passes"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "blake3",
  "loft-abi",
@@ -610,7 +610,7 @@ dependencies = [
 
 [[package]]
 name = "loft-runner"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "blake3",
  "loft-abi",
@@ -625,7 +625,7 @@ dependencies = [
 
 [[package]]
 name = "loft-std"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "loft-abi",
  "loft-format",
@@ -635,7 +635,7 @@ dependencies = [
 
 [[package]]
 name = "loft-verify"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "blake3",
  "loft-abi",
@@ -661,7 +661,7 @@ dependencies = [
 
 [[package]]
 name = "loft-wgpu"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "loft-format",
  "loft-ir",

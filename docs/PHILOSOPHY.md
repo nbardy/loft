@@ -95,6 +95,25 @@ Rendering and motion are both "state, laws, and constraints, evaluated somewhere
   stays planted, a neck has a length, a gaze holds a point, a material conserves energy.
 - **Truth.** Whatever the engine reports about a constraint is true: proved, measured, or named as unknown.
 
+## 3.5 Hybrid authoring: code + direct manipulation (sculpting & iterative art)
+
+Loft is NOT just for pure-code scenes, and NOT a closed GUI tool. The goal is a **first-class hybrid loop** that
+combines an artist's visual, iterative sculpting intuition with an engineer's (or agent's) programmatic power:
+
+- **Procedural structure + direct sculpting compose non-destructively.** Write parametric rigs, symmetries, patterns,
+  anatomies, and procedural bases in `.loft` code — then **sculpt, paint, pose, and deform** them directly (SDF
+  displacement/residual volumes, brush deltas, curve/control-point tables, mesh cages, live parameter tweaks) without
+  destroying the underlying code. Editing the code re-evaluates cleanly beneath the sculpted layers; re-sculpting
+  updates typed data layers (`table` / `image` / `bake`) without breaking the code.
+- **Mix representations freely in one raytraced/hybrid frame.** Analytic primitives, parametric SDFs, sculpted voxel/
+  sparse-volume residuals, control-point splines, and imported/sculpted triangle meshes live in the same `@Space`,
+  share the same materials and light transport, and compose via exact CSG and smooth blends.
+- **Instant visual feedback is part of the core contract.** Live hot-reload of parameters, shaders, and sculpt layers
+  without rebuilding the world lets both human artists (Blender-style direct manipulation) and visual agents
+  (render → critique → edit code or sculpt layer → re-render) converge rapidly.
+- **Sculpt data is ordinary typed Loft data.** A sculpt layer is not an opaque proprietary blob — it is a typed table or
+  3D/2D texture (`table` / `image`) that code can inspect, mirror, procedurally detail, differentiate, or bake.
+
 ## 4. Few tokens, no hidden code
 
 The consumer is often a model. The shortest correct program wins.

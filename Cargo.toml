@@ -3,6 +3,7 @@ resolver = "3"
 members = ["crates/loft-abi", "crates/loft-builtins", "crates/loft-ir", "crates/loft-format", "crates/loft-parse", "crates/loft-check", "crates/loft-eval", "crates/loft-emit", "crates/loft-gltf", "crates/loft-passes", "crates/loft-runner", "crates/loft-std", "crates/loft-wgpu", "crates/loft-native", "crates/loft-cli", "tools/loft-verify"]
 
 [workspace.package]
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.99.1"
 publish = false
