@@ -3,10 +3,8 @@
 //! E401/E402 on kind parameters, E403 stage-0 statements outside `comptime fn`, E404 kind code reading stage 0.
 //! Output: the type of every expression, by id.
 
-#[path = "kernel_units.rs"]
-mod kernel_units;
 use crate::Prog;
-use loft_builtins::{ArgShape, Builtin, BuiltinSpec, PolyRule, RetShape, SigRule, lookup};
+use loft_builtins::{ArgShape, Builtin, BuiltinSpec, MotionClass, PolyRule, RetShape, SigRule, lookup};
 use loft_parse::ast::*;
 use loft_ir::{Code, Diag, Res, Span};
 use std::collections::{BTreeMap, HashMap};
@@ -25,8 +23,6 @@ pub struct Ck<'p, 'a> {
     kernel: Option<&'a KernelDecl>,
     atomic_writes: BTreeMap<String, Determinism>,
     pending_lowering: Option<Span>,
-    local_units: HashMap<Span, Dimension>,
-    expr_units: HashMap<u32, Dimension>,
     ownership: Option<(String,Vec<String>)>,
     /// A kind query is being checked: `K[i]` reads kind K's rows (laws declare `[K]` parameters instead).
     query: bool,
@@ -116,7 +112,7 @@ pub fn check(p: &Prog, types: &mut Vec<Ty>) -> Res<CheckedEffects> {
             calls.calls.extend(crate::references::References::function(f).calls);
         }
         if let Some(call) = calls.calls.into_iter().find(|c| !p.fns.contains_key(c.name.as_str())
-            && matches!(crate::references::motion_math(&c.name), crate::references::MotionMath::Unavailable)) {
+            && lookup(&c.name).is_some_and(|spec| spec.motion_math == MotionClass::Unavailable)) {
             return Err(Diag::new(Code::E504, call.span, "no deterministic motion implementation for this operation", "rewrite it using deterministic operations"));
         }
     }
@@ -261,7 +257,7 @@ fn e003(span: Span, msg: impl Into<String>, fix: impl Into<String>) -> Diag {
 
 impl<'p,'a> Ck<'p,'a> {
     pub fn new(p:&'p Prog<'a>, types:&'p mut Vec<Ty>)->Self {
-        Self{p,types,scopes:vec![],comptime:false,ret:Ty::Void,fresh:0,sig_vars:vec![],hints:None,ownership:None,query:false,kernel:None,atomic_writes:BTreeMap::new(),pending_lowering:None,local_units:HashMap::new(),expr_units:HashMap::new()}
+        Self{p,types,scopes:vec![],comptime:false,ret:Ty::Void,fresh:0,sig_vars:vec![],hints:None,ownership:None,query:false,kernel:None,atomic_writes:BTreeMap::new(),pending_lowering:None}
     }
 
     fn lookup(&self, n: &str) -> Option<&Local> {
@@ -340,7 +336,6 @@ impl<'p,'a> Ck<'p,'a> {
                     n if self.p.aliases.contains_key(n) || self.p.structs.contains_key(n) => self.resolve_named(i, sig, stack),
                     RADIANCE => Ok(Ty::VecN(3)),
                     n if self.p.kinds.contains_key(n) => Ok(Ty::Id(n.into())),
-                    n if self.p.units.contains(n) => Ok(Ty::F32),
                     n => Err(Diag::new(
                         Code::E011,
                         i.span,
@@ -349,17 +344,6 @@ impl<'p,'a> Ck<'p,'a> {
                     )),
                 }
             }
-            TyExpr::Generic(i, args) => match (i.name.as_str(), args.as_slice()) {
-                ("vec2" | "vec3" | "vec4", [TyExpr::Name(a)]) if a.name == "f32" => {
-                    Ok(Ty::VecN(i.name.as_bytes()[3] - b'0'))
-                }
-                _ => Err(Diag::new(
-                    Code::E405,
-                    i.span,
-                    format!("Phase 0 has no `{}<..>` of this element type", i.name),
-                    "use vec2<f32>, vec3<f32> or vec4<f32>",
-                )),
-            },
             TyExpr::Array(element, count, span) => {
                 if *count == 0 { return Err(e003(*span, "array length must be positive", "use a positive count")); }
                 Ok(Ty::Array(Box::new(self.resolve_type(element, sig, stack)?), *count))
@@ -394,9 +378,6 @@ impl<'p,'a> Ck<'p,'a> {
         if !matches!(elem, Ty::Frame(_)) {
             return Err(Diag::new(Code::E405, sc.init.span, "Phase 1 scans produce `Frame[S]` tables", "write `-> Table[Frame[S]]`"));
         }
-        self.bind(&sc.var.name, Local { ty: vt.clone(), mutable: false, map: None, span: sc.var.span });
-        let t = self.expr(&sc.init)?;
-        self.assignable(&t, &elem, sc.init.span)?;
         self.scopes.push(HashMap::new());
         self.bind(&sc.prev.name, Local { ty: elem.clone(), mutable: false, map: None, span: sc.prev.span });
         self.bind(&sc.at.name, Local { ty: vt, mutable: false, map: None, span: sc.at.span });
@@ -470,7 +451,7 @@ impl<'p,'a> Ck<'p,'a> {
         self.sig_vars.clear();
         let mut note = |t: &TyExpr| match t {
             TyExpr::Geo(_, s) | TyExpr::Field(s) | TyExpr::Frame(s) if s.var => self.sig_vars.push(s.name.clone()),
-            TyExpr::Name(_) | TyExpr::Generic(..) | TyExpr::Array(..) | TyExpr::Geo(..) | TyExpr::Field(_) | TyExpr::Frame(_) | TyExpr::Table(_) | TyExpr::Xform(..) => {}
+            TyExpr::Name(_) | TyExpr::Array(..) | TyExpr::Geo(..) | TyExpr::Field(_) | TyExpr::Frame(_) | TyExpr::Table(_) | TyExpr::Xform(..) => {}
         };
         f.params.iter().filter_map(|p| p.ty.as_ref()).chain(f.ret.as_ref()).for_each(&mut note);
         // Defaults have the lexical scope of the declaration, before any parameter is bound.
@@ -518,14 +499,6 @@ impl<'p,'a> Ck<'p,'a> {
     }
 
     pub(crate) fn kernel(&mut self, k: &'a KernelDecl) -> Res<BTreeMap<String, Determinism>> {
-        self.local_units.clear();
-        self.expr_units.clear();
-        for p in &k.f.params {
-            if let Some(t) = &p.ty {
-                self.resolve(t, true)?;
-                self.local_units.insert(p.name.span, self.declared_unit(t));
-            }
-        }
         self.kernel = Some(k);
         self.atomic_writes.clear();
         let result = self.func(&k.f, None);
@@ -776,19 +749,12 @@ impl<'p,'a> Ck<'p,'a> {
                     if t == Ty::AbstractInt { self.set(value, want.clone()); }
                     t = want;
                 }
-                if self.kernel.is_some() {
-                    let dim = match ty {
-                        Some(t) => { let d = self.declared_unit(t); self.expect_unit(value, d)?; d }
-                        None => self.expr_units[&value.id],
-                    };
-                    self.local_units.insert(name.span, dim);
-                }
                 if t == Ty::AbstractInt {
                     t = Ty::I32;
                 }
                 self.bind(&name.name, Local { ty: t, mutable: *mutable, map: None, span: name.span });
             }
-            Stmt::Assign { target, op: _, value } => {
+            Stmt::Assign { target, value, .. } => {
                 if let ExprKind::Member(base,field)=&target.kind {
                     let owned=self.ownership.as_ref().is_some_and(|(row,fields)|matches!(&base.kind,ExprKind::Name(n) if n==row) && fields.contains(&field.name));
                     if !owned{return Err(Diag::new(Code::E501,field.span,"field assignment outside its declared writes set","declare the target field in the owning law’s writes clause"))}
@@ -818,7 +784,6 @@ impl<'p,'a> Ck<'p,'a> {
                 self.set(target, l.ty.clone());
                 let t = self.expr(value)?;
                 self.assignable(&t, &l.ty, value.span)?;
-                if self.kernel.is_some() { self.expect_unit(value, self.local_units[&l.span])?; }
             }
             Stmt::Map { name, head, stages } => self.map(name, head, stages)?,
             Stmt::Return(v, span) => {
@@ -1011,21 +976,17 @@ impl<'p,'a> Ck<'p,'a> {
         Ok(())
     }
 
-    fn expr(&mut self, e: &Expr) -> Res<Ty> {
-        let t = self.expr_inner(e)?;
-        if self.kernel.is_some() {
-            let dim = self.kernel_unit(e)?;
-            self.expr_units.insert(e.id, dim);
-        }
-        Ok(self.set(e, t))
-    }
-
     fn expr_arm(&mut self, arm: &ExprBlock) -> Res<Ty> {
         self.scopes.push(HashMap::new());
         for s in &arm.body.stmts { self.stmt(s)?; }
         let t = self.expr(&arm.value);
         self.scopes.pop();
         t
+    }
+
+    fn expr(&mut self, e: &Expr) -> Res<Ty> {
+        let t = self.expr_inner(e)?;
+        Ok(self.set(e, t))
     }
 
     fn expr_inner(&mut self, e: &Expr) -> Res<Ty> {
@@ -1064,7 +1025,7 @@ impl<'p,'a> Ck<'p,'a> {
             }
             ExprKind::Num { suffix, float, .. } => Ok(match suffix {
                 NumSuffix::None if !float => Ty::AbstractInt,
-                NumSuffix::None | NumSuffix::Deg | NumSuffix::Unit => Ty::F32,
+                NumSuffix::None | NumSuffix::Unit => Ty::F32,
             }),
             ExprKind::Bool(_) => Ok(Ty::Bool),
             ExprKind::String(_) => Err(Diag::new(Code::E403, e.span, "string outside an asset call", "pass it to a Stage 0 asset call")),
@@ -1902,7 +1863,6 @@ pub fn check_kernel_argument<'a>(
     let expected = ck.resolve(ty, true)?;
     let actual = ck.expr(value)?;
     ck.assignable(&actual, &expected, value.span)?;
-    ck.expect_unit(value, ck.declared_unit(ty))?;
     ck.set(value, expected);
     Ok(())
 }
@@ -1918,53 +1878,5 @@ fn always_returns(b: &Block) -> bool {
 }
 
 #[cfg(test)]
-mod soundness_tests {
-    use super::*;
-
-    #[test]
-    fn comparison_checks_operand_types() {
-        let compare = |op, a: &Ty, b: &Ty| binary(op, a, b, Span::NONE, Span::NONE, Span::NONE);
-        for ty in [
-            Ty::Bsdf,
-            Ty::Xform(Space::Open, Space::Open),
-            Ty::Map(Space::Open, Space::Open),
-            Ty::Struct("World".into()),
-        ] {
-            for op in [BinOp::Lt, BinOp::Le, BinOp::Gt, BinOp::Ge, BinOp::Eq, BinOp::Ne] {
-                assert_eq!(compare(op, &ty, &ty).unwrap_err().code, Code::E003);
-            }
-        }
-        for ty in [Ty::Bool, Ty::VecN(3), Ty::Row("K".into()), Ty::Id("K".into())] {
-            assert_eq!(compare(BinOp::Lt, &ty, &ty).unwrap_err().code, Code::E003);
-            assert_eq!(compare(BinOp::Eq, &ty, &ty).unwrap(), Ty::Bool);
-        }
-        assert_eq!(compare(BinOp::Ge, &Ty::F32, &Ty::AbstractInt).unwrap(), Ty::Bool);
-        assert_eq!(compare(BinOp::Ge, &Ty::I32, &Ty::U32).unwrap_err().code, Code::E003);
-    }
-
-    #[test]
-    fn det_kernel_checks_transitive_helpers() {
-        for (operation, diagnostic) in [
-            ("pow(x, 2.0)", "no deterministic motion implementation"),
-            ("wgsl(x: f) -> f { return x; }", "unverified raw WGSL"),
-        ] {
-            for tier in ["", "nondet"] {
-                let source = format!(
-                    "fn leaf(x: f) -> f = {operation}\n\
-                     fn helper(x: f) -> f = leaf(x)\n\
-                     kernel probe(x: f) {tier} {{ let y = helper(x) }}"
-                );
-                let modules = [loft_parse::parse(0, &source, &mut 0).unwrap()];
-                let p = Prog::index(&modules).unwrap();
-                let result = check(&p, &mut vec![]);
-                if tier.is_empty() {
-                    let Err(err) = result else { panic!("Det accepted {operation}") };
-                    assert_eq!(err.code, Code::E504, "{err:?}");
-                    assert!(err.msg.contains(diagnostic), "{err:?}");
-                } else {
-                    assert!(result.is_ok(), "{:?}", result.err());
-                }
-            }
-        }
-    }
-}
+#[path = "../tests/support/soundness.rs"]
+mod soundness_tests;

@@ -7,7 +7,6 @@ mod import_table;
 mod kernel;
 pub mod lip;
 pub mod quant;
-pub mod refine;
 
 use eval::{Eval, RowVal};
 use loft_check::{FINITE_DIFF_STEP, Prog, check, finite_diff_parameter};

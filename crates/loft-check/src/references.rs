@@ -3,17 +3,6 @@ use loft_ir::Span;
 use loft_parse::ast::*;
 use std::collections::BTreeSet;
 
-#[derive(Clone, Copy)]
-pub enum MotionMath { Native, Fixed, Unavailable }
-
-pub fn motion_math(name: &str) -> MotionMath {
-    match name {
-        "sin" | "cos" | "atan2" | "acos" | "exp" | "log" => MotionMath::Fixed,
-        "tan" | "asin" | "atan" | "exp2" | "log2" | "pow" => MotionMath::Unavailable,
-        _ => MotionMath::Native,
-    }
-}
-
 pub fn fn_symbol(n: &str) -> String {
     match n.split_once('#') {
         Some(("", internal)) => format!("loft_internal_{internal}"),

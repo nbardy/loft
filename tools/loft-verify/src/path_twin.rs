@@ -1,5 +1,8 @@
 //! f32 twin of the path loop and direct reservoir. Geometry, media and staged
 //! material sampling are supplied by the same World boundary as the shader.
+
+use std::num::NonZeroU32;
+
 pub type Rgb = [f32; 3];
 
 #[derive(Clone, Copy)]
@@ -147,3 +150,63 @@ impl MediumStack {
 }
 
 pub fn photon_fixed(power: f32) -> u32 { (power.clamp(0.0, 1.0) * 16384.0).round() as u32 }
+
+/// The summed world-medium coefficients at a ray sample. Source is radiance
+/// per metre (emission plus illuminated scattering, including the phase).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Coefficients {
+    pub extinction: [f32; 3],
+    pub source: [f32; 3],
+}
+
+impl std::ops::Add for Coefficients {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        Self {
+            extinction: std::array::from_fn(|i| self.extinction[i] + other.extinction[i]),
+            source: std::array::from_fn(|i| self.source[i] + other.source[i]),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Vol {
+    pub l: [f32; 3],
+    pub t: [f32; 3],
+}
+
+/// Midpoint quadrature over an already clipped ray interval in metres.
+/// Integrate each constant-coefficient segment exactly. A ray's incident
+/// radiance behind the medium is composed as `vol.l + vol.t * background`.
+pub fn inscatter_joint(
+    begin: f32,
+    end: f32,
+    steps: NonZeroU32,
+    mut sample: impl FnMut(f32) -> Coefficients,
+) -> Vol {
+    let mut vol = Vol {
+        l: [0.; 3],
+        t: [1.; 3],
+    };
+    if end <= begin {
+        return vol;
+    }
+    let ds = (end - begin) / steps.get() as f32;
+    for k in 0..steps.get() {
+        let medium = sample(begin + (k as f32 + 0.5) * ds);
+        for (i, sigma) in medium.extinction.into_iter().enumerate() {
+            let tau = sigma * ds;
+            let tr = (-tau).exp();
+            // Keep the vacuum limit and avoid subtracting nearly equal f32 values.
+            let weight = if tau < 0.001 {
+                ds * (1. - tau * (0.5 - tau / 6.))
+            } else {
+                (1. - tr) / sigma
+            };
+            vol.l[i] += vol.t[i] * medium.source[i] * weight;
+            vol.t[i] *= tr;
+        }
+    }
+    vol
+}

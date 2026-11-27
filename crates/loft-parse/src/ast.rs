@@ -13,8 +13,6 @@ pub struct Ident {
 
 #[derive(serde::Serialize, Clone, Debug, Default)]
 pub struct Module {
-    /// Dimensions (length, time, mass, angle) on source types and literals. Their GPU representation is f32.
-    pub dimensions: Vec<(Span, Dimension)>,
     pub items: Vec<Item>,
     pub public: Vec<Span>,
     /// Authored declaration name to body range, including its opening delimiter.
@@ -27,15 +25,12 @@ pub struct Module {
     pub diffs: Vec<(Ident, Ident)>,
 }
 
-pub type Dimension = [f64; 4];
-
 #[derive(serde::Serialize, Clone, Debug)]
 pub enum Item {
     Use(Import),
     Space(Vec<Ident>),
     Struct(Ident, Vec<RowField>),
     TypeAlias(Ident, TyExpr),
-    Unit(Ident),
     Const(ConstDecl),
     Fn(FnDecl),
     Kind(KindDecl),
@@ -71,7 +66,7 @@ impl Item {
         let name = match self {
             Self::Use(_) | Self::Build(_) => return &[],
             Self::Space(names) => return names,
-            Self::Struct(n, _) | Self::TypeAlias(n, _) | Self::Unit(n) | Self::World(n, _) => n,
+            Self::Struct(n, _) | Self::TypeAlias(n, _) | Self::World(n, _) => n,
             Self::Const(x) => &x.name,
             Self::Fn(x) | Self::Check(x) => &x.name,
             Self::Kind(x) => &x.name,
@@ -333,10 +328,7 @@ pub struct Expr {
 #[derive(serde::Serialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NumSuffix {
     None,
-    /// Degrees: the value converts to radians where it is used.
-    Deg,
-    /// Any other unit (`m`, `rad`, `s`, `kg`, `N`, `rad/s`, and `mm`, already converted to metres). Units are tags in
-    /// v1.0: they make the literal a float and are kept in `text`.
+    /// A unit-bearing float, already scaled to base units. The original suffix is kept in `text`.
     Unit,
 }
 
@@ -450,8 +442,6 @@ impl FnDecl {
 pub enum TyExpr {
     /// `f32`, `u32`, `bool`, `vec3f`, a unit alias like `Meters`.
     Name(Ident),
-    /// `vec3<f32>`.
-    Generic(Ident, Vec<TyExpr>),
     Array(Box<TyExpr>, u32, Span),
     Geo(Geo, SpaceRef),
     Xform(SpaceRef, SpaceRef),
@@ -466,7 +456,7 @@ impl TyExpr {
     pub fn span(&self) -> Span {
         match self {
             TyExpr::Array(_, _, span) => *span,
-            TyExpr::Name(i) | TyExpr::Generic(i, _) | TyExpr::Table(i) => i.span,
+            TyExpr::Name(i) | TyExpr::Table(i) => i.span,
             TyExpr::Geo(_, s) | TyExpr::Field(s) | TyExpr::Frame(s) => s.span,
             TyExpr::Xform(a, b) => a.span.to(b.span),
         }

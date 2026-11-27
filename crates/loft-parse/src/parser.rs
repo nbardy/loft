@@ -1,79 +1,13 @@
-//! Recursive descent over the lossless CST. Newlines are virtual separators;
+//! Recursive descent over flat tokens. Newlines are virtual separators;
 //! all expression and diagnostic spans still address the original UTF-8.
-use crate::cst::{Cst, Kind, Trivia};
+use crate::lex::{Kind, Lex, lex, unit};
 use crate::ast::*;
 use loft_ir::{Code, Diag, Res, Span};
 use std::collections::HashSet;
 
-#[derive(Clone, Copy)]
-struct Lex<'a> {
-    text: &'a str,
-    span: Span,
-    kind: Kind,
-}
-
-fn continued(prev: &str, next: &str, depth: usize) -> bool {
-    depth > 0
-        || matches!(
-            prev,
-            "+" | "-"
-                | "*"
-                | "/"
-                | "%"
-                | "=="
-                | "!="
-                | "<"
-                | "<="
-                | ">"
-                | ">="
-                | "&&"
-                | "||"
-                | ","
-                | "="
-                | "|>"
-        )
-        // A line that starts with a binary operator cannot start a statement, so it continues the last one:
-        // `ggx(..)\n  + coat(..)`. Models stack lobes this way (4 of 16 fresh crab programs). `-` is excluded
-        // because it can begin a unary expression.
-        || matches!(next, "|>" | "else" | "+" | "*" | "/" | "%" | "==" | "!=" | "<=" | ">=" | "&&" | "||")
-}
-
 pub fn parse(file: u16, source: &str, next: &mut u32) -> Res<Module> {
-    let tree = Cst::parse(file, source)?;
-    let mut tokens = vec![];
-    let mut depth = 0usize;
-    let mut prev = "";
-    for t in tree.tokens() {
-        let word = t.text(source);
-        if (!continued(prev, word, depth)
-            || (prev == "*"
-                && tokens
-                    .iter()
-                    .rev()
-                    .nth(1)
-                    .is_some_and(|t: &Lex| t.text == "::")))
-            && let Some((_, s)) = t.leading.iter().find(|(k, _)| *k == Trivia::Newline)
-        {
-            tokens.push(Lex {
-                text: ";",
-                span: *s,
-                kind: Kind::Newline,
-            });
-        }
-        tokens.push(Lex {
-            text: word,
-            span: t.span,
-            kind: t.kind,
-        });
-        match word {
-            "(" | "[" => depth += 1,
-            ")" | "]" => depth -= 1,
-            _ => (),
-        }
-        prev = word;
-    }
     let mut p = Parser {
-        tokens,
+        tokens: lex(file, source)?,
         at: 0,
         next,
         module: Module { file: Some(file), ..Module::default() },
@@ -235,24 +169,17 @@ impl<'src> Parser<'src, '_> {
         }
         if unit(self.cur().text) || self.is("1") {
             let span = self.cur().span;
-            let mut dim = [0.; 4];
-            let mut sign = 1.;
             loop {
                 if !unit(self.cur().text) && !self.is("1") {
                     return self.err("a unit atom");
                 }
-                let atom = self.pop();
-                let mut power = sign;
+                self.pop();
                 if self.eat("^") {
-                    if self.eat("-") { power = -power; }
-                    power *= f64::from(self.integer()?);
+                    self.eat("-");
+                    self.integer()?;
                 }
-                add_unit(&mut dim, atom.text, power);
-                if self.eat("/") { sign = -1.; }
-                else if self.eat("*") { sign = 1.; }
-                else { break; }
+                if !self.eat("/") && !self.eat("*") { break; }
             }
-            self.module.dimensions.push((span, dim));
             return Ok(ty("f32", span));
         }
         let n = self.reference()?;
@@ -1580,7 +1507,6 @@ impl<'src> Parser<'src, '_> {
         let suffix = if units.is_empty() {
             NumSuffix::None
         } else {
-            let mut dim = [0.; 4];
             let mut op = 1;
             let mut at = 0;
             while at < units.len() {
@@ -1607,7 +1533,6 @@ impl<'src> Parser<'src, '_> {
                     _ => 1.,
                 };
                 let exponent = power.checked_mul(op).ok_or_else(bad)?;
-                add_unit(&mut dim, sym, f64::from(exponent));
                 value *= factor.powi(exponent);
                 if at < units.len() {
                     op = match units.as_bytes()[at] {
@@ -1618,7 +1543,6 @@ impl<'src> Parser<'src, '_> {
                     at += 1;
                 }
             }
-            self.module.dimensions.push((sp, dim));
             NumSuffix::Unit
         };
         Ok(self.node(
@@ -1632,21 +1556,6 @@ impl<'src> Parser<'src, '_> {
         ))
     }
 }
-fn add_unit(dim: &mut Dimension, symbol: &str, power: f64) {
-    let base = match symbol {
-        "1" => [0, 0, 0, 0],
-        "m" | "mm" => [1, 0, 0, 0],
-        "s" => [0, 1, 0, 0],
-        "kg" => [0, 0, 1, 0],
-        "rad" | "deg" => [0, 0, 0, 1],
-        "Hz" => [0, -1, 0, 0],
-        "N" => [1, -2, 1, 0],
-        "J" => [2, -2, 1, 0],
-        _ => unreachable!("validated unit symbol"),
-    };
-    for (v, e) in dim.iter_mut().zip(base) { *v += power * f64::from(e); }
-}
-
 pub const TYPE_ALIASES: &[(&str, &str)] = &[
     ("f", "f32"), ("u", "u32"), ("i", "i32"),
     ("v2", "vec2f"), ("rgb", "vec3f"), ("v3", "vec3f"), ("v4", "vec4f"),

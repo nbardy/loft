@@ -1,13 +1,8 @@
 //! Layer 0/1 contract. Groups 1–3 come exclusively from each pass declaration.
 use std::collections::BTreeMap;
 
-macro_rules! ids {
-    ($($name:ident),+ $(,)?) => {$(
-        #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-        pub struct $name(pub u32);
-    )+};
-}
-ids!(InstanceId, SymId, ValId);
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct InstanceId(pub u32);
 
 macro_rules! record {
     ($(#[$attr:meta])* $name:ident {
@@ -127,12 +122,3 @@ pub struct Bundle {
     pub params: Vec<ParamMeta>,
     pub passes: Vec<PassDecl>,
 }
-#[derive(Clone, Debug)]
-pub enum Op {
-    Intrinsic { name: SymId, args: Box<[ValId]> },
-}
-#[derive(Default)]
-pub struct IrModule {
-    pub ops: Vec<Op>,
-}
-pub type PassRegistry = BTreeMap<SymId, fn(&mut IrModule) -> crate::Res<()>>;
