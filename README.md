@@ -56,3 +56,7 @@ tools/gpu_lock.sh target/lab/loft still stdlib/engines/capsules.loft out/capsule
 `tools/check.sh full` runs the corpus and grammar checks, the workspace build, native tests with all six mutants, the
 wasm32 runner check, and the five GPU gates once. Focused: `tools/dev.sh check CRATE`. The GPU report is
 `out/meta/gate.json`; the CLI exits nonzero on a missed gate. Details: [AGENTS.md](AGENTS.md).
+
+## Disk hygiene
+
+Run `uv run python scripts/clean_out.py` (defaults to `--dry-run`; pass `--apply` to execute) to reclaim regenerable `out/` raw render buffers, scratch directories, stale frames, and unreferenced `.git/cambium` caches while preserving code, JSON/Markdown reports, and recent outputs.
